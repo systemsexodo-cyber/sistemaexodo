@@ -1,0 +1,65 @@
+═══════════════════════════════════════════════════════════
+  COMANDOS PARA EXECUTAR AGORA - Configuração do Git
+═══════════════════════════════════════════════════════════
+
+📋 PASSO 1: Configurar suas credenciais
+═══════════════════════════════════════════════════════════
+
+Abra o PowerShell/Terminal e execute (SUBSTITUA pelos seus dados):
+
+git config --global user.name "SEU NOME COMPLETO"
+git config --global user.email "seu.email@example.com"
+
+Exemplo:
+git config --global user.name "João Silva"
+git config --global user.email "joao.silva@gmail.com"
+
+
+📋 PASSO 2: Verificar se configurou corretamente
+═══════════════════════════════════════════════════════════
+
+git config --global user.name
+git config --global user.email
+
+
+📋 PASSO 3: Adicionar todos os arquivos modificados
+═══════════════════════════════════════════════════════════
+
+cd "C:\Users\USER\Downloads\Sistema Exodo\sistema_exodo_novo"
+git add .
+
+
+📋 PASSO 4: Fazer commit das mudanças
+═══════════════════════════════════════════════════════════
+
+git commit -m "docs: atualiza documentação e configuração do Git"
+
+
+📋 PASSO 5: Ver status antes de enviar
+═══════════════════════════════════════════════════════════
+
+git status
+
+
+📋 PASSO 6: Enviar para o GitHub
+═══════════════════════════════════════════════════════════
+
+git push origin main
+
+NOTA: Se pedir autenticação, você precisará de um Personal Access Token.
+      Veja o arquivo CONFIGURACAO_GIT.md para criar um token.
+
+
+═══════════════════════════════════════════════════════════
+  STATUS ATUAL
+═══════════════════════════════════════════════════════════
+
+✓ Repositório: Conectado
+✓ Remote URL: https://github.com/systemsexodo-cyber/exodosystems.git
+✓ Branch: main
+✓ Arquivos prontos para commit: 8 arquivos
+
+⚠ Credenciais: Ainda precisam ser configuradas (Passo 1)
+
+═══════════════════════════════════════════════════════════
+
