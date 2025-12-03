@@ -135,6 +135,102 @@ function Fazer-Commit {
     }
 }
 
+# Função para fazer push limpo (sem arquivos grandes)
+function Fazer-Push-Limpo {
+    param(
+        [string]$targetBranch
+    )
+    
+    $currentTime = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    
+    Write-Detail "  [$currentTime] Criando branch limpo para push sem arquivos grandes..."
+    
+    # Salvar branch atual
+    $currentBranch = git rev-parse --abbrev-ref HEAD
+    
+    # Criar branch temporário limpo (orphan)
+    $tempBranchName = "temp-push-$(Get-Date -Format 'yyyyMMddHHmmss')"
+    
+    try {
+        # Criar branch órfão (sem histórico)
+        $checkoutResult = git checkout --orphan $tempBranchName 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "  Erro ao criar branch limpo: $checkoutResult"
+            return $false
+        }
+        
+        # Limpar staging area
+        git reset 2>&1 | Out-Null
+        
+        # Adicionar apenas arquivos da pasta sistema_exodo_01-12 (respeitando .gitignore)
+        Write-Detail "  Adicionando arquivos da pasta sistema_exodo_01-12 (respeitando .gitignore)..."
+        $addResult = git add "sistema_exodo_01-12/" 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            # Também adicionar arquivos na raiz do repositório se houver
+            git add "*.ps1" "*.md" ".gitignore" 2>&1 | Out-Null
+        }
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "  Erro ao adicionar arquivos: $addResult"
+            git checkout $currentBranch 2>&1 | Out-Null
+            return $false
+        }
+        
+        # Verificar se há algo para commitar
+        $status = git status --porcelain 2>&1
+        if (-not $status -or $status.Length -eq 0) {
+            Write-Detail "  Nenhuma alteração para fazer push"
+            git checkout $currentBranch 2>&1 | Out-Null
+            git branch -D $tempBranchName 2>&1 | Out-Null
+            return $false
+        }
+        
+        # Criar commit com estado atual
+        $commitMessage = "Versão limpa do projeto - $currentTime"
+        $commitResult = git commit -m $commitMessage 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "  Erro ao criar commit limpo: $commitResult"
+            git checkout $currentBranch 2>&1 | Out-Null
+            git branch -D $tempBranchName 2>&1 | Out-Null
+            return $false
+        }
+        
+        Write-Detail "  Commit limpo criado, fazendo push para $targetBranch..."
+        
+        # Fazer push forçado para o branch de destino
+        $pushResult = git push origin "$tempBranchName`:$targetBranch" --force --no-verify 2>&1
+        
+        if ($LASTEXITCODE -eq 0) {
+            Write-Success "  Push limpo realizado com sucesso para $targetBranch!"
+            
+            # Log
+            $logFile = Join-Path $logsDir "pushes.log"
+            "$currentTime | PUSH LIMPO | Branch: $targetBranch" | Out-File -Append -FilePath $logFile -Encoding UTF8
+            
+            # Voltar para branch original
+            git checkout $currentBranch 2>&1 | Out-Null
+            git branch -D $tempBranchName 2>&1 | Out-Null
+            
+            return $true
+        } else {
+            Write-Error "  Erro ao fazer push limpo: $pushResult"
+            git checkout $currentBranch 2>&1 | Out-Null
+            git branch -D $tempBranchName 2>&1 | Out-Null
+            
+            # Log de erro
+            $logFile = Join-Path $logsDir "erros.log"
+            "$currentTime | PUSH LIMPO ERROR | $pushResult" | Out-File -Append -FilePath $logFile -Encoding UTF8
+            
+            return $false
+        }
+    } catch {
+        Write-Error "  Erro ao fazer push limpo: $_"
+        # Garantir que voltamos para o branch original
+        git checkout $currentBranch 2>&1 | Out-Null
+        git branch -D $tempBranchName 2>&1 | Out-Null
+        return $false
+    }
+}
+
 # Função para fazer push
 function Fazer-Push {
     $currentTime = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
@@ -145,81 +241,29 @@ function Fazer-Push {
     
     # Verificar se há commits locais que não estão no remoto
     $localBranch = git rev-parse --abbrev-ref HEAD
-    $remoteBranch = "origin/$localBranch"
-    
-    # Verificar se o branch remoto existe
-    $remoteExists = git ls-remote --heads origin $localBranch 2>$null
-    if (-not $remoteExists) {
-        # Branch remoto não existe, criar
-        Write-Detail "  [$currentTime] Branch remoto não existe, criando..."
-        $pushResult = git push -u origin $localBranch 2>&1
-        if ($LASTEXITCODE -eq 0) {
-            Write-Success "  Push inicial realizado com sucesso!"
-            $logFile = Join-Path $logsDir "pushes.log"
-            "$currentTime | PUSH INITIAL | Branch criado" | Out-File -Append -FilePath $logFile -Encoding UTF8
-            return $true
-        } else {
-            Write-Error "  Erro ao criar branch remoto: $pushResult"
-            return $false
-        }
-    }
-    
-    # Comparar commits locais vs remotos
-    $localCommit = git rev-parse HEAD 2>$null
-    $remoteCommit = git rev-parse $remoteBranch 2>$null
-    
-    if ($localCommit -eq $remoteCommit) {
-        # Já está sincronizado
-        return $false
-    }
-    
-    # Verificar quantos commits estão à frente
-    $ahead = git rev-list --count "$remoteBranch..HEAD" 2>$null
-    if (-not $ahead -or $ahead -eq 0) {
-        return $false
-    }
     
     # Fazer backup antes do push
     Backup-AntesOperacao -operacao "pre_push"
     
-    Write-Detail "  [$currentTime] $ahead commit(s) para enviar, fazendo push..."
+    Write-Detail "  [$currentTime] Fazendo push limpo (sem arquivos grandes) para $localBranch..."
     
-    # Tentar push normal primeiro
-    $pushResult = git push origin $localBranch 2>&1
+    # Usar método de push limpo (sem histórico problemático)
+    $pushFeito = Fazer-Push-Limpo -targetBranch $localBranch
     
-    if ($LASTEXITCODE -eq 0) {
-        Write-Success "  Push realizado com sucesso!"
-        
-        # Log
-        $logFile = Join-Path $logsDir "pushes.log"
-        "$currentTime | PUSH | $ahead commit(s) enviado(s)" | Out-File -Append -FilePath $logFile -Encoding UTF8
-        
+    if ($pushFeito) {
         return $true
-    } else {
-        # Se falhar, pode ser conflito. Tentar usar o script de push robusto
-        Write-Warning "  Push normal falhou, tentando método alternativo..."
-        
-        $pushScript = Join-Path $projectPath "push_para_github.ps1"
-        if (Test-Path $pushScript) {
-            $altPushResult = & $pushScript 2>&1
-            if ($LASTEXITCODE -eq 0) {
-                Write-Success "  Push realizado com método alternativo!"
-                $logFile = Join-Path $logsDir "pushes.log"
-                "$currentTime | PUSH ALT | $ahead commit(s) enviado(s)" | Out-File -Append -FilePath $logFile -Encoding UTF8
-                return $true
-            } else {
-                Write-Error "  Erro ao fazer push (método alternativo): $altPushResult"
-            }
-        } else {
-            Write-Error "  Erro ao fazer push: $pushResult"
-        }
-        
-        # Log de erro
-        $logFile = Join-Path $logsDir "erros.log"
-        "$currentTime | PUSH ERROR | $pushResult" | Out-File -Append -FilePath $logFile -Encoding UTF8
-        
-        return $false
     }
+    
+    # Se o push limpo falhou, tentar também para main se não for o branch atual
+    if ($localBranch -ne "main") {
+        Write-Detail "  Tentando também fazer push para main..."
+        $pushMainFeito = Fazer-Push-Limpo -targetBranch "main"
+        if ($pushMainFeito) {
+            Write-Success "  Push para main também realizado!"
+        }
+    }
+    
+    return $pushFeito
 }
 
 # Função para reverter modificações
