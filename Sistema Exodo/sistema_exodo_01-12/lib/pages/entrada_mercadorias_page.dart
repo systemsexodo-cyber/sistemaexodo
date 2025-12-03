@@ -30,6 +30,14 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> {
   int _abaAtiva = 0; // 0 = Itens, 1 = Notas
   String? _notaRascunhoId; // ID da nota rascunho atual
   String? _numeroNotaReal; // Número real da nota fiscal (do XML)
+  // Informações adicionais do XML
+  String? _chaveNFe;
+  String? _fornecedorNome;
+  String? _fornecedorCNPJ;
+  DateTime? _dataEmissao;
+  double? _valorTotal;
+  String? _serie;
+  String? _modelo;
 
   @override
   void dispose() {
@@ -47,6 +55,13 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> {
       _itens.clear();
       _numeroNotaReal = null;
       _notaRascunhoId = null;
+      _chaveNFe = null;
+      _fornecedorNome = null;
+      _fornecedorCNPJ = null;
+      _dataEmissao = null;
+      _valorTotal = null;
+      _serie = null;
+      _modelo = null;
     });
     
     try {
@@ -119,20 +134,132 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> {
 
         _numeroNotaReal = numeroNotaReal;
 
+        // Extrair informações adicionais do XML
+        try {
+          // Extrair chave de acesso (infNFe)
+          final infNFeElements = document.findAllElements('infNFe');
+          if (infNFeElements.isNotEmpty) {
+            final chaveAttr = infNFeElements.first.getAttribute('Id');
+            if (chaveAttr != null && chaveAttr.startsWith('NFe')) {
+              _chaveNFe = chaveAttr.substring(3); // Remove o prefixo "NFe"
+            }
+          }
+
+          // Extrair informações do emitente (fornecedor)
+          final emitElements = document.findAllElements('emit');
+          if (emitElements.isNotEmpty) {
+            final emit = emitElements.first;
+            
+            // Nome do fornecedor
+            final xNome = emit.findElements('xNome');
+            if (xNome.isNotEmpty) {
+              _fornecedorNome = xNome.first.text;
+            }
+            
+            // CNPJ do fornecedor
+            final cnpj = emit.findElements('CNPJ');
+            if (cnpj.isNotEmpty) {
+              _fornecedorCNPJ = cnpj.first.text;
+            } else {
+              // Tentar CPF se não tiver CNPJ
+              final cpf = emit.findElements('CPF');
+              if (cpf.isNotEmpty) {
+                _fornecedorCNPJ = cpf.first.text;
+              }
+            }
+          }
+
+          // Extrair informações do IDE (identificação)
+          final ideElements = document.findAllElements('ide');
+          if (ideElements.isNotEmpty) {
+            final ide = ideElements.first;
+            
+            // Série
+            final serie = ide.findElements('serie');
+            if (serie.isNotEmpty) {
+              _serie = serie.first.text;
+            }
+            
+            // Modelo
+            final modelo = ide.findElements('mod');
+            if (modelo.isNotEmpty) {
+              _modelo = modelo.first.text;
+            }
+            
+            // Data de emissão
+            final dhEmi = ide.findElements('dhEmi');
+            if (dhEmi.isNotEmpty) {
+              try {
+                final dataStr = dhEmi.first.text;
+                // Formato: 2024-01-15T10:30:00-03:00
+                _dataEmissao = DateTime.parse(dataStr);
+              } catch (e) {
+                print('Erro ao parsear data de emissão: $e');
+              }
+            } else {
+              // Tentar dEmi (data simples)
+              final dEmi = ide.findElements('dEmi');
+              if (dEmi.isNotEmpty) {
+                try {
+                  final dataStr = dEmi.first.text;
+                  // Formato: 20240115
+                  if (dataStr.length == 8) {
+                    _dataEmissao = DateTime.parse('${dataStr.substring(0, 4)}-${dataStr.substring(4, 6)}-${dataStr.substring(6, 8)}');
+                  }
+                } catch (e) {
+                  print('Erro ao parsear data de emissão (dEmi): $e');
+                }
+              }
+            }
+          }
+
+          // Extrair valor total
+          final totalElements = document.findAllElements('total');
+          if (totalElements.isNotEmpty) {
+            final icmTot = totalElements.first.findElements('ICMSTot');
+            if (icmTot.isNotEmpty) {
+              final vNF = icmTot.first.findElements('vNF');
+              if (vNF.isNotEmpty) {
+                _valorTotal = double.tryParse(vNF.first.text.replaceAll(',', '.'));
+              }
+            }
+          }
+
+          print('>>> Informações extraídas do XML:');
+          print('>>>   Chave NFe: $_chaveNFe');
+          print('>>>   Fornecedor: $_fornecedorNome');
+          print('>>>   CNPJ: $_fornecedorCNPJ');
+          print('>>>   Data Emissão: $_dataEmissao');
+          print('>>>   Valor Total: $_valorTotal');
+          print('>>>   Série: $_serie');
+          print('>>>   Modelo: $_modelo');
+        } catch (e) {
+          print('Erro ao extrair informações adicionais do XML: $e');
+        }
+
         // Verificar se nota já foi processada (apenas avisar, não impedir carregamento)
         // Nota: notas canceladas/excluídas não bloqueiam o processamento
         bool notaJaProcessada = false;
         if (numeroNotaReal != null && numeroNotaReal.isNotEmpty) {
           final service = Provider.of<DataService>(context, listen: false);
-          try {
-            // Verificar apenas notas processadas que NÃO foram canceladas
-            service.notasEntrada.firstWhere(
-              (n) => n.numeroNotaReal == numeroNotaReal && n.isProcessada && !n.isCancelada,
-            );
+          
+          // Buscar todas as notas com o mesmo número
+          final notasComMesmoNumero = service.notasEntrada.where(
+            (n) => n.numeroNotaReal == numeroNotaReal,
+          ).toList();
+          
+          print('>>> Verificando duplicatas no carregamento XML para nota $numeroNotaReal');
+          print('>>> Encontradas ${notasComMesmoNumero.length} nota(s) com este número');
+          
+          // Filtrar apenas notas processadas e não canceladas
+          final notasProcessadasAtivas = notasComMesmoNumero.where(
+            (n) => n.isProcessada && !n.isCancelada,
+          ).toList();
+          
+          if (notasProcessadasAtivas.isNotEmpty) {
             notaJaProcessada = true;
             print('>>> Nota $numeroNotaReal já foi processada anteriormente (mas pode ser processada novamente)');
-          } catch (_) {
-            // Nota não encontrada ou foi cancelada/excluída - pode processar normalmente
+          } else {
             print('>>> Nota $numeroNotaReal não encontrada ou foi excluída - pode processar normalmente');
           }
         } else {
@@ -323,9 +450,10 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> {
         setState(() {
           _carregando = false;
           _modo = 'xml';
+          _abaAtiva = 0; // Garantir que está na aba de itens para ver os itens carregados
         });
         
-        print('>>> Estado atualizado, _itens.length = ${_itens.length}');
+        print('>>> Estado atualizado, _itens.length = ${_itens.length}, _abaAtiva = $_abaAtiva');
 
         // Mostrar mensagens apropriadas
         if (_itens.isEmpty) {
@@ -457,6 +585,13 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> {
       status: 'rascunho',
       itens: itensNota,
       numeroNotaReal: _numeroNotaReal,
+      chaveNFe: _chaveNFe,
+      fornecedorNome: _fornecedorNome,
+      fornecedorCNPJ: _fornecedorCNPJ,
+      dataEmissao: _dataEmissao,
+      valorTotal: _valorTotal,
+      serie: _serie,
+      modelo: _modelo,
     );
 
     // Salvar a nota
@@ -468,10 +603,10 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> {
       print('>>> Novo rascunho criado: $notaId');
     }
 
-    // Garantir que está na aba de itens e manter os itens na tela
+    // Ir para a aba de notas para ver o rascunho salvo
     setState(() {
       _notaRascunhoId = notaId; // Atualizar o ID mesmo se já existir
-      _abaAtiva = 0; // Garantir que está na aba de itens para continuar editando
+      _abaAtiva = 1; // Ir para a aba de notas para ver o rascunho salvo
     });
 
     print('>>> Após salvar - Itens na tela: ${_itens.length}');
@@ -612,18 +747,25 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> {
     // Verificar se nota já foi processada (se tiver número real)
     // Nota: notas canceladas/excluídas não bloqueiam o processamento
     if (_numeroNotaReal != null && _numeroNotaReal!.isNotEmpty) {
-      NotaEntrada? notaJaProcessada;
-      try {
-        // Verificar apenas notas processadas que não foram canceladas
-        notaJaProcessada = service.notasEntrada.firstWhere(
-          (n) => n.numeroNotaReal == _numeroNotaReal && n.isProcessada && !n.isCancelada,
-        );
-      } catch (_) {
-        // Nota não encontrada ou foi cancelada, tudo bem - pode processar
-      }
+      // Buscar todas as notas com o mesmo número (incluindo canceladas para debug)
+      final notasComMesmoNumero = service.notasEntrada.where(
+        (n) => n.numeroNotaReal == _numeroNotaReal,
+      ).toList();
       
-      if (notaJaProcessada != null) {
-        final nota = notaJaProcessada; // Variável local não-nullable
+      print('>>> Verificando duplicatas para nota $_numeroNotaReal');
+      print('>>> Encontradas ${notasComMesmoNumero.length} nota(s) com este número');
+      
+      // Filtrar apenas notas processadas e não canceladas
+      final notasProcessadasAtivas = notasComMesmoNumero.where(
+        (n) => n.isProcessada && !n.isCancelada,
+      ).toList();
+      
+      print('>>> Notas processadas ativas: ${notasProcessadasAtivas.length}');
+      
+      if (notasProcessadasAtivas.isNotEmpty) {
+        final nota = notasProcessadasAtivas.first;
+        print('>>> Nota encontrada: ${nota.id} - Status: ${nota.status}');
+        
         final confirmar = await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
@@ -666,8 +808,13 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> {
         );
 
         if (confirmar != true) {
+          print('>>> Processamento cancelado pelo usuário');
           return; // Cancelar processamento
+        } else {
+          print('>>> Usuário confirmou processamento mesmo com duplicata');
         }
+      } else {
+        print('>>> Nenhuma nota processada ativa encontrada - pode processar normalmente');
       }
     }
 
@@ -929,21 +1076,31 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> {
       }
     }
 
+    // Armazenar nota processada para poder visualizar depois
+    NotaEntrada? notaProcessada;
+
     // Atualizar nota se for rascunho ou criar nova como processada
     if (_notaRascunhoId != null) {
       // Atualizar nota existente como processada com itens que têm valores anteriores
       final notaExistente = service.notasEntrada.firstWhere((n) => n.id == _notaRascunhoId);
-      final notaProcessada = notaExistente.copyWith(
+      notaProcessada = notaExistente.copyWith(
         status: 'processada',
         dataProcessamento: DateTime.now(),
         numeroNotaReal: _numeroNotaReal ?? notaExistente.numeroNotaReal,
         itens: itensComValoresAnteriores, // Usar itens com valores anteriores
+        chaveNFe: _chaveNFe ?? notaExistente.chaveNFe,
+        fornecedorNome: _fornecedorNome ?? notaExistente.fornecedorNome,
+        fornecedorCNPJ: _fornecedorCNPJ ?? notaExistente.fornecedorCNPJ,
+        dataEmissao: _dataEmissao ?? notaExistente.dataEmissao,
+        valorTotal: _valorTotal ?? notaExistente.valorTotal,
+        serie: _serie ?? notaExistente.serie,
+        modelo: _modelo ?? notaExistente.modelo,
       );
       service.updateNotaEntrada(notaProcessada);
     } else if (itensComValoresAnteriores.isNotEmpty) {
       // Criar nova nota processada com itens que têm valores anteriores
       final notaId = DateTime.now().millisecondsSinceEpoch.toString();
-      final notaProcessada = NotaEntrada(
+      notaProcessada = NotaEntrada(
         id: notaId,
         dataCriacao: DateTime.now(),
         dataProcessamento: DateTime.now(),
@@ -951,9 +1108,22 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> {
         status: 'processada',
         itens: itensComValoresAnteriores,
         numeroNotaReal: _numeroNotaReal,
+        chaveNFe: _chaveNFe,
+        fornecedorNome: _fornecedorNome,
+        fornecedorCNPJ: _fornecedorCNPJ,
+        dataEmissao: _dataEmissao,
+        valorTotal: _valorTotal,
+        serie: _serie,
+        modelo: _modelo,
       );
       await service.addNotaEntrada(notaProcessada);
+      print('>>> Nota processada adicionada: ${notaProcessada.id} - Status: ${notaProcessada.status}');
+      print('>>> Total de notas no serviço: ${service.notasEntrada.length}');
+      print('>>> Notas processadas: ${service.notasEntrada.where((n) => n.isProcessada).length}');
     }
+
+    // Aguardar um pouco para garantir que o serviço foi atualizado
+    await Future.delayed(const Duration(milliseconds: 100));
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -979,22 +1149,56 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> {
         ),
         backgroundColor: Colors.green,
         duration: const Duration(seconds: 5),
+        action: notaProcessada != null
+            ? SnackBarAction(
+                label: 'Ver Detalhes',
+                textColor: Colors.white,
+                onPressed: () {
+                  _mostrarDetalhesNota(notaProcessada!);
+                },
+              )
+            : null,
       ),
     );
 
-    setState(() {
-      // Limpar todos os itens
-      for (var item in _itens) {
-        item.dispose();
+    // Mudar para aba de notas e limpar estado
+    if (mounted) {
+      setState(() {
+        // Limpar todos os itens
+        for (var item in _itens) {
+          item.dispose();
+        }
+        _itens.clear();
+        _notaRascunhoId = null;
+        _numeroNotaReal = null;
+        _chaveNFe = null;
+        _fornecedorNome = null;
+        _fornecedorCNPJ = null;
+        _dataEmissao = null;
+        _valorTotal = null;
+        _serie = null;
+        _modelo = null;
+        _modo = 'xml'; // Resetar modo para o padrão
+        _abaAtiva = 1; // Ir para a aba de notas para ver a nota processada
+        _busca = ''; // Limpar busca
+        _buscaController.clear(); // Limpar campo de busca
+      });
+      
+      print('>>> Aba mudada para: $_abaAtiva (1 = Notas)');
+      print('>>> Verificando notas processadas após setState...');
+      
+      // Verificar novamente após setState
+      final notasProcessadasApos = service.notasEntrada.where((n) => n.isProcessada).toList();
+      print('>>> Notas processadas após setState: ${notasProcessadasApos.length}');
+      if (notasProcessadasApos.isNotEmpty && notaProcessada != null) {
+        final notaId = notaProcessada.id;
+        final notaEncontrada = notasProcessadasApos.firstWhere(
+          (n) => n.id == notaId,
+          orElse: () => notasProcessadasApos.first,
+        );
+        print('>>> Nota encontrada na lista: ${notaEncontrada.id} - ${notaEncontrada.numeroNota}');
       }
-      _itens.clear();
-      _notaRascunhoId = null;
-      _numeroNotaReal = null;
-      _modo = 'xml'; // Resetar modo para o padrão
-      _abaAtiva = 1; // Ir para a aba de notas para ver a nota processada
-      _busca = ''; // Limpar busca
-      _buscaController.clear(); // Limpar campo de busca
-    });
+    }
   }
 
   @override
@@ -1174,11 +1378,16 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> {
   Widget _buildAbaNotas() {
     return Consumer<DataService>(
       builder: (context, service, _) {
-        final notas = service.notasEntrada
+        // Criar uma cópia da lista para ordenar
+        final notas = List<NotaEntrada>.from(service.notasEntrada)
           ..sort((a, b) => b.dataCriacao.compareTo(a.dataCriacao));
         
         final notasRascunho = notas.where((n) => n.isRascunho).toList();
         final notasProcessadas = notas.where((n) => n.isProcessada).toList();
+        
+        print('>>> _buildAbaNotas - Total de notas: ${notas.length}');
+        print('>>> _buildAbaNotas - Rascunhos: ${notasRascunho.length}');
+        print('>>> _buildAbaNotas - Processadas: ${notasProcessadas.length}');
 
         if (notas.isEmpty) {
           return Center(
@@ -1232,6 +1441,7 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> {
                           setState(() => _notaRascunhoId = null);
                         }
                       },
+                      onVerDetalhes: () => _mostrarDetalhesNota(nota),
                     );
                   },
                 ),
@@ -1267,6 +1477,7 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> {
                     return _NotaCard(
                       nota: nota,
                       onCancelar: () => _mostrarDialogoCancelamento(context, service, nota),
+                      onVerDetalhes: () => _mostrarDetalhesNota(nota),
                     );
                   },
                 ),
@@ -1276,6 +1487,146 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> {
         );
       },
     );
+  }
+
+  void _mostrarDetalhesNota(NotaEntrada nota) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.receipt_long, color: Colors.blue),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Detalhes da Nota',
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Informações básicas
+              _buildInfoRow('Número da Nota', nota.numeroNota, Icons.numbers),
+              if (nota.serie != null) _buildInfoRow('Série', nota.serie!, Icons.confirmation_number),
+              if (nota.modelo != null) _buildInfoRow('Modelo', nota.modelo!, Icons.description),
+              
+              const Divider(height: 24),
+              
+              // Chave de acesso
+              if (nota.chaveNFe != null)
+                _buildInfoRow('Chave de Acesso', nota.chaveNFe!, Icons.key, isLong: true),
+              
+              const Divider(height: 24),
+              
+              // Fornecedor
+              if (nota.fornecedorNome != null || nota.fornecedorCNPJ != null) ...[
+                const Text(
+                  'Fornecedor',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                ),
+                const SizedBox(height: 8),
+                if (nota.fornecedorNome != null)
+                  _buildInfoRow('Nome', nota.fornecedorNome!, Icons.business),
+                if (nota.fornecedorCNPJ != null)
+                  _buildInfoRow('CNPJ/CPF', _formatarCNPJ(nota.fornecedorCNPJ!), Icons.badge),
+                const Divider(height: 24),
+              ],
+              
+              // Datas
+              const Text(
+                'Datas',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+              const SizedBox(height: 8),
+              if (nota.dataEmissao != null)
+                _buildInfoRow('Data de Emissão', DateFormat('dd/MM/yyyy HH:mm').format(nota.dataEmissao!), Icons.calendar_today),
+              _buildInfoRow('Data de Processamento', DateFormat('dd/MM/yyyy HH:mm').format(nota.dataProcessamento ?? nota.dataCriacao), Icons.check_circle),
+              
+              const Divider(height: 24),
+              
+              // Valores
+              if (nota.valorTotal != null)
+                _buildInfoRow('Valor Total', _formatoMoeda.format(nota.valorTotal!), Icons.attach_money, isHighlight: true),
+              
+              const Divider(height: 24),
+              
+              // Resumo de itens
+              const Text(
+                'Resumo',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+              const SizedBox(height: 8),
+              _buildInfoRow('Total de Itens', '${nota.itens.length}', Icons.inventory),
+              _buildInfoRow('Status', nota.isProcessada ? 'Processada' : nota.isRascunho ? 'Rascunho' : 'Cancelada', 
+                nota.isProcessada ? Icons.check_circle : nota.isRascunho ? Icons.edit : Icons.cancel,
+                isHighlight: nota.isProcessada,
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Fechar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInfoRow(String label, String value, IconData icon, {bool isLong = false, bool isHighlight = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 20, color: isHighlight ? Colors.green : Colors.grey[600]),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey[600],
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  value,
+                  style: TextStyle(
+                    fontSize: isHighlight ? 16 : 14,
+                    fontWeight: isHighlight ? FontWeight.bold : FontWeight.normal,
+                    color: isHighlight ? Colors.green : Colors.black87,
+                  ),
+                  maxLines: isLong ? 3 : 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatarCNPJ(String cnpj) {
+    if (cnpj.length == 11) {
+      // CPF: 000.000.000-00
+      return '${cnpj.substring(0, 3)}.${cnpj.substring(3, 6)}.${cnpj.substring(6, 9)}-${cnpj.substring(9)}';
+    } else if (cnpj.length == 14) {
+      // CNPJ: 00.000.000/0000-00
+      return '${cnpj.substring(0, 2)}.${cnpj.substring(2, 5)}.${cnpj.substring(5, 8)}/${cnpj.substring(8, 12)}-${cnpj.substring(12)}';
+    }
+    return cnpj;
   }
 
   Future<void> _mostrarDialogoCancelamento(
@@ -1347,12 +1698,16 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> {
     if (confirmar == true) {
       try {
         await service.cancelarNotaEntrada(nota.id);
+        
+        // Aguardar um pouco para garantir que o estado foi atualizado
+        await Future.delayed(const Duration(milliseconds: 100));
+        
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Nota ${nota.numeroNota} excluída e todas as alterações foram revertidas!'),
+              content: Text('Nota ${nota.numeroNota} excluída e todas as alterações foram revertidas! Você pode processar a nota novamente.'),
               backgroundColor: Colors.green,
-              duration: const Duration(seconds: 3),
+              duration: const Duration(seconds: 4),
             ),
           );
         }
@@ -1376,6 +1731,7 @@ class _NotaCard extends StatelessWidget {
   final VoidCallback? onCarregar;
   final VoidCallback? onDeletar;
   final VoidCallback? onCancelar;
+  final VoidCallback? onVerDetalhes;
   final DateFormat _formatoData = DateFormat('dd/MM/yyyy HH:mm');
 
   _NotaCard({
@@ -1383,6 +1739,7 @@ class _NotaCard extends StatelessWidget {
     this.onCarregar,
     this.onDeletar,
     this.onCancelar,
+    this.onVerDetalhes,
   });
 
   @override
@@ -1418,29 +1775,34 @@ class _NotaCard extends StatelessWidget {
             Text('${nota.itens.length} item(ns)'),
           ],
         ),
-        trailing: nota.isRascunho
-            ? Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.edit, color: Colors.blue),
-                    tooltip: 'Continuar editando',
-                    onPressed: onCarregar,
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.delete, color: Colors.red),
-                    tooltip: 'Excluir',
-                    onPressed: onDeletar,
-                  ),
-                ],
-              )
-            : nota.isProcessada && onCancelar != null
-                ? IconButton(
-                    icon: const Icon(Icons.delete_forever, color: Colors.red),
-                    tooltip: 'Excluir e Reverter Alterações',
-                    onPressed: onCancelar,
-                  )
-                : null,
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (onVerDetalhes != null)
+              IconButton(
+                icon: const Icon(Icons.info_outline, color: Colors.blue),
+                tooltip: 'Ver Detalhes',
+                onPressed: onVerDetalhes,
+              ),
+            if (nota.isRascunho) ...[
+              IconButton(
+                icon: const Icon(Icons.edit, color: Colors.blue),
+                tooltip: 'Continuar editando',
+                onPressed: onCarregar,
+              ),
+              IconButton(
+                icon: const Icon(Icons.delete, color: Colors.red),
+                tooltip: 'Excluir',
+                onPressed: onDeletar,
+              ),
+            ] else if (nota.isProcessada && onCancelar != null)
+              IconButton(
+                icon: const Icon(Icons.delete_forever, color: Colors.red),
+                tooltip: 'Excluir e Reverter Alterações',
+                onPressed: onCancelar,
+              ),
+          ],
+        ),
       ),
     );
   }

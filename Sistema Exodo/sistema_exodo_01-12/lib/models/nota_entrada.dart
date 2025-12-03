@@ -80,6 +80,14 @@ class NotaEntrada {
   final List<ItemNotaEntrada> itens;
   final String? observacao;
   final String? numeroNotaReal; // Número real da nota fiscal (do XML)
+  // Informações adicionais do XML
+  final String? chaveNFe; // Chave de acesso da NFe
+  final String? fornecedorNome; // Nome do fornecedor/emitente
+  final String? fornecedorCNPJ; // CNPJ do fornecedor
+  final DateTime? dataEmissao; // Data de emissão da nota
+  final double? valorTotal; // Valor total da nota
+  final String? serie; // Série da nota
+  final String? modelo; // Modelo da nota (55 = NFe)
 
   NotaEntrada({
     required this.id,
@@ -90,6 +98,13 @@ class NotaEntrada {
     required this.itens,
     this.observacao,
     this.numeroNotaReal,
+    this.chaveNFe,
+    this.fornecedorNome,
+    this.fornecedorCNPJ,
+    this.dataEmissao,
+    this.valorTotal,
+    this.serie,
+    this.modelo,
   });
 
   factory NotaEntrada.fromMap(Map<String, dynamic> map) {
@@ -109,6 +124,15 @@ class NotaEntrada {
           [],
       observacao: map['observacao'],
       numeroNotaReal: map['numeroNotaReal'],
+      chaveNFe: map['chaveNFe'],
+      fornecedorNome: map['fornecedorNome'],
+      fornecedorCNPJ: map['fornecedorCNPJ'],
+      dataEmissao: map['dataEmissao'] != null
+          ? DateTime.parse(map['dataEmissao'])
+          : null,
+      valorTotal: map['valorTotal'] != null ? (map['valorTotal'] as num).toDouble() : null,
+      serie: map['serie'],
+      modelo: map['modelo'],
     );
   }
 
@@ -122,6 +146,13 @@ class NotaEntrada {
       'itens': itens.map((item) => item.toMap()).toList(),
       'observacao': observacao,
       'numeroNotaReal': numeroNotaReal,
+      'chaveNFe': chaveNFe,
+      'fornecedorNome': fornecedorNome,
+      'fornecedorCNPJ': fornecedorCNPJ,
+      'dataEmissao': dataEmissao?.toIso8601String(),
+      'valorTotal': valorTotal,
+      'serie': serie,
+      'modelo': modelo,
     };
   }
 
@@ -134,6 +165,13 @@ class NotaEntrada {
     List<ItemNotaEntrada>? itens,
     String? observacao,
     String? numeroNotaReal,
+    String? chaveNFe,
+    String? fornecedorNome,
+    String? fornecedorCNPJ,
+    DateTime? dataEmissao,
+    double? valorTotal,
+    String? serie,
+    String? modelo,
   }) {
     return NotaEntrada(
       id: id ?? this.id,
@@ -144,6 +182,13 @@ class NotaEntrada {
       itens: itens ?? this.itens,
       observacao: observacao ?? this.observacao,
       numeroNotaReal: numeroNotaReal ?? this.numeroNotaReal,
+      chaveNFe: chaveNFe ?? this.chaveNFe,
+      fornecedorNome: fornecedorNome ?? this.fornecedorNome,
+      fornecedorCNPJ: fornecedorCNPJ ?? this.fornecedorCNPJ,
+      dataEmissao: dataEmissao ?? this.dataEmissao,
+      valorTotal: valorTotal ?? this.valorTotal,
+      serie: serie ?? this.serie,
+      modelo: modelo ?? this.modelo,
     );
   }
 
