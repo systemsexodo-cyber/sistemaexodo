@@ -1,0 +1,83 @@
+# Arquivos gerados pelo Flutter
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+flutter_*.log
+
+# Arquivos de IDE
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+
+# Arquivos do sistema operacional
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Arquivos temporários
+*.tmp
+*.temp
+*.log
+*.swp
+*.swo
+*~
+
+# Arquivos de backup
+*.zip
+*.bak
+*.backup
+backup-*.sql
+
+# Diretórios de backup e logs do sistema de proteção
+.backups/
+.restore_backups/
+.salvamento_logs/
+backups_exodo/
+
+# Arquivos de mídia grandes
+*.mp4
+*.avi
+*.mov
+*.mkv
+
+# Arquivos de dados
+*.xlsx
+*.xls
+*.db
+*.sqlite
+
+# Arquivos executáveis
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Arquivos de configuração local
+local.properties
+*.local
+
+# Arquivos de ambiente
+.env
+.env.local
+
+# Arquivos de cache
+*.cache
+.cache/
+
+# Arquivos do Windows
+$RECYCLE.BIN/
+*.lnk
+
+# Arquivos do macOS
+.AppleDouble
+.LSOverride
+
+# Arquivos do Linux
+*~
+
