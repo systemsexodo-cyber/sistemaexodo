@@ -1,0 +1,68 @@
+name: Deploy Firebase Automático
+
+on:
+  push:
+    branches:
+      - main
+      - modo-dev
+    paths:
+      - 'lib/**'
+      - 'web/**'
+      - 'pubspec.yaml'
+      - 'firebase.json'
+      - '.github/workflows/firebase-deploy.yml'
+  workflow_dispatch: # Permite executar manualmente
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.10.0'
+          channel: 'stable'
+
+      - name: Verificar Flutter
+        run: flutter --version
+
+      - name: Obter dependências
+        run: flutter pub get
+
+      - name: Verificar código
+        run: flutter analyze --no-fatal-infos
+
+      - name: Build para Web (Release)
+        run: flutter build web --release
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Instalar Firebase CLI
+        run: npm install -g firebase-tools
+
+      - name: Deploy para Firebase Hosting
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+        run: |
+          firebase use exodosystems-1541d --token $FIREBASE_TOKEN
+          firebase deploy --only hosting --token $FIREBASE_TOKEN --project exodosystems-1541d
+
+      - name: Deploy Firestore Rules e Indexes
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+        run: |
+          firebase deploy --only firestore:rules,firestore:indexes --token $FIREBASE_TOKEN --project exodosystems-1541d
+
+      - name: Resumo do Deploy
+        run: |
+          echo "✅ Deploy realizado com sucesso!"
+          echo "🌐 URL: https://exodosystems-1541d.web.app"
+          echo "📅 Data: $(date)"
+

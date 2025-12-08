@@ -1,0 +1,4 @@
+﻿=== INFORMAÃ‡Ã•ES DO GIT ===
+Commit: 699a0f6c33a76b2da699a768bb4c898ff1955400
+Branch: projeto-limpo
+Status: ?? .backups_versionamento/ ?? README_BACKUP.md ?? sistema_backup_versionamento.ps1

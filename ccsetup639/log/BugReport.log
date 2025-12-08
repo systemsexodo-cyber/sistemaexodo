@@ -1,0 +1,31 @@
+﻿[2025-12-04 17:46:02.183] [notice ] [bug_report ] [11460: 8256] [60E748: 313] BugReport started.
+[2025-12-04 17:46:02.183] [notice ] [bug_report ] [11460: 8256] [60E748:  95]  - valid package type found in [send]: 0
+[2025-12-04 17:46:02.183] [notice ] [bug_report ] [11460: 8256] [60E748:  95]  - valid package type found in [send]: 2
+[2025-12-04 17:46:02.183] [notice ] [bug_report ] [11460: 8256] [60E748: 120]  - setting [product] to 90
+[2025-12-04 17:46:02.183] [notice ] [bug_report ] [11460: 8256] [60E748: 120]  - setting [programpath] to C:\Program Files\CCleaner
+[2025-12-04 17:46:02.183] [notice ] [bug_report ] [11460: 8256] [60E748: 120]  - setting [version] to 6.39.0.11548
+[2025-12-04 17:46:02.183] [notice ] [bug_report ] [11460: 8256] [60E748: 120]  - setting [guid] to 0b2e328b-7aa0-4045-a11b-25d30f2d0a97
+[2025-12-04 17:46:02.183] [notice ] [bug_report ] [11460: 8256] [60E748: 115]  - setting [silent]
+[2025-12-04 17:46:02.183] [notice ] [bug_report ] [11460: 8256] [60E748: 149]  - setting [path] to C:\Program Files\CCleaner\LOG
+[2025-12-04 17:46:02.326] [warning] [crashguard ] [11460: 8256] [4AF4BF: 248] Process dumper doesn't exist in path 'C:\Program Files\CCleaner\avDump.exe'.
+[2025-12-04 17:46:02.381] [warning] [ini_access ] [11460: 8256] [C83FCF: 198] failed to read ini file C:\Users\USER\Downloads\ccsetup639\\setup\config.def
+                                                                              Exception: couldn't open file
+                                                                              Code: 0x00000003 (3)
+[2025-12-04 17:46:02.381] [warning] [files      ] [11460: 8256] [A5F65D: 288] Unable to open path handle 'C:\Users\USER\Downloads\ccsetup639\\setup' to watch changes, failed due to code 3
+[2025-12-04 17:46:02.399] [notice ] [crashguard ] [11460: 3772] [FF32C0: 223] Process monitoring installed.
+[2025-12-04 17:46:02.441] [notice ] [bug_report ] [11460: 8256] [60E748: 399] Processing package type (0)
+[2025-12-04 17:46:02.441] [warning] [bug_report ] [11460: 8256] [BCBC19: 156] Dump reporting fraction cannot be loaded from config.def, defaulting to: 1
+[2025-12-04 17:46:02.533] [notice ] [bug_report ] [11460: 8256] [8BAFB8: 100] {PackageType_0} Done submitting dumps with result: 1
+[2025-12-04 17:46:02.533] [notice ] [bug_report ] [11460: 8256] [60E748: 399] Processing package type (2)
+[2025-12-04 17:46:02.725] [error  ] [bug_report ] [11460: 8256] [6B2A78: 115] {PackageType_2::LogFilesWithReport-90-6.39.0.11548} Error while attaching content 4
+                                                                              Exception: Unable to enumerate directory 'C:\ProgramData\Piriform\Subscriptions\*'!
+                                                                              Code: 0x00000003 (3)
+[2025-12-04 17:46:02.765] [notice ] [bug_report ] [11460: 8256] [451BD4:  57] {PackageType_2::LogFilesWithReport-90-6.39.0.11548} About to submit payload of type (2.102)
+[2025-12-04 17:46:02.821] [warning] [sb         ] [11460: 8256] [AF8487:  22] {PackageType_2::LogFilesWithReport-90-6.39.0.11548} Couldn't get installation info.
+[2025-12-04 17:46:02.821] [warning] [sb         ] [11460: 8256] [AF8487:  34] {PackageType_2::LogFilesWithReport-90-6.39.0.11548} Couldn't get setting 'avdef://config/Common/VersionType', failed with error code 3
+[2025-12-04 17:46:02.821] [warning] [sb         ] [11460: 8256] [AF8487:  89] {PackageType_2::LogFilesWithReport-90-6.39.0.11548} InitAvastIdentity was not able to get running program version
+[2025-12-04 17:46:03.785] [notice ] [bug_report ] [11460: 8256] [451BD4:  71] {PackageType_2::LogFilesWithReport-90-6.39.0.11548} * Metadata submitted and we don't want this payload. Marking as reported.
+[2025-12-04 17:46:03.785] [notice ] [bug_report ] [11460: 8256] [8BAFB8: 170] {PackageType_2::LogFilesWithReport-90-6.39.0.11548} Payload was NOT submitted
+[2025-12-04 17:46:03.795] [notice ] [bug_report ] [11460: 8256] [60E748: 462] Package type '0' reports result: 0
+[2025-12-04 17:46:03.795] [notice ] [bug_report ] [11460: 8256] [60E748: 462] Package type '2' reports result: 2
+[2025-12-04 17:46:03.795] [notice ] [bug_report ] [11460: 8256] [60E748: 466] BugReport is finished with: [2].
