@@ -7,7 +7,7 @@ Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
 # Definir diretório do projeto fixo
-$projectPath = "C:\Users\USER\Downloads\Sistema Exodo\sistema_exodo_01-12"
+$projectPath = $PSScriptRoot
 
 # Verificar se o diretório existe
 if (-not (Test-Path $projectPath)) {
@@ -57,7 +57,8 @@ $excludeItems = @(
     "build",
     ".dart_tool",
     ".flutter-plugins",
-    ".flutter-plugins-dependencies"
+    ".flutter-plugins-dependencies",
+    "node_modules"
 )
 Copy-Item -Path "$projectPath\*" -Destination "$tempPath\" -Recurse -Exclude $excludeItems -Force -ErrorAction SilentlyContinue
 
