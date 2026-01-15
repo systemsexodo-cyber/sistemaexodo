@@ -26,15 +26,26 @@ Sempre que você atingir um marco importante (ex: "Sistema de Agendamento Finali
 - O robô **"Gerar APK de Versão"** vai começar a trabalhar sozinho.
 - Ele vai gerar o arquivo `.apk` (para instalar no Android) e vai **anexar automaticamente** na página dessa versão que você acabou de criar.
 
-## 4. Dicas de Segurança
-- **Não apague a branch master**: Ela é sua base.
-- **Use Pull Requests**: Se começar a trabalhar com mais pessoas, peça para elas criarem branches e você revisa o código antes de aceitar.
+## 4. Fluxo de Trabalho Seguro (Recomendado)
 
-## 5. Próximos Passos
-Para subir essas configurações agora:
-1. No terminal do VS Code, digite:
+Para evitar erros em produção, agora configuramos o seguinte fluxo:
+
+1. **Trabalhe na branch `master`**: Faça suas alterações, testes locais e commits aqui.
+2. **Push para `master`**: Ao dar o push, o robô **CI** vai verificar se seu código tem erros ou se quebra os testes.
+   - Isso **NÃO** altera o site que está no ar.
+3. **Pull Request (PR)**: Quando terminar uma tarefa na `master`, vá ao GitHub e abra um "Pull Request" da branch `master` para a `main`.
+4. **Revisão e Merge**: Verifique se o GitHub diz "All checks passed". Se sim, clique em **Merge**.
+5. **Deploy Automático**: No momento em que você aceita o Merge na `main`, o robô de **Deploy** entra em ação e atualiza o site automaticamente.
+
+## 5. Dicas de Segurança
+- **Nunca trabalhe direto na `main`**: Deixe-a apenas para código que já está validado e pronto para os clientes.
+- **Não apague a branch master**: Ela é sua base de desenvolvimento.
+
+## 6. Próximos Passos
+Para aplicar essas mudanças no GitHub agora:
+1. No terminal:
    ```powershell
-   git add .github/workflows/
-   git commit -m "feat: Configurando workflows de CI, Deploy e Release APK"
+   git add .github/workflows/firebase-deploy.yml GUIA_GITHUB_FLUXO.md
+   git commit -m "fix: Ajustando fluxo de deploy seguro (apenas via main)"
    .\push_para_github.ps1
    ```
