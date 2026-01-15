@@ -1,0 +1,21 @@
+COLE EXATAMENTE ISSO NO CAMPO CORS DO GOOGLE CLOUD CONSOLE:
+
+[
+  {
+    "origin": ["*"],
+    "method": ["GET", "HEAD", "PUT", "POST", "DELETE", "OPTIONS"],
+    "responseHeader": ["Content-Type", "Authorization", "Content-Length", "User-Agent", "X-Goog-Upload-Protocol", "X-Goog-Upload-Command", "X-Goog-Upload-Offset", "X-Goog-Upload-Status"],
+    "maxAgeSeconds": 3600
+  }
+]
+
+INSTRUÇÕES:
+1. Acesse: https://console.cloud.google.com/storage/browser?project=exodo-system
+2. Clique no bucket: exodo-system.firebasestorage.app
+3. Clique em Configurações (ícone de engrenagem)
+4. Vá na aba CORS
+5. Cole o conteúdo acima
+6. Clique em Salvar
+7. Aguarde 2-3 minutos
+8. Teste novamente
+

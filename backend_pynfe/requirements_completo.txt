@@ -1,0 +1,33 @@
+# Sistema Completo de Emissão NFC-e
+# 100% Local - Funciona em Produção e Homologação
+
+# Framework web
+Flask==3.0.0
+Flask-CORS==4.0.0
+
+# XML e SOAP
+lxml==4.9.3
+zeep==4.2.1
+
+# Criptografia e certificados
+cryptography==41.0.7
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

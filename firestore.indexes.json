@@ -1,0 +1,73 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "pedidos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "dataCriacao",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "vendas_balcao",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "dataVenda",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "valorTotal",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "entregas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "dataCriacao",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "aberturas_caixa",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "dataAbertura",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "fechamentos_caixa",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "dataFechamento",
+          "order": "DESCENDING"
+        }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}
+
+
+
+
+
+

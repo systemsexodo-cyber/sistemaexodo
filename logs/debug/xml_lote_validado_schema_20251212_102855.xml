@@ -1,0 +1,191 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
+  <idLote>1</idLote>
+  <indSinc>1</indSinc>
+  <NFe xmlns="http://www.portalfiscal.inf.br/nfe">
+    <ns0:infNFe xmlns:ns0="http://www.portalfiscal.inf.br/nfe" xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00" Id="NFe35251204829400000165650010000000011746801158">
+      <ns0:ide>
+        <ns0:cUF>35</ns0:cUF>
+        <ns0:cNF>74680115</ns0:cNF>
+        <ns0:natOp>VENDA</ns0:natOp>
+        <ns0:mod>65</ns0:mod>
+        <ns0:serie>1</ns0:serie>
+        <ns0:nNF>1</ns0:nNF>
+        <ns0:dhEmi>2025-12-12T13:28:55+00:00</ns0:dhEmi>
+        <ns0:tpNF>1</ns0:tpNF>
+        <ns0:idDest>1</ns0:idDest>
+        <ns0:cMunFG>3550308</ns0:cMunFG>
+        <ns0:tpImp>4</ns0:tpImp>
+        <ns0:tpEmis>1</ns0:tpEmis>
+        <ns0:cDV>8</ns0:cDV>
+        <ns0:tpAmb>2</ns0:tpAmb>
+        <ns0:finNFe>1</ns0:finNFe>
+        <ns0:indFinal>1</ns0:indFinal>
+        <ns0:indPres>1</ns0:indPres>
+        <ns0:procEmi>0</ns0:procEmi>
+        <ns0:verProc>PyNFe 0.6.0</ns0:verProc>
+      </ns0:ide>
+      <ns0:emit>
+        <ns0:CNPJ>04829400000165</ns0:CNPJ>
+        <ns0:xNome>BMJ COMERCIO E SERVICOS DE PETSHOP LTDA:04829400000165</ns0:xNome>
+        <ns0:xFant>E O BICHO PETSHOP</ns0:xFant>
+        <ns0:enderEmit>
+          <ns0:xLgr>SAO JERONIMO, 177</ns0:xLgr>
+          <ns0:nro>177</ns0:nro>
+          <ns0:xBairro>JARDIM SAO JUDAS TADEU</ns0:xBairro>
+          <ns0:cMun>3549904</ns0:cMun>
+          <ns0:xMun>Sao Jose dos Campos</ns0:xMun>
+          <ns0:UF>SP</ns0:UF>
+          <ns0:CEP>12228350</ns0:CEP>
+          <ns0:cPais>1058</ns0:cPais>
+          <ns0:xPais>Brasil</ns0:xPais>
+        </ns0:enderEmit>
+        <ns0:IE>645431707119</ns0:IE>
+        <ns0:CRT>3</ns0:CRT>
+      </ns0:emit>
+      <ns0:dest>
+        <ns0:CPF>00000000000</ns0:CPF>
+        <ns0:xNome>CONSUMIDOR FINAL</ns0:xNome>
+        <ns0:enderDest>
+          <ns0:xLgr/>
+          <ns0:nro>0</ns0:nro>
+          <ns0:xBairro/>
+          <ns0:cMun>3550308</ns0:cMun>
+          <ns0:xMun>SAO PAULO</ns0:xMun>
+          <ns0:UF>SP</ns0:UF>
+          <ns0:cPais>1058</ns0:cPais>
+          <ns0:xPais>Brasil</ns0:xPais>
+        </ns0:enderDest>
+        <ns0:indIEDest>9</ns0:indIEDest>
+      </ns0:dest>
+      <ns0:det nItem="1">
+        <ns0:prod>
+          <ns0:cProd>COD-1</ns0:cProd>
+          <ns0:cEAN>SEM GTIN</ns0:cEAN>
+          <ns0:xProd>TESTE</ns0:xProd>
+          <ns0:NCM>2201100</ns0:NCM>
+          <ns0:CFOP>5405</ns0:CFOP>
+          <ns0:uCom>UN</ns0:uCom>
+          <ns0:qCom>2</ns0:qCom>
+          <ns0:vUnCom>2.0000000000</ns0:vUnCom>
+          <ns0:vProd>4.00</ns0:vProd>
+          <ns0:cEANTrib>SEM GTIN</ns0:cEANTrib>
+          <ns0:uTrib>UN</ns0:uTrib>
+          <ns0:qTrib>2</ns0:qTrib>
+          <ns0:vUnTrib>2.0000000000</ns0:vUnTrib>
+          <ns0:indTot>1</ns0:indTot>
+        </ns0:prod>
+        <ns0:imposto>
+          <ns0:vTotTrib>0.00</ns0:vTotTrib>
+          <ns0:ICMS>
+            <ns0:ICMS00>
+              <ns0:orig>0</ns0:orig>
+              <ns0:CST>00</ns0:CST>
+              <ns0:modBC>0</ns0:modBC>
+              <ns0:vBC>0</ns0:vBC>
+              <ns0:pICMS>0.00</ns0:pICMS>
+              <ns0:vICMS>0.00</ns0:vICMS>
+            </ns0:ICMS00>
+          </ns0:ICMS>
+        </ns0:imposto>
+      </ns0:det>
+      <ns0:total>
+        <ns0:ICMSTot>
+          <ns0:vBC>0.00</ns0:vBC>
+          <ns0:vICMS>0.00</ns0:vICMS>
+          <ns0:vICMSDeson>0.00</ns0:vICMSDeson>
+          <ns0:vFCP>0.00</ns0:vFCP>
+          <ns0:vBCST>0.00</ns0:vBCST>
+          <ns0:vST>0.00</ns0:vST>
+          <ns0:vFCPST>0.00</ns0:vFCPST>
+          <ns0:vFCPSTRet>0.00</ns0:vFCPSTRet>
+          <ns0:vProd>4.00</ns0:vProd>
+          <ns0:vFrete>0.00</ns0:vFrete>
+          <ns0:vSeg>0.00</ns0:vSeg>
+          <ns0:vDesc>0.00</ns0:vDesc>
+          <ns0:vII>0.00</ns0:vII>
+          <ns0:vIPI>0.00</ns0:vIPI>
+          <ns0:vIPIDevol>0.00</ns0:vIPIDevol>
+          <ns0:vPIS>0.00</ns0:vPIS>
+          <ns0:vCOFINS>0.00</ns0:vCOFINS>
+          <ns0:vOutro>0.00</ns0:vOutro>
+          <ns0:vNF>4.00</ns0:vNF>
+        </ns0:ICMSTot>
+      </ns0:total>
+      <ns0:transp>
+        <ns0:modFrete>1</ns0:modFrete>
+      </ns0:transp>
+      <ns0:pag>
+        <ns0:detPag>
+          <ns0:indPag>0</ns0:indPag>
+          <ns0:tPag>01</ns0:tPag>
+          <ns0:xPag>Dinheiro</ns0:xPag>
+          <ns0:vPag>4.00</ns0:vPag>
+        </ns0:detPag>
+      </ns0:pag>
+    </ns0:infNFe>
+    <Signature xmlns="http://www.w3.org/2000/09/xmldsig#">
+      <SignedInfo>
+        <CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/>
+        <SignatureMethod Algorithm="http://www.w3.org/2000/09/xmldsig#rsa-sha1"/>
+        <Reference URI="#NFe35251204829400000165650010000000011746801158">
+          <Transforms>
+            <Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/>
+            <Transform Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/>
+          </Transforms>
+          <DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"/>
+          <DigestValue>18Jjpiea+0yyy637mpN6TchXh58=</DigestValue>
+        </Reference>
+      </SignedInfo>
+      <SignatureValue>CY1u5jmT/MUih/tz35Qqwg0/4kl33DmHnG9qOisVVBJRUTjOeERryz/rP8uNh8cZAnDJGTm0e1zuN075OeJYStN02FxreZPqRRKB1hlerTk8yNviz3D1xq1EmQb9Pu2FCU5UnB3IGpG9YmwN+VG2QOCM+8vnfPH2wd1Q4OXjqwlv+sr++fbinzDMbM6/2bRzrNFYM49YQ1PhsUKebn34c/VxY6IZ14/3z1bq91dMUyNPKBLkM7hYrINMugt9sIRveOhr8mef/CMRYXG+/frkI/4E3DC+O4PWU8vufJjY2Z0+h/rW54iKUltjfSLMqjGlJsbj+QO1sZWAWVKNY4d5zA==</SignatureValue>
+      <KeyInfo>
+        <X509Data>
+          <X509Certificate>MIIH6zCCBdOgAwIBAgILAKD2o6aIk284FuAwDQYJKoZIhvcNAQELBQAwWzELMAkG
+A1UEBhMCQlIxFjAUBgNVBAsMDUFDIFN5bmd1bGFySUQxEzARBgNVBAoMCklDUC1C
+cmFzaWwxHzAdBgNVBAMMFkFDIFN5bmd1bGFySUQgTXVsdGlwbGEwHhcNMjUwNzI5
+MTMxMDM0WhcNMjYwNzI5MTMxMDM0WjCB3DELMAkGA1UEBhMCQlIxEzARBgNVBAoM
+CklDUC1CcmFzaWwxIjAgBgNVBAsMGUNlcnRpZmljYWRvIERpZ2l0YWwgUEogQTEx
+GTAXBgNVBAsMEFZpZGVvY29uZmVyZW5jaWExFzAVBgNVBAsMDjQ3NjA1MDQwMDAw
+MTIwMR8wHQYDVQQLDBZBQyBTeW5ndWxhcklEIE11bHRpcGxhMT8wPQYDVQQDDDZC
+TUogQ09NRVJDSU8gRSBTRVJWSUNPUyBERSBQRVRTSE9QIExUREE6MDQ4Mjk0MDAw
+MDAxNjUwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDnPDMR2cD2g09j
+Fr83L6ujHPZqr0S2ETAUHVEmfj92JuRXzwi1GRtGmAI0fXB2nBmj7BGIB0n9mPPs
+V/XHDgJ7+hEsASZvs9INq+lBZD3j70+sFEHS1MneMkbhwuV1N4zFZW66Juq2X2Rt
+cA7BdCOUaqOrInKHwDXbQaMmlj3aI/DP1XwQJJHGhbtTVN1sEjwdigjB9Q6f52N+
+GRch/NL/tbE5rMBAI6cLUAFk5qJEdv8ydVywhLXqH3U76hxw7nvgxr44t7/YfZAR
+VYnnTbfTR910BQPLsVUFNVtoG+LfVf0CaGJHY5arc5MTjHLP2kgkhHfyIVNsryfo
+BFt/hg/1AgMBAAGjggMsMIIDKDAOBgNVHQ8BAf8EBAMCBeAwHQYDVR0lBBYwFAYI
+KwYBBQUHAwQGCCsGAQUFBwMCMAkGA1UdEwQCMAAwHwYDVR0jBBgwFoAUk+H/fh3l
+9eRN4TliiyFpleavchYwHQYDVR0OBBYEFOAqDj0Lhv/XdGQZDbK/882s/p+SMH8G
+CCsGAQUFBwEBBHMwcTBvBggrBgEFBQcwAoZjaHR0cDovL3N5bmd1bGFyaWQuY29t
+LmJyL3JlcG9zaXRvcmlvL2FjLXN5bmd1bGFyaWQtbXVsdGlwbGEvY2VydGlmaWNh
+ZG9zL2FjLXN5bmd1bGFyaWQtbXVsdGlwbGEucDdiMIGCBgNVHSAEezB5MHcGB2BM
+AQIBgQUwbDBqBggrBgEFBQcCARZeaHR0cDovL3N5bmd1bGFyaWQuY29tLmJyL3Jl
+cG9zaXRvcmlvL2FjLXN5bmd1bGFyaWQtbXVsdGlwbGEvZHBjL2RwYy1hYy1zeW5n
+dWxhcklELW11bHRpcGxhLnBkZjCBwAYDVR0RBIG4MIG1oB4GBWBMAQMCoBUEE01B
+UkNFTE8gSk9TRSBTQU5UT1OgGQYFYEwBAwOgEAQOMDQ4Mjk0MDAwMDAxNjWgQgYF
+YEwBAwSgOQQ3MjQwNjE5NzkyNzQzNTE1Mzg0MjAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMKAXBgVgTAEDB6AOBAwwMDAwMDAwMDAwMDCBG2VvYmlj
+aG9fcGV0c2hvcEBob3RtYWlsLmNvbTCB4gYDVR0fBIHaMIHXMG+gbaBrhmlodHRw
+Oi8vaWNwLWJyYXNpbC5zeW5ndWxhcmlkLmNvbS5ici9yZXBvc2l0b3Jpby9hYy1z
+eW5ndWxhcmlkLW11bHRpcGxhL2xjci9sY3ItYWMtc3luZ3VsYXJpZC1tdWx0aXBs
+YS5jcmwwZKBioGCGXmh0dHA6Ly9zeW5ndWxhcmlkLmNvbS5ici9yZXBvc2l0b3Jp
+by9hYy1zeW5ndWxhcmlkLW11bHRpcGxhL2xjci9sY3ItYWMtc3luZ3VsYXJpZC1t
+dWx0aXBsYS5jcmwwDQYJKoZIhvcNAQELBQADggIBAISY5rurt8VqP92COUhVyS3B
+2oqsQbqcm3r+hqqxM3sIrrr4sh1vXagN/b+4eYA34YeUxnuJvuDX1lb9atHCL5YX
+YKM7OqKcFY3m7ebvXD1ztTOZfrG/ZK9Q7M6Nfz1UE2ocLe/QuYYBGOHD+1QeSAR5
+ZDaVaLcj1a3SbBP2Xq+d6+K/rQ/o+nVF3tk9Rn96FCWgiTEo6YmaSmBmFikO3a4Y
+izES0MxKAVswpFkhg1FnBA17NamFc6IdXVDJUhZr2NgXsbcCjm995SF7FJzQPkWT
+2qQTpu2ORncvj9Gq3AAlaRPA1F0B8yL6etN95/rTW5RbPknj+mMqnYuH2zDkqgVk
+wA1tH9VbRP3Y8Rp2TEyLofllh63F7A7rd6kr/7GkBfeapU/wyVam0uszoPajkROr
+AtiOkWa+KrEKEUmpqt3DFAw3dZ+FHZSBT5MaBJ+Fz+y29ovRfAuJUJLAY2xBxkF7
+Y2bmAzVLQwZ0ucQP0KT6gHijR71ACLWfyl/KvQpdxDXgHkTxwI/HyOspK8LIfOAp
+DxNfC3WThmUnLo3OzyINJ/lrWhfMqzdQxSnXRz4T0umHX3Z2ug9JQ300bW/cC2q/
+SH1n+HLF2cfMYHHpvNtZ3OTIEjGN26ZFgdsonWRAtcEFRVMJ7WsFHkRcHGrQQcP7
+eWHZQ73ii/bqI+8kQFRo
+</X509Certificate>
+        </X509Data>
+      </KeyInfo>
+    </Signature>
+  </NFe>
+</enviNFe>

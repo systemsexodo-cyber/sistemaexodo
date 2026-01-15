@@ -1,0 +1,48 @@
+========================================
+COMANDOS CORRETOS PARA EXECUTAR
+========================================
+
+⚠️ IMPORTANTE: Execute os comandos UM POR VEZ, nesta ordem!
+
+========================================
+PASSO 1: Navegar para o diretório correto
+========================================
+
+cd "C:\Users\USER\Downloads\Sistema Exodo\sistema_exodo_01-12\backend_pynfe"
+
+(Pressione Enter)
+
+========================================
+PASSO 2: Verificar se está no diretório correto
+========================================
+
+pwd
+
+ou
+
+Get-Location
+
+(Deveria mostrar: C:\Users\USER\Downloads\Sistema Exodo\sistema_exodo_01-12\backend_pynfe)
+
+========================================
+PASSO 3: Verificar se PyNFe está instalado
+========================================
+
+.\venv\Scripts\python.exe verificar_pynfe.py
+
+========================================
+OU: Instalar PyNFe (se não estiver instalado)
+========================================
+
+.\venv\Scripts\python.exe -m pip install git+https://github.com/TadaSoftware/PyNFe.git
+
+========================================
+EXEMPLO COMPLETO:
+========================================
+
+PS C:\Users\USER> cd "C:\Users\USER\Downloads\Sistema Exodo\sistema_exodo_01-12\backend_pynfe"
+PS C:\Users\USER\Downloads\Sistema Exodo\sistema_exodo_01-12\backend_pynfe> .\venv\Scripts\python.exe verificar_pynfe.py
+
+========================================
+
+

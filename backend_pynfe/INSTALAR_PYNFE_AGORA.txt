@@ -1,0 +1,52 @@
+========================================
+INSTRUÇÕES PARA INSTALAR PyNFe
+========================================
+
+A instalação do PyNFe pode levar 5-10 minutos.
+NÃO CANCELE durante a instalação!
+
+========================================
+PASSO A PASSO:
+========================================
+
+1. Abra um NOVO terminal PowerShell
+   (não use o terminal atual)
+
+2. Execute estes comandos UM POR VEZ:
+
+   cd "C:\Users\USER\Downloads\Sistema Exodo\sistema_exodo_01-12\backend_pynfe"
+
+   .\venv\Scripts\python.exe -m pip install --upgrade pip
+
+   .\venv\Scripts\python.exe -m pip install git+https://github.com/TadaSoftware/PyNFe.git
+
+3. AGUARDE a instalação terminar
+   (pode levar vários minutos)
+
+4. Verifique se funcionou:
+
+   .\venv\Scripts\python.exe verificar_pynfe.py
+
+   Se aparecer "✅ PyNFe está instalado!", está pronto!
+
+========================================
+OU USE O SCRIPT AUTOMÁTICO:
+========================================
+
+Em um NOVO terminal PowerShell:
+
+cd "C:\Users\USER\Downloads\Sistema Exodo\sistema_exodo_01-12\backend_pynfe"
+powershell -ExecutionPolicy Bypass -File "instalar_pynfe.ps1"
+
+========================================
+IMPORTANTE:
+========================================
+
+- A instalação pode levar 5-10 minutos
+- NÃO CANCELE durante a instalação
+- Certifique-se de ter conexão com internet
+- Git deve estar instalado
+
+========================================
+
+

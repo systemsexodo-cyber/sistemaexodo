@@ -1,0 +1,14 @@
+# Dependencias basicas para o backend NFC-e
+flask>=2.0.0
+flask-cors>=3.0.0
+python-dotenv>=0.19.0
+requests>=2.28.0
+lxml>=4.9.0
+signxml>=3.1.0
+cryptography>=38.0.0
+
+# Opcional para NFS-e
+#-r requirements-nfse.txt
+
+# Opcional para Desenvolvimento (Pytest, Ruff, MyPy, etc)
+#-r requirements-dev.txt

@@ -1,0 +1,13 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // PERMISSÃO TOTAL PARA DESENVOLVIMENTO - PERMITE CORS
+    // Permitir leitura e escrita de qualquer origem (incluindo localhost)
+    match /{allPaths=**} {
+      // Permitir leitura e escrita para todos (em desenvolvimento)
+      // ATENÇÃO: Em produção, implemente autenticação adequada!
+      allow read, write: if true;
+    }
+  }
+}
+

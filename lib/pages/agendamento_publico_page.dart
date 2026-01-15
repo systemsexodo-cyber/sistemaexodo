@@ -1,0 +1,1474 @@
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:sistema_exodo_novo/models/agendamento_servico.dart';
+import 'package:sistema_exodo_novo/models/cliente.dart';
+import 'package:sistema_exodo_novo/models/pet.dart';
+import 'package:sistema_exodo_novo/services/data_service.dart';
+import 'package:sistema_exodo_novo/services/auth_service.dart';
+import 'package:intl/intl.dart';
+import 'dart:ui';
+import 'package:google_fonts/google_fonts.dart';
+
+class AgendamentoPublicoPage extends StatefulWidget {
+  final String? slugEmpresa;
+
+  const AgendamentoPublicoPage({super.key, this.slugEmpresa});
+
+  @override
+  State<AgendamentoPublicoPage> createState() => _AgendamentoPublicoPageState();
+}
+
+class _LojaPublicaStyle {
+  static Color getPrimary(Color? custom) => custom ?? const Color(0xFF6366F1);
+  static Color getSecondary(Color? custom) => custom ?? const Color(0xFF8B5CF6);
+  static const accentColor = Color(0xFF10B981);
+  static const backgroundColor = Color(0xFF0F172A);
+  static const cardColor = Color(0xFF1E293B);
+  static const textColor = Color(0xFFF8FAFC);
+  static const textSecondaryColor = Color(0xFF94A3B8);
+}
+
+class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
+  final _formKey = GlobalKey<FormState>();
+  int _currentStep = 0;
+  bool _isDark = true; // Mesmo padrão do e-commerce
+
+  Color get _primaryColor {
+    try {
+      final auth = Provider.of<AuthService>(context, listen: false);
+      final data = Provider.of<DataService>(context, listen: false);
+      final empresa = auth.obterEmpresaPorSlug(widget.slugEmpresa ?? '') ?? data.empresaAtual;
+      if (empresa?.corPrimaria != null) {
+        String hex = empresa!.corPrimaria!.replaceAll('#', '');
+        return Color(int.parse("FF$hex", radix: 16));
+      }
+    } catch (_) {}
+    return const Color(0xFF6366F1);
+  }
+
+  Color get _secondaryColor {
+    try {
+      final auth = Provider.of<AuthService>(context, listen: false);
+      final data = Provider.of<DataService>(context, listen: false);
+      final empresa = auth.obterEmpresaPorSlug(widget.slugEmpresa ?? '') ?? data.empresaAtual;
+      if (empresa?.corSecundaria != null) {
+        String hex = empresa!.corSecundaria!.replaceAll('#', '');
+        return Color(int.parse("FF$hex", radix: 16));
+      }
+    } catch (_) {}
+    return const Color(0xFF8B5CF6);
+  }
+
+  // Dados do formulário
+  final _nomeController = TextEditingController();
+  final _whatsappController = TextEditingController();
+  final _petNomeController = TextEditingController();
+  final _petRacaController = TextEditingController();
+  
+  String? _servicoIdSelecionado;
+  String _porteAnimal = 'Pequeno'; // Pequeno, Médio, Grande, Gigante
+  double _pesoAproximado = 5.0;
+  DateTime? _dataSelecionada;
+  TimeOfDay? _horaSelecionada;
+  String _tipoEntrega = 'Retirada na Loja'; // 'Retirada na Loja', 'Taxi Dog'
+  String? _bairroEntrega;
+
+  bool _enviando = false;
+  bool _verificandoDisponibilidade = false;
+
+  final List<String> _portes = ['Pequeno', 'Médio', 'Grande', 'Gigante'];
+
+  @override
+  Widget build(BuildContext context) {
+    final authService = Provider.of<AuthService>(context);
+    final dataService = Provider.of<DataService>(context);
+    final empresa = authService.obterEmpresaPorSlug(widget.slugEmpresa ?? '') ?? dataService.empresaAtual;
+    final bool moduloPet = empresa?.moduloPet ?? false;
+
+    Color? pColor;
+    Color? sColor;
+    if (empresa != null) {
+      try {
+        if (empresa.corPrimaria != null) pColor = Color(int.parse("FF${empresa.corPrimaria!.replaceAll('#', '')}", radix: 16));
+        if (empresa.corSecundaria != null) sColor = Color(int.parse("FF${empresa.corSecundaria!.replaceAll('#', '')}", radix: 16));
+      } catch (_) {}
+    }
+
+    final primary = _LojaPublicaStyle.getPrimary(pColor);
+
+    print('>>> [AgendamentoPage] Construindo para: ${widget.slugEmpresa} | Empresa: ${empresa?.nomeExibicao}');
+
+    return Scaffold(
+      backgroundColor: _isDark ? _LojaPublicaStyle.backgroundColor : Colors.grey[100],
+      appBar: AppBar(
+        title: Text(empresa?.nomeExibicao ?? 'Agendamento'),
+        backgroundColor: primary,
+        elevation: 0,
+        actions: [
+          TextButton.icon(
+            onPressed: () => _mostrarConsultaAgendamentos(primary),
+            icon: const Icon(Icons.search, color: Colors.white, size: 20),
+            label: const Text('Meus Agendamentos', style: TextStyle(color: Colors.white, fontSize: 12)),
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          children: [
+            _buildStepper(primary, moduloPet),
+            const SizedBox(height: 32),
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: _isDark ? _LojaPublicaStyle.cardColor : Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.grey.withOpacity(0.2)),
+              ),
+              child: Form(
+                key: _formKey,
+                child: _buildCurrentStepView(moduloPet),
+              ),
+            ),
+            const SizedBox(height: 32),
+            _buildNavigationButtons(primary, moduloPet),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeaderPremium(String nomeEmpresa, Color primaryColor, Color textColor) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        _buildHeader(nomeEmpresa),
+        IconButton(
+          icon: Icon(_isDark ? Icons.light_mode : Icons.dark_mode, color: primaryColor),
+          onPressed: () => setState(() => _isDark = !_isDark),
+        ),
+      ],
+    );
+  }
+
+  // Update existing private build methods to accept color parameters if needed, or rely on Theme.of(context)
+  // I'll update the signatures in the chunks if they were hardcoded.
+
+  Widget _buildAnimatedBackground(Color primaryColor, Color secondaryColor) {
+    if (!_isDark) return const SizedBox.shrink(); // Fundo limpo no modo claro
+
+    return SizedBox.expand(
+      child: Stack(
+        children: [
+          Positioned(
+            top: -100,
+            right: -100,
+            child: Container(
+              width: 400,
+              height: 400,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: primaryColor.withOpacity(0.08),
+              ),
+            ),
+          ),
+          Positioned(
+            bottom: -50,
+            left: -50,
+            child: Container(
+              width: 300,
+              height: 300,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: secondaryColor.withOpacity(0.08),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHeader(String nomeEmpresa) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [_primaryColor, _secondaryColor],
+                ),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: const Icon(Icons.calendar_month_rounded, color: Colors.white, size: 28),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Agendamento Online',
+                    style: GoogleFonts.inter(
+                      color: _isDark ? _LojaPublicaStyle.textSecondaryColor : Colors.grey[600],
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      letterSpacing: 1.1,
+                    ),
+                  ),
+                  Text(
+                    nomeEmpresa,
+                    style: GoogleFonts.outfit(
+                      color: _isDark ? Colors.white : Colors.black87,
+                      fontSize: 32,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStepper(Color primaryColor, bool moduloPet) {
+    final List<String> stepLabels = [
+      'Serviço', 
+      'Seus Dados', 
+      if (moduloPet) 'O Pet', 
+      if (moduloPet) 'Entrega',
+      'Horário'
+    ];
+    final List<IconData> stepIcons = [
+      Icons.style_rounded,
+      Icons.person_rounded,
+      if (moduloPet) Icons.pets_rounded,
+      if (moduloPet) Icons.local_shipping_rounded,
+      Icons.access_time_filled_rounded
+    ];
+
+    final int totalPassos = stepLabels.length;
+
+    return Row(
+      children: List.generate(totalPassos, (index) {
+        bool isCompleted = _currentStep > index;
+        bool isActive = _currentStep == index;
+        
+        return Expanded(
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  if (index > 0)
+                    Expanded(
+                      child: Container(
+                        height: 2,
+                        color: isCompleted || isActive 
+                            ? primaryColor 
+                            : (_isDark ? Colors.white.withOpacity(0.1) : Colors.black.withOpacity(0.05)),
+                      ),
+                    ),
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: isCompleted || isActive 
+                          ? LinearGradient(
+                              colors: [_primaryColor, _secondaryColor],
+                            )
+                          : null,
+                      color: isCompleted || isActive ? null : Theme.of(context).cardColor,
+                      boxShadow: isActive ? [
+                        BoxShadow(
+                          color: primaryColor.withOpacity(0.4),
+                          blurRadius: 12,
+                          spreadRadius: 2,
+                        )
+                      ] : null,
+                      border: Border.all(
+                        color: isActive ? (_isDark ? Colors.white : primaryColor) : (_isDark ? Colors.white.withOpacity(0.1) : Colors.black.withOpacity(0.1)),
+                        width: 2,
+                      ),
+                    ),
+                    child: Center(
+                      child: isCompleted 
+                          ? const Icon(Icons.check, color: Colors.white, size: 20)
+                          : Icon(
+                              stepIcons[index], 
+                              color: isActive ? Colors.white : (_isDark ? Colors.white24 : Colors.grey[400]),
+                              size: 18,
+                            ),
+                    ),
+                  ),
+                  if (index < totalPassos - 1)
+                    Expanded(
+                      child: Container(
+                        height: 2,
+                        color: isCompleted 
+                            ? primaryColor 
+                            : (_isDark ? Colors.white.withOpacity(0.1) : Colors.black.withOpacity(0.05)),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                stepLabels[index],
+                style: GoogleFonts.inter(
+                  color: isActive ? (_isDark ? Colors.white : primaryColor) : (_isDark ? _LojaPublicaStyle.textSecondaryColor : Colors.grey[500]),
+                  fontSize: 11,
+                  fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
+                ),
+              ),
+            ],
+          ),
+        );
+      }),
+    );
+  }
+
+  Widget _buildCurrentStepView(bool moduloPet) {
+    // Mapear o índice atual para o passo real
+    int passoReal = _currentStep;
+    if (!moduloPet) {
+       if (_currentStep >= 2) {
+          passoReal = _currentStep + 2; // Pula Pet e Entrega
+       }
+    }
+
+    switch (passoReal) {
+      case 0:
+        return _buildStepServicos(moduloPet);
+      case 1:
+        return _buildStepDadosPessoais();
+      case 2:
+        return _buildStepDadosPet();
+      case 3:
+        return _buildStepEntrega();
+      case 4:
+        return _buildStepHorario();
+      default:
+        return const SizedBox();
+    }
+  }
+
+  Widget _buildStepServicos(bool moduloPet) {
+    final dataService = Provider.of<DataService>(context);
+    final servicos = dataService.servicos;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildStepTitle(
+          'O que vamos fazer hoje?', 
+          moduloPet ? 'Selecione o serviço desejado para o seu pet.' : 'Selecione o serviço desejado.',
+        ),
+        const SizedBox(height: 24),
+        if (servicos.isEmpty)
+          _buildEmptyState('Nenhum serviço disponível no momento.')
+        else
+          ListView.separated(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: servicos.length,
+            separatorBuilder: (context, index) => const SizedBox(height: 16),
+            itemBuilder: (context, index) {
+              final servico = servicos[index];
+              bool isSelected = _servicoIdSelecionado == servico.id;
+
+              return InkWell(
+                onTap: () => setState(() => _servicoIdSelecionado = servico.id),
+                borderRadius: BorderRadius.circular(20),
+                child: Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: isSelected ? _primaryColor.withOpacity(0.15) : (_isDark ? Colors.white.withOpacity(0.03) : Colors.grey[50]),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: isSelected ? _primaryColor : (_isDark ? Colors.white.withOpacity(0.1) : Colors.grey[200]!),
+                      width: 2,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: isSelected ? _primaryColor : Colors.white.withOpacity(0.05),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Icon(
+                          _getIconForServico(servico.nome),
+                          color: isSelected ? Colors.white : (_isDark ? _LojaPublicaStyle.textSecondaryColor : Colors.grey[500]),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              servico.nome,
+                              style: TextStyle(color: _isDark ? Colors.white : Colors.black87, fontWeight: FontWeight.bold, fontSize: 18),
+                            ),
+                            if (servico.descricao?.isNotEmpty ?? false) ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                servico.descricao!,
+                                style: TextStyle(color: _isDark ? _LojaPublicaStyle.textSecondaryColor : Colors.grey[600], fontSize: 13),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(
+                            'R\$ ${servico.precoTotal.toStringAsFixed(2)}',
+                            style: GoogleFonts.outfit(
+                              color: isSelected ? Colors.white : _primaryColor,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 18,
+                            ),
+                          ),
+                          if (servico.duracaoPadraoMinutos != null)
+                            Text(
+                              '${servico.duracaoPadraoMinutos} min',
+                              style: TextStyle(color: _isDark ? _LojaPublicaStyle.textSecondaryColor : Colors.grey[500], fontSize: 11),
+                            ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+      ],
+    );
+  }
+
+  IconData _getIconForServico(String nome) {
+    final n = nome.toLowerCase();
+    if (n.contains('banho')) return Icons.waves_rounded;
+    if (n.contains('tosa')) return Icons.content_cut_rounded;
+    if (n.contains('vacina')) return Icons.vaccines_rounded;
+    if (n.contains('consulta')) return Icons.medical_services_rounded;
+    if (n.contains('hospedagem')) return Icons.hotel_rounded;
+    return Icons.pets_rounded;
+  }
+
+  Widget _buildStepDadosPessoais() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildStepTitle('Fale um pouco de você', 'Precisamos desses dados para confirmar seu agendamento.'),
+        const SizedBox(height: 32),
+        _buildTextField(
+          controller: _nomeController,
+          label: 'Seu Nome Completo',
+          icon: Icons.person_outline_rounded,
+          placeholder: 'Como podemos te chamar?',
+          validator: (v) => v!.isEmpty ? 'Obrigatório' : null,
+        ),
+        const SizedBox(height: 20),
+        _buildTextField(
+          controller: _whatsappController,
+          label: 'Seu WhatsApp',
+          icon: Icons.phone_android_rounded,
+          placeholder: '(00) 00000-0000',
+          keyboardType: TextInputType.phone,
+          validator: (v) => v!.isEmpty ? 'Obrigatório' : null,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStepDadosPet() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildStepTitle('E quem é o cliente VIP?', 'Conte-nos sobre o animalzinho que receberá o cuidado.'),
+        const SizedBox(height: 32),
+        _buildTextField(
+          controller: _petNomeController,
+          label: 'Nome do Pet',
+          icon: Icons.pets_rounded,
+          placeholder: 'Nome do seu amigo',
+          validator: (v) => v!.isEmpty ? 'Obrigatório' : null,
+        ),
+        const SizedBox(height: 20),
+        _buildTextField(
+          controller: _petRacaController,
+          label: 'Raça',
+          icon: Icons.category_rounded,
+          placeholder: 'Ex: Shih-tzu, Vira-lata...',
+          validator: (v) => v!.isEmpty ? 'Obrigatório' : null,
+        ),
+        const SizedBox(height: 32),
+        Text(
+          'Qual o porte do pet?',
+          style: TextStyle(color: _isDark ? Colors.white : Colors.black87, fontWeight: FontWeight.w600, fontSize: 16),
+        ),
+        const SizedBox(height: 16),
+        Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: _portes.map((porte) {
+            bool isSelected = _porteAnimal == porte;
+            return InkWell(
+              onTap: () => setState(() => _porteAnimal = porte),
+              borderRadius: BorderRadius.circular(12),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: isSelected ? _primaryColor : (_isDark ? Colors.white.withOpacity(0.05) : Colors.grey[100]),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: isSelected ? Colors.white.withOpacity(0.2) : (_isDark ? Colors.white.withOpacity(0.1) : Colors.grey[300]!),
+                  ),
+                ),
+                child: Text(
+                  porte,
+                  style: TextStyle(
+                    color: isSelected ? Colors.white : (_isDark ? _LojaPublicaStyle.textSecondaryColor : Colors.grey[600]),
+                    fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                  ),
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+        const SizedBox(height: 32),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'Peso aproximado:',
+              style: TextStyle(color: _isDark ? Colors.white70 : Colors.grey[700]),
+            ),
+            Text(
+              '${_pesoAproximado.toStringAsFixed(1)} kg',
+              style: TextStyle(color: _primaryColor, fontWeight: FontWeight.bold, fontSize: 18),
+            ),
+          ],
+        ),
+        Slider(
+          value: _pesoAproximado,
+          min: 0.5,
+          max: 80,
+          activeColor: _primaryColor,
+          inactiveColor: _isDark ? Colors.white.withOpacity(0.1) : Colors.grey[200],
+          onChanged: (val) => setState(() => _pesoAproximado = val),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStepEntrega() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildStepTitle('Opções de Entrega', 'Como o pet chegará até nós?'),
+        const SizedBox(height: 32),
+        _buildOpcaoEntregaCard(
+          titulo: 'Eu levo e busco na loja',
+          subtitulo: 'Você traz seu pet e retira após o serviço.',
+          icon: Icons.store_rounded,
+          tipo: 'Retirada na Loja',
+        ),
+        const SizedBox(height: 16),
+        _buildOpcaoEntregaCard(
+          titulo: 'Taxi Dog (Leva e Traz)',
+          subtitulo: 'Nós buscamos o pet na sua casa e levamos de volta.',
+          icon: Icons.local_shipping_rounded,
+          tipo: 'Taxi Dog',
+        ),
+        if (_tipoEntrega == 'Taxi Dog') ...[
+          const SizedBox(height: 32),
+          Text(
+            'Informe seu bairro para o Taxi Dog:',
+            style: TextStyle(color: _isDark ? Colors.white70 : Colors.grey[700], fontSize: 13, fontWeight: FontWeight.w500),
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            value: _bairroEntrega,
+            dropdownColor: _isDark ? _LojaPublicaStyle.cardColor : Colors.white,
+            style: TextStyle(color: _isDark ? Colors.white : Colors.black87),
+            decoration: InputDecoration(
+              filled: true,
+              fillColor: _isDark ? Colors.white.withOpacity(0.05) : Colors.grey[100],
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
+              prefixIcon: Icon(Icons.location_on_rounded, color: _primaryColor),
+            ),
+            items: ['Bairro 01', 'Bairro 02', 'Centro', 'Outros'].map((b) => DropdownMenuItem(value: b, child: Text(b))).toList(),
+            onChanged: (val) => setState(() => _bairroEntrega = val),
+            validator: (v) => _tipoEntrega == 'Taxi Dog' && v == null ? 'Selecione o bairro' : null,
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildOpcaoEntregaCard({required String titulo, required String subtitulo, required IconData icon, required String tipo}) {
+    bool isSelected = _tipoEntrega == tipo;
+    return InkWell(
+      onTap: () => setState(() => _tipoEntrega = tipo),
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: isSelected ? _primaryColor.withOpacity(0.15) : (_isDark ? Colors.white.withOpacity(0.05) : Colors.grey[100]),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: isSelected ? _primaryColor : (_isDark ? Colors.white.withOpacity(0.1) : Colors.grey[300]!),
+            width: isSelected ? 2 : 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(color: isSelected ? _primaryColor : (_isDark ? Colors.white.withOpacity(0.05) : Colors.grey[200]), shape: BoxShape.circle),
+              child: Icon(icon, color: isSelected ? Colors.white : (_isDark ? Colors.white54 : Colors.grey[600])),
+            ),
+            const SizedBox(width: 20),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(titulo, style: TextStyle(color: _isDark ? Colors.white : Colors.black87, fontWeight: FontWeight.bold, fontSize: 16)),
+                  const SizedBox(height: 4),
+                  Text(subtitulo, style: TextStyle(color: _isDark ? Colors.white54 : Colors.grey[600], fontSize: 13)),
+                ],
+              ),
+            ),
+            if (isSelected) Icon(Icons.check_circle_rounded, color: _primaryColor),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStepHorario() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildStepTitle('Quando podemos receber vocês?', 'Escolha a data e o melhor horário disponível.'),
+        const SizedBox(height: 32),
+        Row(
+          children: [
+            Expanded(
+              child: _buildPickerTile(
+                label: 'Data',
+                value: _dataSelecionada == null 
+                    ? 'Selecionar' 
+                    : DateFormat('dd/MM/yyyy').format(_dataSelecionada!),
+                icon: Icons.calendar_today_rounded,
+                onTap: _pickDate,
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: _buildPickerTile(
+                label: 'Horário',
+                value: _horaSelecionada == null 
+                    ? 'Selecionar' 
+                    : _horaSelecionada!.format(context),
+                icon: Icons.access_time_rounded,
+                onTap: _pickTime,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 32),
+        if (_dataSelecionada != null && _horaSelecionada != null)
+          _buildDisponibilidadeCheck(),
+      ],
+    );
+  }
+
+  Widget _buildDisponibilidadeCheck() {
+    if (_verificandoDisponibilidade) {
+      return Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: _isDark ? Colors.white.withOpacity(0.05) : Colors.grey[200],
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          children: [
+            const SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white70),
+            ),
+            const SizedBox(width: 16),
+            Text(
+              'Verificando agenda...',
+              style: TextStyle(color: _isDark ? Colors.white70 : Colors.grey[600]),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final dataService = Provider.of<DataService>(context);
+    final inicio = DateTime(
+      _dataSelecionada!.year,
+      _dataSelecionada!.month,
+      _dataSelecionada!.day,
+      _horaSelecionada!.hour,
+      _horaSelecionada!.minute,
+    );
+    
+    bool disponivel = dataService.checkDisponibilidade(inicio, 60, ignorarPendentes: true);
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: disponivel ? Colors.green.withOpacity(0.1) : Colors.red.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: disponivel ? Colors.green.withOpacity(0.3) : Colors.red.withOpacity(0.3),
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: disponivel ? Colors.green : Colors.red,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              disponivel ? Icons.check : Icons.close,
+              color: Colors.white,
+              size: 16,
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  disponivel ? 'Ótima escolha!' : 'Horário Indisponível',
+                  style: TextStyle(
+                    color: disponivel ? Colors.green[300] : Colors.red[300],
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                Text(
+                  disponivel 
+                    ? 'Esse horário está livre em nossa agenda.' 
+                    : 'Tente escolher outro horário ou outro dia.',
+                  style: TextStyle(
+                    color: disponivel ? Colors.green[100]?.withOpacity(0.7) : Colors.red[100]?.withOpacity(0.7),
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Helpers UI
+  Widget _buildStepTitle(String title, String subtitle) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: GoogleFonts.outfit(
+            color: _isDark ? Colors.white : Colors.black87,
+            fontSize: 24,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          subtitle,
+          style: TextStyle(
+            color: _isDark ? _LojaPublicaStyle.textSecondaryColor : Colors.grey[600],
+            fontSize: 14,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTextField({
+    required TextEditingController controller,
+    required String label,
+    required IconData icon,
+    required String placeholder,
+    TextInputType? keyboardType,
+    String? Function(String?)? validator,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: TextStyle(color: _isDark ? Colors.white70 : Colors.grey[700], fontSize: 13, fontWeight: FontWeight.w500),
+        ),
+        const SizedBox(height: 8),
+        TextFormField(
+          controller: controller,
+          keyboardType: keyboardType,
+          validator: validator,
+          style: TextStyle(color: _isDark ? Colors.white : Colors.black87, fontSize: 16),
+          decoration: InputDecoration(
+            hintText: placeholder,
+            hintStyle: TextStyle(color: _isDark ? Colors.white.withOpacity(0.2) : Colors.grey[400]),
+            prefixIcon: Icon(icon, color: _primaryColor, size: 20),
+            filled: true,
+            fillColor: _isDark ? Colors.white.withOpacity(0.05) : Colors.grey[100],
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(16),
+              borderSide: BorderSide(color: _isDark ? Colors.white.withOpacity(0.1) : Colors.grey[300]!),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(16),
+              borderSide: BorderSide(color: _isDark ? Colors.white.withOpacity(0.1) : Colors.grey[300]!),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(16),
+              borderSide: BorderSide(color: _primaryColor, width: 2),
+            ),
+            errorBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(16),
+              borderSide: const BorderSide(color: Colors.redAccent),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPickerTile({
+    required String label,
+    required String value,
+    required IconData icon,
+    required VoidCallback onTap,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: TextStyle(color: _isDark ? Colors.white70 : Colors.grey[700], fontSize: 13),
+        ),
+        const SizedBox(height: 8),
+        InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(16),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+            decoration: BoxDecoration(
+              color: _isDark ? Colors.white.withOpacity(0.05) : Colors.grey[100],
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: _isDark ? Colors.white.withOpacity(0.1) : Colors.grey[300]!),
+            ),
+            child: Row(
+              children: [
+                Icon(icon, color: _primaryColor, size: 20),
+                const SizedBox(width: 12),
+                Text(
+                  value,
+                  style: TextStyle(
+                    color: value == 'Selecionar' ? (_isDark ? Colors.white24 : Colors.grey[400]) : (_isDark ? Colors.white : Colors.black87),
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildNavigationButtons(Color primaryColor, bool moduloPet) {
+    final int maxIndex = moduloPet ? 4 : 2;
+
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        if (_currentStep > 0)
+          TextButton.icon(
+            onPressed: () => setState(() => _currentStep--),
+            icon: const Icon(Icons.arrow_back_rounded, size: 18),
+            label: const Text('Voltar'),
+            style: TextButton.styleFrom(
+              foregroundColor: _isDark ? _LojaPublicaStyle.textSecondaryColor : Colors.grey[600],
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+            ),
+          )
+        else
+          const SizedBox(),
+        
+        ElevatedButton(
+          onPressed: _enviando ? null : () => _onNext(moduloPet),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.transparent,
+            padding: EdgeInsets.zero,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            elevation: _enviando ? 0 : 8,
+            shadowColor: primaryColor.withOpacity(0.5),
+          ),
+          child: Ink(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: _enviando 
+                  ? [Colors.grey, Colors.grey.withOpacity(0.8)]
+                  : [primaryColor, primaryColor.withOpacity(0.8)],
+              ),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_enviando)
+                    const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        ),
+                        SizedBox(width: 12),
+                        Text('Aguardando...', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                      ],
+                    )
+                  else ...[
+                    Text(
+                      _currentStep == maxIndex ? 'Finalizar Agendamento' : 'Próximo Passo',
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white),
+                    ),
+                    const SizedBox(width: 12),
+                    const Icon(Icons.arrow_forward_rounded, color: Colors.white, size: 18),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _onNext(bool moduloPet) {
+    if (_enviando) return;
+    if (_currentStep == 0 && _servicoIdSelecionado == null) {
+      _showWarning('Por favor, escolha um serviço primeiro.');
+      return;
+    }
+
+    final int maxIndex = moduloPet ? 4 : 2;
+
+    if (_formKey.currentState!.validate()) {
+      if (_currentStep < maxIndex) {
+        setState(() => _currentStep++);
+      } else {
+        _finalizar(moduloPet);
+      }
+    }
+  }
+
+  Future<void> _finalizar(bool moduloPet) async {
+    if (_dataSelecionada == null || _horaSelecionada == null) {
+      _showWarning('Selecione a data e o horário desejado.');
+      return;
+    }
+
+    setState(() => _enviando = true);
+
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final dataAgendamento = DateTime(
+      _dataSelecionada!.year,
+      _dataSelecionada!.month,
+      _dataSelecionada!.day,
+      _horaSelecionada!.hour,
+      _horaSelecionada!.minute,
+    );
+
+    try {
+      final servico = dataService.servicos.firstWhere((s) => s.id == _servicoIdSelecionado);
+      
+      // Identificar cliente pelo telefone
+      final telefoneBusca = _whatsappController.text.replaceAll(RegExp(r'\D'), '');
+      String clienteIdEncontrado = 'publico';
+      Cliente? clienteExistente;
+      Pet? petExistente;
+
+      try {
+        clienteExistente = dataService.clientes.firstWhere(
+          (c) => c.telefone.replaceAll(RegExp(r'\D'), '') == telefoneBusca
+        );
+        clienteIdEncontrado = clienteExistente.id;
+        
+        // Buscar pet do cliente que coincida com o nome informado
+        try {
+          if (moduloPet && _petNomeController.text.isNotEmpty) {
+            petExistente = clienteExistente.pets.firstWhere(
+              (p) => p.nome.toLowerCase().trim() == _petNomeController.text.toLowerCase().trim()
+            );
+          }
+        } catch (_) {
+          // Pet não encontrado para este cliente
+        }
+      } catch (_) {
+        // Cliente não encontrado pelo telefone
+      }
+
+      if (clienteExistente != null) {
+        debugPrint('>>> [AgendamentoPublico] Cliente identificado pelo telefone: ${clienteExistente.nome} (ID: ${clienteExistente.id})');
+        if (petExistente != null) {
+          debugPrint('>>> [AgendamentoPublico] Pet identificado: ${petExistente.nome} (ID: ${petExistente.id})');
+        } else {
+          debugPrint('>>> [AgendamentoPublico] Pet não identificado na lista do cliente - será tratado como novo');
+        }
+      } else {
+        debugPrint('>>> [AgendamentoPublico] Cliente não encontrado pelo telefone - usando identificador "publico"');
+      }
+
+      final agendamento = AgendamentoServico(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        numero: '', // Gerado no backend local
+        servicoId: servico.id,
+        servico: servico,
+        clienteId: clienteIdEncontrado,
+        cliente: clienteExistente,
+        petId: petExistente?.id,
+        pet: petExistente,
+        clienteNome: _nomeController.text,
+        clienteTelefone: _whatsappController.text,
+        petNome: moduloPet ? _petNomeController.text : null,
+        dataAgendamento: dataAgendamento,
+        duracaoMinutos: servico.duracaoPadraoMinutos ?? 60,
+        status: 'Aguardando Confirmação',
+        tipoEntrega: moduloPet ? _tipoEntrega : null,
+        bairroEntrega: moduloPet && _tipoEntrega == 'Taxi Dog' ? _bairroEntrega : null,
+        observacoes: 'SOLICITAÇÃO ONLINE PREMIUM\n'
+            'Cliente: ${_nomeController.text}\n'
+            'WhatsApp: ${_whatsappController.text}\n'
+            '${moduloPet ? 'Pet: ${_petNomeController.text} (${_petRacaController.text})\nPorte: $_porteAnimal\nPeso: ${_pesoAproximado.toStringAsFixed(1)} kg\nEntrega: $_tipoEntrega ${(_tipoEntrega == 'Taxi Dog' && _bairroEntrega != null) ? " ($_bairroEntrega)" : ""}' : ''}',
+      );
+
+      debugPrint('>>> [AgendamentoPublico] Finalizando agendamento...');
+      debugPrint('>>> [AgendamentoPublico] Empresa ID no DataService: ${dataService.empresaIdAtual}');
+      debugPrint('>>> [AgendamentoPublico] Agendamento ID: ${agendamento.id}');
+
+      if (dataService.empresaIdAtual == null) {
+        debugPrint('>>> [AgendamentoPublico] ⚠ AVISO CRÍTICO: Empresa não selecionada no DataService! Tentando recuperar...');
+        final auth = Provider.of<AuthService>(context, listen: false);
+        final emp = auth.obterEmpresaPorSlug(widget.slugEmpresa ?? '');
+        if (emp != null) {
+          await dataService.definirEmpresaAtual(emp.id);
+          debugPrint('>>> [AgendamentoPublico] ✅ Empresa recuperada e setada no DataService: ${emp.id}');
+        } else {
+          debugPrint('>>> [AgendamentoPublico] ❌ ERRO: Não foi possível identificar a empresa!');
+          throw Exception('Empresa não identificada');
+        }
+      }
+
+      debugPrint('>>> [AgendamentoPublico] 🚀 TENTANDO SALVAR AGENDAMENTO ONLINE...');
+      debugPrint('>>> [AgendamentoPublico] Empresa ID Final: ${dataService.empresaIdAtual}');
+      debugPrint('>>> [AgendamentoPublico] Agendamento ID: ${agendamento.id}');
+      
+      await dataService.addAgendamentoServico(agendamento);
+      debugPrint('>>> [AgendamentoPublico] ✅ Agendamento enviado com sucesso para o banco!');
+
+      if (mounted) {
+        _mostrarSucesso();
+      }
+    } catch (e) {
+      _showError('Erro ao processar sua solicitação. Tente novamente em instantes.');
+    } finally {
+      if (mounted) setState(() => _enviando = false);
+    }
+  }
+
+  void _mostrarSucesso() {
+    final cardColor = _isDark ? _LojaPublicaStyle.cardColor : Colors.white;
+    final textColor = _isDark ? Colors.white : const Color(0xFF1E293B);
+    final textSecondary = _isDark ? _LojaPublicaStyle.textSecondaryColor : Colors.black54;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
+        child: AlertDialog(
+          backgroundColor: cardColor,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+          content: Container(
+            padding: const EdgeInsets.symmetric(vertical: 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: Colors.green.withOpacity(0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.check_circle_rounded, color: Colors.green, size: 80),
+                ),
+                const SizedBox(height: 24),
+                Text(
+                  'Quase tudo pronto!',
+                  style: GoogleFonts.outfit(color: textColor, fontSize: 24, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'Recebemos sua solicitação para o(a) ${_petNomeController.text}.\n\nAgora nossa equipe vai revisar e entraremos em contato via WhatsApp para confirmar.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: textSecondary, height: 1.5),
+                ),
+                const SizedBox(height: 32),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () {
+                      Navigator.of(context).pop();
+                      setState(() {
+                        _currentStep = 0;
+                        _servicoIdSelecionado = null;
+                        _nomeController.clear();
+                        _whatsappController.clear();
+                        _petNomeController.clear();
+                        _petRacaController.clear();
+                        _dataSelecionada = null;
+                        _horaSelecionada = null;
+                      });
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _primaryColor,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    ),
+                    child: const Text('Entendido', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyState(String message) {
+    return Center(
+      child: Column(
+        children: [
+          Icon(Icons.search_off_rounded, color: _isDark ? Colors.white.withOpacity(0.1) : Colors.black.withOpacity(0.1), size: 64),
+          const SizedBox(height: 16),
+          Text(message, style: TextStyle(color: _isDark ? _LojaPublicaStyle.textSecondaryColor : Colors.grey[600])),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLoadingOverlay(Color primaryColor) {
+    return Container(
+      color: Colors.black.withOpacity(0.7),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(color: primaryColor),
+            const SizedBox(height: 24),
+            Text(
+              'Enviando sua solicitação...',
+              style: GoogleFonts.inter(color: Colors.white, fontWeight: FontWeight.w500),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFooter(Color textSecondary) {
+    return Center(
+      child: Column(
+        children: [
+          Divider(color: _isDark ? Colors.white10 : Colors.black12),
+          const SizedBox(height: 24),
+          Text(
+            'Powered by Exodo Systems',
+            style: TextStyle(color: textSecondary.withOpacity(0.5), fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showWarning(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg), backgroundColor: Colors.orange, behavior: SnackBarBehavior.floating),
+    );
+  }
+
+  void _showError(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg), backgroundColor: Colors.redAccent, behavior: SnackBarBehavior.floating),
+    );
+  }
+
+  // Pickers logic
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: DateTime.now().add(const Duration(days: 1)),
+      firstDate: DateTime.now(),
+      lastDate: DateTime.now().add(const Duration(days: 60)),
+      builder: (context, child) {
+        return Theme(
+          data: _isDark ? ThemeData.dark().copyWith(
+            colorScheme: ColorScheme.dark(
+              primary: _primaryColor,
+              onPrimary: Colors.white,
+              surface: _LojaPublicaStyle.cardColor,
+              onSurface: Colors.white,
+            ),
+          ) : ThemeData.light().copyWith(
+            colorScheme: ColorScheme.light(
+              primary: _primaryColor,
+              onPrimary: Colors.white,
+              surface: Colors.white,
+              onSurface: Colors.black87,
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+    if (picked != null) {
+      setState(() {
+        _dataSelecionada = picked;
+        _verificandoDisponibilidade = true;
+      });
+      // Simular um pequeno tempo de verificação para dar feedback visual
+      Future.delayed(const Duration(milliseconds: 1500), () {
+        if (mounted) setState(() => _verificandoDisponibilidade = false);
+      });
+    }
+  }
+
+  Future<void> _pickTime() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: const TimeOfDay(hour: 9, minute: 0),
+      builder: (context, child) {
+        return Theme(
+          data: _isDark ? ThemeData.dark().copyWith(
+            colorScheme: ColorScheme.dark(
+              primary: _primaryColor,
+              onPrimary: Colors.white,
+              surface: _LojaPublicaStyle.cardColor,
+              onSurface: Colors.white,
+            ),
+          ) : ThemeData.light().copyWith(
+            colorScheme: ColorScheme.light(
+              primary: _primaryColor,
+              onPrimary: Colors.white,
+              surface: Colors.white,
+              onSurface: Colors.black87,
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+    if (picked != null) {
+      setState(() {
+        _horaSelecionada = picked;
+        _verificandoDisponibilidade = true;
+      });
+      // Simular um pequeno tempo de verificação para dar feedback visual
+      Future.delayed(const Duration(milliseconds: 1500), () {
+        if (mounted) setState(() => _verificandoDisponibilidade = false);
+      });
+    }
+  }
+
+  void _mostrarConsultaAgendamentos(Color primaryColor) {
+    final TextEditingController phoneController = TextEditingController();
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: _isDark ? _LojaPublicaStyle.cardColor : Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: Row(
+          children: [
+            Icon(Icons.history_rounded, color: primaryColor),
+            const SizedBox(width: 12),
+            Text('Meus Agendamentos', style: GoogleFonts.outfit(color: _isDark ? Colors.white : Colors.black87, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Informe seu WhatsApp para consultar seus agendamentos realizados nesta empresa:', style: TextStyle(color: Colors.white70, fontSize: 14)),
+            const SizedBox(height: 20),
+            _buildTextField(
+              controller: phoneController,
+              label: 'WhatsApp',
+              icon: Icons.phone_rounded,
+              placeholder: '(00) 00000-0000',
+              keyboardType: TextInputType.phone,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: Text('Cancelar', style: TextStyle(color: _isDark ? Colors.white54 : Colors.grey))),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _exibirListaAgendamentos(phoneController.text, primaryColor);
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: primaryColor, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+            child: const Text('Consultar', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _exibirListaAgendamentos(String telefone, Color primaryColor) {
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final meusAgendamentos = dataService.agendamentosServico.where((a) {
+      final String rawInput = telefone.replaceAll(RegExp(r'[^\d]'), '');
+      if (rawInput.length < 8) return false;
+
+      // Pegar os últimos 8 dígitos para uma busca mais flexível (ignora DDD/0/55)
+      final String inputFlexivel = rawInput.substring(rawInput.length - 8);
+
+      bool comparar(String? valor) {
+        if (valor == null || valor.isEmpty) return false;
+        final String v = valor.replaceAll(RegExp(r'[^\d]'), '');
+        if (v.length < 8) return false;
+        return v.contains(rawInput) || rawInput.contains(v) || v.contains(inputFlexivel);
+      }
+
+      if (comparar(a.clienteTelefone)) return true;
+      if (comparar(a.cliente?.telefone)) return true;
+      if (comparar(a.observacoes)) return true;
+      if (comparar(a.clienteNome)) return true;
+
+      return false;
+    }).toList();
+
+    // Ordenar por data (mais recente primeiro)
+    meusAgendamentos.sort((a, b) => b.dataAgendamento.compareTo(a.dataAgendamento));
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        height: MediaQuery.of(context).size.height * 0.8,
+        decoration: BoxDecoration(
+          color: _isDark ? _LojaPublicaStyle.backgroundColor : Colors.grey[100],
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
+        ),
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(child: Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)))),
+            const SizedBox(height: 24),
+            Text('Seu Histórico', style: GoogleFonts.outfit(color: _isDark ? Colors.white : Colors.black87, fontSize: 24, fontWeight: FontWeight.bold)),
+            Text('Agendamentos vinculados ao WhatsApp $telefone', style: const TextStyle(color: Colors.white54, fontSize: 14)),
+            const SizedBox(height: 24),
+            Expanded(
+              child: meusAgendamentos.isEmpty 
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.event_busy_rounded, size: 64, color: Colors.white10),
+                        const SizedBox(height: 16),
+                        const Text('Nenhum agendamento encontrado.', style: TextStyle(color: Colors.white30)),
+                      ],
+                    ),
+                  )
+                : ListView.separated(
+                    itemCount: meusAgendamentos.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 12),
+                    itemBuilder: (context, index) {
+                      final agd = meusAgendamentos[index];
+                      return Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: _isDark ? _LojaPublicaStyle.cardColor : Colors.white,
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: Colors.white.withOpacity(0.05)),
+                        ),
+                        child: Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(color: primaryColor.withOpacity(0.1), shape: BoxShape.circle),
+                              child: Icon(Icons.calendar_today_rounded, color: primaryColor, size: 20),
+                            ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(agd.servico?.nome ?? 'Serviço', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                                  Text(DateFormat('dd/MM/yyyy HH:mm').format(agd.dataAgendamento), style: const TextStyle(color: Colors.white54, fontSize: 13)),
+                                ],
+                              ),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: _getStatusColor(agd.status).withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(agd.status, style: TextStyle(color: _getStatusColor(agd.status), fontSize: 11, fontWeight: FontWeight.bold)),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Color _getStatusColor(String status) {
+    switch (status) {
+      case 'Concluído': return Colors.greenAccent;
+      case 'Cancelado': return Colors.redAccent;
+      case 'Aguardando Confirmação': return Colors.orangeAccent;
+      case 'Em Andamento': return Colors.blueAccent;
+      default: return Colors.white54;
+    }
+  }
+}

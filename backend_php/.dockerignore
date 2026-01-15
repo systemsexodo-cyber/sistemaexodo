@@ -1,0 +1,53 @@
+# Dependências
+vendor/
+composer.lock
+
+# Storage (certificados e XMLs)
+storage/certs/*
+storage/xml/*
+!storage/certs/.gitkeep
+!storage/xml/.gitkeep
+
+# Logs
+logs/*
+*.log
+
+# Ambiente
+.env
+.env.local
+
+# Git
+.git
+.gitignore
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Documentação (opcional - pode remover se quiser incluir)
+*.md
+!README.md
+
+# Scripts de desenvolvimento
+*.bat
+*.sh
+testar_emissao.php
+exemplo_uso.php
+
+
+
+
+
+
+
+
+
+
+

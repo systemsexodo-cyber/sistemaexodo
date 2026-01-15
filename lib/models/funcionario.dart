@@ -1,0 +1,86 @@
+class Funcionario {
+  final String id;
+  final String nome;
+  final String? telefone;
+  final String? email;
+  final String? senha; // Senha para login no sistema
+  final String? observacoes;
+  final bool ativo;
+  final bool temAcesso; // Se o funcionário tem acesso ao sistema
+  final DateTime createdAt;
+  final DateTime updatedAt;
+
+  Funcionario({
+    required this.id,
+    required this.nome,
+    this.telefone,
+    this.email,
+    this.senha,
+    this.observacoes,
+    this.ativo = true,
+    this.temAcesso = false, // Por padrão, funcionário não tem acesso
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  })  : createdAt = createdAt ?? DateTime.now(),
+        updatedAt = updatedAt ?? DateTime.now();
+
+  factory Funcionario.fromMap(Map<String, dynamic> map) {
+    return Funcionario(
+      id: map['id'] as String,
+      nome: map['nome'] as String,
+      telefone: map['telefone'] as String?,
+      email: map['email'] as String?,
+      senha: map['senha'] as String?,
+      observacoes: map['observacoes'] as String?,
+      ativo: map['ativo'] ?? true,
+      temAcesso: map['temAcesso'] ?? false,
+      createdAt: map['createdAt'] != null
+          ? DateTime.parse(map['createdAt'] as String)
+          : DateTime.now(),
+      updatedAt: map['updatedAt'] != null
+          ? DateTime.parse(map['updatedAt'] as String)
+          : DateTime.now(),
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'nome': nome,
+      'telefone': telefone,
+      'email': email,
+      'senha': senha,
+      'observacoes': observacoes,
+      'ativo': ativo,
+      'temAcesso': temAcesso,
+      'createdAt': createdAt.toIso8601String(),
+      'updatedAt': updatedAt.toIso8601String(),
+    };
+  }
+
+  Funcionario copyWith({
+    String? id,
+    String? nome,
+    String? telefone,
+    String? email,
+    String? senha,
+    String? observacoes,
+    bool? ativo,
+    bool? temAcesso,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  }) {
+    return Funcionario(
+      id: id ?? this.id,
+      nome: nome ?? this.nome,
+      telefone: telefone ?? this.telefone,
+      email: email ?? this.email,
+      senha: senha ?? this.senha,
+      observacoes: observacoes ?? this.observacoes,
+      ativo: ativo ?? this.ativo,
+      temAcesso: temAcesso ?? this.temAcesso,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
+}

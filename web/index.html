@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <!--
+    If you are serving your web app in a path other than the root, change the
+    href value below to reflect the base path you are serving from.
+
+    The path provided below has to start and end with a slash "/" in order for
+    it to work correctly.
+
+    For more details:
+    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
+
+    This is a placeholder for base href that will be replaced by the value of
+    the `--base-href` argument provided to `flutter build`.
+  -->
+  <base href="$FLUTTER_BASE_HREF">
+
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="Sistema Êxodo - Sistema de gestão empresarial completo">
+
+  <!-- iOS meta tags & icons -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="Êxodo Systems">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon.png" />
+  <link rel="icon" type="image/png" sizes="16x16" href="favicon.png" />
+  <link rel="shortcut icon" type="image/svg+xml" href="favicon.svg" />
+  <link rel="apple-touch-icon" sizes="192x192" href="icons/Icon-192.png">
+  <link rel="apple-touch-icon" sizes="512x512" href="icons/Icon-512.png">
+
+  <title>Êxodo Systems</title>
+  <link rel="manifest" href="manifest.json">
+</head>
+
+<body>
+  <script>
+    // SOLUÇÃO DEFINITIVA PARA CACHE PRESO (Problema da aba anônima)
+    // Este script limpa tudo que pode estar forçando uma versão antiga
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(function (registrations) {
+        for (let registration of registrations) {
+          registration.unregister();
+          console.log('>>> [SISTEMA] Service Worker removido');
+        }
+      });
+    }
+
+    // Limpar todos os caches do navegador
+    if (window.caches) {
+      caches.keys().then(function (names) {
+        for (let name of names) {
+          caches.delete(name);
+          console.log('>>> [SISTEMA] Cache deletado: ' + name);
+        }
+      });
+    }
+
+    // Remover qualquer service worker que possa estar travando a carga
+    window.addEventListener('load', function () {
+      if (typeof window.flutter_web_auth != 'undefined') {
+        // Se houver algum objeto de auth travado, podemos limpar aqui
+      }
+    });
+  </script>
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+
+</html>

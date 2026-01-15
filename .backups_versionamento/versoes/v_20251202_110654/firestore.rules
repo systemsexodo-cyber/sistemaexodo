@@ -1,0 +1,92 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Regra geral: permitir leitura e escrita para todos (em desenvolvimento)
+    // ATENÇÃO: Em produção, implemente autenticação adequada!
+    match /{document=**} {
+      allow read, write: if true;
+    }
+    
+    // Regras específicas por coleção (exemplo de estrutura)
+    
+    // Clientes
+    match /clientes/{clienteId} {
+      allow read: if true;
+      allow create, update, delete: if true;
+    }
+    
+    // Produtos
+    match /produtos/{produtoId} {
+      allow read: if true;
+      allow create, update, delete: if true;
+    }
+    
+    // Serviços
+    match /servicos/{servicoId} {
+      allow read: if true;
+      allow create, update, delete: if true;
+    }
+    
+    // Pedidos
+    match /pedidos/{pedidoId} {
+      allow read: if true;
+      allow create, update, delete: if true;
+    }
+    
+    // Ordens de Serviço
+    match /ordens_servico/{ordemId} {
+      allow read: if true;
+      allow create, update, delete: if true;
+    }
+    
+    // Entregas
+    match /entregas/{entregaId} {
+      allow read: if true;
+      allow create, update, delete: if true;
+    }
+    
+    // Vendas Balcão
+    match /vendas_balcao/{vendaId} {
+      allow read: if true;
+      allow create, update, delete: if true;
+    }
+    
+    // Trocas/Devoluções
+    match /trocas_devolucoes/{trocaId} {
+      allow read: if true;
+      allow create, update, delete: if true;
+    }
+    
+    // Histórico de Estoque
+    match /estoque_historico/{historicoId} {
+      allow read: if true;
+      allow create, update, delete: if true;
+    }
+    
+    // Aberturas de Caixa
+    match /aberturas_caixa/{aberturaId} {
+      allow read: if true;
+      allow create, update, delete: if true;
+    }
+    
+    // Fechamentos de Caixa
+    match /fechamentos_caixa/{fechamentoId} {
+      allow read: if true;
+      allow create, update, delete: if true;
+    }
+    
+    // Motoristas
+    match /motoristas/{motoristaId} {
+      allow read: if true;
+      allow create, update, delete: if true;
+    }
+    
+    // Configurações
+    match /config/{configId} {
+      allow read: if true;
+      allow write: if true; // Apenas admin em produção
+    }
+  }
+}
+

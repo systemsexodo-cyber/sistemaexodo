@@ -1,0 +1,32 @@
+========================================
+COMO INICIAR O BACKEND AGORA
+========================================
+
+Python ja esta instalado! (3.12.10)
+
+PASSO 1: Abra o PowerShell na pasta:
+   C:\Users\USER\Downloads\Sistema Exodo\sistema_exodo_01-12\backend_pynfe
+
+PASSO 2: Execute estes comandos (um por vez):
+
+   python -m venv venv
+   
+   .\venv\Scripts\Activate.ps1
+   
+   pip install Flask Flask-CORS python-dotenv
+   
+   python app.py
+
+PASSO 3: O servidor iniciara em:
+   http://localhost:5000
+
+========================================
+OU USE O SCRIPT AUTOMATICO:
+========================================
+
+Duplo clique em: instalar_rapido.bat
+Depois duplo clique em: start_local.bat
+
+========================================
+
+

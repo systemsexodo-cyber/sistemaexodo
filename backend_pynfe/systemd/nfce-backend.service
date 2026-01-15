@@ -1,0 +1,60 @@
+[Unit]
+Description=Backend NFC-e - Serviço de Produção
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/caminho/para/backend_pynfe
+Environment="PATH=/caminho/para/venv/bin"
+Environment="PYTHONUNBUFFERED=1"
+
+# Carregar variáveis de ambiente do arquivo .env
+EnvironmentFile=/caminho/para/backend_pynfe/.env.production
+
+# Comando para iniciar
+ExecStart=/caminho/para/venv/bin/python /caminho/para/backend_pynfe/wsgi.py
+
+# Reiniciar automaticamente em caso de falha
+Restart=always
+RestartSec=10
+
+# Limites de recursos
+LimitNOFILE=65536
+MemoryMax=2G
+CPUQuota=200%
+
+# Logs
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nfce-backend
+
+[Install]
+WantedBy=multi-user.target
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

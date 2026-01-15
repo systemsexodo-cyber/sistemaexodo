@@ -1,0 +1,96 @@
+========================================
+  PROCESSO COMPLETO - EMISSAO NFC-e
+========================================
+
+SEU PYTHON ESTA INSTALADO! ✅
+Versao detectada: 3.12.10
+
+========================================
+PASSO 1: INICIAR BACKEND
+========================================
+
+Duplo clique em: INICIAR_TUDO.bat
+
+Ou execute no terminal:
+  cd backend_pynfe
+  python -m pip install flask flask-cors python-dotenv requests lxml signxml cryptography
+  python app.py
+
+Verificar se esta funcionando:
+  Abra no navegador: http://localhost:5000/health
+  Deve aparecer: {"status": "ok", ...}
+
+========================================
+PASSO 2: CONFIGURAR EMPRESA NO FLUTTER
+========================================
+
+1. Abra o sistema Flutter
+2. Vá em "Empresas" -> "Nova Empresa" ou "Editar"
+3. Preencha:
+   - CNPJ
+   - Razao Social
+   - Inscricao Estadual
+   - UF (ex: SP)
+   - Codigo IBGE (ex: 3550308 para Sao Paulo)
+   - Certificado Digital (upload do arquivo .pfx)
+   - Senha do Certificado
+   - AMBIENTE HOMOLOGACAO (marque para testes)
+4. Salve
+
+========================================
+PASSO 3: EMITIR NFC-e
+========================================
+
+1. Vá em "Venda Direta"
+2. Adicione produtos ao carrinho
+3. Finalize a venda
+4. Clique em "Emitir NFC-e"
+
+Se tudo estiver OK:
+  - NFC-e sera autorizada
+  - QR Code sera exibido
+  - Chave de acesso sera mostrada
+
+========================================
+ARQUIVOS IMPORTANTES
+========================================
+
+- INICIAR_TUDO.bat - Iniciar backend (DUPLO CLIQUE)
+- COMECE_AQUI.md - Guia rapido
+- GUIA_COMPLETO_NFCE.md - Guia completo
+- TESTE_RAPIDO_NFCE.md - Teste em 5 minutos
+
+========================================
+PROBLEMAS COMUNS
+========================================
+
+Backend nao inicia:
+  - Instale dependencias: pip install flask flask-cors python-dotenv requests lxml signxml cryptography
+
+"Failed to fetch":
+  - Backend esta rodando? Verifique: http://localhost:5000/health
+  - URL esta correta no Flutter?
+
+Certificado invalido:
+  - Use certificado valido (.pfx ou .p12)
+  - Verifique a senha
+  - Certificado nao pode estar expirado
+
+========================================
+PRONTO!
+========================================
+
+Siga os 3 passos acima e voce conseguira emitir NFC-e!
+
+Para mais detalhes, consulte: GUIA_COMPLETO_NFCE.md
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,32 @@
+name: Verificação de Código (CI)
+
+on:
+  push:
+    branches: [ master, main, modo-dev ]
+  pull_request:
+    branches: [ master, main ]
+
+jobs:
+  analyze:
+    name: Analisar e Testar
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.10.0'
+          channel: 'stable'
+          cache: true
+
+      - name: Obter dependências
+        run: flutter pub get
+
+      - name: Analisar Código (Lints)
+        run: flutter analyze --no-fatal-infos
+
+      - name: Executar Testes Unitários
+        run: flutter test

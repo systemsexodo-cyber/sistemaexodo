@@ -1,0 +1,20 @@
+{
+  "cnpj": "04.829.400/0001-65",
+  "razao_social": "BMJ COMERCIO E SERVICOS DE PETSHOP LTDA",
+  "nome_fantasia": "Empresa Teste",
+  "inscricao_estadual": "645431707119",
+  "csc": "25c8591d-34ed-474f-a66c-e3a2c1995f15",
+  "csc_id_token": "1",
+  "serie": "1",
+  "uf": "SP",
+  "endereco": "Rua Teste",
+  "numero": "123",
+  "bairro": "Centro",
+  "cidade": "São Paulo",
+  "cep": "01234567",
+  "telefone": "(11) 1234-5678",
+  "email": "teste@empresa.com.br",
+  "certificado_arquivo": "C:\Users\USER\Downloads\certificado_83fce25b.pfx",
+  "senha_certificado": "Rotwailler1"
+}
+

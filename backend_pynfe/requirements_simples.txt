@@ -1,0 +1,34 @@
+# Backend Python SIMPLIFICADO para NFC-e
+# Usando PyTrustNFe - biblioteca mais simples e confiável
+
+# Framework web
+Flask==3.0.0
+Flask-CORS==4.0.0
+python-dotenv==1.0.0
+
+# Biblioteca NFCe SIMPLES e CONFIÁVEL
+PyTrustNFe>=1.0.0
+
+# Utilitários
+requests==2.31.0
+lxml==4.9.3
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

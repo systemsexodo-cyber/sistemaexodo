@@ -1,0 +1,42 @@
+name: Gerar APK de Versão
+
+on:
+  release:
+    types: [created] # Dispara quando você cria uma Release no site do GitHub
+  workflow_dispatch: # Permite rodar manualmente no botão "Run workflow"
+
+jobs:
+  build_apk:
+    name: Build APK Android
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.10.0'
+          channel: 'stable'
+
+      - name: Obter dependências
+        run: flutter pub get
+
+      - name: Build APK (Release)
+        run: flutter build apk --release --no-tree-shake-icons
+
+      - name: Upload APK para a Release
+        uses: softprops/action-gh-release@v1
+        if: github.event_name == 'release'
+        with:
+          files: build/app/outputs/flutter-apk/app-release.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Salvar APK como Artefato (Manual)
+        uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          name: app-release-apk
+          path: build/app/outputs/flutter-apk/app-release.apk

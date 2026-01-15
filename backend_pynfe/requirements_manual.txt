@@ -1,0 +1,37 @@
+# Dependências para implementação manual de NFC-e
+# Instalar com: pip install -r requirements_manual.txt
+
+# Manipulação de XML
+lxml>=4.9.0
+
+# Assinatura digital XML (XML-DSig)
+signxml>=3.1.0
+
+# Requisições HTTP/HTTPS
+requests>=2.31.0
+
+# Certificados digitais (PKCS#12)
+pyOpenSSL>=23.0.0
+cryptography>=41.0.0
+
+# Suprimir avisos SSL (opcional)
+urllib3>=2.0.0
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,35 @@
+# Backend Python GRATUITO para NFC-e
+# Usando PyTrustNFe - biblioteca open source e gratuita
+
+# Framework web
+Flask==3.0.0
+Flask-CORS==4.0.0
+python-dotenv==1.0.0
+
+# Biblioteca NFCe GRATUITA e SIMPLES
+PyTrustNFe>=1.0.0
+
+# Utilitários básicos
+requests==2.31.0
+lxml==4.9.3
+zeep==4.2.1  # Para SOAP com SEFAZ
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

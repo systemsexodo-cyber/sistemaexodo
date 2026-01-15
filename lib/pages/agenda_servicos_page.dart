@@ -1,0 +1,5409 @@
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:intl/intl.dart';
+import 'package:intl/date_symbol_data_local.dart';
+import '../services/data_service.dart';
+import '../services/firebase_service.dart';
+import '../services/agendamento_pdf_service.dart';
+import '../models/agendamento_servico.dart';
+import '../models/servico.dart';
+import '../models/cliente.dart';
+import '../models/pet.dart';
+import '../models/pedido.dart';
+import '../models/item_material.dart';
+import '../models/produto.dart';
+import '../models/item_servico.dart';
+import '../services/codigo_service.dart';
+import '../theme.dart';
+import 'cliente_detalhes_page.dart';
+import 'package:uuid/uuid.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+// Import condicional para Web
+import 'html_helper_stub.dart' if (dart.library.html) 'html_helper_web.dart' as html_helper;
+
+const uuid = Uuid();
+
+class AgendaServicosPage extends StatefulWidget {
+  const AgendaServicosPage({super.key});
+
+  @override
+  State<AgendaServicosPage> createState() => _AgendaServicosPageState();
+}
+
+class _AgendaServicosPageState extends State<AgendaServicosPage> {
+  DateTime _dataSelecionada = DateTime.now();
+  String _visualizacao = 'Dia'; // 'Dia', 'Semana', 'Mês'
+  DateFormat? _formatoData;
+  DateFormat? _formatoHora;
+  DateFormat? _formatoDataHora;
+  final TextEditingController _buscaController = TextEditingController();
+  String _termoBusca = '';
+  bool _localeInicializado = false;
+  String _filtroTipo = 'Todos'; // 'Todos', 'Banho', 'Vacina', 'Tosa', 'Outros'
+  String? _filtroStatus; // null = todos, ou 'Agendado', 'Em Andamento', etc.
+
+  @override
+  void initState() {
+    super.initState();
+    // Inicializar locale
+    _inicializarLocale();
+  }
+
+  Future<void> _inicializarLocale() async {
+    await initializeDateFormatting('pt_BR', null);
+    if (mounted) {
+      setState(() {
+        _formatoData = DateFormat('dd/MM/yyyy', 'pt_BR');
+        _formatoHora = DateFormat('HH:mm', 'pt_BR'); // Formato 24 horas (13:00 = 1 hora da tarde)
+        _formatoDataHora = DateFormat('dd/MM/yyyy HH:mm', 'pt_BR');
+        _localeInicializado = true;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Mostrar loading enquanto o locale não está inicializado
+    if (!_localeInicializado) {
+      return Scaffold(
+        backgroundColor: Colors.black,
+        body: const Center(
+          child: CircularProgressIndicator(
+            valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFFF9800)),
+          ),
+        ),
+      );
+    }
+    
+    return AppTheme.appBackground(
+      child: Consumer<DataService>(
+        builder: (context, dataService, _) {
+          return Scaffold(
+            backgroundColor: Colors.transparent,
+            appBar: AppBar(
+              title: const Text('Agenda de Serviços'),
+              backgroundColor: Colors.transparent,
+              elevation: 0,
+              foregroundColor: Colors.white,
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.link),
+                  onPressed: () => _gerarLinkAgendamento(dataService),
+                  tooltip: 'Link de Agendamento Online',
+                ),
+                // Notificações de Solicitações Online
+                Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    IconButton(
+                      icon: Icon(
+                        Icons.notifications_active, 
+                        color: dataService.agendamentosServico.any((a) => a.status == 'Aguardando Confirmação') 
+                          ? Colors.amber 
+                          : Colors.white70
+                      ),
+                      tooltip: 'Solicitações de Agendamento',
+                      onPressed: () => _mostrarSolicitacoesAgendamento(context, dataService),
+                    ),
+                    if (dataService.agendamentosServico.any((a) => a.status == 'Aguardando Confirmação'))
+                      Positioned(
+                        right: 8,
+                        top: 8,
+                        child: Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle),
+                          constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+                          child: Text(
+                            '${dataService.agendamentosServico.where((a) => a.status == 'Aguardando Confirmação').length}',
+                            style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                IconButton(
+                  icon: Icon(
+                    Icons.sync,
+                    color: dataService.firebaseHabilitado ? Colors.green[300] : Colors.red[300],
+                  ),
+                  onPressed: () => dataService.forceSync(),
+                  tooltip: 'Sincronizar Agora',
+                ),
+                IconButton(
+                  icon: const Icon(Icons.add),
+                  onPressed: () => _mostrarDialogNovoAgendamento(context, dataService),
+                  tooltip: 'Novo Agendamento',
+                ),
+              ],
+            ),
+            body: Column(
+              children: [
+                // Controles de navegação
+                _buildControlesNavegacao(dataService),
+                // Visualização
+                Expanded(
+                  child: _buildVisualizacao(dataService),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildControlesNavegacao(DataService dataService) {
+    // 1. Agendamentos no período respeitando EXCLUSIVAMENTE a BUSCA (Base para contagens)
+    final inicio = _visualizacao == 'Dia' 
+        ? DateTime(_dataSelecionada.year, _dataSelecionada.month, _dataSelecionada.day)
+        : _visualizacao == 'Semana'
+            ? _dataSelecionada.subtract(Duration(days: _dataSelecionada.weekday - 1))
+            : DateTime(_dataSelecionada.year, _dataSelecionada.month, 1);
+    
+    final fim = _visualizacao == 'Dia'
+        ? inicio.add(const Duration(days: 1))
+        : _visualizacao == 'Semana'
+            ? inicio.add(const Duration(days: 7))
+            : DateTime(_dataSelecionada.year, _dataSelecionada.month + 1, 1);
+
+    final agendamentosNoPeriodo = dataService.getAgendamentosPorPeriodo(inicio, fim);
+    
+    final agendamentosBase = agendamentosNoPeriodo.where((a) {
+      if (_termoBusca.isEmpty) return true;
+      final nome = (a.cliente?.nome ?? a.clienteNome ?? '').toLowerCase();
+      final pet = (a.pet?.nome ?? a.petNome ?? '').toLowerCase();
+      final tsv = _getTipoServico(a).toLowerCase();
+      return nome.contains(_termoBusca) || pet.contains(_termoBusca) || tsv.contains(_termoBusca);
+    }).toList();
+
+    // 2. Contagens para chips de TIPO (respeitando FILTRO DE STATUS ATUAL)
+    final agendamentosParaContarTipo = agendamentosBase.where((a) {
+        if (_filtroStatus == null) return true;
+        return a.status == _filtroStatus;
+    }).toList();
+    
+    final countsTipo = <String, int>{};
+    for (var a in agendamentosParaContarTipo) {
+      final tipo = _getTipoServico(a);
+      countsTipo[tipo] = (countsTipo[tipo] ?? 0) + 1;
+    }
+
+    // 3. Contagens para chips de STATUS (respeitando FILTRO DE TIPO ATUAL)
+    final agendamentosParaContarStatus = agendamentosBase.where((a) {
+        if (_filtroTipo == 'Todos') return true;
+        return _getTipoServico(a) == _filtroTipo;
+    }).toList();
+    
+    final countsStatus = <String, int>{};
+    for (var a in agendamentosParaContarStatus) {
+      countsStatus[a.status] = (countsStatus[a.status] ?? 0) + 1;
+    }
+
+    final isModuloPet = dataService.empresaAtual?.moduloPet ?? false;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.3),
+        border: Border(
+          bottom: BorderSide(color: Colors.white.withOpacity(0.1)),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Campo de busca
+          TextField(
+            controller: _buscaController,
+            style: const TextStyle(color: Colors.white),
+            decoration: InputDecoration(
+              hintText: 'Buscar por nome do cliente...',
+              hintStyle: TextStyle(color: Colors.white.withOpacity(0.6)),
+              prefixIcon: const Icon(Icons.search, color: Colors.white70),
+              suffixIcon: _termoBusca.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.clear, color: Colors.white70),
+                      onPressed: () {
+                        setState(() {
+                          _buscaController.clear();
+                          _termoBusca = '';
+                        });
+                      },
+                    )
+                  : null,
+              filled: true,
+              fillColor: Colors.white.withOpacity(0.1),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: Colors.white.withOpacity(0.3)),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: Colors.white.withOpacity(0.3)),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: const BorderSide(color: Colors.white, width: 2),
+              ),
+            ),
+            onChanged: (value) {
+              setState(() {
+                _termoBusca = value.toLowerCase();
+              });
+            },
+          ),
+          const SizedBox(height: 12),
+          
+          // FILA 1: STATUS
+          const Text('Filtrar por Status:', style: TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 6),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                _buildChipFiltro(
+                  'Todos', 
+                  _filtroStatus == null, 
+                  () => setState(() => _filtroStatus = null),
+                  color: Colors.blue
+                ),
+                const SizedBox(width: 8),
+                if (isModuloPet) ...[
+                  _buildChipFiltro(
+                    'Pendentes (${countsStatus['Aguardando Confirmação'] ?? 0})', 
+                    _filtroStatus == 'Aguardando Confirmação', 
+                    () => setState(() => _filtroStatus = 'Aguardando Confirmação'),
+                    color: Colors.orange
+                  ),
+                  const SizedBox(width: 8),
+                ],
+                _buildChipFiltro(
+                  'Agendados (${countsStatus['Agendado'] ?? 0})', 
+                  _filtroStatus == 'Agendado', 
+                  () => setState(() => _filtroStatus = 'Agendado'),
+                  color: Colors.blueAccent
+                ),
+                const SizedBox(width: 8),
+                _buildChipFiltro(
+                  'Em Andamento (${countsStatus['Em Andamento'] ?? 0})', 
+                  _filtroStatus == 'Em Andamento', 
+                  () => setState(() => _filtroStatus = 'Em Andamento'),
+                  color: Colors.amber
+                ),
+                const SizedBox(width: 8),
+                _buildChipFiltro(
+                  'Concluídos (${countsStatus['Concluído'] ?? 0})', 
+                  _filtroStatus == 'Concluído', 
+                  () => setState(() => _filtroStatus = 'Concluído'),
+                  color: Colors.green
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // FILA 2: SERVIÇOS
+          const Text('Filtrar por Serviço:', style: TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 6),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                _buildChipFiltro(
+                  'Todos', 
+                  _filtroTipo == 'Todos', 
+                  () => setState(() => _filtroTipo = 'Todos')
+                ),
+                if (isModuloPet) ...[
+                  const SizedBox(width: 8),
+                  _buildChipFiltro(
+                    'Banho (${countsTipo['Banho'] ?? 0})', 
+                    _filtroTipo == 'Banho', 
+                    () => setState(() => _filtroTipo = 'Banho'),
+                    color: Colors.cyan
+                  ),
+                  const SizedBox(width: 8),
+                  _buildChipFiltro(
+                    'Tosa (${countsTipo['Tosa'] ?? 0})', 
+                    _filtroTipo == 'Tosa', 
+                    () => setState(() => _filtroTipo = 'Tosa'),
+                    color: Colors.purpleAccent
+                  ),
+                  const SizedBox(width: 8),
+                  _buildChipFiltro(
+                    'Vacina (${countsTipo['Vacina'] ?? 0})', 
+                    _filtroTipo == 'Vacina', 
+                    () => setState(() => _filtroTipo = 'Vacina'),
+                    color: Colors.redAccent
+                  ),
+                ],
+                // Serviços cadastrados que não sejam os básicos acima
+                ...dataService.servicos
+                    .where((s) => !['Banho', 'Tosa', 'Vacina'].contains(s.nome))
+                    .map((servico) {
+                  final qte = countsTipo[servico.nome] ?? 0;
+                  return Padding(
+                    padding: const EdgeInsets.only(left: 8),
+                    child: _buildChipFiltro(
+                      '${servico.nome} ($qte)',
+                      _filtroTipo == servico.nome,
+                      () => setState(() => _filtroTipo = servico.nome),
+                    ),
+                  );
+                }),
+                const SizedBox(width: 8),
+                _buildChipFiltro(
+                  'Outros (${countsTipo['Outros'] ?? 0})', 
+                  _filtroTipo == 'Outros', 
+                  () => setState(() => _filtroTipo = 'Outros')
+                ),
+              ],
+            ),
+          ),
+          
+          if (_filtroStatus != null || _filtroTipo != 'Todos' || _termoBusca.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: TextButton.icon(
+                onPressed: () {
+                  setState(() {
+                    _filtroStatus = null;
+                    _filtroTipo = 'Todos';
+                    _termoBusca = '';
+                    _buscaController.clear();
+                  });
+                },
+                icon: const Icon(Icons.filter_list_off, size: 16, color: Colors.white70),
+                label: const Text('Limpar Filtros', style: TextStyle(color: Colors.white70, fontSize: 12)),
+              ),
+            ),
+          const SizedBox(height: 12),
+          // Seletor de visualização
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _buildBotaoVisualizacao('Dia', Icons.view_day),
+              const SizedBox(width: 8),
+              _buildBotaoVisualizacao('Semana', Icons.view_week),
+              const SizedBox(width: 8),
+              _buildBotaoVisualizacao('Mês', Icons.calendar_month),
+            ],
+          ),
+          const SizedBox(height: 16),
+          // Navegação de data
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              IconButton(
+                icon: const Icon(Icons.chevron_left, color: Colors.white),
+                onPressed: () {
+                  setState(() {
+                    if (_visualizacao == 'Dia') {
+                      _dataSelecionada = _dataSelecionada.subtract(const Duration(days: 1));
+                    } else if (_visualizacao == 'Semana') {
+                      _dataSelecionada = _dataSelecionada.subtract(const Duration(days: 7));
+                    } else {
+                      _dataSelecionada = DateTime(_dataSelecionada.year, _dataSelecionada.month - 1);
+                    }
+                  });
+                },
+              ),
+              GestureDetector(
+                onTap: () => _selecionarData(context),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.blue.withOpacity(0.5)),
+                  ),
+                  child: Text(
+                    _getTextoData(),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.chevron_right, color: Colors.white),
+                onPressed: () {
+                  setState(() {
+                    if (_visualizacao == 'Dia') {
+                      _dataSelecionada = _dataSelecionada.add(const Duration(days: 1));
+                    } else if (_visualizacao == 'Semana') {
+                      _dataSelecionada = _dataSelecionada.add(const Duration(days: 7));
+                    } else {
+                      _dataSelecionada = DateTime(_dataSelecionada.year, _dataSelecionada.month + 1);
+                    }
+                  });
+                },
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBotaoVisualizacao(String tipo, IconData icon) {
+    final isSelecionado = _visualizacao == tipo;
+    return GestureDetector(
+      onTap: () => setState(() => _visualizacao = tipo),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelecionado 
+              ? Colors.blue.withOpacity(0.3)
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: isSelecionado 
+                ? Colors.blue
+                : Colors.white.withOpacity(0.2),
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: isSelecionado ? Colors.blueAccent : Colors.white70, size: 18),
+            const SizedBox(width: 4),
+            Text(
+              tipo,
+              style: TextStyle(
+                color: isSelecionado ? Colors.white : Colors.white70,
+                fontWeight: isSelecionado ? FontWeight.bold : FontWeight.normal,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _getTextoData() {
+    if (_visualizacao == 'Dia') {
+      return _formatoData!.format(_dataSelecionada);
+    } else if (_visualizacao == 'Semana') {
+      final inicioSemana = _dataSelecionada.subtract(Duration(days: _dataSelecionada.weekday - 1));
+      final fimSemana = inicioSemana.add(const Duration(days: 6));
+      return '${_formatoData!.format(inicioSemana)} - ${_formatoData!.format(fimSemana)}';
+    } else {
+      return DateFormat('MMMM yyyy', 'pt_BR').format(_dataSelecionada);
+    }
+  }
+
+  Future<void> _selecionarData(BuildContext context) async {
+    final data = await showDatePicker(
+      context: context,
+      initialDate: _dataSelecionada,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2030),
+    );
+    if (data != null) {
+      setState(() => _dataSelecionada = data);
+    }
+  }
+
+  Widget _buildChipFiltro(String label, bool selecionado, VoidCallback onTap, {Color? color}) {
+    final primaryColor = color ?? const Color(0xFFFF9800);
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: selecionado 
+              ? primaryColor.withOpacity(0.3)
+              : Colors.white.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: selecionado 
+                ? primaryColor
+                : Colors.white.withOpacity(0.3),
+            width: selecionado ? 2 : 1,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: selecionado ? Colors.white : Colors.white70,
+            fontSize: 12,
+            fontWeight: selecionado ? FontWeight.bold : FontWeight.normal,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildVisualizacao(DataService dataService) {
+    final agendamentos = _getAgendamentosPeriodo(dataService);
+    
+    if (_visualizacao == 'Dia') {
+      return _buildVisualizacaoDia(agendamentos, dataService);
+    } else if (_visualizacao == 'Semana') {
+      return _buildVisualizacaoSemana(agendamentos, dataService);
+    } else {
+      return _buildVisualizacaoMes(agendamentos, dataService);
+    }
+  }
+
+  // Retorna o tipo de serviço baseado no nome
+  String _getTipoServico(AgendamentoServico agendamento) {
+    if (agendamento.servico != null) {
+      return agendamento.servico!.nome;
+    }
+    
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final isModuloPet = dataService.empresaAtual?.moduloPet ?? false;
+    
+    if (!isModuloPet) {
+      return 'Serviço';
+    }
+
+    final nomeServico = agendamento.servicoNome?.toLowerCase() ?? '';
+    final observacoes = agendamento.observacoes?.toLowerCase() ?? '';
+    final textoCompleto = '$nomeServico $observacoes';
+    
+    if (_isAgendamentoVacina(agendamento) || textoCompleto.contains('vacina')) {
+      return 'Vacina';
+    } else if (textoCompleto.contains('banho') || textoCompleto.contains('bath')) {
+      return 'Banho';
+    } else if (textoCompleto.contains('tosa') || textoCompleto.contains('grooming')) {
+      return 'Tosa';
+    } else {
+      return 'Outros';
+    }
+  }
+
+  // Retorna o ícone apropriado para o tipo de serviço
+  IconData _getIconeTipoServico(AgendamentoServico agendamento) {
+    final tipo = _getTipoServico(agendamento);
+    switch (tipo) {
+      case 'Vacina':
+        return Icons.vaccines;
+      case 'Banho':
+        return Icons.shower;
+      case 'Tosa':
+        return Icons.content_cut;
+      case 'Serviço':
+        return Icons.miscellaneous_services;
+      default:
+        return Icons.calendar_today;
+    }
+  }
+
+  List<AgendamentoServico> _getAgendamentosPeriodo(DataService dataService, {String? tipoFiltroOverride}) {
+    DateTime inicio, fim;
+    
+    if (_visualizacao == 'Dia') {
+      inicio = DateTime(_dataSelecionada.year, _dataSelecionada.month, _dataSelecionada.day);
+      fim = inicio.add(const Duration(days: 1));
+    } else if (_visualizacao == 'Semana') {
+      inicio = _dataSelecionada.subtract(Duration(days: _dataSelecionada.weekday - 1));
+      inicio = DateTime(inicio.year, inicio.month, inicio.day);
+      fim = inicio.add(const Duration(days: 7));
+    } else {
+      inicio = DateTime(_dataSelecionada.year, _dataSelecionada.month, 1);
+      fim = DateTime(_dataSelecionada.year, _dataSelecionada.month + 1, 1);
+    }
+    
+    var agendamentos = dataService.getAgendamentosPorPeriodo(inicio, fim);
+    
+    // Filtrar por tipo de serviço
+    final filtroParaUsar = tipoFiltroOverride ?? _filtroTipo;
+    if (filtroParaUsar != 'Todos') {
+      agendamentos = agendamentos.where((a) {
+        return _getTipoServico(a) == filtroParaUsar;
+      }).toList();
+    }
+    
+    // Filtrar por status
+    if (_filtroStatus != null) {
+      agendamentos = agendamentos.where((a) {
+        return a.status == _filtroStatus;
+      }).toList();
+    }
+    
+    // Aplicar filtro de busca (agora inclui tipo de serviço)
+    if (_termoBusca.isNotEmpty) {
+      agendamentos = agendamentos.where((a) {
+        final nomeCliente = (a.cliente?.nome ?? a.clienteNome ?? '').toLowerCase();
+        final nomePet = (a.pet?.nome ?? a.petNome ?? '').toLowerCase();
+        final nomeServico = (a.servico?.nome ?? '').toLowerCase();
+        final observacoes = (a.observacoes ?? '').toLowerCase();
+        final tipoServico = _getTipoServico(a).toLowerCase();
+        return nomeCliente.contains(_termoBusca) || 
+               nomePet.contains(_termoBusca) ||
+               nomeServico.contains(_termoBusca) ||
+               observacoes.contains(_termoBusca) ||
+               tipoServico.contains(_termoBusca);
+      }).toList();
+    }
+    
+    return agendamentos;
+  }
+
+  Widget _buildVisualizacaoDia(List<AgendamentoServico> agendamentos, DataService dataService) {
+    // Agrupar por hora
+    final agendamentosPorHora = <int, List<AgendamentoServico>>{};
+    for (final agendamento in agendamentos) {
+      final hora = agendamento.dataAgendamento.hour;
+      agendamentosPorHora.putIfAbsent(hora, () => []).add(agendamento);
+    }
+
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: 24, // 24 horas do dia
+      itemBuilder: (context, index) {
+        final hora = index;
+        final agendamentosHora = agendamentosPorHora[hora] ?? [];
+        
+        return Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Hora
+              SizedBox(
+                width: 60,
+                child: Text(
+                  '${hora.toString().padLeft(2, '0')}:00',
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.6),
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+              // Agendamentos
+              Expanded(
+                child: Column(
+                  children: agendamentosHora.isEmpty
+                      ? [
+                          GestureDetector(
+                            onTap: () {
+                              // Criar agendamento ao clicar no horário vazio
+                              final dataHora = DateTime(
+                                _dataSelecionada.year,
+                                _dataSelecionada.month,
+                                _dataSelecionada.day,
+                                hora,
+                                0,
+                              );
+                              _mostrarDialogNovoAgendamento(context, dataService, dataHoraPreSelecionada: dataHora);
+                            },
+                            child: Container(
+                              height: 40,
+                              decoration: BoxDecoration(
+                                border: Border.all(
+                                  color: Colors.white.withOpacity(0.1),
+                                  width: 1,
+                                ),
+                                borderRadius: BorderRadius.circular(8),
+                                color: Colors.transparent,
+                              ),
+                              child: Center(
+                                child: Icon(
+                                  Icons.add_circle_outline,
+                                  color: Colors.white.withOpacity(0.3),
+                                  size: 20,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ]
+                      : _buildAgendamentosAgrupados(agendamentosHora, dataService, hora),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  /// Agrupa agendamentos do mesmo cliente quando houver 3 ou mais
+  List<Widget> _buildAgendamentosAgrupados(
+    List<AgendamentoServico> agendamentos,
+    DataService dataService,
+    int hora,
+  ) {
+    // Agrupar por cliente
+    final agendamentosPorCliente = <String?, List<AgendamentoServico>>{};
+    for (final agendamento in agendamentos) {
+      final clienteId = agendamento.clienteId;
+      agendamentosPorCliente.putIfAbsent(clienteId, () => []).add(agendamento);
+    }
+
+    final widgets = <Widget>[];
+
+    for (final entry in agendamentosPorCliente.entries) {
+      final clienteId = entry.key;
+      final agendamentosCliente = entry.value;
+
+      // Se houver 3 ou mais agendamentos do mesmo cliente, mostrar indicador de grupo
+      if (agendamentosCliente.length >= 3 && clienteId != null) {
+        // Adicionar indicador de grupo antes dos agendamentos
+        widgets.add(
+          Container(
+            margin: const EdgeInsets.only(bottom: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: Colors.amber.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(
+                color: Colors.amber.withOpacity(0.5),
+                width: 1,
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.group,
+                  size: 14,
+                  color: Colors.amber,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  '${agendamentosCliente.length} animais - ${agendamentosCliente.first.cliente?.nome ?? "Cliente"}',
+                  style: const TextStyle(
+                    color: Colors.amber,
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+      
+      // Exibir todos os agendamentos normalmente (mantendo padrão)
+      for (final agendamento in agendamentosCliente) {
+        widgets.add(_buildCardAgendamento(agendamento, dataService));
+      }
+    }
+
+    // Adicionar botão para adicionar mais agendamentos
+    widgets.add(
+      Padding(
+        padding: const EdgeInsets.only(top: 4),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: () {
+              // Criar agendamento ao clicar no botão de adicionar
+              final dataHora = DateTime(
+                _dataSelecionada.year,
+                _dataSelecionada.month,
+                _dataSelecionada.day,
+                hora,
+                0,
+              );
+              _mostrarDialogNovoAgendamento(context, dataService, dataHoraPreSelecionada: dataHora);
+            },
+            borderRadius: BorderRadius.circular(6),
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+              decoration: BoxDecoration(
+                border: Border.all(
+                  color: Colors.blue.withOpacity(0.3),
+                  width: 1,
+                ),
+                borderRadius: BorderRadius.circular(6),
+                color: Colors.blue.withOpacity(0.1),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.add,
+                    color: Colors.blue.withOpacity(0.7),
+                    size: 16,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Adicionar',
+                    style: TextStyle(
+                      color: Colors.blue.withOpacity(0.7),
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    return widgets;
+  }
+
+
+  Widget _buildVisualizacaoSemana(List<AgendamentoServico> agendamentos, DataService dataService) {
+    final inicioSemana = _dataSelecionada.subtract(Duration(days: _dataSelecionada.weekday - 1));
+    
+    return Row(
+      children: List.generate(7, (index) {
+        final dia = inicioSemana.add(Duration(days: index));
+        final agendamentosDia = agendamentos.where((a) {
+          return a.dataAgendamento.year == dia.year &&
+                 a.dataAgendamento.month == dia.month &&
+                 a.dataAgendamento.day == dia.day;
+        }).toList();
+        
+        return Expanded(
+          child: Container(
+            margin: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.white.withOpacity(0.1)),
+            ),
+            child: Column(
+              children: [
+                // Cabeçalho do dia
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    gradient: _isHoje(dia)
+                        ? LinearGradient(
+                            colors: [
+                              const Color(0xFF2196F3).withOpacity(0.4),
+                              const Color(0xFF42A5F5).withOpacity(0.2),
+                            ],
+                          )
+                        : null,
+                    color: _isHoje(dia) ? null : Colors.transparent,
+                    borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+                    border: _isHoje(dia)
+                        ? Border.all(
+                            color: const Color(0xFF2196F3).withOpacity(0.6),
+                            width: 2,
+                          )
+                        : null,
+                  ),
+                  child: Column(
+                    children: [
+                      Text(
+                        DateFormat('EEE', 'pt_BR').format(dia),
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.7),
+                          fontSize: 12,
+                        ),
+                      ),
+                      Text(
+                        dia.day.toString(),
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                // Agendamentos do dia
+                Expanded(
+                  child: ListView.builder(
+                    padding: const EdgeInsets.all(4),
+                    itemCount: agendamentosDia.length,
+                    itemBuilder: (context, index) {
+                      return _buildCardAgendamentoCompacto(agendamentosDia[index], dataService);
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      }),
+    );
+  }
+
+  Widget _buildVisualizacaoMes(List<AgendamentoServico> agendamentos, DataService dataService) {
+    final primeiroDia = DateTime(_dataSelecionada.year, _dataSelecionada.month, 1);
+    final ultimoDia = DateTime(_dataSelecionada.year, _dataSelecionada.month + 1, 0);
+    final diasNoMes = ultimoDia.day;
+    final primeiroDiaSemana = primeiroDia.weekday;
+    
+    return GridView.builder(
+      padding: const EdgeInsets.all(16),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 7,
+        childAspectRatio: 1,
+        crossAxisSpacing: 4,
+        mainAxisSpacing: 4,
+      ),
+      itemCount: 7 + diasNoMes, // 7 cabeçalhos + dias do mês
+      itemBuilder: (context, index) {
+        if (index < 7) {
+          // Cabeçalhos dos dias da semana
+          final diasSemana = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+          return Center(
+            child: Text(
+              diasSemana[index],
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.7),
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          );
+        }
+        
+        final diaIndex = index - 7;
+        if (diaIndex < primeiroDiaSemana - 1 || diaIndex >= primeiroDiaSemana - 1 + diasNoMes) {
+          return const SizedBox.shrink();
+        }
+        
+        final dia = primeiroDia.add(Duration(days: diaIndex - (primeiroDiaSemana - 1)));
+        final agendamentosDia = agendamentos.where((a) {
+          return a.dataAgendamento.year == dia.year &&
+                 a.dataAgendamento.month == dia.month &&
+                 a.dataAgendamento.day == dia.day;
+        }).toList();
+        
+        return GestureDetector(
+          onTap: () {
+            setState(() {
+              _dataSelecionada = dia;
+              _visualizacao = 'Dia';
+            });
+          },
+          child: Container(
+            decoration: BoxDecoration(
+              gradient: _isHoje(dia)
+                  ? LinearGradient(
+                      colors: [
+                        const Color(0xFF2196F3).withOpacity(0.4),
+                        const Color(0xFF42A5F5).withOpacity(0.2),
+                      ],
+                    )
+                  : null,
+              color: _isHoje(dia) ? null : const Color(0xFF1E1E2E).withOpacity(0.6),
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(
+                color: _isHoje(dia)
+                    ? const Color(0xFF2196F3).withOpacity(0.8)
+                    : Colors.white.withOpacity(0.2),
+                width: _isHoje(dia) ? 2 : 1,
+              ),
+              boxShadow: _isHoje(dia)
+                  ? [
+                      BoxShadow(
+                        color: const Color(0xFF2196F3).withOpacity(0.3),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      ),
+                    ]
+                  : null,
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(4),
+                  child: Text(
+                    dia.day.toString(),
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: _isHoje(dia) ? FontWeight.bold : FontWeight.normal,
+                    ),
+                  ),
+                ),
+                if (agendamentosDia.isNotEmpty)
+                  Expanded(
+                    child: ListView.builder(
+                      padding: EdgeInsets.zero,
+                      itemCount: agendamentosDia.length > 3 ? 3 : agendamentosDia.length,
+                      itemBuilder: (context, index) {
+                        final agendamento = agendamentosDia[index];
+                        final isVacina = (agendamento.servicoId?.startsWith('vacina_') ?? false) || 
+                                        (agendamento.observacoes != null && agendamento.observacoes!.toLowerCase().contains('aplicar'));
+                        final corStatus = isVacina ? const Color(0xFFFF9800) : _getCorStatus(agendamento.status);
+                        final corFundo = isVacina ? const Color(0xFF663C00) : _getCorFundoStatus(agendamento.status);
+                        
+                        return Container(
+                          margin: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
+                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [
+                                corFundo,
+                                Color.lerp(corFundo, corStatus, 0.4)!,
+                              ],
+                            ),
+                            borderRadius: BorderRadius.circular(3),
+                            border: Border.all(
+                              color: corStatus.withOpacity(0.7),
+                              width: 1,
+                            ),
+                          ),
+                          child: Text(
+                            '${_formatoHora!.format(agendamento.dataAgendamento)}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 8,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                if (agendamentosDia.length > 3)
+                  Padding(
+                    padding: const EdgeInsets.all(2),
+                    child: Text(
+                      '+${agendamentosDia.length - 3}',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.6),
+                        fontSize: 8,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  bool _isHoje(DateTime data) {
+    final hoje = DateTime.now();
+    return data.year == hoje.year &&
+           data.month == hoje.month &&
+           data.day == hoje.day;
+  }
+
+  Color _getCorStatus(String status) {
+    switch (status) {
+      case 'Aguardando Confirmação':
+        return Colors.purpleAccent;
+      case 'Agendado':
+        return const Color(0xFF2196F3); // Azul vibrante do tema
+      case 'Em Andamento':
+        return const Color(0xFFFF9800); // Laranja vibrante
+      case 'Concluído':
+        return const Color(0xFF4CAF50); // Verde vibrante
+      case 'Cancelado':
+        return const Color(0xFFF44336); // Vermelho vibrante
+      default:
+        return const Color(0xFF757575); // Cinza
+    }
+  }
+
+  Color _getCorFundoStatus(String status) {
+    switch (status) {
+      case 'Aguardando Confirmação':
+        return Colors.purple.shade900;
+      case 'Agendado':
+        return const Color(0xFF1E3A5F); // Azul escuro
+      case 'Em Andamento':
+        return const Color(0xFF663C00); // Laranja escuro
+      case 'Concluído':
+        return const Color(0xFF1B5E20); // Verde escuro
+      case 'Cancelado':
+        return const Color(0xFF5D1F1F); // Vermelho escuro
+      default:
+        return const Color(0xFF2C2C2C); // Cinza escuro
+    }
+  }
+
+  // Verifica se o agendamento é de vacina
+  bool _isAgendamentoVacina(AgendamentoServico agendamento) {
+    return (agendamento.servicoId?.startsWith('vacina_') ?? false) || 
+           (agendamento.observacoes != null && agendamento.observacoes!.toLowerCase().contains('aplicar'));
+  }
+
+  // Obtém cor para agendamentos de vacina (laranja)
+  Color _getCorVacina() {
+    return const Color(0xFFFF9800); // Laranja
+  }
+
+  Color _getCorFundoVacina() {
+    return const Color(0xFF663C00); // Laranja escuro
+  }
+
+  Widget _buildCardAgendamento(AgendamentoServico agendamento, DataService dataService) {
+    final isVacina = _isAgendamentoVacina(agendamento);
+    final corStatus = isVacina ? _getCorVacina() : _getCorStatus(agendamento.status);
+    final corFundo = isVacina ? _getCorFundoVacina() : _getCorFundoStatus(agendamento.status);
+    final tipoServico = _getTipoServico(agendamento);
+    final iconeServico = _getIconeTipoServico(agendamento);
+    
+    return GestureDetector(
+      onTap: () => _mostrarDetalhesAgendamento(context, agendamento, dataService),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              corFundo,
+              Color.lerp(corFundo, corStatus, 0.3)!,
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: corStatus.withOpacity(0.8),
+            width: 2,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: corStatus.withOpacity(0.3),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                // Ícone do tipo de serviço
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: corStatus.withOpacity(0.3),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(
+                    iconeServico,
+                    color: corStatus,
+                    size: 24,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Mostrar número do agendamento e número do serviço (se houver)
+                      if (agendamento.numeroPedido != null && agendamento.numeroPedido!.isNotEmpty)
+                        Text(
+                          '${agendamento.numeroPedido} • ${agendamento.numero}',
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.7),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        )
+                      else
+                        Text(
+                          agendamento.numero,
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.7),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      const SizedBox(height: 2),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  isVacina 
+                                      ? (agendamento.observacoes ?? 'Vacina') // Para vacinas, usar observações (descrição)
+                                      : (agendamento.servico?.nome ?? 'Serviço'),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.bold,
+                                    shadows: [
+                                      Shadow(
+                                        color: Colors.black54,
+                                        blurRadius: 2,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                // Badge do tipo de serviço
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: corStatus.withOpacity(0.2),
+                                    borderRadius: BorderRadius.circular(4),
+                                    border: Border.all(color: corStatus.withOpacity(0.5)),
+                                  ),
+                                  child: Text(
+                                    tipoServico,
+                                    style: TextStyle(
+                                      color: corStatus,
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          // Ações rápidas
+                          if (agendamento.status == 'Agendado')
+                            IconButton(
+                              icon: const Icon(Icons.play_arrow, color: Colors.white),
+                              onPressed: () => _marcarEmAndamento(agendamento, dataService),
+                              tooltip: 'Iniciar',
+                              iconSize: 20,
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(),
+                            ),
+                          if (agendamento.status == 'Em Andamento')
+                            IconButton(
+                              icon: const Icon(Icons.check_circle, color: Colors.green),
+                              onPressed: () => _marcarConcluido(agendamento, dataService),
+                              tooltip: 'Concluir',
+                              iconSize: 20,
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(),
+                            ),
+                        ],
+                      ),
+                      // Mostrar valor do serviço
+                      if (agendamento.servico != null && agendamento.servico!.preco > 0) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          'R\$ ${agendamento.servico!.precoTotal.toStringAsFixed(2)}',
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.8),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                      // Mostrar materiais do agendamento e do serviço
+                      Builder(
+                        builder: (context) {
+                          final todosMateriais = [
+                            ...agendamento.materiais, // Materiais do agendamento (prioridade)
+                            if (agendamento.servico != null) ...agendamento.servico!.materiais, // Materiais do serviço
+                          ];
+                          if (todosMateriais.isEmpty) return const SizedBox.shrink();
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const SizedBox(height: 4),
+                              Wrap(
+                                spacing: 4,
+                                runSpacing: 2,
+                                children: todosMateriais.take(3).map((material) {
+                                  return Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: material.isVacina 
+                                          ? Colors.green.withOpacity(0.3)
+                                          : Colors.blue.withOpacity(0.3),
+                                      borderRadius: BorderRadius.circular(4),
+                                      border: Border.all(
+                                        color: material.isVacina 
+                                            ? Colors.green.withOpacity(0.5)
+                                            : Colors.blue.withOpacity(0.5),
+                                        width: 1,
+                                      ),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(
+                                          material.isVacina ? Icons.vaccines : Icons.inventory_2,
+                                          size: 10,
+                                          color: Colors.white.withOpacity(0.9),
+                                        ),
+                                        const SizedBox(width: 4),
+                                        Flexible(
+                                          child: Text(
+                                            '${material.produtoNome} (${material.quantidade.toStringAsFixed(material.quantidade % 1 == 0 ? 0 : 2)}${material.unidade != null ? ' ${material.unidade}' : ''})',
+                                            style: TextStyle(
+                                              color: Colors.white.withOpacity(0.9),
+                                              fontSize: 9,
+                                              fontWeight: FontWeight.w500,
+                                            ),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                }).toList(),
+                              ),
+                              if (todosMateriais.length > 3)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 2),
+                                  child: Text(
+                                    '+${todosMateriais.length - 3} mais',
+                                    style: TextStyle(
+                                      color: Colors.white.withOpacity(0.7),
+                                      fontSize: 8,
+                                      fontStyle: FontStyle.italic,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    _formatoHora!.format(agendamento.dataAgendamento),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            if (agendamento.cliente != null || agendamento.clienteNome != null) ...[
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  const Icon(Icons.person, size: 14, color: Colors.white70),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      agendamento.cliente?.nome ?? agendamento.clienteNome ?? 'Cliente Não Identificado',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            if (agendamento.pet != null || agendamento.petNome != null) ...[
+              const SizedBox(height: 6),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.pets, size: 14, color: Colors.orange),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Pet: ${agendamento.pet?.nome ?? agendamento.petNome ?? "Não informado"}',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        if (agendamento.pet?.observacoes != null && agendamento.pet!.observacoes!.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            agendamento.pet!.observacoes!,
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.7),
+                              fontSize: 11,
+                              fontStyle: FontStyle.italic,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            // Indicador de tipo de entrega (Taxi Dog ou Cliente busca)
+            if (agendamento.tipoEntrega != null) ...[
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: agendamento.tipoEntrega == 'Taxi Dog'
+                          ? Colors.green.withOpacity(0.2)
+                          : Colors.blue.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                        color: agendamento.tipoEntrega == 'Taxi Dog'
+                            ? Colors.green.withOpacity(0.6)
+                            : Colors.blue.withOpacity(0.6),
+                        width: 1,
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          agendamento.tipoEntrega == 'Taxi Dog'
+                              ? Icons.local_shipping
+                              : Icons.person,
+                          size: 12,
+                          color: agendamento.tipoEntrega == 'Taxi Dog'
+                              ? Colors.green
+                              : Colors.blue,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          agendamento.tipoEntrega!,
+                          style: TextStyle(
+                            color: agendamento.tipoEntrega == 'Taxi Dog'
+                                ? Colors.green
+                                : Colors.blue,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        if (agendamento.tipoEntrega == 'Taxi Dog' && agendamento.valorTaxiDog != null && agendamento.valorTaxiDog! > 0) ...[
+                          const SizedBox(width: 4),
+                          Text(
+                            'R\$ ${agendamento.valorTaxiDog!.toStringAsFixed(2)}',
+                            style: const TextStyle(
+                              color: Colors.green,
+                              fontSize: 9,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const Spacer(),
+                  // Indicador de recebido
+                  if (agendamento.recebido == true)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.green.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(
+                          color: Colors.green.withOpacity(0.6),
+                          width: 1,
+                        ),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.check_circle,
+                            size: 12,
+                            color: Colors.green,
+                          ),
+                          SizedBox(width: 4),
+                          Text(
+                            'Recebido',
+                            style: TextStyle(
+                              color: Colors.green,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ],
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: corStatus.withOpacity(0.3),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                        color: corStatus.withOpacity(0.6),
+                        width: 1,
+                      ),
+                    ),
+                    child: Text(
+                      agendamento.status.toUpperCase(),
+                      style: TextStyle(
+                        color: corStatus,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ),
+                ),
+                // Botão para marcar como recebido
+                if ((agendamento.recebido != true) && agendamento.status != 'Cancelado')
+                  const SizedBox(width: 8),
+                if ((agendamento.recebido != true) && agendamento.status != 'Cancelado')
+                  InkWell(
+                    onTap: () => _marcarComoRecebido(context, agendamento, dataService),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.green.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(
+                          color: Colors.green.withOpacity(0.6),
+                          width: 1,
+                        ),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.payment,
+                            size: 14,
+                            color: Colors.green,
+                          ),
+                          SizedBox(width: 4),
+                          Text(
+                            'Receber',
+                            style: TextStyle(
+                              color: Colors.green,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCardAgendamentoCompacto(AgendamentoServico agendamento, DataService dataService) {
+    final isVacina = _isAgendamentoVacina(agendamento);
+    final corStatus = isVacina ? _getCorVacina() : _getCorStatus(agendamento.status);
+    final corFundo = isVacina ? _getCorFundoVacina() : _getCorFundoStatus(agendamento.status);
+    
+    return GestureDetector(
+      onTap: () => _mostrarDetalhesAgendamento(context, agendamento, dataService),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 4),
+        padding: const EdgeInsets.all(6),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              corFundo,
+              Color.lerp(corFundo, corStatus, 0.3)!,
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(
+            color: corStatus.withOpacity(0.6),
+            width: 1.5,
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              _formatoHora!.format(agendamento.dataAgendamento),
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  isVacina 
+                      ? (agendamento.observacoes ?? 'Vacina') // Para vacinas, usar observações
+                      : (agendamento.servico?.nome ?? 'Serviço'),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 9,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                // Mostrar valor do serviço (compacto)
+                if (agendamento.servico != null && agendamento.servico!.preco > 0)
+                  Text(
+                    'R\$ ${agendamento.servico!.precoTotal.toStringAsFixed(2)}',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.7),
+                      fontSize: 8,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                // Mostrar materiais do agendamento e do serviço (compacto - apenas ícone se houver)
+                Builder(
+                  builder: (context) {
+                    final todosMateriaisCompacto = [
+                      ...agendamento.materiais,
+                      if (agendamento.servico != null) ...agendamento.servico!.materiais,
+                    ];
+                    if (todosMateriaisCompacto.isEmpty) return const SizedBox.shrink();
+                    return Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          todosMateriaisCompacto.any((m) => m.isVacina) 
+                              ? Icons.vaccines 
+                              : Icons.inventory_2,
+                          size: 8,
+                          color: Colors.white.withOpacity(0.7),
+                        ),
+                        const SizedBox(width: 2),
+                        Text(
+                          '${todosMateriaisCompacto.length} mat.',
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.7),
+                            fontSize: 7,
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ],
+            ),
+            if (agendamento.cliente != null)
+              Text(
+                agendamento.cliente!.nome,
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.8),
+                  fontSize: 8,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            // Indicador de tipo de entrega (compacto)
+            if (agendamento.tipoEntrega != null)
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    agendamento.tipoEntrega == 'Taxi Dog'
+                        ? Icons.local_shipping
+                        : Icons.person,
+                    size: 8,
+                    color: agendamento.tipoEntrega == 'Taxi Dog'
+                        ? Colors.green
+                        : Colors.blue,
+                  ),
+                  const SizedBox(width: 2),
+                  Text(
+                    agendamento.tipoEntrega == 'Taxi Dog' ? 'TD' : 'CB',
+                    style: TextStyle(
+                      color: agendamento.tipoEntrega == 'Taxi Dog'
+                          ? Colors.green
+                          : Colors.blue,
+                      fontSize: 7,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            // Indicador de recebido (compacto)
+            if (agendamento.recebido == true)
+              const Icon(
+                Icons.check_circle,
+                size: 8,
+                color: Colors.green,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Color _getCorAgendamento(AgendamentoServico agendamento) {
+    if (_isAgendamentoVacina(agendamento)) {
+      return _getCorVacina();
+    }
+    return _getCorStatus(agendamento.status);
+  }
+
+  void _mostrarDetalhesAgendamento(
+    BuildContext context,
+    AgendamentoServico agendamento,
+    DataService dataService,
+  ) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: _getCorAgendamento(agendamento).withOpacity(0.3),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(
+                _isAgendamentoVacina(agendamento) ? Icons.vaccines : Icons.event,
+                color: _getCorAgendamento(agendamento),
+                size: 24,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Detalhes do Agendamento',
+                style: const TextStyle(color: Colors.white),
+              ),
+            ),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildInfoLinha('Número', agendamento.numero),
+              if (agendamento.numeroPedido != null && agendamento.numeroPedido!.isNotEmpty)
+                _buildInfoLinha('Número do Serviço', agendamento.numeroPedido!),
+              _buildInfoLinha('Serviço', agendamento.servico?.nome ?? 'N/A'),
+              if (agendamento.servico != null && agendamento.servico!.preco > 0)
+                _buildInfoLinha('Valor', 'R\$ ${agendamento.servico!.precoTotal.toStringAsFixed(2)}'),
+              // Materiais do agendamento e do serviço
+              Builder(
+                builder: (context) {
+                  final todosMateriaisDetalhes = [
+                    ...agendamento.materiais, // Materiais do agendamento (prioridade)
+                    if (agendamento.servico != null) ...agendamento.servico!.materiais, // Materiais do serviço
+                  ];
+                  if (todosMateriaisDetalhes.isEmpty) return const SizedBox.shrink();
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const SizedBox(height: 12),
+                      Text(
+                        agendamento.materiais.isNotEmpty 
+                            ? 'Materiais do Agendamento:'
+                            : 'Materiais do Serviço:',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      ...todosMateriaisDetalhes.map((material) {
+                        return Container(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.05),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: material.isVacina 
+                            ? Colors.green.withOpacity(0.5)
+                            : Colors.blue.withOpacity(0.5),
+                        width: 1,
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(
+                              material.isVacina ? Icons.vaccines : Icons.inventory_2,
+                              size: 18,
+                              color: material.isVacina ? Colors.green : Colors.blue,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                material.produtoNome,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'Quantidade: ${material.quantidade.toStringAsFixed(material.quantidade % 1 == 0 ? 0 : 2)}${material.unidade != null ? ' ${material.unidade}' : ''}',
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.8),
+                            fontSize: 12,
+                          ),
+                        ),
+                        if (material.precoCusto != null) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            'Custo: R\$ ${material.precoCusto!.toStringAsFixed(2)}',
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.7),
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                        if (material.observacao != null && material.observacao!.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            'Obs: ${material.observacao}',
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.7),
+                              fontSize: 11,
+                              fontStyle: FontStyle.italic,
+                            ),
+                          ),
+                        ],
+                        if (material.isVacina && material.dataProximaAplicacao != null) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            'Próxima aplicação: ${_formatoData!.format(material.dataProximaAplicacao!)}',
+                            style: TextStyle(
+                              color: Colors.green.withOpacity(0.9),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  );
+                        }).toList(),
+                    ],
+                  );
+                },
+              ),
+              _buildInfoLinha('Cliente', agendamento.cliente?.nome ?? agendamento.clienteNome ?? 'N/A'),
+              if (agendamento.pet != null || agendamento.petNome != null) ...[
+                if (agendamento.pet != null)
+                  InkWell(
+                    onTap: () {
+                      // Fechar diálogo de detalhes
+                      Navigator.pop(context);
+                      // Navegar para página de detalhes do cliente na aba Pet
+                      if (agendamento.cliente != null) {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => ClienteDetalhesPage(
+                              cliente: agendamento.cliente,
+                              abaInicial: 3, // Índice 3 = aba Pet
+                              petIdParaEditar: agendamento.petId, // ID do pet para editar
+                            ),
+                          ),
+                        );
+                      }
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          SizedBox(
+                            width: 100,
+                            child: Text(
+                              'Pet:',
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.7),
+                                fontSize: 14,
+                              ),
+                            ),
+                          ),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        '${agendamento.pet!.nome}${agendamento.pet!.especie != null ? ' (${agendamento.pet!.especie}${agendamento.pet!.raca != null ? ' - ${agendamento.pet!.raca}' : ''})' : ''}${agendamento.pet!.tamanho != null || agendamento.pet!.peso != null ? ' - ${[if (agendamento.pet!.tamanho != null) agendamento.pet!.tamanho, if (agendamento.pet!.peso != null) '${agendamento.pet!.peso}kg'].join(' • ')}' : ''}',
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w500,
+                                          decoration: TextDecoration.underline,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Icon(
+                                      Icons.edit,
+                                      size: 16,
+                                      color: Colors.orange.withOpacity(0.7),
+                                    ),
+                                  ],
+                                ),
+                                if (agendamento.pet!.observacoes != null && agendamento.pet!.observacoes!.isNotEmpty) ...[
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    agendamento.pet!.observacoes!,
+                                    style: TextStyle(
+                                      color: Colors.white.withOpacity(0.7),
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                else
+                  _buildInfoLinha('Pet', agendamento.petNome ?? 'N/A'),
+              ],
+              _buildInfoLinha('Data/Hora', _formatoDataHora!.format(agendamento.dataAgendamento)),
+              _buildInfoLinha('Duração', '${agendamento.duracaoMinutos} minutos'),
+              _buildInfoLinha('Status', agendamento.status),
+              if (agendamento.tipoEntrega != null) ...[
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: agendamento.tipoEntrega == 'Taxi Dog' 
+                        ? Colors.green.withOpacity(0.2)
+                        : Colors.blue.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: agendamento.tipoEntrega == 'Taxi Dog'
+                          ? Colors.green.withOpacity(0.5)
+                          : Colors.blue.withOpacity(0.5),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        agendamento.tipoEntrega == 'Taxi Dog'
+                            ? Icons.local_shipping
+                            : Icons.person,
+                        color: agendamento.tipoEntrega == 'Taxi Dog'
+                            ? Colors.green
+                            : Colors.blue,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Entrega: ${agendamento.tipoEntrega}',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
+                            ),
+                            if (agendamento.tipoEntrega == 'Taxi Dog') ...[
+                              if (agendamento.bairroEntrega != null && agendamento.bairroEntrega!.isNotEmpty)
+                                Text(
+                                  'Bairro: ${agendamento.bairroEntrega}',
+                                  style: TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              if (agendamento.valorTaxiDog != null && agendamento.valorTaxiDog! > 0)
+                                Text(
+                                  'Taxa: R\$ ${agendamento.valorTaxiDog!.toStringAsFixed(2)}',
+                                  style: TextStyle(
+                                    color: Colors.green,
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              if (agendamento.cliente != null && agendamento.cliente!.observacoes != null && agendamento.cliente!.observacoes!.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                _buildInfoLinha('Observações do Cliente', agendamento.cliente!.observacoes!),
+              ],
+              if (agendamento.cliente != null && agendamento.cliente!.dadosExtras != null && agendamento.cliente!.dadosExtras!.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                _buildInfoLinha('Dados Extras do Cliente', agendamento.cliente!.dadosExtras!.entries.map((e) => '${e.key}: ${e.value}').join('\n')),
+              ],
+              if (agendamento.observacoes != null && agendamento.observacoes!.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                _buildInfoLinha('Observações do Agendamento', agendamento.observacoes!),
+              ],
+              // Informação de recebimento
+              if (agendamento.recebido == true) ...[
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.green.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: Colors.green.withOpacity(0.5),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.check_circle, color: Colors.green, size: 20),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Recebido',
+                              style: TextStyle(
+                                color: Colors.green,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
+                            ),
+                            if (agendamento.dataRecebimento != null)
+                              Text(
+                                'Em ${DateFormat('dd/MM/yyyy HH:mm').format(agendamento.dataRecebimento!)}',
+                                style: TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 12,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          // Botão para marcar como recebido (se ainda não foi recebido)
+          if ((agendamento.recebido != true) && agendamento.status != 'Cancelado')
+            IconButton(
+              icon: const Icon(Icons.payment, color: Colors.green),
+              tooltip: 'Marcar como Recebido',
+              onPressed: () {
+                Navigator.pop(context);
+                _marcarComoRecebido(context, agendamento, dataService);
+              },
+            ),
+          // Botão para gerar PDF
+          IconButton(
+            icon: const Icon(Icons.picture_as_pdf, color: Colors.red),
+            tooltip: 'Gerar PDF',
+            onPressed: () async {
+              try {
+                // Buscar cliente atualizado do DataService para garantir que tem todas as informações
+                Cliente? clienteAtualizado;
+                if (agendamento.clienteId != null) {
+                  try {
+                    clienteAtualizado = dataService.clientes.firstWhere(
+                      (c) => c.id == agendamento.clienteId,
+                    );
+                  } catch (e) {
+                    // Se não encontrar, usar o cliente do agendamento ou null
+                    clienteAtualizado = agendamento.cliente;
+                  }
+                } else {
+                  clienteAtualizado = agendamento.cliente;
+                }
+                
+                // Criar agendamento com cliente atualizado
+                final agendamentoComClienteAtualizado = agendamento.copyWith(
+                  cliente: clienteAtualizado,
+                );
+                
+                // Buscar pedido relacionado ao agendamento
+                Pedido? pedidoRelacionado;
+                try {
+                  debugPrint('>>> [Agenda] Buscando pedido relacionado ao agendamento...');
+                  debugPrint('>>> [Agenda] Cliente ID: ${agendamento.clienteId}');
+                  debugPrint('>>> [Agenda] Data Agendamento: ${agendamento.dataAgendamento}');
+                  
+                  // Estratégia 1: Buscar por cliente e data (mais precisa)
+                  final pedidosPorClienteEData = dataService.pedidos.where((p) {
+                    if (agendamento.clienteId != null && p.clienteId != agendamento.clienteId) {
+                      return false;
+                    }
+                    // Verificar se a data do pedido está próxima da data do agendamento
+                    final diferencaDias = (p.dataPedido.difference(agendamento.dataAgendamento).inDays).abs();
+                    return diferencaDias <= 1; // Pedido no mesmo dia ou dia seguinte
+                  }).toList();
+                  
+                  debugPrint('>>> [Agenda] Pedidos encontrados por cliente e data: ${pedidosPorClienteEData.length}');
+                  
+                  // Estratégia 2: Se não encontrou, buscar por cliente apenas (mais ampla)
+                  if (pedidosPorClienteEData.isEmpty && agendamento.clienteId != null) {
+                    final pedidosPorCliente = dataService.pedidos.where((p) {
+                      return p.clienteId == agendamento.clienteId;
+                    }).toList();
+                    
+                    debugPrint('>>> [Agenda] Pedidos encontrados por cliente apenas: ${pedidosPorCliente.length}');
+                    
+                    // Se houver múltiplos, pegar o mais recente
+                    if (pedidosPorCliente.isNotEmpty) {
+                      pedidosPorCliente.sort((a, b) => b.dataPedido.compareTo(a.dataPedido));
+                      pedidoRelacionado = pedidosPorCliente.first;
+                      debugPrint('>>> [Agenda] Pedido selecionado (mais recente): ${pedidoRelacionado.numero}');
+                    }
+                  } else if (pedidosPorClienteEData.isNotEmpty) {
+                    // Se houver múltiplos, pegar o mais recente
+                    pedidosPorClienteEData.sort((a, b) => b.dataPedido.compareTo(a.dataPedido));
+                    pedidoRelacionado = pedidosPorClienteEData.first;
+                    debugPrint('>>> [Agenda] Pedido selecionado (mais recente): ${pedidoRelacionado.numero}');
+                  }
+                  
+                  // Log do pedido encontrado
+                  if (pedidoRelacionado != null) {
+                    debugPrint('>>> [Agenda] ✅ Pedido encontrado:');
+                    debugPrint('>>> [Agenda]   Número: ${pedidoRelacionado.numero}');
+                    debugPrint('>>> [Agenda]   Data: ${pedidoRelacionado.dataPedido}');
+                    debugPrint('>>> [Agenda]   Observações: "${pedidoRelacionado.observacoes ?? "NULL"}"');
+                    debugPrint('>>> [Agenda]   Observações (isEmpty): ${pedidoRelacionado.observacoes?.isEmpty ?? true}');
+                  } else {
+                    debugPrint('>>> [Agenda] ⚠️ Nenhum pedido relacionado encontrado');
+                  }
+                } catch (e) {
+                  debugPrint('>>> [Agenda] Erro ao buscar pedido: $e');
+                }
+                
+                await AgendamentoPdfService.visualizarPDF(
+                  agendamento: agendamentoComClienteAtualizado,
+                  pedido: pedidoRelacionado,
+                  dataService: dataService, // Passar DataService para buscar cliente atualizado
+                );
+              } catch (e) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Erro ao gerar PDF: $e'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
+              }
+            },
+          ),
+          // Botão para editar cliente (se houver cliente)
+          if (agendamento.cliente != null || agendamento.clienteId != null)
+            IconButton(
+              icon: const Icon(Icons.edit, color: Colors.blue),
+              tooltip: 'Editar Cliente',
+              onPressed: () async {
+                Navigator.pop(context); // Fechar dialog de detalhes
+                
+                // Buscar cliente atualizado
+                Cliente? clienteParaEditar;
+                if (agendamento.clienteId != null) {
+                  try {
+                    clienteParaEditar = dataService.clientes.firstWhere(
+                      (c) => c.id == agendamento.clienteId,
+                    );
+                  } catch (e) {
+                    clienteParaEditar = agendamento.cliente;
+                  }
+                } else {
+                  clienteParaEditar = agendamento.cliente;
+                }
+                
+                if (clienteParaEditar != null) {
+                  // Navegar para a página de detalhes do cliente
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => ClienteDetalhesPage(cliente: clienteParaEditar),
+                    ),
+                  );
+                  
+                  // Atualizar a lista após editar
+                  if (context.mounted) {
+                    setState(() {});
+                  }
+                } else {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Cliente não encontrado'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
+                }
+              },
+            ),
+          // Botão para alterar status
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert, color: Colors.white70),
+            color: const Color(0xFF1E1E2E),
+            onSelected: (novoStatus) async {
+              try {
+                final agendamentoAtualizado = agendamento.copyWith(
+                  status: novoStatus,
+                  updatedAt: DateTime.now(),
+                );
+                
+                await dataService.updateAgendamentoServico(agendamentoAtualizado);
+                
+                // Se o status foi alterado para "Concluído", criar pedido no histórico
+                if (novoStatus == 'Concluído' && agendamento.status != 'Concluído') {
+                  await _criarPedidoDoAgendamento(agendamentoAtualizado, dataService);
+                }
+                
+                if (context.mounted) {
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Status alterado para: $novoStatus'),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                }
+              } catch (e) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Erro ao alterar status: $e'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
+              }
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'Agendado',
+                child: Text('Agendado', style: TextStyle(color: Colors.white)),
+              ),
+              const PopupMenuItem(
+                value: 'Em Andamento',
+                child: Text('Em Andamento', style: TextStyle(color: Colors.white)),
+              ),
+              const PopupMenuItem(
+                value: 'Concluído',
+                child: Text('Concluído', style: TextStyle(color: Colors.white)),
+              ),
+              const PopupMenuItem(
+                value: 'Cancelado',
+                child: Text('Cancelado', style: TextStyle(color: Colors.white)),
+              ),
+            ],
+          ),
+          if (agendamento.status == 'Aguardando Confirmação') ...[
+            ElevatedButton(
+              onPressed: () async {
+                await dataService.rejeitarAgendamento(agendamento.id);
+                if (context.mounted) Navigator.pop(context);
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade900),
+              child: const Text('Rejeitar'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                await dataService.aprovarAgendamento(agendamento.id);
+                if (context.mounted) Navigator.pop(context);
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.purple),
+              child: const Text('Aprovar'),
+            ),
+          ],
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Fechar', style: TextStyle(color: Colors.white54)),
+          ),
+          if (agendamento.status == 'Agendado') ...[
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _editarAgendamento(context, agendamento, dataService);
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
+              child: const Text('Editar'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _cancelarAgendamento(context, agendamento, dataService);
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+              child: const Text('Cancelar'),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInfoLinha(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 100,
+            child: Text(
+              '$label:',
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.7),
+                fontSize: 14,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _mostrarDialogNovoAgendamento(BuildContext context, DataService dataService, {DateTime? dataHoraPreSelecionada}) async {
+    // Serviço é opcional - permitir agendamento sem serviço
+    Servico? servicoSelecionado = null;
+    Cliente? clienteSelecionado;
+    DateTime dataAgendamento = dataHoraPreSelecionada ?? _dataSelecionada;
+    TimeOfDay horaAgendamento = dataHoraPreSelecionada != null 
+        ? TimeOfDay.fromDateTime(dataHoraPreSelecionada)
+        : TimeOfDay.now();
+    int duracaoMinutos = 60;
+    final observacoesController = TextEditingController();
+    List<String> petsSelecionadosIds = []; // Lista de IDs dos pets selecionados
+    String? tipoEntrega; // 'Taxi Dog' ou 'Cliente busca'
+    final valorTaxiDogController = TextEditingController();
+    final bairroEntregaController = TextEditingController();
+    final List<ItemMaterial> materiaisAgendamento = []; // Materiais/vacinas do agendamento
+
+    await showDialog(
+      context: context,
+      builder: (dialogContext) {
+        bool salvando = false;
+        return StatefulBuilder(
+          builder: (context, setState) => AlertDialog(
+          backgroundColor: const Color(0xFF1E1E2E),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.blue.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.add_circle_outline, color: Colors.blueAccent, size: 24),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Text('Novo Agendamento', style: TextStyle(color: Colors.white)),
+              ),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Seleção de Serviço
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text('Serviço:', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                    ),
+                    TextButton.icon(
+                      onPressed: () => _mostrarDialogCadastroRapidoServico(context, dataService, (novoServico) {
+                        setState(() {
+                          servicoSelecionado = novoServico;
+                        });
+                      }),
+                      icon: const Icon(Icons.add_circle, size: 18, color: Colors.blueAccent),
+                      label: const Text('Novo Serviço', style: TextStyle(color: Colors.blueAccent, fontSize: 12)),
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<Servico?>(
+                  value: servicoSelecionado,
+                  decoration: InputDecoration(
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    filled: true,
+                    fillColor: Colors.white.withOpacity(0.05),
+                    hintText: 'Nenhum serviço (opcional)',
+                    hintStyle: TextStyle(color: Colors.white.withOpacity(0.5)),
+                  ),
+                  dropdownColor: const Color(0xFF2C2C3E),
+                  style: const TextStyle(color: Colors.white),
+                  items: [
+                    // Opção "Nenhum serviço"
+                    const DropdownMenuItem<Servico?>(
+                      value: null,
+                      child: Text('Nenhum serviço (opcional)', style: TextStyle(color: Colors.white70, fontStyle: FontStyle.italic)),
+                    ),
+                    // Lista de serviços
+                    ...dataService.servicos.map((s) {
+                      return DropdownMenuItem<Servico?>(
+                        value: s,
+                        child: Text(s.nome),
+                      );
+                    }),
+                  ],
+                  onChanged: (value) {
+                    setState(() => servicoSelecionado = value);
+                  },
+                ),
+                const SizedBox(height: 16),
+                // Seleção de Cliente
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text('Cliente:', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                    ),
+                    TextButton.icon(
+                      onPressed: () => _mostrarDialogCadastroRapidoCliente(context, dataService, (novoCliente) {
+                      setState(() {
+                        // Buscar o cliente atualizado do DataService
+                        final clienteAtualizado = dataService.clientes.firstWhere(
+                          (c) => c.id == novoCliente.id,
+                          orElse: () => novoCliente,
+                        );
+                        clienteSelecionado = clienteAtualizado;
+                        // Preencher observações com dados do cliente
+                        final observacoesCliente = <String>[];
+                            
+                            // Adicionar endereço do cliente
+                            final enderecoCompleto = <String>[];
+                            if (novoCliente.endereco != null && novoCliente.endereco!.isNotEmpty) {
+                              enderecoCompleto.add(novoCliente.endereco!);
+                              if (novoCliente.numero != null && novoCliente.numero!.isNotEmpty) {
+                                enderecoCompleto.add('nº ${novoCliente.numero}');
+                              }
+                              if (novoCliente.complemento != null && novoCliente.complemento!.isNotEmpty) {
+                                enderecoCompleto.add('- ${novoCliente.complemento}');
+                              }
+                              if (novoCliente.bairro != null && novoCliente.bairro!.isNotEmpty) {
+                                enderecoCompleto.add('- ${novoCliente.bairro}');
+                              }
+                              if (novoCliente.cidade != null && novoCliente.cidade!.isNotEmpty) {
+                                enderecoCompleto.add('- ${novoCliente.cidade}');
+                              }
+                              if (novoCliente.estado != null && novoCliente.estado!.isNotEmpty) {
+                                enderecoCompleto.add('/${novoCliente.estado}');
+                              }
+                              if (novoCliente.cep != null && novoCliente.cep!.isNotEmpty) {
+                                enderecoCompleto.add('CEP: ${novoCliente.cep}');
+                              }
+                              if (novoCliente.pontoReferencia != null && novoCliente.pontoReferencia!.isNotEmpty) {
+                                enderecoCompleto.add('Ponto de Referência: ${novoCliente.pontoReferencia}');
+                              }
+                              
+                              if (enderecoCompleto.isNotEmpty) {
+                                observacoesCliente.add('=== ENDEREÇO DO CLIENTE ===');
+                                observacoesCliente.add(enderecoCompleto.join(' '));
+                              }
+                            }
+                            
+                        if (observacoesCliente.isNotEmpty) {
+                          final textoAtual = observacoesController.text.trim();
+                          if (textoAtual.isNotEmpty) {
+                            observacoesController.text = '$textoAtual\n\n${observacoesCliente.join('\n')}';
+                          } else {
+                            observacoesController.text = observacoesCliente.join('\n');
+                          }
+                        }
+                      });
+                    },
+                  ),
+                      icon: const Icon(Icons.person_add, size: 18, color: Colors.blueAccent),
+                      label: const Text('Novo Cliente', style: TextStyle(color: Colors.blueAccent, fontSize: 12)),
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<Cliente?>(
+                  value: clienteSelecionado,
+                  decoration: InputDecoration(
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    filled: true,
+                    fillColor: Colors.white.withOpacity(0.05),
+                  ),
+                  dropdownColor: const Color(0xFF2C2C3E),
+                  style: const TextStyle(color: Colors.white),
+                  items: [
+                    const DropdownMenuItem<Cliente?>(
+                      value: null,
+                      child: Text('Sem cliente'),
+                    ),
+                    ...dataService.clientes.map((c) {
+                      return DropdownMenuItem(
+                        value: c,
+                        child: Text(c.nome),
+                      );
+                    }),
+                  ],
+                  onChanged: (value) {
+                    setState(() {
+                      clienteSelecionado = value;
+                      // Preencher observações com dados do cliente
+                      if (value != null) {
+                        final observacoesCliente = <String>[];
+                        
+                        // Adicionar endereço do cliente
+                        final enderecoCompleto = <String>[];
+                        if (value.endereco != null && value.endereco!.isNotEmpty) {
+                          enderecoCompleto.add(value.endereco!);
+                          if (value.numero != null && value.numero!.isNotEmpty) {
+                            enderecoCompleto.add('nº ${value.numero}');
+                          }
+                          if (value.complemento != null && value.complemento!.isNotEmpty) {
+                            enderecoCompleto.add('- ${value.complemento}');
+                          }
+                          if (value.bairro != null && value.bairro!.isNotEmpty) {
+                            enderecoCompleto.add('- ${value.bairro}');
+                          }
+                          if (value.cidade != null && value.cidade!.isNotEmpty) {
+                            enderecoCompleto.add('- ${value.cidade}');
+                          }
+                          if (value.estado != null && value.estado!.isNotEmpty) {
+                            enderecoCompleto.add('/${value.estado}');
+                          }
+                          if (value.cep != null && value.cep!.isNotEmpty) {
+                            enderecoCompleto.add('CEP: ${value.cep}');
+                          }
+                          if (value.pontoReferencia != null && value.pontoReferencia!.isNotEmpty) {
+                            enderecoCompleto.add('Ponto de Referência: ${value.pontoReferencia}');
+                          }
+                          
+                          if (enderecoCompleto.isNotEmpty) {
+                            observacoesCliente.add('=== ENDEREÇO DO CLIENTE ===');
+                            observacoesCliente.add(enderecoCompleto.join(' '));
+                          }
+                        }
+                        
+                        // Adicionar observações do cliente
+                        if (value.observacoes != null && value.observacoes!.isNotEmpty) {
+                          if (observacoesCliente.isNotEmpty) {
+                            observacoesCliente.add('');
+                          }
+                          observacoesCliente.add('=== OBSERVAÇÕES DO CLIENTE ===');
+                          observacoesCliente.add(value.observacoes!);
+                        }
+                        
+                        // Adicionar dados extras do cliente
+                        if (value.dadosExtras != null && value.dadosExtras!.isNotEmpty) {
+                          if (observacoesCliente.isNotEmpty) {
+                            observacoesCliente.add('');
+                          }
+                          observacoesCliente.add('=== DADOS EXTRAS DO CLIENTE ===');
+                          value.dadosExtras!.forEach((key, valor) {
+                            observacoesCliente.add('$key: $valor');
+                          });
+                        }
+                        
+                        // Se já tinha observações, manter e adicionar as do cliente
+                        if (observacoesCliente.isNotEmpty) {
+                          final textoAtual = observacoesController.text.trim();
+                          if (textoAtual.isNotEmpty) {
+                            observacoesController.text = '$textoAtual\n\n${observacoesCliente.join('\n')}';
+                          } else {
+                            observacoesController.text = observacoesCliente.join('\n');
+                          }
+                        }
+                      } else {
+                        // Se remover cliente, limpar observações relacionadas
+                        final textoAtual = observacoesController.text;
+                        // Remover seções de observações do cliente
+                        final linhas = textoAtual.split('\n');
+                        final linhasFiltradas = <String>[];
+                        bool pularSecao = false;
+                        
+                        for (final linha in linhas) {
+                          if (linha.contains('=== ENDEREÇO DO CLIENTE ===') ||
+                              linha.contains('=== OBSERVAÇÕES DO CLIENTE ===') || 
+                              linha.contains('=== DADOS EXTRAS DO CLIENTE ===')) {
+                            pularSecao = true;
+                            continue;
+                          }
+                          if (linha.trim().isEmpty && pularSecao) {
+                            pularSecao = false;
+                            continue;
+                          }
+                          if (!pularSecao) {
+                            linhasFiltradas.add(linha);
+                          }
+                        }
+                        
+                        observacoesController.text = linhasFiltradas.join('\n').trim();
+                      }
+                    });
+                  },
+                ),
+                const SizedBox(height: 16),
+                // Data
+                const Text('Data:', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                const SizedBox(height: 8),
+                InkWell(
+                  onTap: () async {
+                    final data = await showDatePicker(
+                      context: context,
+                      initialDate: dataAgendamento,
+                      firstDate: DateTime.now(),
+                      lastDate: DateTime.now().add(const Duration(days: 365)),
+                    );
+                    if (data != null) {
+                      setState(() => dataAgendamento = data);
+                    }
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.white.withOpacity(0.3)),
+                      borderRadius: BorderRadius.circular(12),
+                      color: Colors.white.withOpacity(0.05),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.calendar_today, color: Colors.white70, size: 20),
+                        const SizedBox(width: 8),
+                        Text(
+                          _formatoData!.format(dataAgendamento),
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                // Hora
+                const Text('Hora:', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                const SizedBox(height: 8),
+                InkWell(
+                  onTap: () async {
+                    final hora = await _mostrarSeletorHoraComBloqueio(
+                      context: context,
+                      horaInicial: horaAgendamento,
+                      dataAgendamento: dataAgendamento,
+                      duracaoMinutos: duracaoMinutos,
+                      dataService: dataService,
+                    );
+                    if (hora != null) {
+                      setState(() => horaAgendamento = hora);
+                    }
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.white.withOpacity(0.3)),
+                      borderRadius: BorderRadius.circular(12),
+                      color: Colors.white.withOpacity(0.05),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.access_time, color: Colors.white70, size: 20),
+                        const SizedBox(width: 8),
+                        Text(
+                          _formatoHora!.format(DateTime(2000, 1, 1, horaAgendamento.hour, horaAgendamento.minute)),
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                // Duração
+                const Text('Duração (minutos):', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                const SizedBox(height: 8),
+                Builder(
+                  builder: (context) {
+                    final duracaoController = TextEditingController(text: duracaoMinutos.toString());
+                    return TextField(
+                      controller: duracaoController,
+                      keyboardType: TextInputType.number,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: InputDecoration(
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                        filled: true,
+                        fillColor: Colors.white.withOpacity(0.05),
+                      ),
+                      onChanged: (value) {
+                        duracaoMinutos = int.tryParse(value) ?? 60;
+                      },
+                    );
+                  },
+                ),
+                const SizedBox(height: 16),
+                // Seleção de Pets (múltipla)
+                if (clienteSelecionado != null) ...[
+                  Row(
+                    children: [
+                      const Expanded(
+                        child: Text('Pets:', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                      ),
+                      TextButton.icon(
+                        onPressed: () async {
+                          // Buscar cliente atualizado antes de abrir o diálogo
+                          final clienteAtual = dataService.clientes.firstWhere(
+                            (c) => c.id == clienteSelecionado!.id,
+                            orElse: () => clienteSelecionado!,
+                          );
+                          
+                          final clienteRetornado = await _mostrarDialogCadastroRapidoPet(context, dataService, clienteAtual, (novoPet) {
+                            // Callback será chamado dentro do método
+                          });
+                          
+                          // Após retornar, atualizar o cliente selecionado e a lista
+                          if (clienteRetornado != null && context.mounted) {
+                            // Aguardar um pouco para garantir que o DataService foi atualizado
+                            await Future.delayed(const Duration(milliseconds: 300));
+                            
+                            // Buscar cliente atualizado do DataService
+                            final clienteAtualizado = dataService.clientes.firstWhere(
+                              (c) => c.id == clienteSelecionado!.id,
+                              orElse: () => clienteRetornado,
+                            );
+                            
+                            // Usar setState do StatefulBuilder para atualizar o diálogo
+                            setState(() {
+                              clienteSelecionado = clienteAtualizado;
+                              
+                              // Se houver novos pets, adicionar o último à seleção
+                              if (clienteAtualizado.pets.isNotEmpty) {
+                                final ultimoPet = clienteAtualizado.pets.last;
+                                if (!petsSelecionadosIds.contains(ultimoPet.id)) {
+                                  petsSelecionadosIds.add(ultimoPet.id);
+                                }
+                              }
+                            });
+                          }
+                        },
+                        icon: const Icon(Icons.pets, size: 18, color: Colors.orange),
+                        label: const Text('Novo Pet', style: TextStyle(color: Colors.orange, fontSize: 12)),
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  // Buscar cliente atualizado do DataService para ter os pets mais recentes
+                  // Usar Consumer para reagir automaticamente às mudanças do DataService
+                  Consumer<DataService>(
+                    builder: (context, dataServiceConsumer, child) {
+                      // Buscar cliente atualizado do DataService
+                      final clienteAtualizado = dataServiceConsumer.clientes.firstWhere(
+                        (c) => c.id == clienteSelecionado?.id,
+                        orElse: () => clienteSelecionado!,
+                      );
+                      
+                      // Atualizar clienteSelecionado se houver mudanças
+                      if (clienteSelecionado != null && clienteAtualizado.id == clienteSelecionado!.id) {
+                        if (clienteAtualizado.pets.length != clienteSelecionado!.pets.length) {
+                          // Atualizar a referência do cliente selecionado
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            if (mounted) {
+                              setState(() {
+                                clienteSelecionado = clienteAtualizado;
+                              });
+                            }
+                          });
+                        }
+                      }
+                      
+                      if (clienteAtualizado.pets.isEmpty) {
+                        return const Padding(
+                          padding: EdgeInsets.all(16.0),
+                          child: Text(
+                            'Nenhum pet cadastrado. Clique em "Novo Pet" para cadastrar.',
+                            style: TextStyle(color: Colors.white70, fontSize: 12),
+                            textAlign: TextAlign.center,
+                          ),
+                        );
+                      }
+                      
+                      return Container(
+                        decoration: BoxDecoration(
+                          border: Border.all(color: Colors.white.withOpacity(0.3)),
+                          borderRadius: BorderRadius.circular(12),
+                          color: Colors.white.withOpacity(0.05),
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: clienteAtualizado.pets.map((pet) {
+                            final isSelecionado = petsSelecionadosIds.contains(pet.id);
+                            return CheckboxListTile(
+                              title: Text(
+                                pet.nome,
+                                style: const TextStyle(color: Colors.white),
+                              ),
+                              subtitle: pet.especie != null || pet.raca != null
+                                  ? Text(
+                                      '${pet.especie ?? ''}${pet.especie != null && pet.raca != null ? ' - ' : ''}${pet.raca ?? ''}',
+                                      style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 12),
+                                    )
+                                  : null,
+                              value: isSelecionado,
+                              activeColor: Colors.blueAccent,
+                              checkColor: Colors.white,
+                              onChanged: (value) {
+                                setState(() {
+                                  if (value == true) {
+                                    if (!petsSelecionadosIds.contains(pet.id)) {
+                                      petsSelecionadosIds.add(pet.id);
+                                    }
+                                  } else {
+                                    petsSelecionadosIds.remove(pet.id);
+                                  }
+                                });
+                              },
+                            );
+                          }).toList(),
+                        ),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                ],
+                // Tipo de Entrega
+                const Text('Tipo de Entrega:', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String?>(
+                  value: tipoEntrega,
+                  decoration: InputDecoration(
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    filled: true,
+                    fillColor: Colors.white.withOpacity(0.05),
+                  ),
+                  dropdownColor: const Color(0xFF2C2C3E),
+                  style: const TextStyle(color: Colors.white),
+                  items: [
+                    const DropdownMenuItem<String?>(
+                      value: null,
+                      child: Text('Não especificado'),
+                    ),
+                    const DropdownMenuItem<String>(
+                      value: 'Taxi Dog',
+                      child: Text('Taxi Dog'),
+                    ),
+                    const DropdownMenuItem<String>(
+                      value: 'Cliente busca',
+                      child: Text('Cliente busca'),
+                    ),
+                  ],
+                  onChanged: (value) {
+                    setState(() {
+                      tipoEntrega = value;
+                      if (value != 'Taxi Dog') {
+                        valorTaxiDogController.clear();
+                        bairroEntregaController.clear();
+                      }
+                    });
+                  },
+                ),
+                // Campos de Taxi Dog
+                if (tipoEntrega == 'Taxi Dog') ...[
+                  const SizedBox(height: 16),
+                  const Text('Bairro:', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: bairroEntregaController,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      filled: true,
+                      fillColor: Colors.white.withOpacity(0.05),
+                      hintText: 'Digite o bairro',
+                      hintStyle: TextStyle(color: Colors.white.withOpacity(0.5)),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text('Valor Taxi Dog (R\$):', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: valorTaxiDogController,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      filled: true,
+                      fillColor: Colors.white.withOpacity(0.05),
+                      hintText: '0.00',
+                      hintStyle: TextStyle(color: Colors.white.withOpacity(0.5)),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 24),
+                // Seção de Materiais/Vacinas
+                Row(
+                  children: [
+                    const Icon(Icons.vaccines, color: Colors.green, size: 20),
+                    const SizedBox(width: 8),
+                    const Text(
+                      'Materiais/Vacinas do Agendamento',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                if (materiaisAgendamento.isEmpty)
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.05),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.white.withOpacity(0.1)),
+                    ),
+                    child: const Text(
+                      'Nenhum material adicionado. Adicione vacinas ou materiais que serão utilizados neste agendamento.',
+                      style: TextStyle(color: Colors.white70, fontSize: 12),
+                    ),
+                  )
+                else ...[
+                  ...materiaisAgendamento.asMap().entries.map((entry) {
+                    final index = entry.key;
+                    final material = entry.value;
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.05),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.white.withOpacity(0.1)),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            material.isVacina ? Icons.vaccines : Icons.inventory,
+                            color: material.isVacina ? Colors.green : Colors.blue,
+                            size: 20,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  material.produtoNome,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  'Quantidade: ${material.quantidade.toStringAsFixed(2)} ${material.unidade ?? "UN"}',
+                                  style: const TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                                if (material.isVacina && material.dataProximaAplicacao != null)
+                                  Text(
+                                    'Próxima aplicação: ${_formatoData?.format(material.dataProximaAplicacao!) ?? ""}',
+                                    style: const TextStyle(
+                                      color: Colors.green,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                if (material.isVacina && material.intervaloDias != null)
+                                  Text(
+                                    'Intervalo: ${material.intervaloDias} dias',
+                                    style: const TextStyle(
+                                      color: Colors.green,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.delete, color: Colors.red, size: 20),
+                            onPressed: () {
+                              setState(() {
+                                materiaisAgendamento.removeAt(index);
+                              });
+                            },
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
+                ],
+                const SizedBox(height: 12),
+                ElevatedButton.icon(
+                  onPressed: () => _mostrarDialogoAdicionarMaterialAgenda(
+                    context,
+                    dataService,
+                    setState,
+                    materiaisAgendamento,
+                  ),
+                  icon: const Icon(Icons.add),
+                  label: const Text('Adicionar Material/Vacina'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green,
+                    foregroundColor: Colors.white,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                // Observações
+                const Text('Observações:', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: observacoesController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    filled: true,
+                    fillColor: Colors.white.withOpacity(0.05),
+                  ),
+                  maxLines: 3,
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+            ),
+            ElevatedButton(
+              onPressed: salvando ? null : () async {
+                setState(() => salvando = true);
+                // Serviço é opcional - não precisa validar
+
+                final dataHoraCompleta = DateTime(
+                  dataAgendamento.year,
+                  dataAgendamento.month,
+                  dataAgendamento.day,
+                  horaAgendamento.hour,
+                  horaAgendamento.minute,
+                );
+
+                // Validação de conflito REMOVIDA - permitir múltiplos agendamentos no mesmo horário
+                try {
+                  // Processar valor do Taxi Dog
+                  double? valorTaxiDog;
+                  if (tipoEntrega == 'Taxi Dog' && valorTaxiDogController.text.isNotEmpty) {
+                    final valorTexto = valorTaxiDogController.text.replaceAll(',', '.').trim();
+                    valorTaxiDog = double.tryParse(valorTexto);
+                  }
+
+                  // Se houver pets selecionados, criar um agendamento para cada pet
+                  // Se não houver pets selecionados, criar um agendamento sem pet
+                  // Buscar cliente atualizado do DataService para ter os pets mais recentes
+                  final clienteAtualizado = dataService.clientes.firstWhere(
+                    (c) => c.id == clienteSelecionado?.id,
+                    orElse: () => clienteSelecionado!,
+                  );
+                  
+                  final petsParaAgendar = petsSelecionadosIds.isEmpty 
+                      ? [null] // Criar um agendamento sem pet
+                      : clienteAtualizado.pets.where((p) => petsSelecionadosIds.contains(p.id)).toList();
+
+                  int agendamentosCriados = 0;
+                  for (final pet in petsParaAgendar) {
+                    final novoAgendamento = AgendamentoServico(
+                      id: '${DateTime.now().millisecondsSinceEpoch}_${pet?.id ?? 'sem_pet'}_${agendamentosCriados}',
+                      numero: '', // Será gerado automaticamente no addAgendamentoServico
+                      servicoId: servicoSelecionado?.id,
+                      servico: servicoSelecionado,
+                      clienteId: clienteSelecionado?.id,
+                      petId: pet?.id,
+                      pet: pet,
+                      dataAgendamento: dataHoraCompleta,
+                      duracaoMinutos: duracaoMinutos,
+                      observacoes: observacoesController.text.trim().isEmpty
+                          ? null
+                          : observacoesController.text.trim(),
+                      status: 'Agendado',
+                      tipoEntrega: tipoEntrega,
+                      valorTaxiDog: valorTaxiDog,
+                      bairroEntrega: tipoEntrega == 'Taxi Dog' && bairroEntregaController.text.isNotEmpty
+                          ? bairroEntregaController.text.trim()
+                          : null,
+                      materiais: List.from(materiaisAgendamento), // Copiar lista de materiais
+                    );
+
+                    await dataService.addAgendamentoServico(novoAgendamento);
+                    agendamentosCriados++;
+                    
+                    // Criar agendamentos de reaplicação para vacinas
+                    // Usar o contexto do dialogContext que está disponível
+                    for (final material in materiaisAgendamento) {
+                      if (material.isVacina) {
+                        // Usar o contexto do dialog para mostrar mensagens
+                        await _criarAgendamentoReaplicacaoVacinaComContexto(
+                          dialogContext,
+                          material,
+                          clienteSelecionado,
+                          pet,
+                          dataService,
+                        );
+                      }
+                    }
+                  }
+                  
+                  if (context.mounted) {
+                    Navigator.pop(dialogContext);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(agendamentosCriados > 1
+                            ? '$agendamentosCriados agendamentos criados com sucesso!'
+                            : 'Agendamento criado com sucesso!'),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  if (context.mounted) {
+                    final mensagemErro = e.toString().replaceAll('Exception: ', '');
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(mensagemErro),
+                        backgroundColor: Colors.red,
+                        duration: const Duration(seconds: 6),
+                        action: SnackBarAction(
+                          label: 'OK',
+                          textColor: Colors.white,
+                          onPressed: () {},
+                        ),
+                      ),
+                    );
+                  }
+                } finally {
+                  if (context.mounted) {
+                    setState(() => salvando = false);
+                  }
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blueAccent,
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              ),
+              child: salvando 
+                ? const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                      ),
+                      SizedBox(width: 12),
+                      Text('Aguardando...', style: TextStyle(fontWeight: FontWeight.bold)),
+                    ],
+                  )
+                : const Text('Agendar'),
+            ),
+          ],
+        ),
+      );
+    },
+  );
+}
+
+  void _editarAgendamento(BuildContext context, AgendamentoServico agendamento, DataService dataService) {
+    final servicos = dataService.servicos;
+    final clientes = dataService.clientes;
+    
+    Servico? servicoSelecionado = agendamento.servico;
+    Cliente? clienteSelecionado = agendamento.cliente;
+    DateTime dataSelecionada = agendamento.dataAgendamento;
+    TimeOfDay horaSelecionada = TimeOfDay.fromDateTime(agendamento.dataAgendamento);
+    int duracaoMinutos = agendamento.duracaoMinutos;
+    final observacoesController = TextEditingController(text: agendamento.observacoes ?? '');
+    List<String> petsSelecionadosIds = agendamento.petId != null ? [agendamento.petId!] : [];
+    String? tipoEntrega = agendamento.tipoEntrega;
+    final valorTaxiDogController = TextEditingController(
+      text: agendamento.valorTaxiDog != null ? agendamento.valorTaxiDog!.toStringAsFixed(2) : '',
+    );
+    final bairroEntregaController = TextEditingController(text: agendamento.bairroEntrega ?? '');
+    
+    showDialog(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setStateDialog) => AlertDialog(
+          backgroundColor: const Color(0xFF1E1E2E),
+          title: const Text('Editar Agendamento', style: TextStyle(color: Colors.white)),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Serviço
+                DropdownButtonFormField<Servico?>(
+                  value: servicoSelecionado,
+                  decoration: const InputDecoration(
+                    labelText: 'Serviço (opcional)',
+                    labelStyle: TextStyle(color: Colors.white70),
+                    border: OutlineInputBorder(),
+                    hintText: 'Nenhum serviço',
+                  ),
+                  dropdownColor: const Color(0xFF1E1E2E),
+                  style: const TextStyle(color: Colors.white),
+                  items: [
+                    // Opção "Nenhum serviço"
+                    const DropdownMenuItem<Servico?>(
+                      value: null,
+                      child: Text('Nenhum serviço (opcional)', style: TextStyle(color: Colors.white70, fontStyle: FontStyle.italic)),
+                    ),
+                    // Lista de serviços
+                    ...servicos.map((s) => DropdownMenuItem<Servico?>(
+                      value: s,
+                      child: Text(s.nome),
+                    )),
+                  ],
+                  onChanged: (value) {
+                    setStateDialog(() {
+                      servicoSelecionado = value;
+                    });
+                  },
+                ),
+                const SizedBox(height: 16),
+                
+                // Cliente
+                DropdownButtonFormField<Cliente?>(
+                  value: clienteSelecionado,
+                  decoration: const InputDecoration(
+                    labelText: 'Cliente (Opcional)',
+                    labelStyle: TextStyle(color: Colors.white70),
+                    border: OutlineInputBorder(),
+                  ),
+                  dropdownColor: const Color(0xFF1E1E2E),
+                  style: const TextStyle(color: Colors.white),
+                  items: [
+                    const DropdownMenuItem<Cliente?>(
+                      value: null,
+                      child: Text('Sem cliente'),
+                    ),
+                    ...clientes.map((c) => DropdownMenuItem(
+                      value: c,
+                      child: Text(c.nome),
+                    )),
+                  ],
+                  onChanged: (value) {
+                    setStateDialog(() {
+                      clienteSelecionado = value;
+                      // Atualizar observações com dados do cliente
+                      if (clienteSelecionado != null) {
+                        String obsCliente = observacoesController.text;
+                        if (!obsCliente.contains('=== ENDEREÇO DO CLIENTE ===') && 
+                            !obsCliente.contains('=== OBSERVAÇÕES DO CLIENTE ===')) {
+                          String novaObs = '';
+                          
+                          // Adicionar endereço do cliente
+                          final enderecoCompleto = <String>[];
+                          if (clienteSelecionado!.endereco != null && clienteSelecionado!.endereco!.isNotEmpty) {
+                            enderecoCompleto.add(clienteSelecionado!.endereco!);
+                            if (clienteSelecionado!.numero != null && clienteSelecionado!.numero!.isNotEmpty) {
+                              enderecoCompleto.add('nº ${clienteSelecionado!.numero}');
+                            }
+                            if (clienteSelecionado!.complemento != null && clienteSelecionado!.complemento!.isNotEmpty) {
+                              enderecoCompleto.add('- ${clienteSelecionado!.complemento}');
+                            }
+                            if (clienteSelecionado!.bairro != null && clienteSelecionado!.bairro!.isNotEmpty) {
+                              enderecoCompleto.add('- ${clienteSelecionado!.bairro}');
+                            }
+                            if (clienteSelecionado!.cidade != null && clienteSelecionado!.cidade!.isNotEmpty) {
+                              enderecoCompleto.add('- ${clienteSelecionado!.cidade}');
+                            }
+                            if (clienteSelecionado!.estado != null && clienteSelecionado!.estado!.isNotEmpty) {
+                              enderecoCompleto.add('/${clienteSelecionado!.estado}');
+                            }
+                            if (clienteSelecionado!.cep != null && clienteSelecionado!.cep!.isNotEmpty) {
+                              enderecoCompleto.add('CEP: ${clienteSelecionado!.cep}');
+                            }
+                            if (clienteSelecionado!.pontoReferencia != null && clienteSelecionado!.pontoReferencia!.isNotEmpty) {
+                              enderecoCompleto.add('Ponto de Referência: ${clienteSelecionado!.pontoReferencia}');
+                            }
+                            
+                            if (enderecoCompleto.isNotEmpty) {
+                              novaObs += '=== ENDEREÇO DO CLIENTE ===\n${enderecoCompleto.join(' ')}\n';
+                            }
+                          }
+                          
+                          if (clienteSelecionado!.observacoes != null && clienteSelecionado!.observacoes!.isNotEmpty) {
+                            if (novaObs.isNotEmpty) novaObs += '\n';
+                            novaObs += '=== OBSERVAÇÕES DO CLIENTE ===\n${clienteSelecionado!.observacoes}\n';
+                          }
+                          if (clienteSelecionado!.dadosExtras != null && clienteSelecionado!.dadosExtras!.isNotEmpty) {
+                            if (novaObs.isNotEmpty) novaObs += '\n';
+                            novaObs += '=== DADOS EXTRAS DO CLIENTE ===\n';
+                            clienteSelecionado!.dadosExtras!.forEach((key, val) {
+                              novaObs += '$key: $val\n';
+                            });
+                          }
+                          if (novaObs.isNotEmpty) {
+                            observacoesController.text = novaObs + (obsCliente.isNotEmpty ? '\n$obsCliente' : '');
+                          }
+                        }
+                      }
+                    });
+                  },
+                ),
+                const SizedBox(height: 16),
+                
+                // Seleção de Pets (múltipla)
+                if (clienteSelecionado != null && clienteSelecionado!.pets.isNotEmpty) ...[
+                  const Text('Pets:', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                  const SizedBox(height: 8),
+                  Container(
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.white.withOpacity(0.3)),
+                      borderRadius: BorderRadius.circular(12),
+                      color: Colors.white.withOpacity(0.05),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: clienteSelecionado!.pets.map((pet) {
+                        return RadioListTile<String>(
+                          title: Text(
+                            pet.nome,
+                            style: const TextStyle(color: Colors.white),
+                          ),
+                          subtitle: pet.especie != null || pet.raca != null
+                              ? Text(
+                                  '${pet.especie ?? ''}${pet.especie != null && pet.raca != null ? ' - ' : ''}${pet.raca ?? ''}',
+                                  style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 12),
+                                )
+                              : null,
+                          value: pet.id,
+                          groupValue: petsSelecionadosIds.isNotEmpty ? petsSelecionadosIds.first : null,
+                          activeColor: Colors.blueAccent,
+                          onChanged: (value) {
+                            setStateDialog(() {
+                              petsSelecionadosIds = value != null ? [value] : [];
+                            });
+                          },
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                ],
+                // Tipo de Entrega
+                const Text('Tipo de Entrega:', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String?>(
+                  value: tipoEntrega,
+                  decoration: const InputDecoration(
+                    labelText: 'Tipo de Entrega',
+                    labelStyle: TextStyle(color: Colors.white70),
+                    border: OutlineInputBorder(),
+                  ),
+                  dropdownColor: const Color(0xFF1E1E2E),
+                  style: const TextStyle(color: Colors.white),
+                  items: [
+                    const DropdownMenuItem<String?>(
+                      value: null,
+                      child: Text('Não especificado'),
+                    ),
+                    const DropdownMenuItem<String>(
+                      value: 'Taxi Dog',
+                      child: Text('Taxi Dog'),
+                    ),
+                    const DropdownMenuItem<String>(
+                      value: 'Cliente busca',
+                      child: Text('Cliente busca'),
+                    ),
+                  ],
+                  onChanged: (value) {
+                    setStateDialog(() {
+                      tipoEntrega = value;
+                      if (value != 'Taxi Dog') {
+                        valorTaxiDogController.clear();
+                        bairroEntregaController.clear();
+                      }
+                    });
+                  },
+                ),
+                // Campos de Taxi Dog
+                if (tipoEntrega == 'Taxi Dog') ...[
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: bairroEntregaController,
+                    decoration: const InputDecoration(
+                      labelText: 'Bairro',
+                      labelStyle: TextStyle(color: Colors.white70),
+                      border: OutlineInputBorder(),
+                    ),
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: valorTaxiDogController,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(
+                      labelText: 'Valor Taxi Dog (R\$)',
+                      labelStyle: TextStyle(color: Colors.white70),
+                      border: OutlineInputBorder(),
+                    ),
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                ],
+                const SizedBox(height: 16),
+                
+                // Data
+                ListTile(
+                  title: const Text('Data', style: TextStyle(color: Colors.white70)),
+                  subtitle: Text(
+                    _formatoData!.format(dataSelecionada),
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  trailing: const Icon(Icons.calendar_today, color: Colors.blueAccent),
+                  onTap: () async {
+                    final data = await showDatePicker(
+                      context: dialogContext,
+                      initialDate: dataSelecionada,
+                      firstDate: DateTime.now(),
+                      lastDate: DateTime.now().add(const Duration(days: 365)),
+                    );
+                    if (data != null) {
+                      setStateDialog(() {
+                        dataSelecionada = DateTime(
+                          data.year,
+                          data.month,
+                          data.day,
+                          horaSelecionada.hour,
+                          horaSelecionada.minute,
+                        );
+                      });
+                    }
+                  },
+                ),
+                
+                // Hora
+                ListTile(
+                  title: const Text('Hora', style: TextStyle(color: Colors.white70)),
+                  subtitle: Text(
+                    _formatoHora!.format(DateTime(2000, 1, 1, horaSelecionada.hour, horaSelecionada.minute)),
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  trailing: const Icon(Icons.access_time, color: Colors.blueAccent),
+                  onTap: () async {
+                    final hora = await _mostrarSeletorHoraComBloqueio(
+                      context: dialogContext,
+                      horaInicial: horaSelecionada,
+                      dataAgendamento: dataSelecionada,
+                      duracaoMinutos: duracaoMinutos,
+                      dataService: dataService,
+                      excluirAgendamentoId: agendamento.id,
+                    );
+                    if (hora != null) {
+                      setStateDialog(() {
+                        horaSelecionada = hora;
+                        dataSelecionada = DateTime(
+                          dataSelecionada.year,
+                          dataSelecionada.month,
+                          dataSelecionada.day,
+                          hora.hour,
+                          hora.minute,
+                        );
+                      });
+                    }
+                  },
+                ),
+                
+                // Duração
+                TextField(
+                  controller: TextEditingController(text: duracaoMinutos.toString()),
+                  decoration: const InputDecoration(
+                    labelText: 'Duração (minutos)',
+                    labelStyle: TextStyle(color: Colors.white70),
+                    border: OutlineInputBorder(),
+                  ),
+                  style: const TextStyle(color: Colors.white),
+                  keyboardType: TextInputType.number,
+                  onChanged: (value) {
+                    setStateDialog(() {
+                      duracaoMinutos = int.tryParse(value) ?? 60;
+                    });
+                  },
+                ),
+                const SizedBox(height: 16),
+                
+                // Observações
+                TextField(
+                  controller: observacoesController,
+                  decoration: const InputDecoration(
+                    labelText: 'Observações',
+                    labelStyle: TextStyle(color: Colors.white70),
+                    border: OutlineInputBorder(),
+                  ),
+                  style: const TextStyle(color: Colors.white),
+                  maxLines: 4,
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                if (servicoSelecionado == null) {
+                  ScaffoldMessenger.of(dialogContext).showSnackBar(
+                    const SnackBar(
+                      content: Text('Selecione um serviço'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                  return;
+                }
+                
+                final dataHoraCompleta = DateTime(
+                  dataSelecionada.year,
+                  dataSelecionada.month,
+                  dataSelecionada.day,
+                  horaSelecionada.hour,
+                  horaSelecionada.minute,
+                );
+                
+                // Validação de conflito REMOVIDA - permitir múltiplos agendamentos no mesmo horário
+                try {
+                  // Processar valor do Taxi Dog
+                  double? valorTaxiDog;
+                  if (tipoEntrega == 'Taxi Dog' && valorTaxiDogController.text.isNotEmpty) {
+                    final valorTexto = valorTaxiDogController.text.replaceAll(',', '.').trim();
+                    valorTaxiDog = double.tryParse(valorTexto);
+                  }
+
+                  // Obter pet selecionado (primeiro da lista, ou null se nenhum)
+                  Pet? petSelecionado;
+                  String? petIdSelecionado;
+                  if (petsSelecionadosIds.isNotEmpty && clienteSelecionado != null) {
+                    petSelecionado = clienteSelecionado!.pets.firstWhere(
+                      (p) => petsSelecionadosIds.contains(p.id),
+                      orElse: () => clienteSelecionado!.pets.first,
+                    );
+                    petIdSelecionado = petSelecionado.id;
+                  }
+
+                  await dataService.updateAgendamentoServico(
+                    agendamento.copyWith(
+                      servicoId: servicoSelecionado?.id,
+                      servico: servicoSelecionado,
+                      clienteId: clienteSelecionado?.id,
+                      petId: petIdSelecionado,
+                      pet: petSelecionado,
+                      dataAgendamento: dataHoraCompleta,
+                      duracaoMinutos: duracaoMinutos,
+                      observacoes: observacoesController.text.trim().isEmpty
+                          ? null
+                          : observacoesController.text.trim(),
+                      tipoEntrega: tipoEntrega,
+                      valorTaxiDog: valorTaxiDog,
+                      bairroEntrega: tipoEntrega == 'Taxi Dog' && bairroEntregaController.text.isNotEmpty
+                          ? bairroEntregaController.text.trim()
+                          : null,
+                      updatedAt: DateTime.now(),
+                    ),
+                  );
+                  
+                  if (dialogContext.mounted) {
+                    Navigator.pop(dialogContext);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Agendamento atualizado com sucesso!'),
+                        backgroundColor: Colors.green,
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  if (dialogContext.mounted) {
+                    ScaffoldMessenger.of(dialogContext).showSnackBar(
+                      SnackBar(
+                        content: Text('Erro: ${e.toString()}'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
+                }
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
+              child: const Text('Salvar'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _cancelarAgendamento(BuildContext context, AgendamentoServico agendamento, DataService dataService) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        title: const Text('Cancelar Agendamento', style: TextStyle(color: Colors.white)),
+        content: const Text('Tem certeza que deseja cancelar este agendamento?', style: TextStyle(color: Colors.white70)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Não', style: TextStyle(color: Colors.white54)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              dataService.updateAgendamentoServico(
+                agendamento.copyWith(status: 'Cancelado'),
+              );
+              Navigator.pop(context);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Agendamento cancelado'),
+                  backgroundColor: Colors.green,
+                ),
+              );
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Sim, Cancelar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Mostra seletor de hora com bloqueio de horários ocupados
+  Future<TimeOfDay?> _mostrarSeletorHoraComBloqueio({
+    required BuildContext context,
+    required TimeOfDay horaInicial,
+    required DateTime dataAgendamento,
+    required int duracaoMinutos,
+    required DataService dataService,
+    String? excluirAgendamentoId, // Para edição, excluir o próprio agendamento
+  }) async {
+    // Bloqueio de horários REMOVIDO - permitir múltiplos agendamentos no mesmo horário
+    // A duração do serviço é mantida apenas para informação, sem bloquear outros agendamentos
+    
+    // Mostrar seletor de hora em formato 24 horas (horário de Brasília)
+    // FORÇAR formato 24 horas - sem AM/PM (13:00 = 1 hora da tarde)
+    final horaSelecionada = await showTimePicker(
+      context: context,
+      initialTime: horaInicial,
+      builder: (BuildContext context, Widget? child) {
+        return MediaQuery(
+          data: MediaQuery.of(context).copyWith(
+            alwaysUse24HourFormat: true, // FORÇAR formato 24 horas
+          ),
+          child: Theme(
+            data: Theme.of(context).copyWith(
+              colorScheme: const ColorScheme.dark(
+                primary: Colors.blueAccent,
+                onPrimary: Colors.white,
+                surface: Color(0xFF1E1E2E),
+                onSurface: Colors.white,
+              ),
+            ),
+            child: child!,
+          ),
+        );
+      },
+    );
+    
+    if (horaSelecionada == null) return null;
+    
+    // Validação de conflito REMOVIDA - permitir qualquer horário
+    // A duração do serviço é mantida apenas para informação, sem bloquear outros agendamentos
+    
+    return horaSelecionada;
+  }
+
+  /// Marca agendamento como recebido
+  void _marcarComoRecebido(
+    BuildContext context,
+    AgendamentoServico agendamento,
+    DataService dataService,
+  ) {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(Icons.payment, color: Colors.green),
+            SizedBox(width: 12),
+            Text('Marcar como Recebido', style: TextStyle(color: Colors.white)),
+          ],
+        ),
+        content: const Text(
+          'Deseja marcar este agendamento como recebido?',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              try {
+                final agendamentoAtualizado = agendamento.copyWith(
+                  recebido: true,
+                  dataRecebimento: DateTime.now(),
+                );
+                
+                dataService.updateAgendamentoServico(agendamentoAtualizado);
+                
+                Navigator.pop(dialogContext);
+                
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Agendamento marcado como recebido!'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+              } catch (e) {
+                Navigator.pop(dialogContext);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Erro ao marcar como recebido: $e'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+            child: const Text('Confirmar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Mostra diálogo para cadastro rápido de serviço
+  Future<void> _mostrarDialogCadastroRapidoServico(
+    BuildContext context,
+    DataService dataService,
+    Function(Servico) onServicoCriado,
+  ) async {
+    final nomeController = TextEditingController();
+    final descricaoController = TextEditingController();
+    final precoController = TextEditingController();
+    final List<ItemMaterial> materiaisSelecionados = [];
+
+    await showDialog(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          backgroundColor: const Color(0xFF1E1E2E),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Row(
+            children: [
+              Icon(Icons.build, color: Colors.blueAccent),
+              SizedBox(width: 12),
+              Text('Cadastro Rápido - Serviço', style: TextStyle(color: Colors.white)),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Nome do Serviço *:', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: nomeController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    filled: true,
+                    fillColor: Colors.white.withOpacity(0.05),
+                    hintText: 'Nome do serviço',
+                    hintStyle: TextStyle(color: Colors.white.withOpacity(0.5)),
+                  ),
+                  autofocus: true,
+                ),
+                const SizedBox(height: 16),
+                const Text('Descrição:', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: descricaoController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    filled: true,
+                    fillColor: Colors.white.withOpacity(0.05),
+                    hintText: 'Descrição do serviço',
+                    hintStyle: TextStyle(color: Colors.white.withOpacity(0.5)),
+                  ),
+                  maxLines: 2,
+                ),
+                const SizedBox(height: 16),
+                const Text('Preço (R\$):', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: precoController,
+                  style: const TextStyle(color: Colors.white),
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  decoration: InputDecoration(
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    filled: true,
+                    fillColor: Colors.white.withOpacity(0.05),
+                    hintText: '0.00',
+                    hintStyle: TextStyle(color: Colors.white.withOpacity(0.5)),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                // Seção de Materiais
+                Row(
+                  children: [
+                    const Icon(Icons.inventory, color: Colors.blueAccent, size: 20),
+                    const SizedBox(width: 8),
+                    const Text(
+                      'Materiais do Serviço',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                if (materiaisSelecionados.isEmpty)
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.05),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.white.withOpacity(0.1)),
+                    ),
+                    child: const Text(
+                      'Nenhum material cadastrado. Adicione materiais que serão consumidos ao executar este serviço.',
+                      style: TextStyle(color: Colors.white70, fontSize: 12),
+                    ),
+                  )
+                else ...[
+                  ...materiaisSelecionados.asMap().entries.map((entry) {
+                    final index = entry.key;
+                    final material = entry.value;
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.05),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.white.withOpacity(0.1)),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            material.isVacina ? Icons.vaccines : Icons.inventory,
+                            color: material.isVacina ? Colors.green : Colors.blue,
+                            size: 20,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  material.produtoNome,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  'Quantidade: ${material.quantidade.toStringAsFixed(2)} ${material.unidade ?? "UN"}',
+                                  style: const TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                                if (material.isVacina && material.dataProximaAplicacao != null)
+                                  Text(
+                                    'Próxima aplicação: ${_formatoData?.format(material.dataProximaAplicacao!) ?? ""}',
+                                    style: const TextStyle(
+                                      color: Colors.green,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                if (material.isVacina && material.intervaloDias != null)
+                                  Text(
+                                    'Intervalo: ${material.intervaloDias} dias',
+                                    style: const TextStyle(
+                                      color: Colors.green,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.delete, color: Colors.red, size: 20),
+                            onPressed: () {
+                              setState(() {
+                                materiaisSelecionados.removeAt(index);
+                              });
+                            },
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
+                ],
+                const SizedBox(height: 12),
+                ElevatedButton.icon(
+                  onPressed: () => _mostrarDialogoAdicionarMaterialAgenda(
+                    context,
+                    dataService,
+                    setState,
+                    materiaisSelecionados,
+                  ),
+                  icon: const Icon(Icons.add),
+                  label: const Text('Adicionar Material'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blueAccent,
+                    foregroundColor: Colors.white,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                if (nomeController.text.trim().isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Nome do serviço é obrigatório'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                  return;
+                }
+
+                try {
+                  final precoTexto = precoController.text.replaceAll(',', '.').trim();
+                  final preco = double.tryParse(precoTexto) ?? 0.0;
+
+                  final novoServico = Servico(
+                    id: DateTime.now().millisecondsSinceEpoch.toString(),
+                    nome: nomeController.text.trim(),
+                    descricao: descricaoController.text.trim().isNotEmpty
+                        ? descricaoController.text.trim()
+                        : null,
+                    preco: preco,
+                    materiais: List.from(materiaisSelecionados),
+                    createdAt: DateTime.now(),
+                    updatedAt: DateTime.now(),
+                  );
+
+                  await dataService.addServico(novoServico);
+                  
+                  if (context.mounted) {
+                    Navigator.pop(dialogContext);
+                    onServicoCriado(novoServico);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'Serviço cadastrado com sucesso${materiaisSelecionados.isNotEmpty ? ' com ${materiaisSelecionados.length} material(is)' : ''}!',
+                        ),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Erro ao cadastrar serviço: $e'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
+                }
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
+              child: const Text('Cadastrar'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Diálogo para adicionar material ao serviço na agenda
+  void _mostrarDialogoAdicionarMaterialAgenda(
+    BuildContext context,
+    DataService dataService,
+    StateSetter setStateDialogo,
+    List<ItemMaterial> materiaisSelecionados,
+  ) {
+    final produtos = dataService.produtos;
+    
+    Produto? produtoSelecionado;
+    final quantidadeController = TextEditingController();
+    final observacaoController = TextEditingController();
+    bool isVacina = false;
+    DateTime? dataProximaAplicacao;
+    final intervaloDiasController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF1E1E2E),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              title: const Row(
+                children: [
+                  Icon(Icons.inventory, color: Colors.blueAccent),
+                  SizedBox(width: 12),
+                  Text('Adicionar Material', style: TextStyle(color: Colors.white)),
+                ],
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: DropdownButtonFormField<Produto>(
+                            decoration: InputDecoration(
+                              labelText: 'Produto/Material *',
+                              labelStyle: const TextStyle(color: Colors.white70),
+                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                              filled: true,
+                              fillColor: Colors.white.withOpacity(0.05),
+                            ),
+                            dropdownColor: const Color(0xFF1E1E2E),
+                            style: const TextStyle(color: Colors.white),
+                            items: produtos.map((produto) {
+                              return DropdownMenuItem<Produto>(
+                                value: produto,
+                                child: Text(
+                                  '${produto.nome} (Estoque: ${produto.estoque})',
+                                  style: const TextStyle(color: Colors.white),
+                                ),
+                              );
+                            }).toList(),
+                            onChanged: (produto) {
+                              setState(() {
+                                produtoSelecionado = produto;
+                              });
+                            },
+                            value: produtoSelecionado,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        IconButton(
+                          icon: const Icon(Icons.add_circle_outline, color: Colors.blueAccent),
+                          tooltip: 'Cadastrar Novo Produto',
+                          onPressed: () => _mostrarDialogoCadastroRapidoProdutoAgenda(
+                            context,
+                            dataService,
+                            setState,
+                            (novoProduto) {
+                              setState(() {
+                                produtoSelecionado = novoProduto;
+                              });
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: quantidadeController,
+                      style: const TextStyle(color: Colors.white),
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      decoration: InputDecoration(
+                        labelText: 'Quantidade *',
+                        labelStyle: const TextStyle(color: Colors.white70),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                        filled: true,
+                        fillColor: Colors.white.withOpacity(0.05),
+                        helperText: 'Quantidade a ser consumida (permite decimais)',
+                        helperStyle: const TextStyle(color: Colors.white54),
+                      ),
+                    ),
+                    if (produtoSelecionado != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        'Estoque atual: ${produtoSelecionado!.estoque} ${produtoSelecionado!.unidade}',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.blue,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: observacaoController,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: InputDecoration(
+                        labelText: 'Observação (opcional)',
+                        labelStyle: const TextStyle(color: Colors.white70),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                        filled: true,
+                        fillColor: Colors.white.withOpacity(0.05),
+                      ),
+                      maxLines: 2,
+                    ),
+                    const SizedBox(height: 16),
+                    // Opções para vacinas
+                    CheckboxListTile(
+                      title: const Text(
+                        'É uma vacina (requer agendamento)',
+                        style: TextStyle(color: Colors.white),
+                      ),
+                      value: isVacina,
+                      onChanged: (value) {
+                        setState(() {
+                          isVacina = value ?? false;
+                          if (!isVacina) {
+                            dataProximaAplicacao = null;
+                            intervaloDiasController.clear();
+                          }
+                        });
+                      },
+                      activeColor: Colors.green,
+                    ),
+                    if (isVacina) ...[
+                      const SizedBox(height: 8),
+                      InkWell(
+                        onTap: () async {
+                          final data = await showDatePicker(
+                            context: context,
+                            initialDate: dataProximaAplicacao ?? DateTime.now().add(const Duration(days: 30)),
+                            firstDate: DateTime.now(),
+                            lastDate: DateTime.now().add(const Duration(days: 365 * 2)),
+                          );
+                          if (data != null) {
+                            setState(() {
+                              dataProximaAplicacao = data;
+                            });
+                          }
+                        },
+                        child: InputDecorator(
+                          decoration: InputDecoration(
+                            labelText: 'Data da Próxima Aplicação (opcional se informar intervalo)',
+                            labelStyle: const TextStyle(color: Colors.white70),
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                            filled: true,
+                            fillColor: Colors.white.withOpacity(0.05),
+                            suffixIcon: const Icon(Icons.calendar_today, color: Colors.white70),
+                            helperText: 'Deixe em branco se usar apenas o intervalo de dias',
+                            helperStyle: const TextStyle(color: Colors.white54),
+                          ),
+                          child: Text(
+                            dataProximaAplicacao != null
+                                ? _formatoData?.format(dataProximaAplicacao!) ?? 'Selecionar data'
+                                : 'Selecionar data (opcional)',
+                            style: const TextStyle(color: Colors.white),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      TextField(
+                        controller: intervaloDiasController,
+                        style: const TextStyle(color: Colors.white),
+                        keyboardType: TextInputType.number,
+                        decoration: InputDecoration(
+                          labelText: 'Intervalo entre doses (dias) *',
+                          labelStyle: const TextStyle(color: Colors.white70),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                          filled: true,
+                          fillColor: Colors.white.withOpacity(0.05),
+                          helperText: 'Ex: 1 para amanhã, 21 para 3 semanas. Obrigatório se não informar data',
+                          helperStyle: const TextStyle(color: Colors.white54),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    quantidadeController.dispose();
+                    observacaoController.dispose();
+                    intervaloDiasController.dispose();
+                    Navigator.pop(context);
+                  },
+                  child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    if (produtoSelecionado == null) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Selecione um produto'),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                      return;
+                    }
+                    
+                    final quantidade = double.tryParse(
+                      quantidadeController.text.replaceAll(',', '.'),
+                    );
+                    
+                    if (quantidade == null || quantidade <= 0) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Informe uma quantidade válida'),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                      return;
+                    }
+
+                    final intervaloDias = intervaloDiasController.text.isNotEmpty
+                        ? int.tryParse(intervaloDiasController.text)
+                        : null;
+
+                    // Validar se é vacina: precisa ter data OU intervalo de dias
+                    if (isVacina && dataProximaAplicacao == null && (intervaloDias == null || intervaloDias <= 0)) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Para vacinas, é necessário informar a data da próxima aplicação OU o intervalo em dias'),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                      return;
+                    }
+
+                    setStateDialogo(() {
+                      materiaisSelecionados.add(ItemMaterial(
+                        produtoId: produtoSelecionado!.id,
+                        produtoNome: produtoSelecionado!.nome,
+                        quantidade: quantidade,
+                        unidade: produtoSelecionado!.unidade,
+                        precoCusto: produtoSelecionado!.precoCusto,
+                        precoVenda: produtoSelecionado!.preco,
+                        observacao: observacaoController.text.isEmpty
+                            ? null
+                            : observacaoController.text,
+                        isVacina: isVacina,
+                        dataProximaAplicacao: dataProximaAplicacao,
+                        intervaloDias: intervaloDias,
+                      ));
+                    });
+                    
+                    quantidadeController.dispose();
+                    observacaoController.dispose();
+                    intervaloDiasController.dispose();
+                    Navigator.pop(context);
+                  },
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
+                  child: const Text('Adicionar'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  /// Diálogo para cadastro rápido de produto na agenda
+  Future<void> _mostrarDialogoCadastroRapidoProdutoAgenda(
+    BuildContext context,
+    DataService dataService,
+    StateSetter setStateDialogo,
+    Function(Produto) onProdutoCriado,
+  ) async {
+    final nomeController = TextEditingController();
+    final precoCustoController = TextEditingController();
+    final estoqueController = TextEditingController(text: '0');
+    final unidadeController = TextEditingController(text: 'UN');
+    final grupoController = TextEditingController();
+
+    final novoProduto = await showDialog<Produto>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1E1E2E),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Row(
+            children: [
+              Icon(Icons.add_circle, color: Colors.blueAccent),
+              SizedBox(width: 12),
+              Text('Cadastrar Novo Produto', style: TextStyle(color: Colors.white)),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                TextField(
+                  controller: nomeController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    labelText: 'Nome do Produto *',
+                    labelStyle: const TextStyle(color: Colors.white70),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    filled: true,
+                    fillColor: Colors.white.withOpacity(0.05),
+                  ),
+                  autofocus: true,
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: precoCustoController,
+                  style: const TextStyle(color: Colors.white),
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  decoration: InputDecoration(
+                    labelText: 'Preço de Custo (R\$) *',
+                    labelStyle: const TextStyle(color: Colors.white70),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    filled: true,
+                    fillColor: Colors.white.withOpacity(0.05),
+                    prefixText: 'R\$ ',
+                    prefixStyle: const TextStyle(color: Colors.white),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      flex: 2,
+                      child: TextField(
+                        controller: estoqueController,
+                        style: const TextStyle(color: Colors.white),
+                        keyboardType: TextInputType.number,
+                        decoration: InputDecoration(
+                          labelText: 'Estoque Inicial',
+                          labelStyle: const TextStyle(color: Colors.white70),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                          filled: true,
+                          fillColor: Colors.white.withOpacity(0.05),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextField(
+                        controller: unidadeController,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: InputDecoration(
+                          labelText: 'Unidade',
+                          labelStyle: const TextStyle(color: Colors.white70),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                          filled: true,
+                          fillColor: Colors.white.withOpacity(0.05),
+                          hintText: 'UN',
+                          hintStyle: TextStyle(color: Colors.white.withOpacity(0.5)),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: grupoController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    labelText: 'Grupo/Categoria (opcional)',
+                    labelStyle: const TextStyle(color: Colors.white70),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    filled: true,
+                    fillColor: Colors.white.withOpacity(0.05),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                nomeController.dispose();
+                precoCustoController.dispose();
+                estoqueController.dispose();
+                unidadeController.dispose();
+                grupoController.dispose();
+                Navigator.pop(context);
+              },
+              child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                if (nomeController.text.trim().isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Informe o nome do produto'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                  return;
+                }
+
+                final precoCusto = double.tryParse(
+                  precoCustoController.text.replaceAll(',', '.'),
+                );
+                
+                if (precoCusto == null || precoCusto <= 0) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Informe um preço de custo válido'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                  return;
+                }
+
+                final estoque = int.tryParse(estoqueController.text) ?? 0;
+                final unidade = unidadeController.text.trim().isEmpty 
+                    ? 'UN' 
+                    : unidadeController.text.trim();
+                final grupo = grupoController.text.trim().isEmpty 
+                    ? 'Sem Grupo' 
+                    : grupoController.text.trim();
+
+                // Gerar código automático
+                final codigosExistentes = dataService.produtos
+                    .map((p) => p.codigo ?? '')
+                    .where((c) => c.isNotEmpty)
+                    .toList();
+                final codigo = CodigoService.gerarProximoCodigo(codigosExistentes);
+
+                // Para cadastro rápido, definir preço de venda igual ao custo (pode ser alterado depois)
+                final produto = Produto(
+                  id: DateTime.now().millisecondsSinceEpoch.toString(),
+                  codigo: codigo,
+                  nome: nomeController.text.trim(),
+                  descricao: null,
+                  unidade: unidade,
+                  grupo: grupo,
+                  preco: precoCusto, // Preço de venda inicial igual ao custo
+                  precoCusto: precoCusto,
+                  estoque: estoque,
+                  createdAt: DateTime.now(),
+                  updatedAt: DateTime.now(),
+                );
+
+                await dataService.addProduto(produto);
+                
+                nomeController.dispose();
+                precoCustoController.dispose();
+                estoqueController.dispose();
+                unidadeController.dispose();
+                grupoController.dispose();
+                
+                Navigator.pop(context, produto);
+                
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Produto "${produto.nome}" cadastrado com sucesso!'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
+              child: const Text('Cadastrar'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (novoProduto != null) {
+      setStateDialogo(() {
+        // O produto já foi selecionado no callback
+      });
+      onProdutoCriado(novoProduto);
+    }
+  }
+
+  /// Cria agendamento de reaplicação para vacina (versão com contexto)
+  Future<void> _criarAgendamentoReaplicacaoVacinaComContexto(
+    BuildContext context,
+    ItemMaterial vacina,
+    Cliente? cliente,
+    Pet? pet,
+    DataService dataService,
+  ) async {
+    if (!vacina.isVacina) {
+      return;
+    }
+
+    // Calcular data da próxima aplicação
+    DateTime? dataProximaAplicacao = vacina.dataProximaAplicacao;
+    
+    // Se não há data definida mas há intervalo de dias, calcular automaticamente
+    if (dataProximaAplicacao == null && vacina.intervaloDias != null && vacina.intervaloDias! > 0) {
+      final diasAdicionar = vacina.intervaloDias!;
+      dataProximaAplicacao = DateTime.now().add(Duration(days: diasAdicionar));
+    }
+    
+    if (dataProximaAplicacao == null) {
+      return; // Sem data de próxima aplicação, não criar agendamento
+    }
+
+    try {
+      // Para vacinas, não usamos serviço - apenas os dados da vacina nas observações
+      final servicoVacinaId = 'vacina_${vacina.produtoId}_${DateTime.now().millisecondsSinceEpoch}';
+
+      // Garantir que a data tenha uma hora definida (padrão 09:00)
+      DateTime dataAgendamentoComHora = dataProximaAplicacao;
+      if (dataAgendamentoComHora.hour == 0 && dataAgendamentoComHora.minute == 0) {
+        dataAgendamentoComHora = DateTime(
+          dataAgendamentoComHora.year,
+          dataAgendamentoComHora.month,
+          dataAgendamentoComHora.day,
+          9, // Hora padrão: 09:00
+          0, // Minutos: 00
+        );
+      }
+
+      // Criar descrição da vacina para usar nas observações
+      final descricaoVacina = vacina.intervaloDias != null 
+          ? 'Aplicar ${vacina.produtoNome} (intervalo: ${vacina.intervaloDias} dia(s))'
+          : 'Aplicar ${vacina.produtoNome}';
+
+      final agendamento = AgendamentoServico(
+        id: 'vacina_${vacina.produtoId}_${DateTime.now().millisecondsSinceEpoch}',
+        numero: '', // Será gerado automaticamente
+        servicoId: servicoVacinaId,
+        clienteId: cliente?.id,
+        cliente: cliente,
+        petId: pet?.id,
+        pet: pet,
+        dataAgendamento: dataAgendamentoComHora,
+        duracaoMinutos: 30, // 30 minutos padrão para vacinação
+        observacoes: descricaoVacina,
+        status: 'Agendado',
+        materiais: [vacina], // Incluir a vacina nos materiais do agendamento
+      );
+
+      await dataService.addAgendamentoServico(agendamento);
+      
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Agendamento criado para próxima dose de ${vacina.produtoNome} em ${_formatoData?.format(dataProximaAplicacao) ?? ""}'),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('>>> Erro ao criar agendamento de reaplicação de vacina: $e');
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erro ao criar agendamento de reaplicação: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  /// Cria um pedido no histórico quando um agendamento é concluído
+  Future<void> _criarPedidoDoAgendamento(
+    AgendamentoServico agendamento,
+    DataService dataService,
+  ) async {
+    try {
+      // Coletar todos os materiais do agendamento e do serviço
+      final todosMateriais = [
+        ...agendamento.materiais,
+        if (agendamento.servico != null) ...agendamento.servico!.materiais,
+      ];
+
+      // Criar ItemServico a partir do agendamento
+      final servicoNome = agendamento.servico?.nome ?? 
+          (agendamento.observacoes ?? 'Serviço do Agendamento');
+      final servicoValor = agendamento.servico?.preco ?? 0.0;
+      
+      final itemServico = ItemServico(
+        id: uuid.v4(),
+        descricao: servicoNome,
+        valor: servicoValor,
+        valorAdicional: agendamento.valorTaxiDog ?? 0.0,
+        descricaoAdicional: agendamento.tipoEntrega == 'Taxi Dog' 
+            ? 'Taxi Dog${agendamento.bairroEntrega != null ? ' - ${agendamento.bairroEntrega}' : ''}'
+            : null,
+        dataAgendamento: agendamento.dataAgendamento,
+        duracaoMinutos: agendamento.duracaoMinutos,
+        materiais: todosMateriais,
+        tipoEntrega: agendamento.tipoEntrega,
+        valorTaxiDog: agendamento.valorTaxiDog,
+        bairroEntrega: agendamento.bairroEntrega,
+      );
+
+      // Gerar número do pedido (usar SRV- para serviços)
+      final numeroPedido = dataService.getProximoNumeroServico();
+
+      // Criar pedido
+      final pedido = Pedido(
+        id: uuid.v4(),
+        numero: numeroPedido,
+        clienteId: agendamento.clienteId,
+        clienteNome: agendamento.cliente?.nome,
+        clienteTelefone: agendamento.cliente?.telefone,
+        clienteEndereco: agendamento.cliente?.endereco,
+        clienteCpfCnpj: agendamento.cliente?.cpfCnpj,
+        dataPedido: agendamento.dataAgendamento,
+        status: 'Concluído',
+        produtos: [],
+        servicos: [itemServico],
+        materiaisConsumidos: todosMateriais,
+        observacoes: 'Agendamento ${agendamento.numero}${agendamento.observacoes != null ? ' - ${agendamento.observacoes}' : ''}',
+      );
+
+      await dataService.addPedido(pedido);
+      
+      // Atualizar agendamento com o número do pedido
+      await dataService.updateAgendamentoServico(
+        agendamento.copyWith(
+          pedidoId: pedido.id,
+          numeroPedido: pedido.numero,
+        ),
+      );
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Agendamento concluído e salvo no histórico (${pedido.numero})'),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('>>> Erro ao criar pedido do agendamento: $e');
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erro ao salvar no histórico: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  /// Marca agendamento como Em Andamento
+  Future<void> _marcarEmAndamento(AgendamentoServico agendamento, DataService dataService) async {
+    try {
+      await dataService.updateAgendamentoServico(
+        agendamento.copyWith(
+          status: 'Em Andamento',
+          updatedAt: DateTime.now(),
+        ),
+      );
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Serviço iniciado'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 2),
+          ),
+        );
+        setState(() {}); // Atualizar UI
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erro ao iniciar serviço: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  /// Marca agendamento como Concluído e cria pedido no histórico
+  Future<void> _marcarConcluido(AgendamentoServico agendamento, DataService dataService) async {
+    try {
+      final agendamentoAtualizado = agendamento.copyWith(
+        status: 'Concluído',
+        updatedAt: DateTime.now(),
+      );
+      
+      await dataService.updateAgendamentoServico(agendamentoAtualizado);
+      
+      // Criar pedido no histórico
+      await _criarPedidoDoAgendamento(agendamentoAtualizado, dataService);
+      
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Serviço concluído e salvo no histórico'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
+        );
+        setState(() {}); // Atualizar UI
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erro ao concluir serviço: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  /// Navega para tela de cadastro de cliente
+  Future<void> _mostrarDialogCadastroRapidoCliente(
+    BuildContext context,
+    DataService dataService,
+    Function(Cliente) onClienteCriado,
+  ) async {
+    // Navegar para a tela completa de cadastro de cliente
+    final novoCliente = await Navigator.push<Cliente>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const ClienteDetalhesPage(cliente: null),
+      ),
+    );
+
+    // Se um cliente foi criado, atualizar a seleção
+    if (novoCliente != null && context.mounted) {
+      onClienteCriado(novoCliente);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Cliente cadastrado com sucesso!'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    }
+  }
+
+  /// Navega para tela de cadastro de pet (dentro da tela de detalhes do cliente)
+  Future<Cliente?> _mostrarDialogCadastroRapidoPet(
+    BuildContext context,
+    DataService dataService,
+    Cliente cliente,
+    Function(Pet) onPetCriado,
+  ) async {
+    // Navegar para a tela de detalhes do cliente na aba Pet (índice 3)
+    final clienteAtualizado = await Navigator.push<Cliente>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ClienteDetalhesPage(
+          cliente: cliente,
+          abaInicial: 3, // Ir direto para a aba Pet
+        ),
+      ),
+    );
+
+    // Se o cliente foi atualizado (com novo pet), atualizar a seleção
+    if (clienteAtualizado != null && context.mounted) {
+      // Aguardar um pouco para garantir que o DataService foi atualizado
+      await Future.delayed(const Duration(milliseconds: 300));
+      
+      // Buscar o cliente atualizado do DataService para garantir que tem os pets mais recentes
+      Cliente? clienteAtualizadoDoService;
+      try {
+        clienteAtualizadoDoService = dataService.clientes.firstWhere(
+          (c) => c.id == cliente.id,
+        );
+      } catch (e) {
+        // Se não encontrar, usar o cliente retornado
+        clienteAtualizadoDoService = clienteAtualizado;
+      }
+      
+      // Verificar se há novos pets comparando com os pets originais
+      final petsAntigos = cliente.pets.map((p) => p.id).toSet();
+      final novosPets = clienteAtualizadoDoService.pets.where((p) => !petsAntigos.contains(p.id)).toList();
+      
+      if (novosPets.isNotEmpty) {
+        // Adicionar o primeiro novo pet à seleção
+        onPetCriado(novosPets.first);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Pet "${novosPets.first.nome}" cadastrado com sucesso!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        return clienteAtualizadoDoService;
+      } else {
+        // Se não encontrou novos pets, verificar se o cliente retornado tem mais pets
+        if (clienteAtualizado.pets.length > cliente.pets.length) {
+          final petNovo = clienteAtualizado.pets.last;
+          onPetCriado(petNovo);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Pet "${petNovo.nome}" cadastrado com sucesso!'),
+              backgroundColor: Colors.green,
+            ),
+          );
+          return clienteAtualizadoDoService;
+        }
+      }
+      
+      return clienteAtualizadoDoService;
+    }
+    
+    return null;
+  }
+
+  /// Gera e exibe o link de agendamento online para a empresa atual
+  void _gerarLinkAgendamento(DataService dataService) {
+    // Obter o identificador da empresa (prefere slug ao ID)
+    final empresa = dataService.empresaAtual;
+    final identificador = (empresa?.slug?.isNotEmpty ?? false) 
+        ? empresa!.slug 
+        : dataService.empresaIdAtual;
+
+    if (identificador == null) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Selecione uma empresa primeiro'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+
+    // Gerar o link de agendamento online baseado na URL atual do navegador
+    String baseUrl = '';
+    if (kIsWeb) {
+      // Usar o origin atual (host + protocolo) 
+      baseUrl = html_helper.getWindowOrigin();
+      // Remover barra final se houver para evitar barra dupla
+      if (baseUrl.endsWith('/')) {
+        baseUrl = baseUrl.substring(0, baseUrl.length - 1);
+      }
+    } else {
+      baseUrl = 'https://sistema-exodo.web.app'; // Fallback para mobile/desktop
+    }
+    
+    // Garantir que identificador não tenha espaços ou caracteres especiais
+    final identificadorLimpo = identificador!.trim();
+    // Link no formato /agendamento/slug para ser igual ao ecommerce
+    final link = '$baseUrl/agendamento/$identificadorLimpo';
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.grey[900],
+        title: const Text('Link de Agendamento Online', style: TextStyle(color: Colors.white)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Compartilhe este link com seus clientes para que eles possam agendar serviços online:',
+              style: TextStyle(color: Colors.white70),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              width: double.infinity,
+              decoration: BoxDecoration(
+                color: Colors.black,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.white24),
+              ),
+              child: SelectableText(
+                link,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Fechar', style: TextStyle(color: Colors.white54)),
+              ),
+              Row(
+                children: [
+                  TextButton.icon(
+                    onPressed: () {
+                      if (kIsWeb) {
+                        html_helper.openWindow(link, '_blank');
+                      } else {
+                        // Para mobile/desktop usaria url_launcher se disponível
+                        // Por enquanto apenas copia
+                        Clipboard.setData(ClipboardData(text: link));
+                      }
+                    },
+                    icon: const Icon(Icons.open_in_new, size: 18),
+                    label: const Text('Abrir'),
+                    style: TextButton.styleFrom(foregroundColor: Colors.blueAccent),
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton.icon(
+                    onPressed: () {
+                      Clipboard.setData(ClipboardData(text: link));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Link copiado para a área de transferência!'),
+                          backgroundColor: Colors.green,
+                          duration: Duration(seconds: 2),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.copy, size: 18),
+                    label: const Text('Copiar'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFFFF9800),
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+  /// Mostra as solicitações de agendamento online (Aguardando Confirmação)
+  void _mostrarSolicitacoesAgendamento(BuildContext context, DataService dataService) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+      return Scaffold(
+        backgroundColor: Colors.transparent,
+        body: Consumer<DataService>(
+          builder: (context, currentDataService, _) {
+            final solicitacoes = currentDataService.agendamentosServico
+                .where((a) => a.status == 'Aguardando Confirmação')
+                .toList();
+
+            final totalTodos = currentDataService.agendamentosServico.length;
+            final outrosStatus = currentDataService.agendamentosServico
+                .where((a) => a.status != 'Aguardando Confirmação')
+                .map((a) => '${a.status}:${a.id.length > 4 ? a.id.substring(a.id.length - 4) : a.id}')
+                .join(', ');
+
+            // Ordenar por data (mais recente primeiro)
+            solicitacoes.sort((a, b) => b.dataAgendamento.compareTo(a.dataAgendamento));
+
+            return Container(
+              height: MediaQuery.of(context).size.height * 0.8,
+              decoration: const BoxDecoration(
+                color: Color(0xFF1E1E2E), // Cor escura do sistema
+                borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
+              ),
+              child: Column(
+                children: [
+                  const SizedBox(height: 12),
+                  Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.white24,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                currentDataService.empresaAtual?.nomeExibicao ?? 'Solicitações Online',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              Text(
+                                'ID: ${currentDataService.empresaIdAtual}',
+                                style: const TextStyle(
+                                  color: Colors.white38,
+                                  fontSize: 10,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ),
+                        ),
+                        // Botão de Refresh Manual no Modal
+                        IconButton(
+                          icon: const Icon(Icons.refresh, color: Colors.blueAccent, size: 20),
+                          onPressed: () async {
+                             ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Buscando atualizações no Firebase...')),
+                            );
+                            await currentDataService.forceSync();
+                          },
+                          tooltip: 'Recarregar Agora',
+                        ),
+                        // Botão de Diagnóstico (Long Press na Info)
+                        GestureDetector(
+                          onLongPress: () async {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Verificando Firestore...')),
+                            );
+                            final count = await FirebaseService.instance.contarAgendamentosPendentes(currentDataService.empresaIdAtual!);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Encontrados $count docs em: .../${currentDataService.empresaIdAtual}/agendamentos_servico'),
+                                backgroundColor: Colors.blueAccent,
+                                action: SnackBarAction(
+                                  label: 'CRIAR TESTE',
+                                  textColor: Colors.white,
+                                  onPressed: () async {
+                                    final teste = AgendamentoServico(
+                                      id: 'TESTE-${DateTime.now().millisecondsSinceEpoch}',
+                                      numero: 'TS-999',
+                                      dataAgendamento: DateTime.now(),
+                                      status: 'Aguardando Confirmação',
+                                      observacoes: 'AGENDAMENTO DE TESTE PARA VERIFICAR CONEXÃO',
+                                    );
+                                    await FirebaseService.instance.salvarAgendamentoServico(currentDataService.empresaIdAtual!, teste);
+                                  },
+                                ),
+                              ),
+                            );
+                          },
+                          child: const Padding(
+                            padding: EdgeInsets.symmetric(horizontal: 8.0),
+                            child: Icon(Icons.info_outline, color: Colors.white10, size: 20),
+                          ),
+                        ),
+                        if (solicitacoes.isNotEmpty)
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: Colors.amber.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(color: Colors.amber.withOpacity(0.3)),
+                            ),
+                            child: Text(
+                              '${solicitacoes.length} PENDENTE(S)',
+                              style: const TextStyle(
+                                color: Colors.amber,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 10,
+                              ),
+                            ),
+                          ),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Total: $totalTodos',
+                          style: const TextStyle(color: Colors.white24, fontSize: 10),
+                        ),
+                        if (totalTodos > 0)
+                          IconButton(
+                            icon: const Icon(Icons.bug_report, size: 14, color: Colors.white10),
+                            onPressed: () {
+                              debugPrint('>>> [DEBUG-MODAL] 📋 Todos os agendamentos em memória:');
+                              for (var a in currentDataService.agendamentosServico) {
+                                debugPrint('    - ID: ${a.id} | Status: ${a.status} | Data: ${a.dataAgendamento}');
+                              }
+                            },
+                          ),
+                      ],
+                    ),
+                  ),
+                  if (outrosStatus.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8.0, left: 24, right: 24),
+                      child: Text(
+                        'Outros: $outrosStatus',
+                        style: const TextStyle(color: Colors.white10, fontSize: 8),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  const SizedBox(height: 24),
+                  Expanded(
+                    child: solicitacoes.isEmpty
+                        ? Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.event_available_rounded, size: 80, color: Colors.white.withOpacity(0.05)),
+                                const SizedBox(height: 16),
+                                const Text(
+                                  'Nenhuma nova solicitação no momento.',
+                                  style: TextStyle(color: Colors.white38),
+                                ),
+                              ],
+                            ),
+                          )
+                        : ListView.separated(
+                            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                            itemCount: solicitacoes.length,
+                            separatorBuilder: (_, __) => const SizedBox(height: 16),
+                            itemBuilder: (context, index) {
+                              final sol = solicitacoes[index];
+                              return Container(
+                                padding: const EdgeInsets.all(20),
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withOpacity(0.05),
+                                  borderRadius: BorderRadius.circular(24),
+                                  border: Border.all(color: Colors.white.withOpacity(0.05)),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Container(
+                                          padding: const EdgeInsets.all(12),
+                                          decoration: BoxDecoration(
+                                            color: Colors.blueAccent.withOpacity(0.1),
+                                            shape: BoxShape.circle,
+                                          ),
+                                          child: const Icon(Icons.person_outline_rounded, color: Colors.blueAccent, size: 24),
+                                        ),
+                                        const SizedBox(width: 16),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                sol.clienteNome ?? sol.cliente?.nome ?? 'Cliente Publico',
+                                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
+                                              ),
+                                              Text(
+                                                sol.clienteTelefone ?? sol.cliente?.telefone ?? 'Sem telefone',
+                                                style: const TextStyle(color: Colors.white54, fontSize: 13),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const Padding(
+                                      padding: EdgeInsets.symmetric(vertical: 16),
+                                      child: Divider(color: Colors.white10),
+                                    ),
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: _buildInfoItem(
+                                            Icons.calendar_today_rounded,
+                                            'Data',
+                                            _formatoData?.format(sol.dataAgendamento) ?? '',
+                                          ),
+                                        ),
+                                        Expanded(
+                                          child: _buildInfoItem(
+                                            Icons.access_time_rounded,
+                                            'Horário',
+                                            _formatoHora?.format(sol.dataAgendamento) ?? '',
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 16),
+                                    _buildInfoItem(
+                                      Icons.pets_rounded,
+                                      'Pet / Serviço',
+                                      '${sol.petNome ?? sol.pet?.nome ?? "Não informado"} - ${sol.servico?.nome ?? sol.servicoId ?? "Serviço"}',
+                                    ),
+                                    if (sol.observacoes != null && sol.observacoes!.isNotEmpty) ...[
+                                      const SizedBox(height: 16),
+                                      Container(
+                                        width: double.infinity,
+                                        padding: const EdgeInsets.all(12),
+                                        decoration: BoxDecoration(
+                                          color: Colors.white.withOpacity(0.03),
+                                          borderRadius: BorderRadius.circular(12),
+                                        ),
+                                        child: Text(
+                                          sol.observacoes!,
+                                          style: const TextStyle(color: Colors.white38, fontSize: 12),
+                                        ),
+                                      ),
+                                    ],
+                                    const SizedBox(height: 24),
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: ElevatedButton(
+                                            onPressed: () async {
+                                                try {
+                                                  await currentDataService.rejeitarAgendamento(sol.id);
+                                                  if (context.mounted) {
+                                                    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                                                    ScaffoldMessenger.of(context).showSnackBar(
+                                                      const SnackBar(
+                                                        content: Text('Solicitação cancelada/rejeitada'),
+                                                        behavior: SnackBarBehavior.floating,
+                                                      ),
+                                                    );
+                                                  }
+                                                  
+                                                  // Se não houver mais solicitações, fecha o modal após um breve delay
+                                                  final restantes = currentDataService.agendamentosServico
+                                                      .where((a) => a.status == 'Aguardando Confirmação')
+                                                      .length;
+                                                  if (restantes == 0 && context.mounted) {
+                                                    Future.delayed(const Duration(milliseconds: 800), () {
+                                                      if (context.mounted) Navigator.pop(context);
+                                                    });
+                                                  }
+                                                } catch (e) {
+                                                ScaffoldMessenger.of(context).showSnackBar(
+                                                  SnackBar(content: Text('Erro: $e'), backgroundColor: Colors.red),
+                                                );
+                                              }
+                                            },
+                                            style: ElevatedButton.styleFrom(
+                                              backgroundColor: Colors.redAccent.withOpacity(0.1),
+                                              foregroundColor: Colors.redAccent,
+                                              elevation: 0,
+                                              padding: const EdgeInsets.symmetric(vertical: 16),
+                                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                                              side: BorderSide(color: Colors.redAccent.withOpacity(0.3)),
+                                            ),
+                                            child: const Text('Rejeitar', style: TextStyle(fontWeight: FontWeight.bold)),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: ElevatedButton(
+                                            onPressed: () async {
+                                                try {
+                                                  await currentDataService.aprovarAgendamento(sol.id);
+                                                  if (context.mounted) {
+                                                    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                                                    ScaffoldMessenger.of(context).showSnackBar(
+                                                      const SnackBar(
+                                                        content: Text('Solicitação aprovada com sucesso!'), 
+                                                        backgroundColor: Colors.green,
+                                                        behavior: SnackBarBehavior.floating,
+                                                      ),
+                                                    );
+                                                  }
+
+                                                  // Se não houver mais solicitações, fecha o modal após um breve delay
+                                                  final restantes = currentDataService.agendamentosServico
+                                                      .where((a) => a.status == 'Aguardando Confirmação')
+                                                      .length;
+                                                  if (restantes == 0 && context.mounted) {
+                                                    Future.delayed(const Duration(milliseconds: 800), () {
+                                                      if (context.mounted) Navigator.pop(context);
+                                                    });
+                                                  }
+                                                } catch (e) {
+                                                ScaffoldMessenger.of(context).showSnackBar(
+                                                  SnackBar(content: Text('Erro: $e'), backgroundColor: Colors.red),
+                                                );
+                                              }
+                                            },
+                                            style: ElevatedButton.styleFrom(
+                                              backgroundColor: const Color(0xFFFF9800),
+                                              foregroundColor: Colors.white,
+                                              elevation: 4,
+                                              padding: const EdgeInsets.symmetric(vertical: 16),
+                                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                                            ),
+                                            child: const Text('Confirmar Agendamento', style: TextStyle(fontWeight: FontWeight.bold)),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
+                          ),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+      );
+    },
+  );
+}
+
+  Widget _buildInfoItem(IconData icon, String label, String value) {
+    return Row(
+      children: [
+        Icon(icon, color: const Color(0xFFFF9800).withOpacity(0.5), size: 16),
+        const SizedBox(width: 8),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label, style: const TextStyle(color: Colors.white38, fontSize: 10)),
+            Text(value, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
