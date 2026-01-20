@@ -515,6 +515,9 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
             
             // Notificar DataService sobre a empresa selecionada
             final dataService = Provider.of<DataService>(context, listen: false);
+            // DEFINIR OBJETO COMPLETO PRIMEIRO (para temas e links)
+            dataService.setEmpresaAtual(empresa);
+            // DEFINIR ID PARA CARREGAMENTO DE DADOS
             await dataService.definirEmpresaAtual(empresa.id);
             
             if (context.mounted) {

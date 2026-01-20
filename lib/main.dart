@@ -370,9 +370,10 @@ class _AuthWrapperState extends State<AuthWrapper> {
             }
             
             // Garantir que a empresa está sempre atualizada no DataService
-            if (empresaAtual != null && dataService.empresaAtual?.id != empresaAtual.id) {
+            if (empresaAtual != null && dataService.empresaAtual != empresaAtual) {
               dataService.setEmpresaAtual(empresaAtual);
             }
+
             
             return const HomePage();
           } catch (e, stackTrace) {

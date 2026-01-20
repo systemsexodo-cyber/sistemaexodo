@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:intl/intl.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import '../services/data_service.dart';
@@ -13,7 +14,10 @@ import '../models/pedido.dart';
 import '../models/item_material.dart';
 import '../models/produto.dart';
 import '../models/item_servico.dart';
+import '../models/empresa.dart';
 import '../services/codigo_service.dart';
+import '../services/auth_service.dart';
+
 import '../theme.dart';
 import 'cliente_detalhes_page.dart';
 import 'package:uuid/uuid.dart';
@@ -1902,6 +1906,17 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                 },
               ),
               _buildInfoLinha('Cliente', agendamento.cliente?.nome ?? agendamento.clienteNome ?? 'N/A'),
+              Builder(
+                builder: (context) {
+                  final telefone = agendamento.clienteTelefone ?? agendamento.cliente?.telefone ?? 'N/A';
+                  return _buildInfoLinhaComBotoes(
+                    'Telefone',
+                    telefone,
+                    onWhatsApp: telefone != 'N/A' ? () => _abrirWhatsApp(telefone) : null,
+                    onCopy: telefone != 'N/A' ? () => _copiarTelefoneParaObservacoes(agendamento, telefone, dataService) : null,
+                  );
+                },
+              ),
               if (agendamento.pet != null || agendamento.petNome != null) ...[
                 if (agendamento.pet != null)
                   InkWell(
@@ -2216,52 +2231,20 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
               }
             },
           ),
-          // Botão para editar cliente (se houver cliente)
-          if (agendamento.cliente != null || agendamento.clienteId != null)
+          // Botão para editar cliente
+          // Agora sempre mostramos se houver informações mínimas (nome ou telefone)
+          if (agendamento.cliente != null || agendamento.clienteId != null || agendamento.clienteTelefone != null || agendamento.clienteNome != null)
             IconButton(
-              icon: const Icon(Icons.edit, color: Colors.blue),
-              tooltip: 'Editar Cliente',
-              onPressed: () async {
-                Navigator.pop(context); // Fechar dialog de detalhes
-                
-                // Buscar cliente atualizado
-                Cliente? clienteParaEditar;
-                if (agendamento.clienteId != null) {
-                  try {
-                    clienteParaEditar = dataService.clientes.firstWhere(
-                      (c) => c.id == agendamento.clienteId,
-                    );
-                  } catch (e) {
-                    clienteParaEditar = agendamento.cliente;
-                  }
-                } else {
-                  clienteParaEditar = agendamento.cliente;
-                }
-                
-                if (clienteParaEditar != null) {
-                  // Navegar para a página de detalhes do cliente
-                  await Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => ClienteDetalhesPage(cliente: clienteParaEditar),
-                    ),
-                  );
-                  
-                  // Atualizar a lista após editar
-                  if (context.mounted) {
-                    setState(() {});
-                  }
-                } else {
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Cliente não encontrado'),
-                        backgroundColor: Colors.red,
-                      ),
-                    );
-                  }
-                }
-              },
+              icon: Icon(
+                (agendamento.clienteId == 'publico' || agendamento.clienteId == null) 
+                    ? Icons.person_add_alt_1 
+                    : Icons.edit, 
+                color: Colors.blue
+              ),
+              tooltip: (agendamento.clienteId == 'publico' || agendamento.clienteId == null)
+                  ? 'Vincular/Cadastrar Cliente'
+                  : 'Editar Cliente',
+              onPressed: () => _editarOuVincularCliente(context, agendamento, dataService),
             ),
           // Botão para alterar status
           PopupMenuButton<String>(
@@ -2365,6 +2348,119 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
     );
   }
 
+  /// Método inteligente para editar ou vincular um cliente a um agendamento
+  Future<void> _editarOuVincularCliente(BuildContext context, AgendamentoServico agendamento, DataService dataService) async {
+    Navigator.pop(context); // Fechar dialog de detalhes
+
+    Cliente? clienteAlvo;
+    bool isPublico = agendamento.clienteId == 'publico' || agendamento.clienteId == null;
+
+    if (!isPublico) {
+      // Caso A: Cliente já registrado - Tentar buscar o registro oficial
+      try {
+        clienteAlvo = dataService.clientes.firstWhere((c) => c.id == agendamento.clienteId);
+      } catch (e) {
+        clienteAlvo = agendamento.cliente; // Fallback para o objeto no agendamento
+      }
+    }
+
+    // Se for público ou não encontramos o cliente registrado, vamos buscar pelo telefone
+    if (clienteAlvo == null || isPublico) {
+      final telefoneBusca = (agendamento.clienteTelefone ?? agendamento.cliente?.telefone ?? '').replaceAll(RegExp(r'\D'), '');
+      
+      if (telefoneBusca.isNotEmpty) {
+        try {
+          // Busca exata pelo telefone (removendo caracteres não numéricos)
+          final matches = dataService.clientes.where((c) {
+            final t = c.telefone.replaceAll(RegExp(r'\D'), '');
+            return t.contains(telefoneBusca) || telefoneBusca.contains(t);
+          }).toList();
+
+          if (matches.isNotEmpty) {
+            final match = matches.first;
+            
+            // Perguntar se deseja vincular
+            final bool? vincular = await showDialog<bool>(
+              context: context,
+              builder: (context) => AlertDialog(
+                backgroundColor: const Color(0xFF1E1E2E),
+                title: const Text('Cliente Encontrado', style: TextStyle(color: Colors.white)),
+                content: Text(
+                  'Identificamos que o telefone ${agendamento.clienteTelefone} pertence ao cliente cadastrado: ${match.nome}.\n\nDeseja vincular este agendamento ao cadastro dele?',
+                  style: const TextStyle(color: Colors.white70),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context, false),
+                    child: const Text('Não, criar novo', style: TextStyle(color: Colors.white54)),
+                  ),
+                  ElevatedButton(
+                    onPressed: () => Navigator.pop(context, true),
+                    style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
+                    child: const Text('Sim, vincular'),
+                  ),
+                ],
+              ),
+            );
+
+            if (vincular == true) {
+              // Atualizar agendamento no banco
+              final agendamentoVinculado = agendamento.copyWith(
+                clienteId: match.id,
+                cliente: match,
+                updatedAt: DateTime.now(),
+              );
+              await dataService.updateAgendamentoServico(agendamentoVinculado);
+              clienteAlvo = match;
+            }
+          }
+        } catch (e) {
+          debugPrint('Erro ao buscar cliente por telefone: $e');
+        }
+      }
+    }
+
+    // Se ainda não temos um cliente alvo (e não vinculamos a um existente), criar um pré-preenchido
+    if (clienteAlvo == null) {
+      clienteAlvo = Cliente(
+        id: '', // ID vazio para indicar NOVO cliente no ClienteDetalhesPage
+        nome: agendamento.clienteNome ?? agendamento.cliente?.nome ?? '',
+        telefone: agendamento.clienteTelefone ?? agendamento.cliente?.telefone ?? '',
+        whatsapp: agendamento.clienteTelefone ?? agendamento.cliente?.whatsapp ?? '',
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+      );
+    }
+
+    // Abrir página de detalhes para editar/cadastrar
+    if (context.mounted) {
+      final Cliente? resultado = await Navigator.push<Cliente>(
+        context,
+        MaterialPageRoute(
+          builder: (context) => ClienteDetalhesPage(cliente: clienteAlvo),
+        ),
+      );
+
+      // Se um cliente foi salvo/retornado, e o agendamento era público, vincular agora
+      if (resultado != null && isPublico) {
+        final agendamentoFinal = agendamento.copyWith(
+          clienteId: resultado.id,
+          cliente: resultado,
+          updatedAt: DateTime.now(),
+        );
+        await dataService.updateAgendamentoServico(agendamentoFinal);
+        
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Agendamento vinculado ao novo cliente!'), backgroundColor: Colors.green),
+          );
+        }
+      }
+      
+      if (context.mounted) setState(() {});
+    }
+  }
+
   Widget _buildInfoLinha(String label, String value) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -2394,6 +2490,115 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
         ],
       ),
     );
+  }
+
+  Widget _buildInfoLinhaComBotoes(String label, String value, {VoidCallback? onWhatsApp, VoidCallback? onCopy}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 100,
+            child: Text(
+              '$label:',
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.7),
+                fontSize: 14,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    value,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+                if (onWhatsApp != null)
+                  IconButton(
+                    icon: const Icon(Icons.chat, color: Colors.green, size: 20),
+                    onPressed: onWhatsApp,
+                    tooltip: 'Conversar no WhatsApp',
+                    constraints: const BoxConstraints(),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                if (onCopy != null)
+                  IconButton(
+                    icon: const Icon(Icons.copy, color: Colors.blue, size: 20),
+                    onPressed: onCopy,
+                    tooltip: 'Copiar para Observações',
+                    constraints: const BoxConstraints(),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _abrirWhatsApp(String telefone) async {
+    final numeroLimpo = telefone.replaceAll(RegExp(r'\D'), '');
+    if (numeroLimpo.isEmpty) return;
+
+    // Adicionar código do país se não tiver (padrão Brasil 55)
+    String link = "";
+    if (numeroLimpo.length <= 11) {
+      link = "https://wa.me/55$numeroLimpo";
+    } else {
+      link = "https://wa.me/$numeroLimpo";
+    }
+
+    final uri = Uri.parse(link);
+    try {
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      } else {
+        // Fallback para window.open no web se canLaunchUrl falhar
+        if (kIsWeb) {
+          html_helper.openWindow(link, 'whatsapp');
+        }
+      }
+    } catch (e) {
+      debugPrint('Erro ao abrir WhatsApp: $e');
+    }
+  }
+
+  void _copiarTelefoneParaObservacoes(AgendamentoServico agendamento, String telefone, DataService dataService) async {
+    final obsAntiga = agendamento.observacoes ?? '';
+    final novoTexto = obsAntiga.isEmpty ? telefone : '$obsAntiga\n$telefone';
+
+    try {
+      final agendamentoAtualizado = agendamento.copyWith(
+        observacoes: novoTexto,
+        updatedAt: DateTime.now(),
+      );
+      await dataService.updateAgendamentoServico(agendamentoAtualizado);
+      
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Telefone copiado para as observações!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        Navigator.pop(context); // Fechar detalhes para mostrar atualizado
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erro ao atualizar observações: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
   }
 
   void _mostrarDialogNovoAgendamento(BuildContext context, DataService dataService, {DateTime? dataHoraPreSelecionada}) async {
@@ -4907,10 +5112,32 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
   /// Gera e exibe o link de agendamento online para a empresa atual
   void _gerarLinkAgendamento(DataService dataService) {
     // Obter o identificador da empresa (prefere slug ao ID)
-    final empresa = dataService.empresaAtual;
-    final identificador = (empresa?.slug?.isNotEmpty ?? false) 
-        ? empresa!.slug 
-        : dataService.empresaIdAtual;
+    // Tentar obter a empresa do DataService primeiro, e do AuthService como fallback
+    Empresa? empresa = dataService.empresaAtual;
+    
+    if (empresa == null) {
+      try {
+        final authService = Provider.of<AuthService>(context, listen: false);
+        empresa = authService.empresaAtual;
+      } catch (e) {
+        debugPrint('Erro ao obter AuthService no link de agendamento: $e');
+      }
+    }
+
+    String? identificador;
+    
+    if (empresa != null) {
+      if (empresa.slug.isNotEmpty) {
+        identificador = empresa.slug;
+      } else {
+        // Fallback: Gerar slug a partir do nome se o campo slug estiver vazio
+        identificador = Empresa.gerarSlug(empresa.nomeExibicao);
+      }
+    }
+    
+    // Se ainda for nulo (não deveria), usa o ID
+    identificador ??= dataService.empresaIdAtual;
+
 
     if (identificador == null) {
       if (context.mounted) {
@@ -5234,12 +5461,42 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                                 sol.clienteNome ?? sol.cliente?.nome ?? 'Cliente Publico',
                                                 style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
                                               ),
-                                              Text(
-                                                sol.clienteTelefone ?? sol.cliente?.telefone ?? 'Sem telefone',
-                                                style: const TextStyle(color: Colors.white54, fontSize: 13),
+                                              Row(
+                                                children: [
+                                                  Text(
+                                                    sol.clienteTelefone ?? sol.cliente?.telefone ?? 'Sem telefone',
+                                                    style: const TextStyle(color: Colors.white54, fontSize: 13),
+                                                  ),
+                                                  if ((sol.clienteTelefone ?? sol.cliente?.telefone) != null) ...[
+                                                    const SizedBox(width: 8),
+                                                    InkWell(
+                                                      onTap: () => _abrirWhatsApp(sol.clienteTelefone ?? sol.cliente!.telefone),
+                                                      child: const Icon(Icons.chat, color: Colors.green, size: 16),
+                                                    ),
+                                                    const SizedBox(width: 8),
+                                                    InkWell(
+                                                      onTap: () => _copiarTelefoneParaObservacoes(sol, sol.clienteTelefone ?? sol.cliente!.telefone, currentDataService),
+                                                      child: const Icon(Icons.copy, color: Colors.blueAccent, size: 16),
+                                                    ),
+                                                  ],
+                                                ],
                                               ),
                                             ],
                                           ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        IconButton(
+                                          icon: Icon(
+                                            (sol.clienteId == 'publico' || sol.clienteId == null) 
+                                              ? Icons.person_add_alt_1 
+                                              : Icons.edit, 
+                                            color: Colors.blueAccent.withOpacity(0.8),
+                                            size: 20,
+                                          ),
+                                          tooltip: (sol.clienteId == 'publico' || sol.clienteId == null)
+                                            ? 'Vincular/Cadastrar Cliente'
+                                            : 'Editar Cliente',
+                                          onPressed: () => _editarOuVincularCliente(context, sol, currentDataService),
                                         ),
                                       ],
                                     ),

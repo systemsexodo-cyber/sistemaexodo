@@ -232,7 +232,9 @@ class Empresa {
           : (map['regimeTributario'] != null 
               ? _converterRegimeTributarioParaCRT(map['regimeTributario'].toString())
               : null), // Compatibilidade com dados antigos
-      slug: map['slug'] ?? gerarSlug(map['nomeFantasia'] ?? map['razaoSocial'] ?? ''),
+      slug: (map['slug'] != null && map['slug'].toString().trim().isNotEmpty)
+          ? map['slug'].toString()
+          : gerarSlug(map['nomeFantasia'] ?? map['razaoSocial'] ?? ''),
       email: map['email'],
       telefone: map['telefone'],
       celular: map['celular'],
@@ -361,11 +363,32 @@ class Empresa {
   /// Gera um slug a partir de um texto (ex: "Exodo Systems" -> "exodo-systems")
   static String gerarSlug(String texto) {
     if (texto.isEmpty) return 'loja';
-    return texto
-        .toLowerCase()
-        .replaceAll(RegExp(r'[^\w\s-]'), '') // Remove caracteres especiais
-        .replaceAll(RegExp(r'[\s]'), '-')    // Espaços para hífens
-        .replaceAll(RegExp(r'-+'), '-')       // Remove hífens duplicados
-        .trim();
+    
+    // Converter para minúsculas
+    String slug = texto.toLowerCase();
+    
+    // Remover acentos e caracteres especiais comuns no Brasil
+    slug = slug
+        .replaceAll(RegExp(r'[áàâãä]'), 'a')
+        .replaceAll(RegExp(r'[éèêë]'), 'e')
+        .replaceAll(RegExp(r'[íìîï]'), 'i')
+        .replaceAll(RegExp(r'[óòôõö]'), 'o')
+        .replaceAll(RegExp(r'[úùûü]'), 'u')
+        .replaceAll(RegExp(r'[ç]'), 'c')
+        .replaceAll(RegExp(r'[ñ]'), 'n');
+    
+    // Remover qualquer outro caractere que não seja letra, número, espaço ou hífen
+    slug = slug.replaceAll(RegExp(r'[^a-z0-9\s-]'), '');
+    
+    // Substituir espaços e múltiplos hífens por um único hífen
+    slug = slug.replaceAll(RegExp(r'[\s-]+'), '-');
+    
+    // Remover hífens no início e fim
+    slug = slug.replaceAll(RegExp(r'^-+|-+$'), '');
+    
+    // Se ficou vazio, usar "loja"
+    if (slug.isEmpty) return 'loja';
+    
+    return slug.trim();
   }
 }

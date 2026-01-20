@@ -64,6 +64,10 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
   final _whatsappController = TextEditingController();
   final _petNomeController = TextEditingController();
   final _petRacaController = TextEditingController();
+  final _petEspecieController = TextEditingController();
+  final _petCorController = TextEditingController();
+  final _petObsController = TextEditingController();
+
   
   String? _servicoIdSelecionado;
   String _porteAnimal = 'Pequeno'; // Pequeno, Médio, Grande, Gigante
@@ -72,6 +76,9 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
   TimeOfDay? _horaSelecionada;
   String _tipoEntrega = 'Retirada na Loja'; // 'Retirada na Loja', 'Taxi Dog'
   String? _bairroEntrega;
+  String _petSexo = 'M'; // M ou F
+  String _petEspecie = 'Cachorro';
+
 
   bool _enviando = false;
   bool _verificandoDisponibilidade = false;
@@ -79,6 +86,19 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
   final List<String> _portes = ['Pequeno', 'Médio', 'Grande', 'Gigante'];
 
   @override
+  void dispose() {
+    _nomeController.dispose();
+    _whatsappController.dispose();
+    _petNomeController.dispose();
+    _petRacaController.dispose();
+    _petEspecieController.dispose();
+    _petCorController.dispose();
+    _petObsController.dispose();
+    super.dispose();
+  }
+
+  @override
+
   Widget build(BuildContext context) {
     final authService = Provider.of<AuthService>(context);
     final dataService = Provider.of<DataService>(context);
@@ -351,7 +371,15 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       case 2:
         return _buildStepDadosPet();
       case 3:
-        return _buildStepEntrega();
+        final authService = Provider.of<AuthService>(context, listen: false);
+        final dataService = Provider.of<DataService>(context, listen: false);
+        final empresa = authService.obterEmpresaPorSlug(widget.slugEmpresa ?? '') ?? dataService.empresaAtual;
+        final config = empresa?.configuracoes ?? {};
+        final agendamentoConfig = config['agendamento'] as Map<String, dynamic>? ?? {};
+        final bairrosData = agendamentoConfig['bairrosTaxiDog'] as List<dynamic>? ?? [];
+        final bairrosCustom = bairrosData.map((e) => e.toString()).toList();
+        
+        return _buildStepEntrega(bairrosCustom);
       case 4:
         return _buildStepHorario();
       default:
@@ -499,22 +527,71 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       children: [
         _buildStepTitle('E quem é o cliente VIP?', 'Conte-nos sobre o animalzinho que receberá o cuidado.'),
         const SizedBox(height: 32),
+        
         _buildTextField(
           controller: _petNomeController,
-          label: 'Nome do Pet',
+          label: 'Nome do Pet *',
           icon: Icons.pets_rounded,
           placeholder: 'Nome do seu amigo',
           validator: (v) => v!.isEmpty ? 'Obrigatório' : null,
         ),
+        
         const SizedBox(height: 20),
-        _buildTextField(
-          controller: _petRacaController,
-          label: 'Raça',
-          icon: Icons.category_rounded,
-          placeholder: 'Ex: Shih-tzu, Vira-lata...',
-          validator: (v) => v!.isEmpty ? 'Obrigatório' : null,
+        
+        Row(
+          children: [
+            Expanded(
+              child: _buildDropdown<String>(
+                label: 'Espécie',
+                icon: Icons.category_rounded,
+                value: _petEspecie,
+                items: ['Cachorro', 'Gato', 'Pássaro', 'Coelho', 'Outros'].map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
+                onChanged: (v) => setState(() => _petEspecie = v!),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildTextField(
+                controller: _petRacaController,
+                label: 'Raça *',
+                icon: Icons.search_rounded,
+                placeholder: 'Ex: Shih-tzu',
+                validator: (v) => v!.isEmpty ? 'Obrigatório' : null,
+              ),
+            ),
+          ],
         ),
+        
+        const SizedBox(height: 20),
+        
+        Row(
+          children: [
+            Expanded(
+              child: _buildDropdown<String>(
+                label: 'Sexo',
+                icon: Icons.wc_rounded,
+                value: _petSexo,
+                items: [
+                  const DropdownMenuItem(value: 'M', child: Text('Macho')),
+                  const DropdownMenuItem(value: 'F', child: Text('Fêmea')),
+                ],
+                onChanged: (v) => setState(() => _petSexo = v!),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildTextField(
+                controller: _petCorController,
+                label: 'Cor',
+                icon: Icons.palette_rounded,
+                placeholder: 'Ex: Branco, Preto',
+              ),
+            ),
+          ],
+        ),
+        
         const SizedBox(height: 32),
+        
         Text(
           'Qual o porte do pet?',
           style: TextStyle(color: _isDark ? Colors.white : Colors.black87, fontWeight: FontWeight.w600, fontSize: 16),
@@ -548,7 +625,9 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
             );
           }).toList(),
         ),
+        
         const SizedBox(height: 32),
+        
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
@@ -570,11 +649,33 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
           inactiveColor: _isDark ? Colors.white.withOpacity(0.1) : Colors.grey[200],
           onChanged: (val) => setState(() => _pesoAproximado = val),
         ),
+        
+        const SizedBox(height: 20),
+        
+        _buildTextField(
+          controller: _petObsController,
+          label: 'Observações do Animal',
+          icon: Icons.notes_rounded,
+          placeholder: 'Ex: Ele é bravo, tem alergia a algum produto...',
+          maxLines: 3,
+        ),
       ],
     );
   }
 
-  Widget _buildStepEntrega() {
+
+  Widget _buildStepEntrega(List<String> bairrosCustom) {
+    final List<String> bairros = bairrosCustom.isNotEmpty 
+        ? (bairrosCustom..sort())
+        : ['Centro', 'Vila Nova', 'Jardim Alvorada', 'Outros'];
+
+    // Se o bairro selecionado não estiver na lista (ex: lista padrão mudou ou foi editada)
+    // adicionamos ele temporariamente para não quebrar o Dropdown
+    if (_bairroEntrega != null && !bairros.contains(_bairroEntrega)) {
+      bairros.add(_bairroEntrega!);
+      bairros.sort();
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -610,7 +711,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
               prefixIcon: Icon(Icons.location_on_rounded, color: _primaryColor),
             ),
-            items: ['Bairro 01', 'Bairro 02', 'Centro', 'Outros'].map((b) => DropdownMenuItem(value: b, child: Text(b))).toList(),
+            items: bairros.map((b) => DropdownMenuItem(value: b, child: Text(b))).toList(),
             onChanged: (val) => setState(() => _bairroEntrega = val),
             validator: (v) => _tipoEntrega == 'Taxi Dog' && v == null ? 'Selecione o bairro' : null,
           ),
@@ -683,7 +784,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                 label: 'Horário',
                 value: _horaSelecionada == null 
                     ? 'Selecionar' 
-                    : _horaSelecionada!.format(context),
+                    : '${_horaSelecionada!.hour.toString().padLeft(2, '0')}:${_horaSelecionada!.minute.toString().padLeft(2, '0')}',
                 icon: Icons.access_time_rounded,
                 onTap: _pickTime,
               ),
@@ -731,7 +832,9 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       _horaSelecionada!.minute,
     );
     
-    bool disponivel = dataService.checkDisponibilidade(inicio, 60, ignorarPendentes: true);
+    final duracao = dataService.servicos.firstWhere((s) => s.id == _servicoIdSelecionado, orElse: () => dataService.servicos.first).duracaoPadraoMinutos ?? 60;
+    bool disponivel = dataService.checkDisponibilidade(inicio, duracao, ignorarPendentes: false);
+
 
     return Container(
       padding: const EdgeInsets.all(20),
@@ -816,6 +919,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     required IconData icon,
     required String placeholder,
     TextInputType? keyboardType,
+    int maxLines = 1,
     String? Function(String?)? validator,
   }) {
     return Column(
@@ -830,6 +934,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
           controller: controller,
           keyboardType: keyboardType,
           validator: validator,
+          maxLines: maxLines,
           style: TextStyle(color: _isDark ? Colors.white : Colors.black87, fontSize: 16),
           decoration: InputDecoration(
             hintText: placeholder,
@@ -858,6 +963,45 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       ],
     );
   }
+
+  Widget _buildDropdown<T>({
+    required String label,
+    required IconData icon,
+    required T value,
+    required List<DropdownMenuItem<T>> items,
+    required void Function(T?) onChanged,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: TextStyle(color: _isDark ? Colors.white70 : Colors.grey[700], fontSize: 13, fontWeight: FontWeight.w500),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          decoration: BoxDecoration(
+            color: _isDark ? Colors.white.withOpacity(0.05) : Colors.grey[100],
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: _isDark ? Colors.white.withOpacity(0.1) : Colors.grey[300]!),
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<T>(
+              value: value,
+              items: items,
+              onChanged: onChanged,
+              isExpanded: true,
+              icon: Icon(Icons.arrow_drop_down, color: _primaryColor),
+              dropdownColor: _isDark ? _LojaPublicaStyle.cardColor : Colors.white,
+              style: TextStyle(color: _isDark ? Colors.white : Colors.black87, fontSize: 16),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
 
   Widget _buildPickerTile({
     required String label,
@@ -1012,6 +1156,17 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     try {
       final servico = dataService.servicos.firstWhere((s) => s.id == _servicoIdSelecionado);
       
+      // Verificar disponibilidade para mostrar o alerta no final (considerando agendamentos pendentes como conflito)
+      debugPrint('>>> [AgendamentoPublico] 🔍 Verificando disponibilidade para $dataAgendamento');
+      debugPrint('>>> [AgendamentoPublico] 📋 Total de agendamentos na memória: ${dataService.agendamentosServico.length}');
+      
+      final disponivel = dataService.checkDisponibilidade(dataAgendamento, servico.duracaoPadraoMinutos ?? 60, ignorarPendentes: false);
+      
+      debugPrint('>>> [AgendamentoPublico] 📢 Resultado disponibilidade: ${disponivel ? "LIVRE" : "OCUPADO"}');
+
+
+
+      
       // Identificar cliente pelo telefone
       final telefoneBusca = _whatsappController.text.replaceAll(RegExp(r'\D'), '');
       String clienteIdEncontrado = 'publico';
@@ -1049,6 +1204,20 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
         debugPrint('>>> [AgendamentoPublico] Cliente não encontrado pelo telefone - usando identificador "publico"');
       }
 
+      final petInfo = moduloPet ? Pet(
+        id: petExistente?.id ?? 'novo_${DateTime.now().millisecondsSinceEpoch}',
+        nome: _petNomeController.text,
+        especie: _petEspecie,
+        raca: _petRacaController.text,
+        sexo: _petSexo,
+        cor: _petCorController.text,
+        tamanho: _porteAnimal,
+        peso: _pesoAproximado,
+        observacoes: _petObsController.text,
+        updatedAt: DateTime.now(),
+        createdAt: petExistente?.createdAt ?? DateTime.now(),
+      ) : null;
+
       final agendamento = AgendamentoServico(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
         numero: '', // Gerado no backend local
@@ -1056,8 +1225,8 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
         servico: servico,
         clienteId: clienteIdEncontrado,
         cliente: clienteExistente,
-        petId: petExistente?.id,
-        pet: petExistente,
+        petId: petInfo?.id,
+        pet: petInfo,
         clienteNome: _nomeController.text,
         clienteTelefone: _whatsappController.text,
         petNome: moduloPet ? _petNomeController.text : null,
@@ -1066,11 +1235,22 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
         status: 'Aguardando Confirmação',
         tipoEntrega: moduloPet ? _tipoEntrega : null,
         bairroEntrega: moduloPet && _tipoEntrega == 'Taxi Dog' ? _bairroEntrega : null,
-        observacoes: 'SOLICITAÇÃO ONLINE PREMIUM\n'
+        observacoes: 'SOLICITAÇÃO ONLINE DETALHADA\n'
             'Cliente: ${_nomeController.text}\n'
             'WhatsApp: ${_whatsappController.text}\n'
-            '${moduloPet ? 'Pet: ${_petNomeController.text} (${_petRacaController.text})\nPorte: $_porteAnimal\nPeso: ${_pesoAproximado.toStringAsFixed(1)} kg\nEntrega: $_tipoEntrega ${(_tipoEntrega == 'Taxi Dog' && _bairroEntrega != null) ? " ($_bairroEntrega)" : ""}' : ''}',
+            '${moduloPet ? '-------------------\n'
+            'PET: ${petInfo!.nome}\n'
+            'Espécie: ${petInfo.especie}\n'
+            'Raça: ${petInfo.raca}\n'
+            'Sexo: ${petInfo.sexo == "M" ? "Macho" : "Fêmea"}\n'
+            'Cor: ${petInfo.cor}\n'
+            'Porte: ${petInfo.tamanho}\n'
+            'Peso: ${petInfo.peso?.toStringAsFixed(1)} kg\n'
+            'Obs Pet: ${petInfo.observacoes}\n'
+            '-------------------\n'
+            'Entrega: $_tipoEntrega ${(_tipoEntrega == 'Taxi Dog' && _bairroEntrega != null) ? " ($_bairroEntrega)" : ""}' : ''}',
       );
+
 
       debugPrint('>>> [AgendamentoPublico] Finalizando agendamento...');
       debugPrint('>>> [AgendamentoPublico] Empresa ID no DataService: ${dataService.empresaIdAtual}');
@@ -1097,8 +1277,9 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       debugPrint('>>> [AgendamentoPublico] ✅ Agendamento enviado com sucesso para o banco!');
 
       if (mounted) {
-        _mostrarSucesso();
+        _mostrarSucesso(horarioOcupado: !disponivel);
       }
+
     } catch (e) {
       _showError('Erro ao processar sua solicitação. Tente novamente em instantes.');
     } finally {
@@ -1106,7 +1287,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     }
   }
 
-  void _mostrarSucesso() {
+  void _mostrarSucesso({bool horarioOcupado = false}) {
     final cardColor = _isDark ? _LojaPublicaStyle.cardColor : Colors.white;
     final textColor = _isDark ? Colors.white : const Color(0xFF1E293B);
     final textSecondary = _isDark ? _LojaPublicaStyle.textSecondaryColor : Colors.black54;
@@ -1120,29 +1301,78 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
           backgroundColor: cardColor,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
           content: Container(
-            padding: const EdgeInsets.symmetric(vertical: 20),
+            padding: const EdgeInsets.symmetric(vertical: 10),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                // Ícone de Status
                 Container(
                   padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
-                    color: Colors.green.withOpacity(0.1),
+                    color: (horarioOcupado ? Colors.red : Colors.green).withOpacity(0.1),
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(Icons.check_circle_rounded, color: Colors.green, size: 80),
+                  child: Icon(
+                    horarioOcupado ? Icons.warning_amber_rounded : Icons.check_circle_rounded, 
+                    color: horarioOcupado ? Colors.red : Colors.green, 
+                    size: 80
+                  ),
                 ),
                 const SizedBox(height: 24),
+                
+                // Título
                 Text(
-                  'Quase tudo pronto!',
-                  style: GoogleFonts.outfit(color: textColor, fontSize: 24, fontWeight: FontWeight.bold),
+                  horarioOcupado ? 'Horário já Ocupado!' : 'Quase tudo pronto!',
+                  style: GoogleFonts.outfit(
+                    color: horarioOcupado ? Colors.redAccent : textColor, 
+                    fontSize: 24, 
+                    fontWeight: FontWeight.bold
+                  ),
                 ),
+                
+                // Alerta de Horário (se ocupado)
+                if (horarioOcupado) ...[
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.red.withOpacity(0.05),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.red.withOpacity(0.2)),
+                    ),
+                    child: Column(
+                      children: [
+                        const Text(
+                          'AVISO DE DISPONIBILIDADE',
+                          style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold, fontSize: 12),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Este horário já está reservado para outro cliente, mas não se preocupe!',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: _isDark ? Colors.white70 : Colors.black87, fontSize: 13),
+                        ),
+                        const SizedBox(height: 4),
+                        const Text(
+                          'Enviamos sua solicitação assim mesmo. Nossa equipe entrará em contato para confirmar ou sugerir um novo horário.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Colors.redAccent, fontSize: 13, fontWeight: FontWeight.w500),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+
                 const SizedBox(height: 16),
+
                 Text(
-                  'Recebemos sua solicitação para o(a) ${_petNomeController.text}.\n\nAgora nossa equipe vai revisar e entraremos em contato via WhatsApp para confirmar.',
+                  horarioOcupado 
+                    ? 'Sua solicitação para o(a) ${_petNomeController.text} foi enviada para análise.'
+                    : 'Recebemos sua solicitação para o(a) ${_petNomeController.text}.\n\nAgora nossa equipe vai revisar e entraremos em contato via WhatsApp para confirmar.',
                   textAlign: TextAlign.center,
                   style: TextStyle(color: textSecondary, height: 1.5),
                 ),
+
                 const SizedBox(height: 32),
                 SizedBox(
                   width: double.infinity,
@@ -1156,9 +1386,17 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                         _whatsappController.clear();
                         _petNomeController.clear();
                         _petRacaController.clear();
+                        _petEspecieController.clear();
+                        _petCorController.clear();
+                        _petObsController.clear();
+                        _petEspecie = 'Cachorro';
+                        _petSexo = 'M';
+                        _porteAnimal = 'Pequeno';
+                        _pesoAproximado = 5.0;
                         _dataSelecionada = null;
                         _horaSelecionada = null;
                       });
+
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: _primaryColor,
@@ -1295,7 +1533,10 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
               onSurface: Colors.black87,
             ),
           ),
-          child: child!,
+          child: MediaQuery(
+            data: MediaQuery.of(context).copyWith(alwaysUse24HourFormat: true),
+            child: child!,
+          ),
         );
       },
     );

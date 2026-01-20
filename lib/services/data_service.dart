@@ -130,8 +130,12 @@ class DataService extends ChangeNotifier {
   
   /// Define a empresa completa (chamado pelo AuthService após selecionar empresa)
   void setEmpresaAtual(Empresa? empresa) {
-    _empresaAtual = empresa;
+    if (_empresaAtual != empresa) {
+      _empresaAtual = empresa;
+      notifyListeners();
+    }
   }
+
   
   // Estado de carregamento
   bool _isLoading = false;
@@ -201,6 +205,7 @@ class DataService extends ChangeNotifier {
     
     // DEFINIR NOVA EMPRESA
     _empresaIdAtual = empresaId;
+    _empresaAtual = null; // Limpar para evitar dados obsoletos
     
     // Recarregar dados APENAS da nova empresa (isoladamente)
     if (empresaId != null) {

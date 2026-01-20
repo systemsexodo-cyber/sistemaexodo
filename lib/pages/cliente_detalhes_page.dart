@@ -223,7 +223,7 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
   final ImagePicker _imagePicker = ImagePicker();
   bool _uploadingFoto = false; // Flag para controlar upload de foto
 
-  bool get _isEditing => widget.cliente != null;
+  bool get _isEditing => widget.cliente != null && widget.cliente!.id.isNotEmpty;
   
 
   /// Retorna a URL permanente do Firebase ou null se falhar
@@ -2690,9 +2690,9 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
       final dataService = Provider.of<DataService>(context, listen: false);
 
       final cliente = Cliente(
-        id:
-            widget.cliente?.id ??
-            DateTime.now().millisecondsSinceEpoch.toString(),
+        id: (_isEditing)
+          ? widget.cliente!.id
+          : DateTime.now().millisecondsSinceEpoch.toString(),
         nome: _nomeController.text.trim(),
         nomeFantasia: _nomeFantasiaController.text.trim().isEmpty
             ? null

@@ -102,10 +102,12 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
   final _melhorEnvioTokenController = TextEditingController();
   final _melhorEnvioEmailController = TextEditingController();
   final _slugController = TextEditingController();
+  final _novoBairroTaxiDogController = TextEditingController();
   
   // Opções de Frete Fixas Personalizadas
   List<OpcaoFrete> _opcoesFreteFixas = [];
   List<ZonaEntrega> _zonasEntrega = [];
+  List<String> _bairrosTaxiDog = [];
   bool _habilitarEstimativaDistancia = true;
   
   bool _isLoading = false;
@@ -113,7 +115,7 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 7, vsync: this);
+    _tabController = TabController(length: 8, vsync: this);
     _carregarConfiguracoes();
   }
 
@@ -148,6 +150,7 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
       _melhorEnvioTokenController.dispose();
       _melhorEnvioEmailController.dispose();
       _slugController.dispose();
+      _novoBairroTaxiDogController.dispose();
       super.dispose();
   }
 
@@ -247,6 +250,11 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
       
       _valorFreteGratisController.text = _valorFreteGratis.toStringAsFixed(2);
       _percentualDescontoPixController.text = _percentualDescontoPix.toStringAsFixed(0);
+
+      // Carregar configurações de agendamento (incluindo bairros Taxi Dog)
+      final agendamentoConfig = config['agendamento'] as Map<String, dynamic>? ?? {};
+      final bairrosData = agendamentoConfig['bairrosTaxiDog'] as List<dynamic>? ?? [];
+      _bairrosTaxiDog = bairrosData.map((e) => e.toString()).toList();
     });
   }
 
@@ -631,6 +639,13 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
       
       // Atualizar a seção ecommerce no config
       config['ecommerce'] = ecommerceExistente;
+
+      // Configurações de agendamento
+      final agendamentoExistente = config['agendamento'] != null
+          ? Map<String, dynamic>.from(config['agendamento'] as Map)
+          : <String, dynamic>{};
+      agendamentoExistente['bairrosTaxiDog'] = _bairrosTaxiDog;
+      config['agendamento'] = agendamentoExistente;
       
       debugPrint('>>> [PersonalizarLoja] Salvando configurações completas');
       
@@ -769,6 +784,7 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
               Tab(icon: Icon(Icons.info), text: 'Informações'),
               Tab(icon: Icon(Icons.gavel), text: 'Legal'),
               Tab(icon: Icon(Icons.settings), text: 'Layout'),
+              Tab(icon: Icon(Icons.pets), text: 'Taxi Dog'),
             ],
           ),
         ),
@@ -784,6 +800,7 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
               _buildAbaInformacoes(),
               _buildAbaLegal(),
               _buildAbaLayout(),
+              _buildAbaAgendamento(),
             ],
           ),
         ),
@@ -804,8 +821,12 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
   }
 
   Widget _buildAbaVisual() {
+    final empresa = Provider.of<AuthService>(context).empresaAtual;
+    if (empresa == null) return const SizedBox.shrink();
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
+
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -867,8 +888,8 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
                   // LINK DIRETO (MAIS FÁCIL)
                   _buildLinkItem(
                     'Link da sua Loja (E-commerce)',
-                    '${html_helper.getWindowHost()}/loja/${_slugController.text}',
-                    '${html_helper.getWindowOrigin()}/loja/${_slugController.text}',
+                    '${html_helper.getWindowHost()}/loja/${_slugController.text.isNotEmpty ? _slugController.text : Empresa.gerarSlug(empresa.nomeExibicao)}',
+                    '${html_helper.getWindowOrigin()}/loja/${_slugController.text.isNotEmpty ? _slugController.text : Empresa.gerarSlug(empresa.nomeExibicao)}',
                   ),
                   
                   const SizedBox(height: 12),
@@ -876,9 +897,10 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
                   // LINK DE AGENDAMENTO
                   _buildLinkItem(
                     'Link de Agendamento Online',
-                    '${html_helper.getWindowHost()}/agendamento/${_slugController.text}',
-                    '${html_helper.getWindowOrigin()}/agendamento/${_slugController.text}',
+                    '${html_helper.getWindowHost()}/agendamento/${_slugController.text.isNotEmpty ? _slugController.text : Empresa.gerarSlug(empresa.nomeExibicao)}',
+                    '${html_helper.getWindowOrigin()}/agendamento/${_slugController.text.isNotEmpty ? _slugController.text : Empresa.gerarSlug(empresa.nomeExibicao)}',
                   ),
+
                 ],
               ),
             ),
@@ -2453,6 +2475,109 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
                       setState(() => _estiloCards = newSelection.first);
                     },
                   ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAbaAgendamento() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Card(
+            color: Colors.white.withOpacity(0.1),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.pets, color: Colors.white),
+                      const SizedBox(width: 8),
+                      const Text(
+                        'Bairros Atendidos (Taxi Dog)',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Cadastre os bairros que aparecerão como opção no agendamento online.',
+                    style: TextStyle(color: Colors.white70, fontSize: 13),
+                  ),
+                  const SizedBox(height: 20),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildTextField(
+                          _novoBairroTaxiDogController,
+                          'Novo Bairro',
+                          hint: 'Ex: Centro',
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Padding(
+                        padding: const EdgeInsets.only(top: 24.0),
+                        child: ElevatedButton(
+                          onPressed: () {
+                            final nome = _novoBairroTaxiDogController.text.trim();
+                            if (nome.isNotEmpty) {
+                              setState(() {
+                                if (!_bairrosTaxiDog.contains(nome)) {
+                                  _bairrosTaxiDog.add(nome);
+                                }
+                                _novoBairroTaxiDogController.clear();
+                              });
+                            }
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.green,
+                            padding: const EdgeInsets.all(16),
+                          ),
+                          child: const Icon(Icons.add, color: Colors.white),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  if (_bairrosTaxiDog.isEmpty)
+                    const Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(20.0),
+                        child: Text(
+                          'Nenhum bairro cadastrado. O agendamento usará uma lista padrão.',
+                          style: TextStyle(color: Colors.white38, fontStyle: FontStyle.italic),
+                        ),
+                      ),
+                    )
+                  else
+                    ListView.separated(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: _bairrosTaxiDog.length,
+                      separatorBuilder: (_, __) => const Divider(color: Colors.white12),
+                      itemBuilder: (context, index) {
+                        final bairro = _bairrosTaxiDog[index];
+                        return ListTile(
+                          title: Text(bairro, style: const TextStyle(color: Colors.white)),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.delete, color: Colors.redAccent),
+                            onPressed: () {
+                              setState(() {
+                                _bairrosTaxiDog.removeAt(index);
+                              });
+                            },
+                          ),
+                        );
+                      },
+                    ),
                 ],
               ),
             ),

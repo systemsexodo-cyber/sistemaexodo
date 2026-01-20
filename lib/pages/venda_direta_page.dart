@@ -27,6 +27,7 @@ import '../services/nfce_service.dart';
 import '../models/nfce.dart';
 import '../models/carrinho_item.dart';
 import '../widgets/exodo_logo.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 /// Item no carrinho da venda direta
 class ItemCarrinho {
@@ -2757,21 +2758,10 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       }
     }
 
-    // Limpar carrinho
+    // Limpar pagamentos salvos da memória
     setState(() {
-      _carrinho.clear();
-      _clienteSelecionado = null;
       _pagamentosSalvos = [];
     });
-    // Limpar carrinho salvo após finalizar venda
-    _limparCarrinhoSalvo();
-
-    // Perguntar sobre emissão de NFC-e
-    if (statusPedido == 'Pago') {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _perguntarEmissaoNfce(vendaBalcao, _clienteSelecionado);
-      });
-    }
   }
 
   Future<void> _perguntarEmissaoNfce(VendaBalcao venda, Cliente? cliente) async {
@@ -3205,12 +3195,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       onEmitirNFCe: () => _emitirNFCe(vendaBalcao),
     );
 
-    // Limpar carrinho e cliente imediatamente
-    setState(() {
-      _carrinho.clear();
-      _clienteSelecionado = null;
-    });
-    _limparCarrinhoSalvo();
+    // O carrinho e cliente serão limpos quando o popup for fechado (onDismiss)
   }
 
   /// Emite NFC-e para uma venda
@@ -3657,23 +3642,28 @@ o padrão padrão (sem opções avançadas).
                     child: Column(
                       children: [
                         const Text(
-                          'QR Code para Consulta',
-                          style: TextStyle(fontSize: 12, color: Colors.black87),
+                        'QR Code para Consulta',
+                        style: TextStyle(fontSize: 12, color: Colors.black87, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 12),
+                      QrImageView(
+                        data: qrCodeUrl,
+                        version: QrVersions.auto,
+                        size: 200.0,
+                        backgroundColor: Colors.white,
+                      ),
+                      const SizedBox(height: 12),
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Colors.grey[100],
+                          borderRadius: BorderRadius.circular(8),
                         ),
-                        const SizedBox(height: 8),
-                        // Aqui você pode usar um pacote de QR Code se quiser mostrar imagem
-                        // Por enquanto, mostramos o texto
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: Colors.grey[100],
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: SelectableText(
-                            qrCodeUrl,
-                            style: const TextStyle(fontSize: 10, fontFamily: 'monospace'),
-                          ),
+                        child: Text(
+                          'Aponte a câmera para consultar',
+                          style: TextStyle(fontSize: 10, color: Colors.grey[600]),
                         ),
+                      ),
                       ],
                     ),
                   ),
