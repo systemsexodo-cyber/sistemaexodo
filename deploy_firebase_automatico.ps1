@@ -34,15 +34,31 @@ if ($relevantChanges) {
 }
 Write-Host ""
 
-Write-Host "[2/7] Verificando projeto Firebase..." -ForegroundColor Yellow
+Write-Host "[2/7] Verificando ambiente (Node.js e Firebase)..." -ForegroundColor Yellow
 $firebaseProject = "exodosystems-1541d"
-Write-Host "  Projeto alvo: $firebaseProject" -ForegroundColor Cyan
-$currentProject = cmd /c "firebase use" 2>$null | Select-String -Pattern "using"
-if ($currentProject -notmatch $firebaseProject) {
-    Write-Host "  Mudando para o projeto $firebaseProject..." -ForegroundColor Yellow
-    cmd /c "firebase use $firebaseProject" 2>&1 | Out-Null
+$firebaseCmd = "firebase"
+
+# Verificar se Node existe
+$nodeCheck = Get-Command node -ErrorAction SilentlyContinue
+if (-not $nodeCheck) {
+    Write-Host "  ERRO: Node.js nao encontrado! Instale em: https://nodejs.org/" -ForegroundColor Red
+    exit 1
 }
-Write-Host "  OK: Projeto Firebase configurado" -ForegroundColor Green
+
+# Verificar se Firebase CLI existe ou se vamos usar via npx
+$firebaseCheck = Get-Command firebase -ErrorAction SilentlyContinue
+if (-not $firebaseCheck) {
+    Write-Host "  AVISO: Comando 'firebase' global nao encontrado. Tentando usar via 'npx'..." -ForegroundColor Yellow
+    $firebaseCmd = "npx firebase"
+}
+
+Write-Host "  Projeto alvo: $firebaseProject" -ForegroundColor Cyan
+$currentProject = cmd /c "$firebaseCmd use" 2>$null | Select-String -Pattern "using"
+if ($currentProject -notmatch $firebaseProject) {
+    Write-Host "  Configurando projeto $firebaseProject..." -ForegroundColor Yellow
+    cmd /c "$firebaseCmd use $firebaseProject" 2>&1 | Out-Null
+}
+Write-Host "  OK: Ambiente e Projeto configurados" -ForegroundColor Green
 Write-Host ""
 
 Write-Host "[3/7] REMOVENDO COMPLETAMENTE o diretorio build..." -ForegroundColor Yellow
@@ -103,8 +119,8 @@ if ($LASTEXITCODE -eq 0) {
 Write-Host ""
 
 Write-Host "[7/7] Fazendo deploy para Firebase Hosting..." -ForegroundColor Yellow
-Write-Host "  Executando: firebase deploy --only hosting --project $firebaseProject" -ForegroundColor Cyan
-$deployResult = cmd /c "firebase deploy --only hosting --project $firebaseProject" 2>&1
+Write-Host "  Executando: $firebaseCmd deploy --only hosting --project $firebaseProject" -ForegroundColor Cyan
+$deployResult = cmd /c "$firebaseCmd deploy --only hosting --project $firebaseProject" 2>&1
 if ($LASTEXITCODE -eq 0) {
     Write-Host ""
     Write-Host "========================================" -ForegroundColor Green
