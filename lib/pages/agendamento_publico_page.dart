@@ -471,8 +471,8 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                         children: [
                           if (servico.valorAdicional > 0)
                              Text(
-                              'R\$ ${servico.preco.toStringAsFixed(2)} + R\$ ${servico.valorAdicional.toStringAsFixed(2)}',
-                              style: const TextStyle(color: Colors.greenAccent, fontSize: 10, fontWeight: FontWeight.bold),
+                              '${servico.nome}: R\$ ${servico.preco.toStringAsFixed(2)} + ${servico.descricaoAdicional ?? "Adicional"}: R\$ ${servico.valorAdicional.toStringAsFixed(2)}',
+                              style: TextStyle(color: Colors.greenAccent.withOpacity(0.8), fontSize: 9, fontWeight: FontWeight.w500),
                             ),
                           Text(
                             'R\$ ${servico.precoTotal.toStringAsFixed(2)}',
@@ -501,12 +501,25 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
 
   IconData _getIconForServico(String nome) {
     final n = nome.toLowerCase();
+    
+    // Pets e Banho
     if (n.contains('banho')) return Icons.waves_rounded;
     if (n.contains('tosa')) return Icons.content_cut_rounded;
     if (n.contains('vacina')) return Icons.vaccines_rounded;
     if (n.contains('consulta')) return Icons.medical_services_rounded;
     if (n.contains('hospedagem')) return Icons.hotel_rounded;
-    return Icons.pets_rounded;
+    
+    // Estética e Beleza (conforme imagem)
+    if (n.contains('bronzeamento')) return Icons.wb_sunny_rounded;
+    if (n.contains('sombrancelha')) return Icons.remove_red_eye_rounded;
+    if (n.contains('limpeza de pele') || n.contains('facial')) return Icons.face_retouching_natural_rounded;
+    if (n.contains('unha') || n.contains('manicure')) return Icons.back_hand_rounded;
+    if (n.contains('cabelo') || n.contains('corte')) return Icons.content_cut_rounded;
+    if (n.contains('massagem')) return Icons.self_improvement_rounded;
+    if (n.contains('estetica')) return Icons.auto_awesome_rounded;
+    
+    // Padrão
+    return Icons.star_rounded;
   }
 
   Widget _buildStepDadosPessoais() {
@@ -853,10 +866,10 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: disponivel ? Colors.green.withOpacity(0.1) : Colors.red.withOpacity(0.1),
+        color: disponivel ? Colors.green.withOpacity(0.1) : Colors.orange.withOpacity(0.1),
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
-          color: disponivel ? Colors.green.withOpacity(0.3) : Colors.red.withOpacity(0.3),
+          color: disponivel ? Colors.green.withOpacity(0.3) : Colors.orange.withOpacity(0.3),
         ),
       ),
       child: Row(
@@ -864,11 +877,11 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
           Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: disponivel ? Colors.green : Colors.red,
+              color: disponivel ? Colors.green : Colors.orange,
               shape: BoxShape.circle,
             ),
             child: Icon(
-              disponivel ? Icons.check : Icons.close,
+              disponivel ? Icons.check : Icons.access_time_rounded,
               color: Colors.white,
               size: 16,
             ),
@@ -879,18 +892,18 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  disponivel ? 'Ótima escolha!' : 'Horário Indisponível',
+                  disponivel ? 'Ótima escolha!' : 'Já temos agendamentos neste horário',
                   style: TextStyle(
-                    color: disponivel ? Colors.green[300] : Colors.red[300],
+                    color: disponivel ? Colors.green[300] : Colors.orange[300],
                     fontWeight: FontWeight.bold,
                   ),
                 ),
                 Text(
                   disponivel 
                     ? 'Esse horário está livre em nossa agenda.' 
-                    : 'Tente escolher outro horário ou outro dia.',
+                    : 'Iremos receber sua solicitação e analisar a possibilidade de encaixe.',
                   style: TextStyle(
-                    color: disponivel ? Colors.green[100]?.withOpacity(0.7) : Colors.red[100]?.withOpacity(0.7),
+                    color: disponivel ? Colors.green[100]?.withOpacity(0.7) : Colors.orange[100]?.withOpacity(0.7),
                     fontSize: 12,
                   ),
                 ),
@@ -1270,16 +1283,20 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       debugPrint('>>> [AgendamentoPublico] Empresa ID no DataService: ${dataService.empresaIdAtual}');
       debugPrint('>>> [AgendamentoPublico] Agendamento ID: ${agendamento.id}');
 
+      // GARANTIR QUE A EMPRESA ESTÁ SETADA NO DATASERVICE PARA SALVAR NO LOCAL CORRETO
       if (dataService.empresaIdAtual == null) {
-        debugPrint('>>> [AgendamentoPublico] ⚠ AVISO CRÍTICO: Empresa não selecionada no DataService! Tentando recuperar...');
+        debugPrint('>>> [AgendamentoPublico] ⚠ Empresa não está no DataService. Forçando definição...');
         final auth = Provider.of<AuthService>(context, listen: false);
-        final emp = auth.obterEmpresaPorSlug(widget.slugEmpresa ?? '');
-        if (emp != null) {
-          await dataService.definirEmpresaAtual(emp.id);
-          debugPrint('>>> [AgendamentoPublico] ✅ Empresa recuperada e setada no DataService: ${emp.id}');
-        } else {
-          debugPrint('>>> [AgendamentoPublico] ❌ ERRO: Não foi possível identificar a empresa!');
-          throw Exception('Empresa não identificada');
+        final slugParaUsar = widget.slugEmpresa;
+        if (slugParaUsar != null && slugParaUsar.isNotEmpty) {
+          final emp = auth.obterEmpresaPorSlug(slugParaUsar);
+          
+          if (emp != null) {
+            await dataService.definirEmpresaAtual(emp.id);
+            // Pequena pausa para garantir que o DataService inicializou as listas da empresa
+            await Future.delayed(const Duration(milliseconds: 500));
+            debugPrint('>>> [AgendamentoPublico] ✅ Empresa ID setada: ${dataService.empresaIdAtual}');
+          }
         }
       }
 
@@ -1323,12 +1340,12 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                 Container(
                   padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
-                    color: (horarioOcupado ? Colors.red : Colors.green).withOpacity(0.1),
+                    color: (horarioOcupado ? Colors.orange : Colors.green).withOpacity(0.1),
                     shape: BoxShape.circle,
                   ),
                   child: Icon(
                     horarioOcupado ? Icons.warning_amber_rounded : Icons.check_circle_rounded, 
-                    color: horarioOcupado ? Colors.red : Colors.green, 
+                    color: horarioOcupado ? Colors.orange : Colors.green, 
                     size: 80
                   ),
                 ),
@@ -1336,9 +1353,9 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                 
                 // Título
                 Text(
-                  horarioOcupado ? 'Horário já Ocupado!' : 'Quase tudo pronto!',
+                  horarioOcupado ? 'Solicitação de Encaixe' : 'Quase tudo pronto!',
                   style: GoogleFonts.outfit(
-                    color: horarioOcupado ? Colors.redAccent : textColor, 
+                    color: horarioOcupado ? Colors.orangeAccent : textColor, 
                     fontSize: 24, 
                     fontWeight: FontWeight.bold
                   ),
@@ -1350,27 +1367,27 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                   Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
-                      color: Colors.red.withOpacity(0.05),
+                      color: Colors.orange.withOpacity(0.05),
                       borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: Colors.red.withOpacity(0.2)),
+                      border: Border.all(color: Colors.orange.withOpacity(0.2)),
                     ),
                     child: Column(
                       children: [
                         const Text(
                           'AVISO DE DISPONIBILIDADE',
-                          style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold, fontSize: 12),
+                          style: TextStyle(color: Colors.orangeAccent, fontWeight: FontWeight.bold, fontSize: 12),
                         ),
                         const SizedBox(height: 8),
-                        Text(
-                          'Este horário já está reservado para outro cliente, mas não se preocupe!',
+                        const Text(
+                          'Já temos um agendamento nesse horário, mas não se preocupe!',
                           textAlign: TextAlign.center,
-                          style: TextStyle(color: _isDark ? Colors.white70 : Colors.black87, fontSize: 13),
+                          style: TextStyle(color: Colors.white70, fontSize: 13),
                         ),
                         const SizedBox(height: 4),
                         const Text(
-                          'Enviamos sua solicitação assim mesmo. Nossa equipe entrará em contato para confirmar ou sugerir um novo horário.',
+                          'Iremos analisar sua solicitação e encaixar o horário mais próximo.',
                           textAlign: TextAlign.center,
-                          style: TextStyle(color: Colors.redAccent, fontSize: 13, fontWeight: FontWeight.w500),
+                          style: TextStyle(color: Colors.orangeAccent, fontSize: 13, fontWeight: FontWeight.w500),
                         ),
                       ],
                     ),

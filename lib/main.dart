@@ -212,7 +212,8 @@ class AppRouter {
             'href': rawHref
           };
         } else {
-          isLoja = true; // Root slug agora abre a loja
+          // Só trata como loja se NÃO for uma das rotas protegidas
+          isLoja = true;
           slug = first;
         }
       }
@@ -334,7 +335,8 @@ class _AuthWrapperState extends State<AuthWrapper> {
   @override
   Widget build(BuildContext context) {
     if (kIsWeb) {
-      if (_entradaPublica) {
+      // SÓ faz bypass se for REALMENTE uma entrada pública e NÃO estiver tentando acessar admin
+      if (_entradaPublica && widget.subRota == null) {
         print('>>> [AuthWrapper] BYPASS SEGURO: Usando dados de Boot');
         return LojaPublicaWrapper(
           codigoLink: '',

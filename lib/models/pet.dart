@@ -1,4 +1,6 @@
+import 'package:sistema_exodo_novo/utils/date_parser.dart';
 /// Modelo para representar um pet (animal de estimação)
+
 class Pet {
   final String id;
   final String nome;
@@ -55,29 +57,28 @@ class Pet {
     return '$anos ano(s)';
   }
 
+
+
   factory Pet.fromMap(Map<String, dynamic> map) {
     return Pet(
-      id: map['id'] ?? '',
-      nome: map['nome'] ?? '',
-      especie: map['especie'],
-      raca: map['raca'],
+      id: map['id']?.toString() ?? '',
+      nome: map['nome']?.toString() ?? '',
+      especie: map['especie']?.toString(),
+      raca: map['raca']?.toString(),
       dataNascimento: map['dataNascimento'] != null
-          ? DateTime.parse(map['dataNascimento'] as String)
+          ? DateParser.parse(map['dataNascimento'])
           : null,
-      tamanho: map['tamanho'],
-      peso: map['peso']?.toDouble(),
-      cor: map['cor'],
-      sexo: map['sexo'],
-      observacoes: map['observacoes'],
-      fotoPath: map['fotoPath'],
-      createdAt: map['createdAt'] != null
-          ? DateTime.parse(map['createdAt'] as String)
-          : DateTime.now(),
-      updatedAt: map['updatedAt'] != null
-          ? DateTime.parse(map['updatedAt'] as String)
-          : DateTime.now(),
+      tamanho: map['tamanho']?.toString(),
+      peso: (map['peso'] as num?)?.toDouble(),
+      cor: map['cor']?.toString(),
+      sexo: map['sexo']?.toString(),
+      observacoes: map['observacoes']?.toString(),
+      fotoPath: map['fotoPath']?.toString(),
+      createdAt: DateParser.parse(map['createdAt']),
+      updatedAt: DateParser.parse(map['updatedAt']),
     );
   }
+
 
   Map<String, dynamic> toMap() {
     return {

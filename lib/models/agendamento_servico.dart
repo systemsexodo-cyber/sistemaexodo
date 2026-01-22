@@ -1,4 +1,6 @@
 import 'package:sistema_exodo_novo/models/cliente.dart';
+import 'package:sistema_exodo_novo/utils/date_parser.dart';
+
 import 'package:sistema_exodo_novo/models/servico.dart';
 import 'package:sistema_exodo_novo/models/pet.dart';
 import 'package:sistema_exodo_novo/models/item_material.dart';
@@ -190,40 +192,37 @@ class AgendamentoServico {
     };
   }
 
-  factory AgendamentoServico.fromMap(Map<String, dynamic> map) {
-    DateTime parseDate(dynamic value) {
-      if (value == null) return DateTime.now();
-      if (value is String) return DateTime.tryParse(value) ?? DateTime.now();
-      return DateTime.now();
-    }
 
+
+  factory AgendamentoServico.fromMap(Map<String, dynamic> map) {
     return AgendamentoServico(
-      id: map['id'] ?? '',
-      numero: map['numero'] ?? 'AGD-0000',
-      servicoId: map['servicoId'],
-      clienteId: map['clienteId'],
-      petId: map['petId'],
-      dataAgendamento: parseDate(map['dataAgendamento']),
+      id: map['id']?.toString() ?? '',
+      numero: map['numero']?.toString() ?? 'AGD-0000',
+      servicoId: map['servicoId']?.toString(),
+      clienteId: map['clienteId']?.toString(),
+      petId: map['petId']?.toString(),
+      dataAgendamento: DateParser.parse(map['dataAgendamento']),
       duracaoMinutos: map['duracaoMinutos'] ?? 60,
-      observacoes: map['observacoes'],
-      status: map['status'] ?? 'Agendado',
-      tipoEntrega: map['tipoEntrega'],
-      valorTaxiDog: map['valorTaxiDog']?.toDouble(),
-      bairroEntrega: map['bairroEntrega'],
-      pedidoId: map['pedidoId'],
-      numeroPedido: map['numeroPedido'],
+      observacoes: map['observacoes']?.toString(),
+      status: map['status']?.toString() ?? 'Agendado',
+      tipoEntrega: map['tipoEntrega']?.toString(),
+      valorTaxiDog: (map['valorTaxiDog'] as num?)?.toDouble(),
+      bairroEntrega: map['bairroEntrega']?.toString(),
+      pedidoId: map['pedidoId']?.toString(),
+      numeroPedido: map['numeroPedido']?.toString(),
       recebido: (map['recebido'] as bool?) ?? false,
       dataRecebimento: map['dataRecebimento'] != null 
-          ? DateTime.tryParse(map['dataRecebimento'].toString()) 
+          ? DateParser.parse(map['dataRecebimento']) 
           : null,
       materiais: map['materiais'] != null && map['materiais'] is List
           ? (map['materiais'] as List).map((m) => ItemMaterial.fromMap(m as Map<String, dynamic>)).toList()
           : <ItemMaterial>[],
-      createdAt: parseDate(map['createdAt']),
-      updatedAt: parseDate(map['updatedAt']),
-      clienteNome: map['clienteNome'],
-      clienteTelefone: map['clienteTelefone'],
-      petNome: map['petNome'],
+      createdAt: DateParser.parse(map['createdAt']),
+      updatedAt: DateParser.parse(map['updatedAt']),
+      clienteNome: map['clienteNome']?.toString(),
+      clienteTelefone: map['clienteTelefone']?.toString(),
+      petNome: map['petNome']?.toString(),
     );
   }
 }
+

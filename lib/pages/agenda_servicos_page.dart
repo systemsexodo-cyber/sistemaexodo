@@ -1404,7 +1404,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                 ],
               ),
             ],
-            if (agendamento.pet != null || agendamento.petNome != null) ...[
+            if ((agendamento.pet != null || agendamento.petNome != null) && dataService.empresaAtual?.moduloPet == true) ...[
               const SizedBox(height: 6),
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1917,7 +1917,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                   );
                 },
               ),
-              if (agendamento.pet != null || agendamento.petNome != null) ...[
+              if ((agendamento.pet != null || agendamento.petNome != null) && dataService.empresaAtual?.moduloPet == true) ...[
                 if (agendamento.pet != null)
                   InkWell(
                     onTap: () {
@@ -5524,9 +5524,11 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                     ),
                                     const SizedBox(height: 16),
                                     _buildInfoItem(
-                                      Icons.pets_rounded,
-                                      'Pet / Serviço',
-                                      '${sol.petNome ?? sol.pet?.nome ?? "Não informado"} - ${sol.servico?.nome ?? sol.servicoId ?? "Serviço"}',
+                                      currentDataService.empresaAtual?.moduloPet == true ? Icons.pets_rounded : Icons.work_rounded,
+                                      currentDataService.empresaAtual?.moduloPet == true ? 'Pet / Serviço' : 'Serviço',
+                                      currentDataService.empresaAtual?.moduloPet == true 
+                                        ? '${sol.petNome ?? sol.pet?.nome ?? "Não informado"} - ${sol.servico?.nome ?? sol.servicoId ?? "Serviço"}'
+                                        : (sol.servico?.nome ?? sol.servicoId ?? "Serviço"),
                                     ),
                                     if (sol.observacoes != null && sol.observacoes!.isNotEmpty) ...[
                                       const SizedBox(height: 16),
@@ -5663,4 +5665,3 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
     );
   }
 }
-

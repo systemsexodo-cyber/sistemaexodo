@@ -99,7 +99,17 @@ class _LojaPublicaWrapperState extends State<LojaPublicaWrapper> {
             if (idx != -1 && idx + 1 < segments.length) {
               slugDeteccao = segments[idx + 1];
             } else if (segments.indexOf('loja') == -1 && segments.indexOf('shop') == -1) {
-              slugDeteccao = segments[0];
+              final first = segments[0];
+              const reservados = {
+                'login', 'home', 'dashboard', 'admin', 'auth', 'selecionar-empresa', 'debug',
+                'clientes', 'produtos', 'servicos', 'pedidos', 'venda-direta', 'pdv',
+                'entrada-mercadorias', 'contas-pagar', 'agenda-contas', 'cozinha-bar',
+                'mesas', 'links-vendedores', 'vendedor-dashboard', 'funcionarios',
+                'personalizar-loja', 'agenda-pet', 'gerenciar-imagens'
+              };
+              if (!reservados.contains(first)) {
+                slugDeteccao = first;
+              }
             }
           }
         }

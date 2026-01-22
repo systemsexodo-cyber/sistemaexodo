@@ -277,13 +277,17 @@ class DataService extends ChangeNotifier {
 
         if (index >= 0) {
           debugPrint('>>> [Sync] 🔄 Verificando existente: ${agendamento.id}');
-          if (_agendamentosServico[index].status != agendamentoCompleto.status || 
-              _agendamentosServico[index].updatedAt != agendamentoCompleto.updatedAt) {
+          // Comparar status e updatedAt (garantir que não estamos retrocedendo ou ignorando mudanças)
+          final local = _agendamentosServico[index];
+          if (local.status != agendamentoCompleto.status || 
+              local.updatedAt.millisecondsSinceEpoch != agendamentoCompleto.updatedAt.millisecondsSinceEpoch) {
             _agendamentosServico[index] = agendamentoCompleto;
             houveMudanca = true;
-            debugPrint('>>> [Sync] ✅ MUDANÇA REAL APLICADA: ${agendamento.id}');
+            debugPrint('>>> [Sync] ✅ MUDANÇA REAL APLICADA: ${agendamento.id} (${local.status} -> ${agendamentoCompleto.status})');
           }
         } else {
+          // Evitar qualquer chance de duplicata fantasma verificando novamente antes de adicionar
+          _agendamentosServico.removeWhere((a) => a.id == agendamentoCompleto.id);
           _agendamentosServico.add(agendamentoCompleto);
           houveMudanca = true;
           debugPrint('>>> [Sync] ✨ NOVO AGENDAMENTO ADICIONADO via Stream: ${agendamentoCompleto.id}');
@@ -2565,6 +2569,8 @@ class DataService extends ChangeNotifier {
       pet: pet,
     );
 
+    // Evitar duplicatas em memória antes de adicionar
+    _agendamentosServico.removeWhere((a) => a.id == agendamentoCompleto.id);
     _agendamentosServico.add(agendamentoCompleto);
     notifyListeners();
     
@@ -2846,10 +2852,20 @@ class DataService extends ChangeNotifier {
     final index = _agendamentosServico.indexWhere((a) => a.id == agendamentoId);
     if (index != -1) {
       final agendamento = _agendamentosServico[index];
+      
+      // Atribuir número sequencial se ainda não tiver um válido (muito comum em agendamentos online)
+      String numero = agendamento.numero;
+      if (numero.isEmpty || numero == 'AGD-0000' || numero == 'TS-999') {
+        numero = getProximoNumeroAgendamento();
+        debugPrint('>>> [Agendamento] Gerado novo número para aprovação: $numero');
+      }
+
       final agendamentoAtualizado = agendamento.copyWith(
+        numero: numero,
         status: 'Agendado',
         updatedAt: DateTime.now(),
       );
+      
       _agendamentosServico[index] = agendamentoAtualizado;
       notifyListeners();
       _salvarAutomaticamente();

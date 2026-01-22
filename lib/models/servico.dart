@@ -1,4 +1,6 @@
+import 'package:sistema_exodo_novo/utils/date_parser.dart';
 import 'item_material.dart';
+
 
 class Servico {
   final String id;
@@ -49,22 +51,25 @@ class Servico {
     };
   }
 
+
   factory Servico.fromMap(Map<String, dynamic> map) {
+
     return Servico(
-      id: map['id'] as String,
-      nome: map['nome'] as String,
-      descricao: map['descricao'] as String?,
-      preco: (map['preco'] as num).toDouble(),
-      valorAdicional: (map['valorAdicional'] as num?)?.toDouble() ?? 0.0,
-      descricaoAdicional: map['descricaoAdicional'] as String?,
-      createdAt: DateTime.parse(map['createdAt'] as String),
-      updatedAt: DateTime.parse(map['updatedAt'] as String),
+      id: map['id']?.toString() ?? '',
+      nome: map['nome']?.toString() ?? '',
+      descricao: map['descricao']?.toString(),
+      preco: (map['preco'] as num? ?? 0).toDouble(),
+      valorAdicional: (map['valorAdicional'] as num? ?? 0).toDouble(),
+      descricaoAdicional: map['descricaoAdicional']?.toString(),
+      createdAt: DateParser.parse(map['createdAt']),
+      updatedAt: DateParser.parse(map['updatedAt']),
       materiais: map['materiais'] != null
           ? (map['materiais'] as List).map((m) => ItemMaterial.fromMap(m as Map<String, dynamic>)).toList()
           : [],
       duracaoPadraoMinutos: map['duracaoPadraoMinutos'] as int?,
     );
   }
+
 
   Servico copyWith({
     String? id,

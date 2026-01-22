@@ -1,4 +1,6 @@
+import 'package:sistema_exodo_novo/utils/date_parser.dart';
 import 'pet.dart';
+
 
 /// Tipo de pessoa
 enum TipoPessoa { fisica, juridica }
@@ -152,56 +154,55 @@ class Cliente {
     return cpfCnpj;
   }
 
+
+
   factory Cliente.fromMap(Map<String, dynamic> map) {
     return Cliente(
-      id: map['id'] ?? '',
-      nome: map['nome'] ?? '',
-      nomeFantasia: map['nomeFantasia'],
+      id: map['id']?.toString() ?? '',
+      nome: map['nome']?.toString() ?? '',
+      nomeFantasia: map['nomeFantasia']?.toString(),
       tipoPessoa: map['tipoPessoa'] != null
           ? TipoPessoa.values.firstWhere(
               (t) => t.name == map['tipoPessoa'],
               orElse: () => TipoPessoa.fisica,
             )
           : TipoPessoa.fisica,
-      cpfCnpj: map['cpfCnpj'],
-      rgIe: map['rgIe'],
-      email: map['email'],
-      telefone: map['telefone'] ?? '',
-      telefone2: map['telefone2'],
-      whatsapp: map['whatsapp'],
-      endereco: map['endereco'],
-      numero: map['numero'],
-      complemento: map['complemento'],
-      bairro: map['bairro'],
-      cidade: map['cidade'],
-      estado: map['estado'],
-      cep: map['cep'],
-      pontoReferencia: map['pontoReferencia'],
+      cpfCnpj: map['cpfCnpj']?.toString(),
+      rgIe: map['rgIe']?.toString(),
+      email: map['email']?.toString(),
+      telefone: map['telefone']?.toString() ?? '',
+      telefone2: map['telefone2']?.toString(),
+      whatsapp: map['whatsapp']?.toString(),
+      endereco: map['endereco']?.toString(),
+      numero: map['numero']?.toString(),
+      complemento: map['complemento']?.toString(),
+      bairro: map['bairro']?.toString(),
+      cidade: map['cidade']?.toString(),
+      estado: map['estado']?.toString(),
+      cep: map['cep']?.toString(),
+      pontoReferencia: map['pontoReferencia']?.toString(),
       dataNascimento: map['dataNascimento'] != null
-          ? DateTime.parse(map['dataNascimento'])
+          ? DateParser.parse(map['dataNascimento'])
           : null,
-      profissao: map['profissao'],
-      observacoes: map['observacoes'],
-      fotoPath: map['fotoPath'],
+      profissao: map['profissao']?.toString(),
+      observacoes: map['observacoes']?.toString(),
+      fotoPath: map['fotoPath']?.toString(),
       dadosExtras: map['dadosExtras'] != null ? Map<String, dynamic>.from(map['dadosExtras']) : null,
       pets: map['pets'] != null
           ? (map['pets'] as List).map((p) => Pet.fromMap(p as Map<String, dynamic>)).toList()
           : [],
-      limiteCredito: map['limiteCredito']?.toDouble(),
-      saldoDevedor: (map['saldoDevedor'] ?? 0).toDouble(),
+      limiteCredito: (map['limiteCredito'] as num?)?.toDouble(),
+      saldoDevedor: (map['saldoDevedor'] as num? ?? 0).toDouble(),
       bloqueado: map['bloqueado'] ?? false,
-      motivoBloqueio: map['motivoBloqueio'],
-      senha: map['senha'],
-      emailLogin: map['emailLogin'],
+      motivoBloqueio: map['motivoBloqueio']?.toString(),
+      senha: map['senha']?.toString(),
+      emailLogin: map['emailLogin']?.toString(),
       ativo: map['ativo'] ?? true,
-      createdAt: map['createdAt'] != null
-          ? DateTime.parse(map['createdAt'])
-          : DateTime.now(),
-      updatedAt: map['updatedAt'] != null
-          ? DateTime.parse(map['updatedAt'])
-          : DateTime.now(),
+      createdAt: DateParser.parse(map['createdAt']),
+      updatedAt: DateParser.parse(map['updatedAt']),
     );
   }
+
 
   Map<String, dynamic> toMap() {
     return {
