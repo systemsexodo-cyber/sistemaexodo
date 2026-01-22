@@ -26,10 +26,12 @@ if ($relevantChanges) {
     git commit -m "feat: alteracoes antes do deploy - $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" --no-verify 2>$null
     if ($LASTEXITCODE -eq 0) {
         Write-Host "  Commit realizado com sucesso!" -ForegroundColor Green
-    } else {
+    }
+    else {
         Write-Host "  AVISO: Falha ao fazer commit. Continuando mesmo assim..." -ForegroundColor Yellow
     }
-} else {
+}
+else {
     Write-Host "  OK: Nenhuma alteracao relevante nao commitada." -ForegroundColor Green
 }
 Write-Host ""
@@ -49,7 +51,7 @@ if (-not $nodeCheck) {
 $firebaseCheck = Get-Command firebase -ErrorAction SilentlyContinue
 if (-not $firebaseCheck) {
     Write-Host "  AVISO: Comando 'firebase' global nao encontrado. Tentando usar via 'npx'..." -ForegroundColor Yellow
-    $firebaseCmd = "npx firebase"
+    $firebaseCmd = "npx -p firebase-tools firebase"
 }
 
 Write-Host "  Projeto alvo: $firebaseProject" -ForegroundColor Cyan
@@ -66,7 +68,8 @@ if (Test-Path "build") {
     Remove-Item -Recurse -Force "build" -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 2
     Write-Host "  OK: Diretorio build removido completamente!" -ForegroundColor Green
-} else {
+}
+else {
     Write-Host "  OK: Diretorio build nao existe (ja esta limpo)." -ForegroundColor Green
 }
 Write-Host ""
@@ -75,7 +78,8 @@ Write-Host "[4/7] Limpando cache do Flutter..." -ForegroundColor Yellow
 $cleanResult = flutter clean 2>&1
 if ($LASTEXITCODE -eq 0) {
     Write-Host "  OK: Cache do Flutter limpo!" -ForegroundColor Green
-} else {
+}
+else {
     Write-Host "  AVISO: Erro ao limpar cache. Continuando mesmo assim..." -ForegroundColor Yellow
 }
 Write-Host ""
@@ -85,11 +89,13 @@ $pubGetResult = flutter pub get 2>&1
 $pubGetOutput = $pubGetResult | Out-String
 if ($pubGetOutput -match "Got dependencies!" -or $LASTEXITCODE -eq 0) {
     Write-Host "  OK: Dependencias obtidas com sucesso!" -ForegroundColor Green
-} else {
+}
+else {
     Write-Host "  AVISO: Alguns avisos foram encontrados, mas continuando..." -ForegroundColor Yellow
     if ($pubGetOutput -match "Got dependencies!") {
         Write-Host "  OK: Dependencias foram obtidas mesmo com avisos!" -ForegroundColor Green
-    } else {
+    }
+    else {
         Write-Host "  ERRO: Falha critica ao obter dependencias!" -ForegroundColor Red
         exit 1
     }
@@ -107,11 +113,13 @@ if ($LASTEXITCODE -eq 0) {
     if (Test-Path "build\web\index.html") {
         $buildTime = (Get-Item "build\web\index.html").LastWriteTime
         Write-Host "  Build criado em: $buildTime" -ForegroundColor Cyan
-    } else {
+    }
+    else {
         Write-Host "  ERRO: Arquivo build\web\index.html nao foi criado!" -ForegroundColor Red
         exit 1
     }
-} else {
+}
+else {
     Write-Host "  ERRO: Falha ao construir o projeto!" -ForegroundColor Red
     Write-Host $buildResult -ForegroundColor Red
     exit 1
@@ -141,7 +149,8 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host "  [OK] Novo build foi criado do zero" -ForegroundColor Green
     Write-Host "  [OK] Deploy foi feito com arquivos atualizados" -ForegroundColor Green
     Write-Host ""
-} else {
+}
+else {
     Write-Host ""
     Write-Host "========================================" -ForegroundColor Red
     Write-Host "  ERRO AO FAZER DEPLOY!" -ForegroundColor Red
