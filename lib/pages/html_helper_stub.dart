@@ -25,3 +25,8 @@ void openWindow(String url, String name) {
   // Não faz nada fora da Web
 }
 
+/// Atualiza o caminho da URL (stub)
+void updateUrl(String path, {bool replace = false}) {
+  // Não faz nada fora da Web
+}
+

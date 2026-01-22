@@ -37,3 +37,16 @@ void openWindow(String url, String name) {
   html.window.open(url, name);
 }
 
+/// Atualiza o caminho da URL
+void updateUrl(String path, {bool replace = false}) {
+  try {
+    if (replace) {
+      html.window.history.replaceState(null, '', path);
+    } else {
+      html.window.history.pushState(null, '', path);
+    }
+  } catch (e) {
+    print('Erro ao atualizar URL: $e');
+  }
+}
+

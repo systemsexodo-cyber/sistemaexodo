@@ -172,6 +172,20 @@ class _LojaPublicaWrapperState extends State<LojaPublicaWrapper> {
           _empresaIdConfigurada = empresaIdParaUsar;
           _dadosCarregados = true;
         });
+
+        // REFORÇO DE URL: Se for Web, garantir que o link original NÃO mude para '/'
+        if (kIsWeb && empresaIdParaUsar != null) {
+          final slug = widget.slugEmpresa ?? slugDeteccao;
+          if (slug != null) {
+            // Decidir rota baseada no estado atual
+            final isAgendamento = widget.forceAgendamento || html_helper.getWindowPathname().contains('agendamento');
+            final path = isAgendamento ? '/agendamento/$slug' : '/loja/$slug';
+            
+            // Usar replace: true para não criar entrada extra no histórico
+            debugPrint('>>> [LojaPublica] Sincronizando URL forçadamente para: $path');
+            html_helper.updateUrl(path, replace: true);
+          }
+        }
       }
     } catch (e) {
       print('>>> [LojaPublica] ❌ Erro crítico no carregamento: $e');
@@ -250,6 +264,18 @@ class _LojaPublicaWrapperState extends State<LojaPublicaWrapper> {
       child = LojaPublicaPage(
         codigoLink: widget.codigoLink.isNotEmpty ? widget.codigoLink : null,
       );
+    }
+
+    // Reforçar a URL no build se ela estiver vazia ou resetada (segurança extra)
+    if (kIsWeb && _dadosCarregados && _empresaIdConfigurada != null) {
+       final currentPath = html_helper.getWindowPathname();
+       if (currentPath == '/' || currentPath.isEmpty) {
+          final slug = widget.slugEmpresa ?? _empresaIdConfigurada;
+          if (slug != null) {
+            final path = isAgendamento ? '/agendamento/$slug' : '/loja/$slug';
+            html_helper.updateUrl(path, replace: true);
+          }
+       }
     }
 
     // Cores da empresa atualizadas do DataService

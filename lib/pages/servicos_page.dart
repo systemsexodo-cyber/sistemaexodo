@@ -91,6 +91,16 @@ class ServicosPage extends StatelessWidget {
               tooltip: 'Histórico de Vendas',
             ),
             IconButton(
+              icon: const Icon(Icons.playlist_add, color: Colors.greenAccent),
+              onPressed: () {
+                showDialog(
+                  context: context,
+                  builder: (context) => const _CriarServicoDialog(),
+                );
+              },
+              tooltip: 'Cadastrar Novo Tipo de Serviço',
+            ),
+            IconButton(
               icon: const Icon(Icons.add),
               onPressed: () {
                 Navigator.push(
@@ -794,6 +804,225 @@ class _EditarServicoDialogState extends State<_EditarServicoDialog> {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+// Modal de cadastro de novo tipo de serviço (Catálogo)
+class _CriarServicoDialog extends StatefulWidget {
+  const _CriarServicoDialog();
+
+  @override
+  State<_CriarServicoDialog> createState() => _CriarServicoDialogState();
+}
+
+class _CriarServicoDialogState extends State<_CriarServicoDialog> {
+  final _nomeController = TextEditingController();
+  final _descricaoController = TextEditingController();
+  final _precoController = TextEditingController();
+  final _valorAdicionalController = TextEditingController();
+  final _descricaoAdicionalController = TextEditingController();
+  final _duracaoController = TextEditingController(text: '60');
+
+  @override
+  void dispose() {
+    _nomeController.dispose();
+    _descricaoController.dispose();
+    _precoController.dispose();
+    _valorAdicionalController.dispose();
+    _descricaoAdicionalController.dispose();
+    _duracaoController.dispose();
+    super.dispose();
+  }
+
+  void _cadastrar() {
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final preco = double.tryParse(_precoController.text.replaceAll(',', '.')) ?? 0.0;
+    final valorAdicional = double.tryParse(_valorAdicionalController.text.replaceAll(',', '.')) ?? 0.0;
+    final duracao = int.tryParse(_duracaoController.text) ?? 60;
+
+    if (_nomeController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('O nome é obrigatório'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+
+    if (preco <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('O preço deve ser maior que zero'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+
+    final novoServico = Servico(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      nome: _nomeController.text,
+      descricao: _descricaoController.text.isEmpty ? null : _descricaoController.text,
+      preco: preco,
+      valorAdicional: valorAdicional,
+      descricaoAdicional: _descricaoAdicionalController.text.isEmpty ? null : _descricaoAdicionalController.text,
+      duracaoPadraoMinutos: duracao,
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+    );
+
+    dataService.addTipoServico(novoServico);
+    Navigator.of(context).pop();
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Serviço cadastrado no catálogo com sucesso!'),
+        backgroundColor: Colors.green,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    
+    return Dialog(
+      backgroundColor: const Color(0xFF121212),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          width: MediaQuery.of(context).size.width * 0.95,
+          constraints: const BoxConstraints(maxWidth: 800),
+          decoration: const BoxDecoration(
+            color: Color(0xFF1A1A1A),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Header com Gradiente Púrpura (Igual ao original)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [Color(0xFF4A148C), Color(0xFF880E4F)],
+                    begin: Alignment.centerLeft,
+                    end: Alignment.centerRight,
+                  ),
+                ),
+                child: const Text(
+                  'Cadastrar Novo Serviço',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+              
+              Padding(
+                padding: const EdgeInsets.all(20.0),
+                child: Column(
+                  children: [
+                    // Campo: Nome do Serviço *
+                    _buildField(
+                      controller: _nomeController,
+                      label: 'Nome do Serviço *',
+                    ),
+                    const SizedBox(height: 12),
+                    
+                    // Campo: Descrição
+                    _buildField(
+                      controller: _descricaoController,
+                      label: 'Descrição',
+                      maxLines: 3,
+                    ),
+                    const SizedBox(height: 12),
+                    
+                    // Linha: Preço Base e Valor Adicional
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _buildField(
+                            controller: _precoController,
+                            label: 'Preço Base (R\$) *',
+                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: _buildField(
+                            controller: _valorAdicionalController,
+                            label: 'Valor Adicional (R\$)',
+                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    
+                    // Campo: Descrição do Valor Adicional
+                    _buildField(
+                      controller: _descricaoAdicionalController,
+                      label: 'Descrição do Valor Adicional',
+                    ),
+                    
+                    const SizedBox(height: 24),
+                    
+                    // Botões de Ação
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        TextButton(
+                          onPressed: () => Navigator.of(context).pop(),
+                          child: const Text('Cancelar', style: TextStyle(color: Colors.white70)),
+                        ),
+                        const SizedBox(width: 12),
+                        ElevatedButton(
+                          onPressed: _cadastrar,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF4A148C),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                          child: const Text('Cadastrar'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildField({
+    required TextEditingController controller,
+    required String label,
+    int maxLines = 1,
+    TextInputType keyboardType = TextInputType.text,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF121212),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.white.withOpacity(0.05)),
+      ),
+      child: TextField(
+        controller: controller,
+        maxLines: maxLines,
+        keyboardType: keyboardType,
+        style: const TextStyle(color: Colors.white, fontSize: 14),
+        decoration: InputDecoration(
+          labelText: label,
+          labelStyle: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 13),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          border: InputBorder.none,
+          isDense: true,
         ),
       ),
     );

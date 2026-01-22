@@ -442,9 +442,18 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              servico.nome,
-                              style: TextStyle(color: _isDark ? Colors.white : Colors.black87, fontWeight: FontWeight.bold, fontSize: 18),
+                            // Nome do Serviço (com + se houver adicional para facilitar entendimento de combo)
+                            RichText(
+                              text: TextSpan(
+                                style: TextStyle(color: _isDark ? Colors.white : Colors.black87, fontWeight: FontWeight.bold, fontSize: 18),
+                                children: [
+                                  TextSpan(text: servico.nome),
+                                  if (servico.descricaoAdicional?.isNotEmpty ?? false) ...[
+                                    const TextSpan(text: ' + ', style: TextStyle(color: Colors.purpleAccent, fontSize: 20)),
+                                    TextSpan(text: servico.descricaoAdicional!, style: const TextStyle(color: Colors.purpleAccent)),
+                                  ],
+                                ],
+                              ),
                             ),
                             if (servico.descricao?.isNotEmpty ?? false) ...[
                               const SizedBox(height: 4),
@@ -460,6 +469,11 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
+                          if (servico.valorAdicional > 0)
+                             Text(
+                              'R\$ ${servico.preco.toStringAsFixed(2)} + R\$ ${servico.valorAdicional.toStringAsFixed(2)}',
+                              style: const TextStyle(color: Colors.greenAccent, fontSize: 10, fontWeight: FontWeight.bold),
+                            ),
                           Text(
                             'R\$ ${servico.precoTotal.toStringAsFixed(2)}',
                             style: GoogleFonts.outfit(

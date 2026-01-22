@@ -34,7 +34,8 @@ import '../services/data_service.dart';
 import 'html_helper_stub.dart' if (dart.library.html) 'html_helper_web.dart' as html_helper;
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key});
+  final String? initialPage;
+  const HomePage({super.key, this.initialPage});
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -309,6 +310,61 @@ class _HomePageState extends State<HomePage> {
         ),
       ),
     );
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    // Inicializar locale
+    
+    // Se temos uma página inicial via URL, navegar para ela após o build
+    if (widget.initialPage != null && widget.initialPage != 'home') {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _navegarParaPaginaInicial(widget.initialPage!);
+      });
+    }
+  }
+
+  void _navegarParaPaginaInicial(String route) {
+    Widget? page;
+    String? urlPath;
+
+    switch (route) {
+      case 'clientes': page = const ClientesPage(); urlPath = '/clientes'; break;
+      case 'produtos': page = ProdutosPage(); urlPath = '/produtos'; break;
+      case 'servicos': page = ServicosPage(); urlPath = '/servicos'; break;
+      case 'pedidos': page = const PedidosPage(); urlPath = '/pedidos'; break;
+      case 'venda-direta': 
+      case 'pdv': page = VendaDiretaPage(); urlPath = '/pdv'; break;
+      case 'entrada-mercadorias': page = const EntradaMercadoriasPage(); urlPath = '/entrada-mercadorias'; break;
+      case 'contas-pagar': page = const ContasPagarPage(); urlPath = '/contas-pagar'; break;
+      case 'agenda-contas': page = const AgendaContasPage(); urlPath = '/agenda-contas'; break;
+      case 'cozinha-bar': page = const CozinhaBarPage(); urlPath = '/cozinha-bar'; break;
+      case 'mesas': page = CozinhaMesasFuncionarioPage(); urlPath = '/mesas'; break;
+      case 'links-vendedores': page = const GerenciarLinksVendedoresPage(); urlPath = '/links-vendedores'; break;
+      case 'vendedor-dashboard': page = const VendedorDashboardPage(); urlPath = '/vendedor-dashboard'; break;
+      case 'funcionarios': page = const FuncionariosPage(); urlPath = '/funcionarios'; break;
+      case 'personalizar-loja': page = const PersonalizarLojaPage(); urlPath = '/personalizar-loja'; break;
+      case 'agenda-pet': page = AgendaServicosPage(); urlPath = '/agenda-pet'; break;
+      case 'gerenciar-imagens': page = const GerenciarImagensPage(); urlPath = '/gerenciar-imagens'; break;
+    }
+
+    if (page != null) {
+      debugPrint('>>> [HomePage] Navegação automática para: $route');
+      // Usar pushing normal mas com a URL correta
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => page!),
+      ).then((_) {
+        // Ao voltar, garante que a URL volte para home
+        html_helper.updateUrl('/');
+      });
+      // Importante: Não chamamos updateUrl aqui porque ele já deve estar no path correto
+      // se veio pelo boot. Mas vamos chamar por segurança se não for boot.
+      if (kIsWeb) {
+         html_helper.updateUrl(urlPath ?? '/');
+      }
+    }
   }
 
   @override
@@ -610,11 +666,39 @@ class _HomePageState extends State<HomePage> {
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: () {
-            Navigator.push(
+          onTap: () async {
+            // Sincronizar URL se estiver no Web
+            String? urlPath;
+            if (page is ClientesPage) urlPath = '/clientes';
+            else if (page is ProdutosPage) urlPath = '/produtos';
+            else if (page is ServicosPage) urlPath = '/servicos';
+            else if (page is PedidosPage) urlPath = '/pedidos';
+            else if (page is VendaDiretaPage) urlPath = '/pdv';
+            else if (page is EntradaMercadoriasPage) urlPath = '/entrada-mercadorias';
+            else if (page is ContasPagarPage) urlPath = '/contas-pagar';
+            else if (page is AgendaContasPage) urlPath = '/agenda-contas';
+            else if (page is CozinhaBarPage) urlPath = '/cozinha-bar';
+            else if (page is CozinhaMesasFuncionarioPage) urlPath = '/mesas';
+            else if (page is GerenciarLinksVendedoresPage) urlPath = '/links-vendedores';
+            else if (page is VendedorDashboardPage) urlPath = '/vendedor-dashboard';
+            else if (page is FuncionariosPage) urlPath = '/funcionarios';
+            else if (page is PersonalizarLojaPage) urlPath = '/personalizar-loja';
+            else if (page is AgendaServicosPage) urlPath = '/agenda-pet';
+            else if (page is GerenciarImagensPage) urlPath = '/gerenciar-imagens';
+
+            if (kIsWeb && urlPath != null) {
+              html_helper.updateUrl(urlPath);
+            }
+
+            await Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => page),
             );
+
+            // Ao retornar, volta a URL para a home (/)
+            if (kIsWeb) {
+               html_helper.updateUrl('/');
+            }
           },
           borderRadius: BorderRadius.circular(20),
           child: Container(

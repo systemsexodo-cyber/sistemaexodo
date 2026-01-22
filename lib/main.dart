@@ -194,8 +194,24 @@ class AppRouter {
         // Se tem apenas um segmento e não é rota interna, tratar como LOJA por padrão
         // (Isso torna os links individuais: /loja/slug vs /agendamento/slug)
         final first = segments[0];
-        const internos = {'login', 'home', 'dashboard', 'admin', 'auth', 'selecionar-empresa', 'debug'};
-        if (!internos.contains(first)) {
+        const internos = {
+          'login', 'home', 'dashboard', 'admin', 'auth', 'selecionar-empresa', 'debug',
+          'clientes', 'produtos', 'servicos', 'pedidos', 'venda-direta', 'pdv',
+          'entrada-mercadorias', 'contas-pagar', 'agenda-contas', 'cozinha-bar',
+          'mesas', 'links-vendedores', 'vendedor-dashboard', 'funcionarios',
+          'personalizar-loja', 'agenda-pet', 'gerenciar-imagens'
+        };
+        
+        if (internos.contains(first)) {
+           return {
+            'publico': false,
+            'slug': null,
+            'agenda': false,
+            'loja': false,
+            'interna': first,
+            'href': rawHref
+          };
+        } else {
           isLoja = true; // Root slug agora abre a loja
           slug = first;
         }
@@ -206,13 +222,14 @@ class AppRouter {
         'slug': slug,
         'agenda': isAgenda,
         'loja': isLoja,
+        'interna': null,
         'href': rawHref
       };
       print('>>> [AppRouter] Analise: $res');
       return res;
     } catch (e) {
       print('>>> [AppRouter] Erro: $e');
-      return {'publico': false, 'slug': null, 'agenda': false, 'loja': false};
+      return {'publico': false, 'slug': null, 'agenda': false, 'loja': false, 'interna': null};
     }
   }
 }
@@ -263,6 +280,7 @@ class _MyAppState extends State<MyApp> {
         final bool mostrarPublico = rotaMap['publico'] || _entradaPublica;
         final String? slugEmpresa = rotaMap['slug'] ?? _entradaSlug;
         final bool isAgendamentoRoute = rotaMap['agenda'] || _entradaAgenda;
+        final String? subRotaInterna = rotaMap['interna'];
         final String? codigoLink = null;
 
         // 2. CONFIGURAR TEMA (Baseado na empresa se disponível)
@@ -289,7 +307,7 @@ class _MyAppState extends State<MyApp> {
                   slugEmpresa: slugEmpresa,
                   forceAgendamento: isAgendamentoRoute,
                 )
-              : const AuthWrapper(),
+              : AuthWrapper(subRota: subRotaInterna),
           builder: (context, child) {
             if (child == null) return const Center(child: CircularProgressIndicator());
             
@@ -305,7 +323,8 @@ class _MyAppState extends State<MyApp> {
 }
 
 class AuthWrapper extends StatefulWidget {
-  const AuthWrapper({super.key});
+  final String? subRota;
+  const AuthWrapper({super.key, this.subRota});
 
   @override
   State<AuthWrapper> createState() => _AuthWrapperState();
@@ -324,6 +343,8 @@ class _AuthWrapperState extends State<AuthWrapper> {
         );
       }
     }
+
+    final String? rotaInicial = widget.subRota;
 
     try {
       return Consumer2<AuthService, DataService>(
@@ -375,7 +396,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
             }
 
             
-            return const HomePage();
+            return HomePage(initialPage: rotaInicial);
           } catch (e, stackTrace) {
             print('>>> ⚠ Erro no AuthWrapper: $e');
             print('>>> StackTrace: $stackTrace');
