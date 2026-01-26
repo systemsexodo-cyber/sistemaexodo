@@ -82,6 +82,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
 
   bool _enviando = false;
   bool _verificandoDisponibilidade = false;
+  List<AgendamentoServico> _agendamentosCarrinho = [];
 
   final List<String> _portes = ['Pequeno', 'Médio', 'Grande', 'Gigante'];
 
@@ -148,7 +149,12 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
               ),
               child: Form(
                 key: _formKey,
-                child: _buildCurrentStepView(moduloPet),
+                child: Column(
+                  children: [
+                    if (_agendamentosCarrinho.isNotEmpty) _buildResumoCarrinho(primary),
+                    _buildCurrentStepView(moduloPet),
+                  ],
+                ),
               ),
             ),
             const SizedBox(height: 32),
@@ -1075,71 +1081,94 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
 
   Widget _buildNavigationButtons(Color primaryColor, bool moduloPet) {
     final int maxIndex = moduloPet ? 4 : 2;
+    final bool noUltimoPasso = _currentStep == maxIndex;
 
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    return Column(
       children: [
-        if (_currentStep > 0)
-          TextButton.icon(
-            onPressed: () => setState(() => _currentStep--),
-            icon: const Icon(Icons.arrow_back_rounded, size: 18),
-            label: const Text('Voltar'),
-            style: TextButton.styleFrom(
-              foregroundColor: _isDark ? _LojaPublicaStyle.textSecondaryColor : Colors.grey[600],
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-            ),
-          )
-        else
-          const SizedBox(),
-        
-        ElevatedButton(
-          onPressed: _enviando ? null : () => _onNext(moduloPet),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.transparent,
-            padding: EdgeInsets.zero,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            elevation: _enviando ? 0 : 8,
-            shadowColor: primaryColor.withOpacity(0.5),
-          ),
-          child: Ink(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: _enviando 
-                  ? [Colors.grey, Colors.grey.withOpacity(0.8)]
-                  : [primaryColor, primaryColor.withOpacity(0.8)],
+        if (noUltimoPasso && moduloPet)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _enviando ? null : () => _adicionarAoCarrinho(moduloPet),
+                icon: const Icon(Icons.add_circle_outline),
+                label: const Text('Agendar outro Pet', style: TextStyle(fontWeight: FontWeight.bold)),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: primaryColor,
+                  side: BorderSide(color: primaryColor),
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                ),
               ),
-              borderRadius: BorderRadius.circular(16),
             ),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (_enviando)
-                    const Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                        ),
-                        SizedBox(width: 12),
-                        Text('Aguardando...', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                      ],
-                    )
-                  else ...[
-                    Text(
-                      _currentStep == maxIndex ? 'Finalizar Agendamento' : 'Próximo Passo',
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white),
+          ),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            if (_currentStep > 0)
+              TextButton.icon(
+                onPressed: () => setState(() => _currentStep--),
+                icon: const Icon(Icons.arrow_back_rounded, size: 18),
+                label: const Text('Voltar'),
+                style: TextButton.styleFrom(
+                  foregroundColor: _isDark ? _LojaPublicaStyle.textSecondaryColor : Colors.grey[600],
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                ),
+              )
+            else
+              const SizedBox(),
+            
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.only(left: 12),
+                child: ElevatedButton(
+                  onPressed: _enviando ? null : () => _onNext(moduloPet),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.transparent,
+                    padding: EdgeInsets.zero,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    elevation: _enviando ? 0 : 8,
+                    shadowColor: primaryColor.withOpacity(0.5),
+                  ),
+                  child: Ink(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: _enviando 
+                          ? [Colors.grey, Colors.grey.withOpacity(0.8)]
+                          : [primaryColor, primaryColor.withOpacity(0.8)],
+                      ),
+                      borderRadius: BorderRadius.circular(16),
                     ),
-                    const SizedBox(width: 12),
-                    const Icon(Icons.arrow_forward_rounded, color: Colors.white, size: 18),
-                  ],
-                ],
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          if (_enviando)
+                            const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                            )
+                          else ...[
+                            Text(
+                              noUltimoPasso 
+                                ? (_agendamentosCarrinho.isEmpty ? 'Finalizar Agendamento' : 'Finalizar TUDO (${_agendamentosCarrinho.length + 1})') 
+                                : 'Próximo Passo',
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white),
+                            ),
+                            const SizedBox(width: 12),
+                            const Icon(Icons.arrow_forward_rounded, color: Colors.white, size: 18),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
               ),
             ),
-          ),
+          ],
         ),
       ],
     );
@@ -1172,31 +1201,22 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     setState(() => _enviando = true);
 
     final dataService = Provider.of<DataService>(context, listen: false);
-    final dataAgendamento = DateTime(
-      _dataSelecionada!.year,
-      _dataSelecionada!.month,
-      _dataSelecionada!.day,
-      _horaSelecionada!.hour,
-      _horaSelecionada!.minute,
-    );
+    final authService = Provider.of<AuthService>(context, listen: false);
 
     try {
-      final servico = dataService.servicos.firstWhere((s) => s.id == _servicoIdSelecionado);
-      
-      // Verificar disponibilidade para mostrar o alerta no final (considerando agendamentos pendentes como conflito)
-      debugPrint('>>> [AgendamentoPublico] 🔍 Verificando disponibilidade para $dataAgendamento');
-      debugPrint('>>> [AgendamentoPublico] 📋 Total de agendamentos na memória: ${dataService.agendamentosServico.length}');
-      
-      final disponivel = dataService.checkDisponibilidade(dataAgendamento, servico.duracaoPadraoMinutos ?? 60, ignorarPendentes: false);
-      
-      debugPrint('>>> [AgendamentoPublico] 📢 Resultado disponibilidade: ${disponivel ? "LIVRE" : "OCUPADO"}');
+      // 1. Criar o agendamento atual (o último que está sendo editado)
+      final dataAgendamentoAtual = DateTime(
+        _dataSelecionada!.year,
+        _dataSelecionada!.month,
+        _dataSelecionada!.day,
+        _horaSelecionada!.hour,
+        _horaSelecionada!.minute,
+      );
 
-
-
+      final servicoAtual = dataService.servicos.firstWhere((s) => s.id == _servicoIdSelecionado);
       
-      // Identificar cliente pelo telefone
+      // Identificar cliente/pet para o agendamento atual
       final telefoneBusca = _whatsappController.text.replaceAll(RegExp(r'\D'), '');
-      String clienteIdEncontrado = 'publico';
       Cliente? clienteExistente;
       Pet? petExistente;
 
@@ -1204,34 +1224,14 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
         clienteExistente = dataService.clientes.firstWhere(
           (c) => c.telefone.replaceAll(RegExp(r'\D'), '') == telefoneBusca
         );
-        clienteIdEncontrado = clienteExistente.id;
-        
-        // Buscar pet do cliente que coincida com o nome informado
-        try {
-          if (moduloPet && _petNomeController.text.isNotEmpty) {
-            petExistente = clienteExistente.pets.firstWhere(
-              (p) => p.nome.toLowerCase().trim() == _petNomeController.text.toLowerCase().trim()
-            );
-          }
-        } catch (_) {
-          // Pet não encontrado para este cliente
+        if (moduloPet && _petNomeController.text.isNotEmpty) {
+          petExistente = clienteExistente.pets.firstWhere(
+            (p) => p.nome.toLowerCase().trim() == _petNomeController.text.toLowerCase().trim()
+          );
         }
-      } catch (_) {
-        // Cliente não encontrado pelo telefone
-      }
+      } catch (_) {}
 
-      if (clienteExistente != null) {
-        debugPrint('>>> [AgendamentoPublico] Cliente identificado pelo telefone: ${clienteExistente.nome} (ID: ${clienteExistente.id})');
-        if (petExistente != null) {
-          debugPrint('>>> [AgendamentoPublico] Pet identificado: ${petExistente.nome} (ID: ${petExistente.id})');
-        } else {
-          debugPrint('>>> [AgendamentoPublico] Pet não identificado na lista do cliente - será tratado como novo');
-        }
-      } else {
-        debugPrint('>>> [AgendamentoPublico] Cliente não encontrado pelo telefone - usando identificador "publico"');
-      }
-
-      final petInfo = moduloPet ? Pet(
+      final petInfoAtual = moduloPet ? Pet(
         id: petExistente?.id ?? 'novo_${DateTime.now().millisecondsSinceEpoch}',
         nome: _petNomeController.text,
         especie: _petEspecie,
@@ -1245,77 +1245,193 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
         createdAt: petExistente?.createdAt ?? DateTime.now(),
       ) : null;
 
-      final agendamento = AgendamentoServico(
+      final agendamentoAtual = AgendamentoServico(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
-        numero: '', // Gerado no backend local
-        servicoId: servico.id,
-        servico: servico,
-        clienteId: clienteIdEncontrado,
+        numero: '',
+        servicoId: servicoAtual.id,
+        servico: servicoAtual,
+        clienteId: clienteExistente?.id ?? 'publico',
         cliente: clienteExistente,
-        petId: petInfo?.id,
-        pet: petInfo,
+        petId: petInfoAtual?.id,
+        pet: petInfoAtual,
         clienteNome: _nomeController.text,
         clienteTelefone: _whatsappController.text,
         petNome: moduloPet ? _petNomeController.text : null,
-        dataAgendamento: dataAgendamento,
-        duracaoMinutos: servico.duracaoPadraoMinutos ?? 60,
+        dataAgendamento: dataAgendamentoAtual,
+        duracaoMinutos: servicoAtual.duracaoPadraoMinutos ?? 60,
         status: 'Aguardando Confirmação',
         tipoEntrega: moduloPet ? _tipoEntrega : null,
         bairroEntrega: moduloPet && _tipoEntrega == 'Taxi Dog' ? _bairroEntrega : null,
-        observacoes: 'SOLICITAÇÃO ONLINE DETALHADA\n'
-            'Cliente: ${_nomeController.text}\n'
-            'WhatsApp: ${_whatsappController.text}\n'
-            '${moduloPet ? '-------------------\n'
-            'PET: ${petInfo!.nome}\n'
-            'Espécie: ${petInfo.especie}\n'
-            'Raça: ${petInfo.raca}\n'
-            'Sexo: ${petInfo.sexo == "M" ? "Macho" : "Fêmea"}\n'
-            'Cor: ${petInfo.cor}\n'
-            'Porte: ${petInfo.tamanho}\n'
-            'Peso: ${petInfo.peso?.toStringAsFixed(1)} kg\n'
-            'Obs Pet: ${petInfo.observacoes}\n'
-            '-------------------\n'
-            'Entrega: $_tipoEntrega ${(_tipoEntrega == 'Taxi Dog' && _bairroEntrega != null) ? " ($_bairroEntrega)" : ""}' : ''}',
+        observacoes: 'SOLICITAÇÃO ONLINE DETALHADA',
       );
 
+      // 2. Unir com agendamentos já salvos no carrinho local
+      final todos = [..._agendamentosCarrinho, agendamentoAtual];
+      bool algumOcupado = false;
 
-      debugPrint('>>> [AgendamentoPublico] Finalizando agendamento...');
-      debugPrint('>>> [AgendamentoPublico] Empresa ID no DataService: ${dataService.empresaIdAtual}');
-      debugPrint('>>> [AgendamentoPublico] Agendamento ID: ${agendamento.id}');
-
-      // GARANTIR QUE A EMPRESA ESTÁ SETADA NO DATASERVICE PARA SALVAR NO LOCAL CORRETO
+      // Garantir empresa ativa
       if (dataService.empresaIdAtual == null) {
-        debugPrint('>>> [AgendamentoPublico] ⚠ Empresa não está no DataService. Forçando definição...');
-        final auth = Provider.of<AuthService>(context, listen: false);
         final slugParaUsar = widget.slugEmpresa;
-        if (slugParaUsar != null && slugParaUsar.isNotEmpty) {
-          final emp = auth.obterEmpresaPorSlug(slugParaUsar);
-          
-          if (emp != null) {
-            await dataService.definirEmpresaAtual(emp.id);
-            // Pequena pausa para garantir que o DataService inicializou as listas da empresa
-            await Future.delayed(const Duration(milliseconds: 500));
-            debugPrint('>>> [AgendamentoPublico] ✅ Empresa ID setada: ${dataService.empresaIdAtual}');
-          }
+        if (slugParaUsar != null) {
+          final emp = authService.obterEmpresaPorSlug(slugParaUsar);
+          if (emp != null) await dataService.definirEmpresaAtual(emp.id);
         }
       }
 
-      debugPrint('>>> [AgendamentoPublico] 🚀 TENTANDO SALVAR AGENDAMENTO ONLINE...');
-      debugPrint('>>> [AgendamentoPublico] Empresa ID Final: ${dataService.empresaIdAtual}');
-      debugPrint('>>> [AgendamentoPublico] Agendamento ID: ${agendamento.id}');
-      
-      await dataService.addAgendamentoServico(agendamento);
-      debugPrint('>>> [AgendamentoPublico] ✅ Agendamento enviado com sucesso para o banco!');
+      // 3. Processar envio de todos
+      for (var agd in todos) {
+        final disponivel = dataService.checkDisponibilidade(
+          agd.dataAgendamento, 
+          agd.servico?.duracaoPadraoMinutos ?? 60, 
+          ignorarPendentes: false
+        );
+        if (!disponivel) algumOcupado = true;
+        
+        await dataService.addAgendamentoServico(agd);
+      }
 
       if (mounted) {
-        _mostrarSucesso(horarioOcupado: !disponivel);
+        _mostrarSucesso(horarioOcupado: algumOcupado);
       }
 
     } catch (e) {
-      _showError('Erro ao processar sua solicitação. Tente novamente em instantes.');
+      debugPrint('Erro ao finalizar: $e');
+      _showError('Erro ao processar sua solicitação. Tente novamente.');
     } finally {
       if (mounted) setState(() => _enviando = false);
     }
+  }
+
+
+  Widget _buildResumoCarrinho(Color primaryColor) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 24),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: primaryColor.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: primaryColor.withOpacity(0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.shopping_basket_rounded, color: primaryColor, size: 20),
+              const SizedBox(width: 10),
+              Text(
+                'Seus Agendamentos (${_agendamentosCarrinho.length})',
+                style: GoogleFonts.outfit(color: _isDark ? Colors.white : Colors.black87, fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          ..._agendamentosCarrinho.map((agd) => Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: _isDark ? Colors.white.withOpacity(0.03) : Colors.white,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              children: [
+                CircleAvatar(
+                  backgroundColor: primaryColor.withOpacity(0.1),
+                  radius: 18,
+                  child: Icon(agd.pet != null ? Icons.pets : Icons.style, color: primaryColor, size: 16),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${agd.petNome ?? 'Serviço'} - ${agd.servico?.nome ?? ''}',
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.white),
+                      ),
+                      Text(
+                        '${DateFormat('dd/MM HH:mm').format(agd.dataAgendamento)}',
+                        style: TextStyle(color: _isDark ? Colors.white54 : Colors.black54, fontSize: 11),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.remove_circle_outline, color: Colors.redAccent, size: 20),
+                  onPressed: () => setState(() => _agendamentosCarrinho.remove(agd)),
+                ),
+              ],
+            ),
+          )).toList(),
+        ],
+      ),
+    );
+  }
+
+  void _adicionarAoCarrinho(bool moduloPet) {
+    if (_dataSelecionada == null || _horaSelecionada == null) {
+      _showWarning('Selecione a data e o horário desejado.');
+      return;
+    }
+
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final dataAgendamento = DateTime(
+      _dataSelecionada!.year,
+      _dataSelecionada!.month,
+      _dataSelecionada!.day,
+      _horaSelecionada!.hour,
+      _horaSelecionada!.minute,
+    );
+
+    final servico = dataService.servicos.firstWhere((s) => s.id == _servicoIdSelecionado);
+    
+    final petInfo = moduloPet ? Pet(
+      id: 'novo_${DateTime.now().millisecondsSinceEpoch}',
+      nome: _petNomeController.text,
+      especie: _petEspecie,
+      raca: _petRacaController.text,
+      sexo: _petSexo,
+      cor: _petCorController.text,
+      tamanho: _porteAnimal,
+      peso: _pesoAproximado,
+      observacoes: _petObsController.text,
+      updatedAt: DateTime.now(),
+      createdAt: DateTime.now(),
+    ) : null;
+
+    final agendamento = AgendamentoServico(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      numero: '',
+      servicoId: servico.id,
+      servico: servico,
+      clienteId: 'publico',
+      petId: petInfo?.id,
+      pet: petInfo,
+      clienteNome: _nomeController.text,
+      clienteTelefone: _whatsappController.text,
+      petNome: moduloPet ? _petNomeController.text : null,
+      dataAgendamento: dataAgendamento,
+      duracaoMinutos: servico.duracaoPadraoMinutos ?? 60,
+      status: 'Aguardando Confirmação',
+      tipoEntrega: moduloPet ? _tipoEntrega : null,
+      bairroEntrega: moduloPet && _tipoEntrega == 'Taxi Dog' ? _bairroEntrega : null,
+      observacoes: 'SOLICITAÇÃO ONLINE ADICIONAL',
+    );
+
+    setState(() {
+      _agendamentosCarrinho.add(agendamento);
+      // Resetar apenas campos do PET e SERVIÇO e HORÁRIO
+      _servicoIdSelecionado = null;
+      _petNomeController.clear();
+      _petRacaController.clear();
+      _petCorController.clear();
+      _petObsController.clear();
+      _dataSelecionada = null;
+      _horaSelecionada = null;
+      _currentStep = 0; // Volta para o início para o próximo pet
+    });
+
+    _showWarning('Agendamento adicionado! Você pode agendar outro pet agora.');
   }
 
   void _mostrarSucesso({bool horarioOcupado = false}) {
@@ -1336,7 +1452,6 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Ícone de Status
                 Container(
                   padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
@@ -1350,60 +1465,24 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                   ),
                 ),
                 const SizedBox(height: 24),
-                
-                // Título
                 Text(
-                  horarioOcupado ? 'Solicitação de Encaixe' : 'Quase tudo pronto!',
-                  style: GoogleFonts.outfit(
-                    color: horarioOcupado ? Colors.orangeAccent : textColor, 
-                    fontSize: 24, 
-                    fontWeight: FontWeight.bold
-                  ),
+                  horarioOcupado ? 'Solicitações Enviadas' : 'Tudo pronto!',
+                  style: GoogleFonts.outfit(color: textColor, fontSize: 24, fontWeight: FontWeight.bold),
                 ),
-                
-                // Alerta de Horário (se ocupado)
-                if (horarioOcupado) ...[
-                  const SizedBox(height: 16),
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.orange.withOpacity(0.05),
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: Colors.orange.withOpacity(0.2)),
-                    ),
-                    child: Column(
-                      children: [
-                        const Text(
-                          'AVISO DE DISPONIBILIDADE',
-                          style: TextStyle(color: Colors.orangeAccent, fontWeight: FontWeight.bold, fontSize: 12),
-                        ),
-                        const SizedBox(height: 8),
-                        const Text(
-                          'Já temos um agendamento nesse horário, mas não se preocupe!',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(color: Colors.white70, fontSize: 13),
-                        ),
-                        const SizedBox(height: 4),
-                        const Text(
-                          'Iremos analisar sua solicitação e encaixar o horário mais próximo.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(color: Colors.orangeAccent, fontSize: 13, fontWeight: FontWeight.w500),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-
                 const SizedBox(height: 16),
-
                 Text(
-                  horarioOcupado 
-                    ? 'Sua solicitação para o(a) ${_petNomeController.text} foi enviada para análise.'
-                    : 'Recebemos sua solicitação para o(a) ${_petNomeController.text}.\n\nAgora nossa equipe vai revisar e entraremos em contato via WhatsApp para confirmar.',
+                  'Recebemos suas solicitações de agendamento.',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: textSecondary, height: 1.5),
+                  style: TextStyle(color: textSecondary),
                 ),
-
+                const SizedBox(height: 16),
+                ..._agendamentosCarrinho.map((a) => Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(
+                    '• ${a.petNome ?? 'Serviço'} - ${DateFormat('dd/MM HH:mm').format(a.dataAgendamento)}',
+                    style: TextStyle(color: textColor.withOpacity(0.7), fontSize: 13),
+                  ),
+                )).toList(),
                 const SizedBox(height: 32),
                 SizedBox(
                   width: double.infinity,
@@ -1412,6 +1491,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                       Navigator.of(context).pop();
                       setState(() {
                         _currentStep = 0;
+                        _agendamentosCarrinho.clear();
                         _servicoIdSelecionado = null;
                         _nomeController.clear();
                         _whatsappController.clear();
@@ -1420,14 +1500,9 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                         _petEspecieController.clear();
                         _petCorController.clear();
                         _petObsController.clear();
-                        _petEspecie = 'Cachorro';
-                        _petSexo = 'M';
-                        _porteAnimal = 'Pequeno';
-                        _pesoAproximado = 5.0;
                         _dataSelecionada = null;
                         _horaSelecionada = null;
                       });
-
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: _primaryColor,

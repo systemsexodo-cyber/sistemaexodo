@@ -186,6 +186,7 @@ class AgendamentoServico {
       'clienteNome': clienteNome,
       'clienteTelefone': clienteTelefone,
       'petNome': petNome,
+      'pet': pet?.toMap(), // Incluir objeto pet para evitar perda de dados online
       'materiais': materiais.map((m) => m.toMap()).toList(),
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
@@ -222,6 +223,7 @@ class AgendamentoServico {
       clienteNome: map['clienteNome']?.toString(),
       clienteTelefone: map['clienteTelefone']?.toString(),
       petNome: map['petNome']?.toString(),
+      pet: map['pet'] != null ? Pet.fromMap(Map<String, dynamic>.from(map['pet'])) : null,
     );
   }
 }

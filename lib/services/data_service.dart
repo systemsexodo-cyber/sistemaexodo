@@ -205,7 +205,9 @@ class DataService extends ChangeNotifier {
     
     // DEFINIR NOVA EMPRESA
     _empresaIdAtual = empresaId;
-    _empresaAtual = null; // Limpar para evitar dados obsoletos
+    if (_empresaAtual?.id != empresaId) {
+      _empresaAtual = null; // Limpar para evitar dados obsoletos apenas se for realmente outra empresa
+    }
     
     // Recarregar dados APENAS da nova empresa (isoladamente)
     if (empresaId != null) {

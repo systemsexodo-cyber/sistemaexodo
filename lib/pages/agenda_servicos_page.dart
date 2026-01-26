@@ -1404,7 +1404,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                 ],
               ),
             ],
-            if ((agendamento.pet != null || agendamento.petNome != null) && dataService.empresaAtual?.moduloPet == true) ...[
+            if (agendamento.pet != null || agendamento.petNome != null) ...[
               const SizedBox(height: 6),
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1917,7 +1917,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                   );
                 },
               ),
-              if ((agendamento.pet != null || agendamento.petNome != null) && dataService.empresaAtual?.moduloPet == true) ...[
+              if (agendamento.pet != null || agendamento.petNome != null) ...[
                 if (agendamento.pet != null)
                   InkWell(
                     onTap: () {
@@ -5524,12 +5524,20 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                     ),
                                     const SizedBox(height: 16),
                                     _buildInfoItem(
-                                      currentDataService.empresaAtual?.moduloPet == true ? Icons.pets_rounded : Icons.work_rounded,
-                                      currentDataService.empresaAtual?.moduloPet == true ? 'Pet / Serviço' : 'Serviço',
-                                      currentDataService.empresaAtual?.moduloPet == true 
-                                        ? '${sol.petNome ?? sol.pet?.nome ?? "Não informado"} - ${sol.servico?.nome ?? sol.servicoId ?? "Serviço"}'
+                                      (currentDataService.empresaAtual?.moduloPet == true || sol.petNome != null || sol.pet != null) ? Icons.pets_rounded : Icons.work_rounded,
+                                      (currentDataService.empresaAtual?.moduloPet == true || sol.petNome != null || sol.pet != null) ? 'Pet / Serviço' : 'Serviço',
+                                      (currentDataService.empresaAtual?.moduloPet == true || sol.petNome != null || sol.pet != null)
+                                        ? '${sol.petNome ?? sol.pet?.nome ?? "Não informado"}${sol.pet?.raca != null ? " (${sol.pet!.raca})" : ""} - ${sol.servico?.nome ?? sol.servicoId ?? "Serviço"}'
                                         : (sol.servico?.nome ?? sol.servicoId ?? "Serviço"),
                                     ),
+                                    if (sol.pet != null) 
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 8),
+                                        child: Text(
+                                          'Pet Detalhes: ${sol.pet!.especie ?? ""} ${sol.pet!.sexo == "M" ? "♂" : sol.pet!.sexo == "F" ? "♀" : ""} ${sol.pet!.cor ?? ""} - Porte: ${sol.pet!.tamanho ?? "N/I"} - Peso: ${sol.pet!.peso != null ? "${sol.pet!.peso}kg" : "N/I"}',
+                                          style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 11),
+                                        ),
+                                      ),
                                     if (sol.observacoes != null && sol.observacoes!.isNotEmpty) ...[
                                       const SizedBox(height: 16),
                                       Container(
