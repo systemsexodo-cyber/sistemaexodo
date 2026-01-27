@@ -2825,7 +2825,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                            }
                         }
                       },
-                    );
+                    ),
                 const SizedBox(height: 16),
                 // Seleção de Cliente
                 Row(
