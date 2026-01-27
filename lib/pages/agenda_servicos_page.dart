@@ -2615,6 +2615,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
     String? tipoEntrega; // 'Taxi Dog' ou 'Cliente busca'
     final valorTaxiDogController = TextEditingController();
     final bairroEntregaController = TextEditingController();
+    final phoneController = TextEditingController(); // Novo controlador para busca por telefone
     final List<ItemMaterial> materiaisAgendamento = []; // Materiais/vacinas do agendamento
 
     await showDialog(
@@ -2698,6 +2699,133 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                     setState(() => servicoSelecionado = value);
                   },
                 ),
+                const SizedBox(height: 16),
+                // Seleção por Telefone (Busca Rápida)
+                const Text('Buscar Cliente por Telefone:', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: phoneController,
+                  keyboardType: TextInputType.phone,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    hintText: '(00) 00000-0000',
+                    hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
+                    prefixIcon: const Icon(Icons.phone, color: Colors.blueAccent, size: 20),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    filled: true,
+                    fillColor: Colors.white.withOpacity(0.05),
+                    suffixIcon: IconButton(
+                          icon: const Icon(Icons.search, color: Colors.blueAccent),
+                          onPressed: () {
+                            final termo = phoneController.text.replaceAll(RegExp(r'[^0-9]'), '');
+                            if (termo.length >= 8) {
+                              Cliente? encontrado;
+                              for (final c in dataService.clientes) {
+                                final tel = c.telefone.replaceAll(RegExp(r'[^0-9]'), '');
+                                final zap = (c.whatsapp ?? '').replaceAll(RegExp(r'[^0-9]'), '');
+                                if (tel.contains(termo) || zap.contains(termo)) {
+                                  encontrado = c;
+                                  break;
+                                }
+                              }
+                              
+                              if (encontrado != null) {
+                                setState(() {
+                                  clienteSelecionado = encontrado;
+                                  // Se tiver apenas um pet, seleciona automaticamente
+                                  if (encontrado!.pets.length == 1) {
+                                    petsSelecionadosIds = [encontrado!.pets.first.id];
+                                  } else {
+                                    petsSelecionadosIds = [];
+                                  }
+                                  
+                                  // Preencher observações (reutilizando a lógica do Dropdown)
+                                  final value = encontrado;
+                                  final observacoesCliente = <String>[];
+                                  
+                                  // Adicionar endereço do cliente
+                                  final enderecoCompleto = <String>[];
+                                  if (value!.endereco != null && value.endereco!.isNotEmpty) {
+                                    enderecoCompleto.add(value.endereco!);
+                                    if (value.numero != null && value.numero!.isNotEmpty) {
+                                      enderecoCompleto.add('nº ${value.numero}');
+                                    }
+                                    if (value.complemento != null && value.complemento!.isNotEmpty) {
+                                      enderecoCompleto.add('- ${value.complemento}');
+                                    }
+                                    if (value.bairro != null && value.bairro!.isNotEmpty) {
+                                      enderecoCompleto.add('- ${value.bairro}');
+                                    }
+                                    if (value.cidade != null && value.cidade!.isNotEmpty) {
+                                      enderecoCompleto.add('- ${value.cidade}');
+                                    }
+                                    if (value.estado != null && value.estado!.isNotEmpty) {
+                                      enderecoCompleto.add('/${value.estado}');
+                                    }
+                                    if (value.cep != null && value.cep!.isNotEmpty) {
+                                      enderecoCompleto.add('CEP: ${value.cep}');
+                                    }
+                                    
+                                    if (enderecoCompleto.isNotEmpty) {
+                                      observacoesCliente.add('=== ENDEREÇO DO CLIENTE ===');
+                                      observacoesCliente.add(enderecoCompleto.join(' '));
+                                    }
+                                  }
+                                  
+                                  if (value.observacoes != null && value.observacoes!.isNotEmpty) {
+                                    if (observacoesCliente.isNotEmpty) observacoesCliente.add('');
+                                    observacoesCliente.add('=== OBSERVAÇÕES DO CLIENTE ===');
+                                    observacoesCliente.add(value.observacoes!);
+                                  }
+
+                                  if (observacoesCliente.isNotEmpty) {
+                                    final textoAtual = observacoesController.text.trim();
+                                    if (textoAtual.isNotEmpty) {
+                                      observacoesController.text = '$textoAtual\n\n${observacoesCliente.join('\n')}';
+                                    } else {
+                                      observacoesController.text = observacoesCliente.join('\n');
+                                    }
+                                  }
+                                });
+                                
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('Cliente ${encontrado.nome} encontrado!'),
+                                    backgroundColor: Colors.green,
+                                    duration: const Duration(seconds: 2),
+                                  ),
+                                );
+                              } else {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Nenhum cliente encontrado com este telefone.'),
+                                    backgroundColor: Colors.redAccent,
+                                  ),
+                                );
+                              }
+                            }
+                          },
+                        ),
+                      ),
+                      onChanged: (value) {
+                        if (value.length >= 10) { // Busca automática se tiver número completo
+                           final termo = value.replaceAll(RegExp(r'[^0-9]'), '');
+                           for (final c in dataService.clientes) {
+                             final tel = c.telefone.replaceAll(RegExp(r'[^0-9]'), '');
+                             final zap = (c.whatsapp ?? '').replaceAll(RegExp(r'[^0-9]'), '');
+                             if (tel == termo || zap == termo) {
+                               setState(() {
+                                 clienteSelecionado = c;
+                                 if (c.pets.length == 1) {
+                                   petsSelecionadosIds = [c.pets.first.id];
+                                 }
+                               });
+                               break;
+                             }
+                           }
+                        }
+                      },
+                    );
                 const SizedBox(height: 16),
                 // Seleção de Cliente
                 Row(

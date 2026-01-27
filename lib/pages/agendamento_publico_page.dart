@@ -86,7 +86,64 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
 
   final List<String> _portes = ['Pequeno', 'Médio', 'Grande', 'Gigante'];
 
+  // Busca de cliente/pet automático
+  List<Pet> _petsEncontrados = [];
+  Cliente? _clienteEncontrado;
+  bool _buscandoCliente = false;
+
   @override
+  void initState() {
+    super.initState();
+    _whatsappController.addListener(_onWhatsappChanged);
+  }
+
+  void _onWhatsappChanged() {
+    final tel = _whatsappController.text.replaceAll(RegExp(r'\D'), '');
+    // Buscar se tiver pelo menos 10 dígitos (DDD + 8 ou 9 dígitos)
+    if (tel.length >= 10) {
+      _buscarClientePorTelefone(tel);
+    }
+  }
+
+  Future<void> _buscarClientePorTelefone(String telefone) async {
+    if (_buscandoCliente) return;
+
+    final dataService = Provider.of<DataService>(context, listen: false);
+    
+    // Evitar buscar se já for o mesmo cliente que acabamos de carregar
+    if (_clienteEncontrado?.telefone.replaceAll(RegExp(r'\D'), '') == telefone) return;
+
+    setState(() => _buscandoCliente = true);
+
+    try {
+      // Procura na lista local de clientes (que deve estar sincronizada pelo DataService)
+      final encontrado = dataService.clientes.firstWhere(
+        (c) => c.telefone.replaceAll(RegExp(r'\D'), '') == telefone,
+        orElse: () => throw 'Cliente não encontrado'
+      );
+
+      setState(() {
+        _clienteEncontrado = encontrado;
+        _petsEncontrados = encontrado.pets;
+        // Preenche o nome se estiver vazio
+        if (_nomeController.text.isEmpty) {
+          _nomeController.text = encontrado.nome;
+        }
+      });
+      
+      debugPrint('>>> [AgendamentoPublico] Cliente encontrado: ${encontrado.nome} com ${_petsEncontrados.length} pets');
+    } catch (_) {
+      // Se mudar o telefone e não achar nada, limpamos a sugestão
+      if (_clienteEncontrado != null) {
+        setState(() {
+          _petsEncontrados = [];
+          _clienteEncontrado = null;
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _buscandoCliente = false);
+    }
+  }
   void dispose() {
     _nomeController.dispose();
     _whatsappController.dispose();
@@ -549,6 +606,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
           placeholder: '(00) 00000-0000',
           keyboardType: TextInputType.phone,
           validator: (v) => v!.isEmpty ? 'Obrigatório' : null,
+          onChanged: (_) => _onWhatsappChanged(),
         ),
       ],
     );
@@ -560,6 +618,76 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       children: [
         _buildStepTitle('E quem é o cliente VIP?', 'Conte-nos sobre o animalzinho que receberá o cuidado.'),
         const SizedBox(height: 32),
+
+        if (_petsEncontrados.isNotEmpty) ...[
+          Text(
+            'Pets já cadastrados em seu telefone:',
+            style: TextStyle(
+              color: _primaryColor, 
+              fontWeight: FontWeight.bold, 
+              fontSize: 15,
+              letterSpacing: 0.5
+            ),
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            height: 90,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: _petsEncontrados.length + 1,
+              separatorBuilder: (_, __) => const SizedBox(width: 12),
+              itemBuilder: (context, index) {
+                if (index == _petsEncontrados.length) {
+                  // Card para "Novo Pet"
+                  bool isSelected = _petNomeController.text.isEmpty;
+                  return _buildPetSelectionCard(
+                    title: 'Outro Pet',
+                    subtitle: 'Novo cadastro',
+                    icon: Icons.add_circle_outline_rounded,
+                    isSelected: isSelected,
+                    onTap: () {
+                      setState(() {
+                        _petNomeController.clear();
+                        _petRacaController.clear();
+                        _petCorController.clear();
+                        _petObsController.clear();
+                        _petEspecie = 'Cachorro';
+                        _petSexo = 'M';
+                        _porteAnimal = 'Pequeno';
+                        _pesoAproximado = 5.0;
+                      });
+                    },
+                  );
+                }
+
+                final pet = _petsEncontrados[index];
+                bool isSelected = _petNomeController.text == pet.nome;
+
+                return _buildPetSelectionCard(
+                  title: pet.nome,
+                  subtitle: pet.raca ?? 'Sem raça',
+                  icon: (pet.especie?.toLowerCase() ?? '') == 'gato' ? Icons.pets : Icons.pets_rounded,
+                  isSelected: isSelected,
+                  onTap: () {
+                    setState(() {
+                      _petNomeController.text = pet.nome;
+                      _petRacaController.text = pet.raca ?? '';
+                      _petCorController.text = pet.cor ?? '';
+                      _petObsController.text = pet.observacoes ?? '';
+                      _petEspecie = pet.especie ?? 'Cachorro';
+                      _petSexo = pet.sexo ?? 'M';
+                      _porteAnimal = pet.tamanho ?? 'Pequeno';
+                      _pesoAproximado = pet.peso ?? 5.0;
+                    });
+                  },
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 24),
+          const Divider(color: Colors.white10),
+          const SizedBox(height: 24),
+        ],
         
         _buildTextField(
           controller: _petNomeController,
@@ -696,6 +824,58 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     );
   }
 
+
+  Widget _buildPetSelectionCard({
+    required String title,
+    required String subtitle,
+    required IconData icon,
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        width: 140,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: isSelected ? _primaryColor.withOpacity(0.15) : (_isDark ? Colors.white.withOpacity(0.05) : Colors.grey[100]),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: isSelected ? _primaryColor : (_isDark ? Colors.white.withOpacity(0.1) : Colors.grey[300]!),
+            width: isSelected ? 2 : 1,
+          ),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, color: isSelected ? _primaryColor : Colors.grey[400], size: 24),
+            const SizedBox(height: 8),
+            Text(
+              title,
+              style: TextStyle(
+                color: isSelected ? Colors.white : (_isDark ? Colors.white70 : Colors.black87),
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                fontSize: 13,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            Text(
+              subtitle,
+              style: TextStyle(
+                color: isSelected ? _primaryColor : Colors.grey[500],
+                fontSize: 10,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   Widget _buildStepEntrega(List<String> bairrosCustom) {
     final List<String> bairros = bairrosCustom.isNotEmpty 
@@ -872,10 +1052,10 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: disponivel ? Colors.green.withOpacity(0.1) : Colors.orange.withOpacity(0.1),
+        color: disponivel ? Colors.green.withOpacity(0.1) : _primaryColor.withOpacity(0.1),
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
-          color: disponivel ? Colors.green.withOpacity(0.3) : Colors.orange.withOpacity(0.3),
+          color: disponivel ? Colors.green.withOpacity(0.3) : _primaryColor.withOpacity(0.3),
         ),
       ),
       child: Row(
@@ -883,11 +1063,11 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
           Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: disponivel ? Colors.green : Colors.orange,
+              color: disponivel ? Colors.green : _primaryColor,
               shape: BoxShape.circle,
             ),
             child: Icon(
-              disponivel ? Icons.check : Icons.access_time_rounded,
+              disponivel ? Icons.check : Icons.notification_important_rounded,
               color: Colors.white,
               size: 16,
             ),
@@ -898,18 +1078,18 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  disponivel ? 'Ótima escolha!' : 'Já temos agendamentos neste horário',
+                  disponivel ? 'Ótima escolha!' : 'Solicitação de Agendamento',
                   style: TextStyle(
-                    color: disponivel ? Colors.green[300] : Colors.orange[300],
+                    color: disponivel ? Colors.green[300] : Colors.white,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
                 Text(
                   disponivel 
                     ? 'Esse horário está livre em nossa agenda.' 
-                    : 'Iremos receber sua solicitação e analisar a possibilidade de encaixe.',
+                    : 'Faremos o possível para te atender! Prosiga com o agendamento e aguarde nossa confirmação.',
                   style: TextStyle(
-                    color: disponivel ? Colors.green[100]?.withOpacity(0.7) : Colors.orange[100]?.withOpacity(0.7),
+                    color: disponivel ? Colors.green[100]?.withOpacity(0.7) : Colors.white.withOpacity(0.7),
                     fontSize: 12,
                   ),
                 ),
@@ -954,6 +1134,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     TextInputType? keyboardType,
     int maxLines = 1,
     String? Function(String?)? validator,
+    void Function(String)? onChanged,
   }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -967,6 +1148,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
           controller: controller,
           keyboardType: keyboardType,
           validator: validator,
+          onChanged: onChanged,
           maxLines: maxLines,
           style: TextStyle(color: _isDark ? Colors.white : Colors.black87, fontSize: 16),
           decoration: InputDecoration(
@@ -1217,19 +1399,44 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       
       // Identificar cliente/pet para o agendamento atual
       final telefoneBusca = _whatsappController.text.replaceAll(RegExp(r'\D'), '');
-      Cliente? clienteExistente;
+      Cliente? clienteReal;
       Pet? petExistente;
 
       try {
-        clienteExistente = dataService.clientes.firstWhere(
+        clienteReal = dataService.clientes.firstWhere(
           (c) => c.telefone.replaceAll(RegExp(r'\D'), '') == telefoneBusca
         );
-        if (moduloPet && _petNomeController.text.isNotEmpty) {
-          petExistente = clienteExistente.pets.firstWhere(
+      } catch (_) {}
+
+      // Se não existe, criar o cliente agora
+      if (clienteReal == null) {
+        clienteReal = Cliente(
+          id: 'pub_${DateTime.now().millisecondsSinceEpoch}',
+          nome: _nomeController.text,
+          telefone: _whatsappController.text,
+          whatsapp: telefoneBusca,
+          pets: [],
+          createdAt: DateTime.now(),
+          updatedAt: DateTime.now(),
+        );
+        await dataService.addCliente(clienteReal);
+        if (mounted) setState(() => _clienteEncontrado = clienteReal);
+      } else {
+        // Se existe mas o nome no formulário é diferente, atualizar
+        if (_nomeController.text.isNotEmpty && clienteReal.nome != _nomeController.text) {
+          clienteReal = clienteReal.copyWith(nome: _nomeController.text, updatedAt: DateTime.now());
+          await dataService.updateCliente(clienteReal);
+        }
+      }
+
+      // Tentar encontrar pet para o agendamento ATUAL
+      if (moduloPet && _petNomeController.text.isNotEmpty) {
+        try {
+          petExistente = clienteReal.pets.firstWhere(
             (p) => p.nome.toLowerCase().trim() == _petNomeController.text.toLowerCase().trim()
           );
-        }
-      } catch (_) {}
+        } catch (_) {}
+      }
 
       final petInfoAtual = moduloPet ? Pet(
         id: petExistente?.id ?? 'novo_${DateTime.now().millisecondsSinceEpoch}',
@@ -1250,8 +1457,8 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
         numero: '',
         servicoId: servicoAtual.id,
         servico: servicoAtual,
-        clienteId: clienteExistente?.id ?? 'publico',
-        cliente: clienteExistente,
+        clienteId: clienteReal.id,
+        cliente: clienteReal,
         petId: petInfoAtual?.id,
         pet: petInfoAtual,
         clienteNome: _nomeController.text,
@@ -1278,16 +1485,49 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
         }
       }
 
-      // 3. Processar envio de todos
+      // 3. Processar envio de todos, garantindo pets no cliente
       for (var agd in todos) {
+        var agdFinal = agd.copyWith(
+          clienteId: clienteReal!.id,
+          cliente: clienteReal,
+        );
+
+        if (moduloPet && agdFinal.petNome != null && agdFinal.petNome!.isNotEmpty) {
+          Pet? petNoCliente;
+          try {
+            petNoCliente = clienteReal.pets.firstWhere(
+              (p) => p.nome.toLowerCase().trim() == agdFinal.petNome!.toLowerCase().trim()
+            );
+          } catch (_) {}
+
+          if (petNoCliente == null) {
+            // Novo pet, adicionar ao cliente
+            final novoPet = agdFinal.pet ?? Pet(
+              id: 'per_${DateTime.now().millisecondsSinceEpoch}_${agdFinal.id}',
+              nome: agdFinal.petNome!,
+              updatedAt: DateTime.now(),
+              createdAt: DateTime.now(),
+            );
+            final novosPets = [...clienteReal.pets, novoPet];
+            clienteReal = clienteReal.copyWith(pets: novosPets, updatedAt: DateTime.now());
+            await dataService.updateCliente(clienteReal);
+            petNoCliente = novoPet;
+          }
+
+          agdFinal = agdFinal.copyWith(
+            petId: petNoCliente.id,
+            pet: petNoCliente,
+          );
+        }
+
         final disponivel = dataService.checkDisponibilidade(
-          agd.dataAgendamento, 
-          agd.servico?.duracaoPadraoMinutos ?? 60, 
+          agdFinal.dataAgendamento, 
+          agdFinal.servico?.duracaoPadraoMinutos ?? 60, 
           ignorarPendentes: false
         );
         if (!disponivel) algumOcupado = true;
         
-        await dataService.addAgendamentoServico(agd);
+        await dataService.addAgendamentoServico(agdFinal);
       }
 
       if (mounted) {
@@ -1385,8 +1625,21 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
 
     final servico = dataService.servicos.firstWhere((s) => s.id == _servicoIdSelecionado);
     
+    // Identificar cliente/pet existentes se possível
+    final telefoneBusca = _whatsappController.text.replaceAll(RegExp(r'\D'), '');
+    Cliente? clienteExistente = _clienteEncontrado;
+    Pet? petExistente;
+
+    if (moduloPet && clienteExistente != null && _petNomeController.text.isNotEmpty) {
+      try {
+        petExistente = clienteExistente.pets.firstWhere(
+          (p) => p.nome.toLowerCase().trim() == _petNomeController.text.toLowerCase().trim()
+        );
+      } catch (_) {}
+    }
+
     final petInfo = moduloPet ? Pet(
-      id: 'novo_${DateTime.now().millisecondsSinceEpoch}',
+      id: petExistente?.id ?? 'novo_${DateTime.now().millisecondsSinceEpoch}',
       nome: _petNomeController.text,
       especie: _petEspecie,
       raca: _petRacaController.text,
@@ -1396,7 +1649,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       peso: _pesoAproximado,
       observacoes: _petObsController.text,
       updatedAt: DateTime.now(),
-      createdAt: DateTime.now(),
+      createdAt: petExistente?.createdAt ?? DateTime.now(),
     ) : null;
 
     final agendamento = AgendamentoServico(
@@ -1404,7 +1657,8 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       numero: '',
       servicoId: servico.id,
       servico: servico,
-      clienteId: 'publico',
+      clienteId: clienteExistente?.id ?? 'publico',
+      cliente: clienteExistente,
       petId: petInfo?.id,
       pet: petInfo,
       clienteNome: _nomeController.text,
