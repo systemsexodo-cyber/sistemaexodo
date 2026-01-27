@@ -850,10 +850,10 @@ class AuthService extends ChangeNotifier {
         return;
       }
       
-      // Se não há empresas no localStorage, tentar Firebase com timeout curto
+      // Se não há empresas no localStorage, tentar Firebase com timeout maior para evitar erro no primeiro acesso
       try {
         final empresasFirebase = await _firebaseService.carregarEmpresas().timeout(
-          const Duration(seconds: 3),
+          const Duration(seconds: 12),
           onTimeout: () {
             debugPrint('>>> [AuthService] Timeout ao carregar empresas do Firebase - usando padrão');
             return <Empresa>[];

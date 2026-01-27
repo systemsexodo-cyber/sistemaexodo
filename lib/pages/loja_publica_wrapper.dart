@@ -60,9 +60,10 @@ class _LojaPublicaWrapperState extends State<LojaPublicaWrapper> {
     super.didChangeDependencies();
     // Se ainda não carregamos os dados OU se carregamos o padrão mas as empresas acabaram de chegar, tentar de novo
     final authService = Provider.of<AuthService>(context);
-    if (!_dadosCarregados || (_empresaIdConfigurada == '1' && authService.empresas.length > 1)) {
-      if (authService.empresas.isNotEmpty && _ultimoSlugProcessado != widget.slugEmpresa) {
-        print('>>> [LojaPublicaWrapper] @CHANGES - Empresas disponíveis, tentando carregar...');
+    // Retentar se ainda não carregamos com sucesso ou se estamos no fallback '1' mas mais empresas chegaram
+    if (!_dadosCarregados || (_empresaIdConfigurada == null)) {
+      if (authService.empresas.isNotEmpty) {
+        debugPrint('>>> [LojaPublicaWrapper] @CHANGES - Empresas chegaram, tentando carregar...');
         _carregarDados();
       }
     }
@@ -81,9 +82,29 @@ class _LojaPublicaWrapperState extends State<LojaPublicaWrapper> {
       int tentativas = 0;
       int maxTentativas = (currentSlug != null && currentSlug.isNotEmpty) ? 20 : 10; // Esperar até 10s se tiver slug
       
-      while (authService.isCarregandoDados && authService.empresas.isEmpty && tentativas < maxTentativas) {
-        await Future.delayed(const Duration(milliseconds: 500));
-        tentativas++;
+      // Se temos um slug, vale a pena esperar as empresas chegarem
+      while (tentativas < maxTentativas) {
+        // Se já temos empresas, tentar encontrar a solicitada
+        if (authService.empresas.isNotEmpty) {
+           final slugDeteccaoLocal = widget.slugEmpresa;
+           if (slugDeteccaoLocal != null && slugDeteccaoLocal.isNotEmpty) {
+              final detectada = authService.obterEmpresaPorSlug(slugDeteccaoLocal);
+              if (detectada != null) break; // Encontramos!
+           } else if (slugDeteccaoLocal == null || slugDeteccaoLocal.isEmpty) {
+              break; // Sem slug, qualquer empresa (ou nenhuma) serve
+           }
+        }
+        
+        // Se ainda está carregando inicial ou a lista está vazia, esperamos
+        if (authService.isCarregandoDados || authService.empresas.isEmpty) {
+          await Future.delayed(const Duration(milliseconds: 500));
+          tentativas++;
+        } else {
+          // Se não está carregando e já temos empresas (e não achamos o slug no break acima),
+          // vamos dar uma última chance (mais 1s) caso o sync do Firebase ainda esteja rolando
+          await Future.delayed(const Duration(seconds: 1));
+          break;
+        }
       }
       
       String? empresaIdParaUsar;
