@@ -1856,12 +1856,15 @@ class DataService extends ChangeNotifier {
     }
   }
 
-  /// Busca um cliente por telefone (procura localmente e no Firebase se necessário)
+  /// Busca um cliente por telefone (procura localmente e no Firebase)
   Future<List<Cliente>> buscarClientePorTelefone(String telefone) async {
     final normalizado = telefone.replaceAll(RegExp(r'\D'), '');
-    if (normalizado.isEmpty) return [];
+    if (normalizado.length < 8) return [];
 
-    // 1. Procurar localmente na memória primeiro (rápido)
+    final idsVistos = <String>{};
+    final resultadoFinal = <Cliente>[];
+
+    // 1. Procurar localmente na memória (rápido)
     final candidatosLocais = _clientes.where((c) {
       final t1 = c.telefone.replaceAll(RegExp(r'\D'), '');
       final t2 = (c.telefone2 ?? '').replaceAll(RegExp(r'\D'), '');
@@ -1872,32 +1875,52 @@ class DataService extends ChangeNotifier {
              (t1.length >= 8 && normalizado.endsWith(t1));
     }).toList();
 
-    if (candidatosLocais.isNotEmpty) {
-      debugPrint('>>> [DataService] Cliente encontrado localmente para o telefone $normalizado');
-      return candidatosLocais;
+    for (final c in candidatosLocais) {
+      if (!idsVistos.contains(c.id)) {
+        idsVistos.add(c.id);
+        resultadoFinal.add(c);
+      }
     }
 
-    // 2. Se não encontrou e tem Firebase, buscar no Firebase
+    // 2. Se tem Firebase, buscar SEMPRE no Firebase também para garantir dados frescos (pets, endereço)
     if (_firebaseHabilitado && _empresaIdAtual != null) {
-      debugPrint('>>> [DataService] 🔍 Cliente não em memória, buscando no Firebase: $normalizado');
+      debugPrint('>>> [DataService] 🔍 Buscando no Firebase por telefone: $normalizado');
       try {
         final remotos = await _firebaseService.buscarClientesPorTelefone(_empresaIdAtual!, normalizado);
         if (remotos.isNotEmpty) {
-          // Adicionar à lista local (cache)
           for (final c in remotos) {
-            if (!_clientes.any((loc) => loc.id == c.id)) {
+            // Se já temos o cliente localmente, substituir pelo remoto (mais fresco)
+            final indexLocal = resultadoFinal.indexWhere((loc) => loc.id == c.id);
+            if (indexLocal != -1) {
+              resultadoFinal[indexLocal] = c;
+            } else {
+              resultadoFinal.add(c);
+              idsVistos.add(c.id);
+            }
+
+            // Atualizar cache local
+            final cacheIndex = _clientes.indexWhere((loc) => loc.id == c.id);
+            if (cacheIndex != -1) {
+              _clientes[cacheIndex] = c;
+            } else {
               _clientes.add(c);
             }
           }
           notifyListeners();
-          return remotos;
         }
       } catch (e) {
         debugPrint('>>> [DataService] Erro na busca remota: $e');
       }
     }
 
-    return [];
+    // Ordenar: Quem tem pets primeiro
+    resultadoFinal.sort((a, b) {
+      if (a.pets.isNotEmpty && b.pets.isEmpty) return -1;
+      if (a.pets.isEmpty && b.pets.isNotEmpty) return 1;
+      return b.updatedAt.compareTo(a.updatedAt);
+    });
+
+    return resultadoFinal;
   }
 
 

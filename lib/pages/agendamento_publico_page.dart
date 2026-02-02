@@ -8,6 +8,7 @@ import 'package:sistema_exodo_novo/services/auth_service.dart';
 import 'package:intl/intl.dart';
 import 'dart:ui';
 import 'package:google_fonts/google_fonts.dart';
+import 'dart:async';
 
 class AgendamentoPublicoPage extends StatefulWidget {
   final String? slugEmpresa;
@@ -97,6 +98,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
   Cliente? _clienteEncontrado;
   bool _buscandoCliente = false;
   String? _ultimoTelefoneBuscado; // Para evitar loops de busca
+  Timer? _debounceBusca;
 
   @override
   void initState() {
@@ -106,23 +108,28 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
   }
 
   void _onNomeChanged() {
-    final tel = _whatsappController.text.replaceAll(RegExp(r'\D'), '');
-    if (tel.length >= 8) {
-      _buscarClientePorTelefone(tel);
-    }
+    _agendarBusca();
   }
 
   void _onWhatsappChanged() {
-    final tel = _whatsappController.text.replaceAll(RegExp(r'\D'), '');
-    // Buscar se tiver pelo menos 8 dígitos (permitir busca parcial proativa)
-    if (tel.length >= 8) {
-      _buscarClientePorTelefone(tel);
-    }
+    _agendarBusca();
+  }
+
+  void _agendarBusca() {
+    _debounceBusca?.cancel();
+    _debounceBusca = Timer(const Duration(milliseconds: 600), () {
+      final tel = _whatsappController.text.replaceAll(RegExp(r'\D'), '');
+      if (tel.length >= 8) {
+        _buscarClientePorTelefone(tel);
+      }
+    });
   }
 
   Future<void> _buscarClientePorTelefone(String telefone) async {
-    if (_buscandoCliente || telefone.length < 8) {
-      if (telefone.length < 8 && _clienteEncontrado != null) {
+    final normalizado = telefone.replaceAll(RegExp(r'\D'), '');
+    
+    if (normalizado.length < 8) {
+      if (_clienteEncontrado != null) {
         setState(() {
           _clienteEncontrado = null;
           _petsEncontrados = [];
@@ -131,10 +138,12 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       return;
     }
 
+    if (_buscandoCliente && _ultimoTelefoneBuscado == normalizado) {
+      debugPrint('>>> [Agendamento] Busca já em andamento para $normalizado');
+      return;
+    }
+
     final dataService = Provider.of<DataService>(context, listen: false);
-    
-    // Evitar buscar se já for o mesmo cliente que acabamos de carregar
-    final normalizado = telefone.replaceAll(RegExp(r'\D'), '');
     final nomeDigitado = _nomeController.text.toLowerCase().trim();
 
     if (_clienteEncontrado != null) {
@@ -142,13 +151,13 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       final w = (_clienteEncontrado!.whatsapp ?? '').replaceAll(RegExp(r'\D'), '');
       final n = _clienteEncontrado!.nome.toLowerCase().trim();
       
-      // Se o telefone já for o mesmo E o nome já bater (ou o nome digitado estiver vazio), não precisa buscar
       if ((t == normalizado || w == normalizado) && (nomeDigitado.isEmpty || n == nomeDigitado)) {
+        debugPrint('>>> [Agendamento] Cliente ${_clienteEncontrado!.nome} já carregado e coincide. Pulando busca.');
         return;
       }
     }
 
-    debugPrint('>>> [Agendamento] 🔍 Buscando fone: $normalizado em ${dataService.clientes.length} clientes');
+    debugPrint('>>> [Agendamento] 🔍 Iniciando busca: fone $normalizado, nome "$nomeDigitado"');
 
     setState(() {
       _buscandoCliente = true;
@@ -156,52 +165,39 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     });
 
     try {
-      // 1. Chamar o DataService que agora sabe buscar no Firebase se necessário
       final candidatos = await dataService.buscarClientePorTelefone(normalizado);
 
       if (candidatos.isNotEmpty) {
-        // Priorizar o candidato que bate com o nome digitado ou tem pets
+        debugPrint('>>> [Agendamento] ✅ ${candidatos.length} candidatos encontrados.');
+        
         final sortedCandidatos = List<Cliente>.from(candidatos);
         final nomeBusca = _nomeController.text.toLowerCase().trim();
 
         sortedCandidatos.sort((a, b) {
-          // 1. Prioridade máxima: Nome bate exatamente
           if (nomeBusca.isNotEmpty) {
             final aMatches = a.nome.toLowerCase().trim() == nomeBusca;
             final bMatches = b.nome.toLowerCase().trim() == nomeBusca;
             if (aMatches && !bMatches) return -1;
             if (!aMatches && bMatches) return 1;
           }
-
-          // 2. Quem tem pets ganha
           if (a.pets.isNotEmpty && b.pets.isEmpty) return -1;
           if (a.pets.isEmpty && b.pets.isNotEmpty) return 1;
-          
-          // 3. Quem tem mais pets ganha
           if (a.pets.length != b.pets.length) return b.pets.length.compareTo(a.pets.length);
-          
-          // 4. Quem tem endereço ganha
-          bool aHasEnd = (a.endereco?.isNotEmpty ?? false);
-          bool bHasEnd = (b.endereco?.isNotEmpty ?? false);
-          if (aHasEnd && !bHasEnd) return -1;
-          if (!aHasEnd && bHasEnd) return 1;
-          
-          // 5. Mais recente ganha
           return b.updatedAt.compareTo(a.updatedAt);
         });
 
         final encontrado = sortedCandidatos.first;
+        debugPrint('>>> [Agendamento] Selecionado: ${encontrado.nome} (${encontrado.pets.length} pets)');
         
         setState(() {
           _clienteEncontrado = encontrado;
           _petsEncontrados = encontrado.pets;
-          // Preenche o nome se estiver vazio
+          
           if (_nomeController.text.isEmpty) {
             _nomeController.text = encontrado.nome;
           }
           
-          // Preenche o endereço se estiver vazio
-          if (_bairroEntrega == null) {
+          if (_bairroEntrega == null || _enderecoRuaController.text.isEmpty) {
             _bairroEntrega = encontrado.bairro;
             _enderecoRuaController.text = encontrado.endereco ?? '';
             _enderecoNumeroController.text = encontrado.numero ?? '';
@@ -209,9 +205,9 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
             _pontoReferenciaController.text = encontrado.pontoReferencia ?? '';
           }
           
-          // Se houver apenas um pet, já pré-seleciona ele
-          if (_petsEncontrados.length == 1) {
+          if (_petsEncontrados.length == 1 && _petNomeController.text.isEmpty) {
             final pet = _petsEncontrados.first;
+            debugPrint('>>> [Agendamento] Auto-selecionando pet: ${pet.nome}');
             _petNomeController.text = pet.nome;
             _petRacaController.text = pet.raca ?? '';
             _petCorController.text = pet.cor ?? '';
@@ -222,9 +218,8 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
             _pesoAproximado = pet.peso ?? 5.0;
           }
         });
-        debugPrint('>>> [Agendamento] ✅ Encontrado: ${encontrado.nome} com ${encontrado.pets.length} pets');
       } else {
-        debugPrint('>>> [Agendamento] ❌ Ninguém encontrado para $normalizado');
+        debugPrint('>>> [Agendamento] ❌ Nada encontrado para $normalizado');
         if (_clienteEncontrado != null) {
           setState(() {
             _clienteEncontrado = null;
@@ -233,7 +228,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
         }
       }
     } catch (e) {
-      debugPrint('>>> [Agendamento] ❌ Erro na busca: $e');
+      debugPrint('>>> [Agendamento] ❌ Erro: $e');
     } finally {
       if (mounted) setState(() => _buscandoCliente = false);
     }
@@ -250,6 +245,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     _enderecoNumeroController.dispose();
     _enderecoComplementoController.dispose();
     _pontoReferenciaController.dispose();
+    _debounceBusca?.cancel();
     super.dispose();
   }
 

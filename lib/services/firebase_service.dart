@@ -855,42 +855,53 @@ class FirebaseService {
   Future<List<Cliente>> buscarClientesPorTelefone(String empresaId, String telefone) async {
     try {
       final normalizado = telefone.replaceAll(RegExp(r'\D'), '');
-      if (normalizado.isEmpty) return [];
+      if (normalizado.length < 8) return [];
 
       debugPrint('>>> [Firebase] 🔍 Buscando cliente por telefone: $normalizado');
       
-      // Tentar buscar por telefone e whatsapp
-      final querySnapshotTelefone = await _getSubCollection(empresaId, _subCollectionClientes)
-          .where('telefone', isEqualTo: normalizado)
-          .get();
-          
-      final querySnapshotTelefone2 = await _getSubCollection(empresaId, _subCollectionClientes)
-          .where('telefone2', isEqualTo: normalizado)
-          .get();
-          
-      final querySnapshotWhatsapp = await _getSubCollection(empresaId, _subCollectionClientes)
-          .where('whatsapp', isEqualTo: normalizado)
-          .get();
-
-      // Combinar os resultados
-      final docs = [
-        ...querySnapshotTelefone.docs, 
-        ...querySnapshotTelefone2.docs,
-        ...querySnapshotWhatsapp.docs
-      ];
+      final candidates = <String>[normalizado];
       
-      // Remover duplicados (pelo ID)
+      // Se começou com 55, adicionar a versão sem 55
+      if (normalizado.startsWith('55') && normalizado.length > 10) {
+        candidates.add(normalizado.substring(2));
+      }
+      
+      // Se NÃO começou com 55 e tem 10-11 dígitos, adicionar versão com 55
+      if (!normalizado.startsWith('55') && (normalizado.length == 10 || normalizado.length == 11)) {
+        candidates.add('55$normalizado');
+      }
+
+      // Se tem 10-11 dígitos (DDD + número), adicionar versão SEM DDD (apenas últimos 8 ou 9)
+      if (normalizado.length >= 10) {
+        candidates.add(normalizado.substring(normalizado.length - 8));
+        candidates.add(normalizado.substring(normalizado.length - 9));
+      }
+
       final idsVistos = <String>{};
       final clientes = <Cliente>[];
-      
-      for (final doc in docs) {
-        if (!idsVistos.contains(doc.id)) {
-          idsVistos.add(doc.id);
-          clientes.add(Cliente.fromMap(doc.data() as Map<String, dynamic>));
+      final colRef = _getSubCollection(empresaId, _subCollectionClientes);
+
+      for (final queryStr in candidates.toSet()) {
+        if (queryStr.length < 8) continue;
+
+        // Buscar em telefone, telefone2 e whatsapp
+        final fields = ['telefone', 'telefone2', 'whatsapp'];
+        for (final field in fields) {
+          final snapshot = await colRef.where(field, isEqualTo: queryStr).get();
+          for (final doc in snapshot.docs) {
+            if (!idsVistos.contains(doc.id)) {
+              idsVistos.add(doc.id);
+              try {
+                clientes.add(Cliente.fromMap(doc.data() as Map<String, dynamic>));
+              } catch (e) {
+                debugPrint('>>> [Firebase] Erro ao converter cliente ${doc.id}: $e');
+              }
+            }
+          }
         }
       }
       
-      debugPrint('>>> [Firebase] Found ${clientes.length} candidates for phone $normalizado');
+      debugPrint('>>> [Firebase] Encontrados ${clientes.length} candidatos para o telefone $normalizado');
       return clientes;
     } catch (e) {
       debugPrint('>>> [Firebase] Erro ao buscar cliente por telefone: $e');
