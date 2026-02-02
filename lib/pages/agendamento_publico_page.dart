@@ -102,6 +102,14 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
   void initState() {
     super.initState();
     _whatsappController.addListener(_onWhatsappChanged);
+    _nomeController.addListener(_onNomeChanged);
+  }
+
+  void _onNomeChanged() {
+    final tel = _whatsappController.text.replaceAll(RegExp(r'\D'), '');
+    if (tel.length >= 8) {
+      _buscarClientePorTelefone(tel);
+    }
   }
 
   void _onWhatsappChanged() {
@@ -127,10 +135,17 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     
     // Evitar buscar se já for o mesmo cliente que acabamos de carregar
     final normalizado = telefone.replaceAll(RegExp(r'\D'), '');
+    final nomeDigitado = _nomeController.text.toLowerCase().trim();
+
     if (_clienteEncontrado != null) {
       final t = _clienteEncontrado!.telefone.replaceAll(RegExp(r'\D'), '');
       final w = (_clienteEncontrado!.whatsapp ?? '').replaceAll(RegExp(r'\D'), '');
-      if (t == normalizado || w == normalizado) return;
+      final n = _clienteEncontrado!.nome.toLowerCase().trim();
+      
+      // Se o telefone já for o mesmo E o nome já bater (ou o nome digitado estiver vazio), não precisa buscar
+      if ((t == normalizado || w == normalizado) && (nomeDigitado.isEmpty || n == nomeDigitado)) {
+        return;
+      }
     }
 
     debugPrint('>>> [Agendamento] 🔍 Buscando fone: $normalizado em ${dataService.clientes.length} clientes');
@@ -145,23 +160,33 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       final candidatos = await dataService.buscarClientePorTelefone(normalizado);
 
       if (candidatos.isNotEmpty) {
-        // Priorizar o candidato que tem pets cadastrados
+        // Priorizar o candidato que bate com o nome digitado ou tem pets
         final sortedCandidatos = List<Cliente>.from(candidatos);
+        final nomeBusca = _nomeController.text.toLowerCase().trim();
+
         sortedCandidatos.sort((a, b) {
-          // 1. Quem tem pets ganha
+          // 1. Prioridade máxima: Nome bate exatamente
+          if (nomeBusca.isNotEmpty) {
+            final aMatches = a.nome.toLowerCase().trim() == nomeBusca;
+            final bMatches = b.nome.toLowerCase().trim() == nomeBusca;
+            if (aMatches && !bMatches) return -1;
+            if (!aMatches && bMatches) return 1;
+          }
+
+          // 2. Quem tem pets ganha
           if (a.pets.isNotEmpty && b.pets.isEmpty) return -1;
           if (a.pets.isEmpty && b.pets.isNotEmpty) return 1;
           
-          // 2. Quem tem mais pets ganha
+          // 3. Quem tem mais pets ganha
           if (a.pets.length != b.pets.length) return b.pets.length.compareTo(a.pets.length);
           
-          // 3. Quem tem endereço ganha
+          // 4. Quem tem endereço ganha
           bool aHasEnd = (a.endereco?.isNotEmpty ?? false);
           bool bHasEnd = (b.endereco?.isNotEmpty ?? false);
           if (aHasEnd && !bHasEnd) return -1;
           if (!aHasEnd && bHasEnd) return 1;
           
-          // 4. Mais recente ganha
+          // 5. Mais recente ganha
           return b.updatedAt.compareTo(a.updatedAt);
         });
 

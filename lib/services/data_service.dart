@@ -1863,9 +1863,13 @@ class DataService extends ChangeNotifier {
 
     // 1. Procurar localmente na memória primeiro (rápido)
     final candidatosLocais = _clientes.where((c) {
-      final t = c.telefone.replaceAll(RegExp(r'\D'), '');
+      final t1 = c.telefone.replaceAll(RegExp(r'\D'), '');
+      final t2 = (c.telefone2 ?? '').replaceAll(RegExp(r'\D'), '');
       final w = (c.whatsapp ?? '').replaceAll(RegExp(r'\D'), '');
-      return t == normalizado || w == normalizado;
+      
+      return t1 == normalizado || t2 == normalizado || w == normalizado ||
+             (normalizado.length >= 8 && (t1.endsWith(normalizado) || t2.endsWith(normalizado) || w.endsWith(normalizado))) ||
+             (t1.length >= 8 && normalizado.endsWith(t1));
     }).toList();
 
     if (candidatosLocais.isNotEmpty) {

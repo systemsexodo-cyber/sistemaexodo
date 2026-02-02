@@ -864,12 +864,20 @@ class FirebaseService {
           .where('telefone', isEqualTo: normalizado)
           .get();
           
+      final querySnapshotTelefone2 = await _getSubCollection(empresaId, _subCollectionClientes)
+          .where('telefone2', isEqualTo: normalizado)
+          .get();
+          
       final querySnapshotWhatsapp = await _getSubCollection(empresaId, _subCollectionClientes)
           .where('whatsapp', isEqualTo: normalizado)
           .get();
 
       // Combinar os resultados
-      final docs = [...querySnapshotTelefone.docs, ...querySnapshotWhatsapp.docs];
+      final docs = [
+        ...querySnapshotTelefone.docs, 
+        ...querySnapshotTelefone2.docs,
+        ...querySnapshotWhatsapp.docs
+      ];
       
       // Remover duplicados (pelo ID)
       final idsVistos = <String>{};
