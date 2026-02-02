@@ -405,93 +405,82 @@ class FirebaseService {
   ) async {
     if (items.isEmpty) return;
 
-    // Reduzir batch size para evitar travamentos (500 é muito grande)
-    const batchSize = 100; // Reduzido de 500 para 100
-    int totalSalvos = 0;
+    debugPrint('>>> [Firebase] Sincronizando $subCollection (${items.length} itens)...');
     
-    for (int i = 0; i < items.length; i += batchSize) {
-      try {
-        final batch = _firestore.batch();
-        final end = (i + batchSize < items.length) ? i + batchSize : items.length;
-        
-        for (int j = i; j < end; j++) {
-          final item = items[j];
-          final docRef = _getSubCollection(empresaId, subCollection).doc(getId(item));
-          batch.set(docRef, toMap(item));
-        }
-        
-        // Timeout de 30 segundos por batch para evitar travamentos em conexões instáveis
-        await batch.commit().timeout(
-          const Duration(seconds: 30),
-          onTimeout: () {
-            throw TimeoutException('Timeout ao salvar batch de $subCollection');
-          },
-        );
-        
-        totalSalvos += (end - i);
-        debugPrint('>>> [Firebase] $subCollection: ${end - i} documentos salvos (${totalSalvos}/${items.length})');
-        
-        // Pequeno delay entre batches para não sobrecarregar
-        if (end < items.length) {
-          await Future.delayed(const Duration(milliseconds: 50));
-        }
-      } catch (e) {
-        debugPrint('>>> [Firebase] Erro ao salvar batch de $subCollection: $e');
-        // Continua com próximo batch mesmo se um falhar
-        rethrow; // Re-throw para que o erro seja capturado pela fila de sincronização
-      }
-    }
-  }
+    // Salvar item por item em vez de batch para maior granularidade e evitar timeouts de lotes grandes
+    int sucessos = 0;
+    int falhas = 0;
 
-  /// Carregar todos os dados do Firebase para uma empresa específica
-  /// IMPORTANTE: Este método carrega APENAS os dados da empresa especificada
-  Future<Map<String, dynamic>> carregarTudoDoFirebase(String empresaId) async {
-    try {
-      // Verificar se Firebase está disponível antes de usar
-      if (!isAvailable) {
-        debugPrint('>>> [Firebase] ⚠️ Firebase não está disponível - não é possível carregar dados');
-        throw Exception('Firebase não está disponível');
-      }
-      if (empresaId.isEmpty) {
-        throw ArgumentError('empresaId não pode ser vazio');
+    for (var item in items) {
+      try {
+        final id = getId(item);
+        final docRef = _getSubCollection(empresaId, subCollection).doc(id);
+        
+        // Timeout individual de 15s por item
+        await docRef.set(toMap(item)).timeout(
+          const Duration(seconds: 15),
+          onTimeout: () => throw TimeoutException('Timeout no item $id'),
+        );
+        sucessos++;
+      } catch (e) {
+        falhas++;
+        // Se for erro de cota, interrompemos a lista para não piorar
+        if (e.toString().toLowerCase().contains('quota')) {
+          debugPrint('>>> [Firebase] ⚠️ Cota excedida durante sync de $subCollection. Interrompendo...');
+          break;
+        }
       }
       
-      debugPrint('>>> [Firebase] ========================================');
-      debugPrint('>>> [Firebase] CARREGANDO DADOS DO FIREBASE');
-      debugPrint('>>> [Firebase] Empresa ID: $empresaId');
-      debugPrint('>>> [Firebase] ========================================');
+      // Pequeno delay para não "metralhar" o Firestore
+      await Future.delayed(const Duration(milliseconds: 10));
+    }
+    
+    debugPrint('>>> [Firebase] Finalizado $subCollection: $sucessos sucessos, $falhas falhas.');
+  }
+
+  /// Carrega todos os dados do Firebase para uma empresa específica
+  /// [lastSync]: Se fornecido, busca apenas documentos atualizados após esta data
+  Future<Map<String, dynamic>> carregarTudoDoFirebase(String empresaId, {DateTime? lastSync}) async {
+    try {
+      if (!isAvailable) throw Exception('Firebase não está disponível');
+      if (empresaId.isEmpty) throw ArgumentError('empresaId não pode ser vazio');
+      
+      debugPrint('>>> [Firebase] 🔥 CARREGANDO TUDO DO FIREBASE - LastSync: $lastSync');
       
       final dados = <String, dynamic>{};
 
-      // Carregar todas as subcoleções da empresa em paralelo com timeout de 8 segundos
-      // IMPORTANTE: _getSubCollection já filtra por empresaId
-      debugPrint('>>> [Firebase] Iniciando carregamento paralelo das subcoleções...');
+      Query _applyFilter(Query query) {
+        if (lastSync == null) return query;
+        return query.where('updatedAt', isGreaterThan: lastSync.toIso8601String());
+      }
+      
+      // Carregar todas as subcoleções em paralelo
       final results = await Future.wait([
-        _getSubCollection(empresaId, _subCollectionClientes).get(),
-        _getSubCollection(empresaId, _subCollectionProdutos).get(),
-        _getSubCollection(empresaId, _subCollectionServicos).get(),
-        _getSubCollection(empresaId, _subCollectionPedidos).get(),
-        _getSubCollection(empresaId, _subCollectionOrdensServico).get(),
-        _getSubCollection(empresaId, _subCollectionEntregas).get(),
-        _getSubCollection(empresaId, _subCollectionVendasBalcao).get(),
-        _getSubCollection(empresaId, _subCollectionTrocasDevolucoes).get(),
-        _getSubCollection(empresaId, _subCollectionEstoqueHistorico).get(),
-        _getSubCollection(empresaId, _subCollectionAberturasCaixa).get(),
-        _getSubCollection(empresaId, _subCollectionFechamentosCaixa).get(),
-        _getSubCollection(empresaId, _subCollectionMotoristas).get(),
-        _getSubCollection(empresaId, _subCollectionAgendamentosServico).get(),
-        _getSubCollection(empresaId, _subCollectionNotasEntrada).get(),
-        _getSubCollection(empresaId, _subCollectionFuncionarios).get(),
-        _getSubCollection(empresaId, _subCollectionTaxasEntrega).get(),
-        _getSubCollection(empresaId, _subCollectionContasPagar).get(),
-        _getSubCollection(empresaId, _subCollectionNFCes).get(),
-        _getSubCollection(empresaId, _subCollectionSangrias).get(),
-        _getSubCollection(empresaId, _subCollectionSuprimentos).get(),
-        _getSubCollection(empresaId, _subCollectionMesasComandas).get(),
-        _getSubCollection(empresaId, _subCollectionLinksVendedores).get(),
-        _getSubCollection(empresaId, _subCollectionComissoesVendedores).get(),
+        _applyFilter(_getSubCollection(empresaId, _subCollectionClientes)).get(),
+        _applyFilter(_getSubCollection(empresaId, _subCollectionProdutos)).get(),
+        _applyFilter(_getSubCollection(empresaId, _subCollectionServicos)).get(),
+        _applyFilter(_getSubCollection(empresaId, _subCollectionPedidos)).get(),
+        _applyFilter(_getSubCollection(empresaId, _subCollectionOrdensServico)).get(),
+        _applyFilter(_getSubCollection(empresaId, _subCollectionEntregas)).get(),
+        _applyFilter(_getSubCollection(empresaId, _subCollectionVendasBalcao)).get(),
+        _applyFilter(_getSubCollection(empresaId, _subCollectionTrocasDevolucoes)).get(),
+        _applyFilter(_getSubCollection(empresaId, _subCollectionEstoqueHistorico)).get(),
+        _applyFilter(_getSubCollection(empresaId, _subCollectionAberturasCaixa)).get(),
+        _applyFilter(_getSubCollection(empresaId, _subCollectionFechamentosCaixa)).get(),
+        _applyFilter(_getSubCollection(empresaId, _subCollectionMotoristas)).get(),
+        _applyFilter(_getSubCollection(empresaId, _subCollectionAgendamentosServico)).get(),
+        _applyFilter(_getSubCollection(empresaId, _subCollectionNotasEntrada)).get(),
+        _applyFilter(_getSubCollection(empresaId, _subCollectionFuncionarios)).get(),
+        _applyFilter(_getSubCollection(empresaId, _subCollectionTaxasEntrega)).get(),
+        _applyFilter(_getSubCollection(empresaId, _subCollectionContasPagar)).get(),
+        _applyFilter(_getSubCollection(empresaId, _subCollectionNFCes)).get(),
+        _applyFilter(_getSubCollection(empresaId, _subCollectionSangrias)).get(),
+        _applyFilter(_getSubCollection(empresaId, _subCollectionSuprimentos)).get(),
+        _applyFilter(_getSubCollection(empresaId, _subCollectionMesasComandas)).get(),
+        _applyFilter(_getSubCollection(empresaId, _subCollectionLinksVendedores)).get(),
+        _applyFilter(_getSubCollection(empresaId, _subCollectionComissoesVendedores)).get(),
       ]).timeout(
-        const Duration(seconds: 45), // Aumentado de 8s para 45s para carregar todas as subcoleções
+        const Duration(seconds: 45),
         onTimeout: () {
           debugPrint('>>> [Firebase] ⚠ Timeout ao carregar dados (45s)');
           throw TimeoutException('Timeout ao carregar dados do Firebase');
@@ -522,36 +511,11 @@ class FirebaseService {
       dados['links_vendedores'] = results[21].docs.map((doc) => doc.data()).toList();
       dados['comissoes_vendedores'] = results[22].docs.map((doc) => doc.data()).toList();
 
-      debugPrint('>>> [Firebase] ========================================');
-      debugPrint('>>> [Firebase] DADOS CARREGADOS DA EMPRESA: $empresaId');
+      debugPrint('>>> [Firebase] Carga concluída:');
       debugPrint('  - Clientes: ${dados['clientes'].length}');
       debugPrint('  - Produtos: ${dados['produtos'].length}');
-      debugPrint('  - Serviços: ${dados['servicos'].length}');
       debugPrint('  - Pedidos: ${dados['pedidos'].length}');
-      debugPrint('  - Ordens de Serviço: ${dados['ordens_servico'].length}');
-      debugPrint('  - Entregas: ${dados['entregas'].length}');
-      debugPrint('  - Vendas Balcão: ${dados['vendas_balcao'].length}');
-      debugPrint('  - Trocas/Devoluções: ${dados['trocas_devolucoes'].length}');
-      debugPrint('  - Estoque Histórico: ${dados['estoque_historico'].length}');
-      debugPrint('  - Aberturas Caixa: ${dados['aberturas_caixa'].length}');
-      debugPrint('  - Fechamentos Caixa: ${dados['fechamentos_caixa'].length}');
-      debugPrint('  - Motoristas: ${dados['motoristas'].length}');
-      final agendamentosCount = dados['agendamentos_servico']?.length ?? 0;
-      debugPrint('  - Agendamentos de Serviço: $agendamentosCount');
-      if (agendamentosCount > 0) {
-        debugPrint('>>> [Firebase] ✅✅✅ AGENDAMENTOS ENCONTRADOS NO FIREBASE! ✅✅✅');
-      } else {
-        debugPrint('>>> [Firebase] ⚠️ NENHUM AGENDAMENTO ENCONTRADO NO FIREBASE');
-      }
-      debugPrint('  - Notas de Entrada: ${dados['notas_entrada'].length}');
-      debugPrint('  - Funcionários: ${dados['funcionarios'].length}');
-      debugPrint('  - Taxas de Entrega: ${dados['taxas_entrega'].length}');
-      debugPrint('  - Contas a Pagar: ${dados['contas_pagar'].length}');
-      debugPrint('  - NFC-es: ${dados['nfces'].length}');
-      debugPrint('  - Sangrias: ${dados['sangrias'].length}');
-      debugPrint('  - Suprimentos: ${dados['suprimentos'].length}');
-      debugPrint('  - Mesas/Comandas: ${dados['mesas_comandas'].length}');
-      debugPrint('  - Links Vendedores: ${dados['links_vendedores'].length}');
+      debugPrint('  - Agendamentos: ${dados['agendamentos_servico'].length}');
       debugPrint('  - Comissões Vendedores: ${dados['comissoes_vendedores'].length}');
 
       return dados;
@@ -561,6 +525,77 @@ class FirebaseService {
       rethrow;
     }
   }
+
+  /// Carrega APENAS os dados essenciais para o funcionamento da loja pública/agendamento
+
+  /// Isso evita carregar milhares de documentos irrelevantes (estoque_historico, nfces, etc)
+  /// e previne erros de Out of Memory (OOM)
+  /// [lastSync]: Se fornecido, busca apenas documentos atualizados após esta data
+  Future<Map<String, dynamic>> carregarDadosLevesDoFirebase(String empresaId, {DateTime? lastSync}) async {
+    try {
+      if (!isAvailable) throw Exception('Firebase não está disponível');
+      if (empresaId.isEmpty) throw ArgumentError('empresaId não pode ser vazio');
+      
+      debugPrint('>>> [Firebase] ⚡ CARREGANDO DADOS LEVES (Modo Leve) - LastSync: $lastSync');
+      
+      final dados = <String, dynamic>{};
+
+      Query _applyFilter(Query query) {
+        if (lastSync == null) return query;
+        return query.where('updatedAt', isGreaterThan: lastSync.toIso8601String());
+      }
+
+      // Carregar apenas o necessário: Produtos, Serviços, Agendamentos and Taxas de Entrega
+      final results = await Future.wait([
+        _applyFilter(_getSubCollection(empresaId, _subCollectionProdutos)).get(),
+        _applyFilter(_getSubCollection(empresaId, _subCollectionServicos)).get(),
+        _applyFilter(_getSubCollection(empresaId, _subCollectionAgendamentosServico)).get(),
+        _applyFilter(_getSubCollection(empresaId, _subCollectionTaxasEntrega)).get(),
+        _applyFilter(_getSubCollection(empresaId, _subCollectionFuncionarios)).get(),
+        _applyFilter(_getSubCollection(empresaId, _subCollectionLinksVendedores)).get(),
+      ]).timeout(
+        const Duration(seconds: 30),
+        onTimeout: () {
+          debugPrint('>>> [Firebase] ⚠ Timeout ao carregar dados leves (30s)');
+          throw TimeoutException('Timeout ao carregar dados essenciais do Firebase');
+        },
+      );
+
+      dados['produtos'] = results[0].docs.map((doc) => doc.data()).toList();
+      dados['servicos'] = results[1].docs.map((doc) => doc.data()).toList();
+      dados['agendamentos_servico'] = results[2].docs.map((doc) => doc.data()).toList();
+      dados['taxas_entrega'] = results[3].docs.map((doc) => doc.data()).toList();
+      dados['funcionarios'] = results[4].docs.map((doc) => doc.data()).toList();
+      dados['links_vendedores'] = results[5].docs.map((doc) => doc.data()).toList();
+
+      // Inicializar listas vazias para os dados não carregados
+      dados['clientes'] = [];
+      dados['pedidos'] = [];
+      dados['ordens_servico'] = [];
+      dados['entregas'] = [];
+      dados['vendas_balcao'] = [];
+      dados['trocas_devolucoes'] = [];
+      dados['estoque_historico'] = [];
+      dados['aberturas_caixa'] = [];
+      dados['fechamentos_caixa'] = [];
+      dados['motoristas'] = [];
+      dados['notas_entrada'] = [];
+      dados['contas_pagar'] = [];
+      dados['nfces'] = [];
+      dados['sangrias'] = [];
+      dados['suprimentos'] = [];
+      dados['mesas_comandas'] = [];
+      dados['comissoes_vendedores'] = [];
+
+      debugPrint('>>> [Firebase] ⚡ Carga leve concluída para empresa: $empresaId');
+      return dados;
+    } catch (e, stackTrace) {
+      debugPrint('>>> [Firebase] ERRO na carga leve: $e');
+      debugPrint('>>> [Firebase] StackTrace: $stackTrace');
+      rethrow;
+    }
+  }
+
 
   /// Sincronizar dados (salvar tudo)
   /// Executa com timeout para evitar travamentos
@@ -660,6 +695,37 @@ class FirebaseService {
       return [];
     }
   }
+
+
+  /// Busca uma empresa específica pelo slug no Firebase (otimizado)
+  Future<Empresa?> buscarEmpresaPorSlug(String slug) async {
+    try {
+      final slugLower = slug.toLowerCase().trim();
+      debugPrint('>>> [Firebase] 🔍 Buscando empresa por slug: $slugLower');
+      
+      // Tentar buscar por slug
+      final snapshotSlug = await _firestore.collection(_collectionEmpresas)
+          .where('slug', isEqualTo: slugLower)
+          .get();
+          
+      if (snapshotSlug.docs.isNotEmpty) {
+        return Empresa.fromMap(snapshotSlug.docs.first.data());
+      }
+      
+      // Tentar buscar por ID (caso o slug passado seja o ID)
+      final docId = await _firestore.collection(_collectionEmpresas).doc(slugLower).get();
+      if (docId.exists) {
+        return Empresa.fromMap(docId.data()!);
+      }
+      
+      debugPrint('>>> [Firebase] ❌ Empresa não encontrada para slug/ID: $slugLower');
+      return null;
+    } catch (e) {
+      debugPrint('>>> [Firebase] ERRO ao buscar empresa por slug: $e');
+      return null;
+    }
+  }
+
 
   /// Remove uma empresa do Firebase
   Future<void> removerEmpresa(String empresaId) async {
@@ -784,6 +850,46 @@ class FirebaseService {
       rethrow;
     }
   }
+
+  /// Busca clientes por telefone no Firebase (para evitar carregar todos os clientes)
+  Future<List<Cliente>> buscarClientesPorTelefone(String empresaId, String telefone) async {
+    try {
+      final normalizado = telefone.replaceAll(RegExp(r'\D'), '');
+      if (normalizado.isEmpty) return [];
+
+      debugPrint('>>> [Firebase] 🔍 Buscando cliente por telefone: $normalizado');
+      
+      // Tentar buscar por telefone e whatsapp
+      final querySnapshotTelefone = await _getSubCollection(empresaId, _subCollectionClientes)
+          .where('telefone', isEqualTo: normalizado)
+          .get();
+          
+      final querySnapshotWhatsapp = await _getSubCollection(empresaId, _subCollectionClientes)
+          .where('whatsapp', isEqualTo: normalizado)
+          .get();
+
+      // Combinar os resultados
+      final docs = [...querySnapshotTelefone.docs, ...querySnapshotWhatsapp.docs];
+      
+      // Remover duplicados (pelo ID)
+      final idsVistos = <String>{};
+      final clientes = <Cliente>[];
+      
+      for (final doc in docs) {
+        if (!idsVistos.contains(doc.id)) {
+          idsVistos.add(doc.id);
+          clientes.add(Cliente.fromMap(doc.data() as Map<String, dynamic>));
+        }
+      }
+      
+      debugPrint('>>> [Firebase] Found ${clientes.length} candidates for phone $normalizado');
+      return clientes;
+    } catch (e) {
+      debugPrint('>>> [Firebase] Erro ao buscar cliente por telefone: $e');
+      return [];
+    }
+  }
+
 
   /// Salva um produto individual no Firebase
   /// Com timeout para evitar travamentos
@@ -1059,6 +1165,41 @@ class FirebaseService {
     });
   }
 
+  /// Obtém um stream de produtos para tempo real
+  Stream<List<Produto>> getProdutosStream(String empresaId) {
+    debugPrint('>>> [Firebase] 📣 Criando novo Stream em: empresas/$empresaId/produtos');
+    return _getSubCollection(empresaId, _subCollectionProdutos)
+        .snapshots()
+        .map((snapshot) {
+      return snapshot.docs.map((doc) {
+        try {
+          return Produto.fromMap(doc.data() as Map<String, dynamic>);
+        } catch (e) {
+          debugPrint('>>> [Firebase] Erro ao converter produto do stream: $e');
+          return null;
+        }
+      }).where((p) => p != null).cast<Produto>().toList();
+    });
+  }
+
+  /// Obtém um stream de serviços para tempo real
+  Stream<List<Servico>> getServicosStream(String empresaId) {
+    debugPrint('>>> [Firebase] 📣 Criando novo Stream em: empresas/$empresaId/servicos');
+    return _getSubCollection(empresaId, _subCollectionServicos)
+        .snapshots()
+        .map((snapshot) {
+      return snapshot.docs.map((doc) {
+        try {
+          return Servico.fromMap(doc.data() as Map<String, dynamic>);
+        } catch (e) {
+          debugPrint('>>> [Firebase] Erro ao converter serviço do stream: $e');
+          return null;
+        }
+      }).where((s) => s != null).cast<Servico>().toList();
+    });
+  }
+
+
   /// [DIAGNÓSTICO] Conta todos os documentos para verificar se existem no Firebase
   Future<int> contarAgendamentosPendentes(String empresaId) async {
     try {
@@ -1198,6 +1339,56 @@ class FirebaseService {
       debugPrint('>>> [Firebase] Taxa de entrega salva: ${taxa.id}');
     } catch (e, stackTrace) {
       debugPrint('>>> [Firebase] ERRO ao salvar taxa de entrega: $e');
+      debugPrint('>>> [Firebase] StackTrace: $stackTrace');
+      rethrow;
+    }
+  }
+
+  /// Remove uma taxa de entrega do Firebase
+  Future<void> removerTaxaEntrega(String empresaId, String taxaId) async {
+    try {
+      await _getSubCollection(empresaId, _subCollectionTaxasEntrega).doc(taxaId).delete();
+      debugPrint('>>> [Firebase] Taxa de entrega removida: $taxaId');
+    } catch (e, stackTrace) {
+      debugPrint('>>> [Firebase] ERRO ao remover taxa de entrega: $e');
+      debugPrint('>>> [Firebase] StackTrace: $stackTrace');
+      rethrow;
+    }
+  }
+
+  /// Deleta todas as taxas de entrega de uma empresa no Firebase
+  Future<void> deletarTodasTaxasEntrega(String empresaId) async {
+    try {
+      final taxasRef = _getSubCollection(empresaId, _subCollectionTaxasEntrega);
+      final snapshot = await taxasRef.get();
+      
+      if (snapshot.docs.isEmpty) {
+        debugPrint('>>> [Firebase] Nenhuma taxa de entrega para deletar');
+        return;
+      }
+      
+      // Deletar em batch (máximo 500 por vez no Firestore)
+      int totalDeletados = 0;
+      final List<Future<void>> batches = [];
+      
+      for (int i = 0; i < snapshot.docs.length; i += 500) {
+        final batch = _firestore.batch();
+        final endIndex = (i + 500 < snapshot.docs.length) ? i + 500 : snapshot.docs.length;
+        
+        for (int j = i; j < endIndex; j++) {
+          batch.delete(snapshot.docs[j].reference);
+          totalDeletados++;
+        }
+        
+        batches.add(batch.commit());
+      }
+      
+      // Executar todos os batches
+      await Future.wait(batches);
+      
+      debugPrint('>>> [Firebase] ✅ Total de $totalDeletados taxas de entrega deletadas com sucesso');
+    } catch (e, stackTrace) {
+      debugPrint('>>> [Firebase] ❌ Erro ao deletar todas as taxas de entrega: $e');
       debugPrint('>>> [Firebase] StackTrace: $stackTrace');
       rethrow;
     }

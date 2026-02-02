@@ -15,6 +15,10 @@ class ItemServico {
   final String? tipoEntrega; // 'Taxi Dog' ou 'Cliente busca' ou null
   final double? valorTaxiDog; // Valor cobrado pelo taxi dog
   final String? bairroEntrega; // Bairro para cálculo da taxa
+  final String? endereco; // Rua/Logradouro para Taxi Dog
+  final String? numeroEndereco; // Número para Taxi Dog
+  final String? complemento; // Complemento para Taxi Dog
+  final String? pontoReferencia; // Ponto de referência para Taxi Dog
 
   ItemServico({
     required this.id,
@@ -30,6 +34,10 @@ class ItemServico {
     this.tipoEntrega,
     this.valorTaxiDog,
     this.bairroEntrega,
+    this.endereco,
+    this.numeroEndereco,
+    this.complemento,
+    this.pontoReferencia,
   }) : materiais = materiais ?? [];
 
   bool get temAgendamento => dataAgendamento != null;
@@ -54,6 +62,10 @@ class ItemServico {
       tipoEntrega: map['tipoEntrega'] as String?,
       valorTaxiDog: map['valorTaxiDog']?.toDouble(),
       bairroEntrega: map['bairroEntrega'] as String?,
+      endereco: map['endereco'] as String?,
+      numeroEndereco: map['numeroEndereco'] as String?,
+      complemento: map['complemento'] as String?,
+      pontoReferencia: map['pontoReferencia'] as String?,
     );
   }
 
@@ -72,6 +84,10 @@ class ItemServico {
       'tipoEntrega': tipoEntrega,
       'valorTaxiDog': valorTaxiDog,
       'bairroEntrega': bairroEntrega,
+      'endereco': endereco,
+      'numeroEndereco': numeroEndereco,
+      'complemento': complemento,
+      'pontoReferencia': pontoReferencia,
     };
   }
 
@@ -89,6 +105,10 @@ class ItemServico {
     String? tipoEntrega,
     double? valorTaxiDog,
     String? bairroEntrega,
+    String? endereco,
+    String? numeroEndereco,
+    String? complemento,
+    String? pontoReferencia,
   }) {
     return ItemServico(
       id: id ?? this.id,
@@ -104,6 +124,10 @@ class ItemServico {
       tipoEntrega: tipoEntrega ?? this.tipoEntrega,
       valorTaxiDog: valorTaxiDog ?? this.valorTaxiDog,
       bairroEntrega: bairroEntrega ?? this.bairroEntrega,
+      endereco: endereco ?? this.endereco,
+      numeroEndereco: numeroEndereco ?? this.numeroEndereco,
+      complemento: complemento ?? this.complemento,
+      pontoReferencia: pontoReferencia ?? this.pontoReferencia,
     );
   }
 }

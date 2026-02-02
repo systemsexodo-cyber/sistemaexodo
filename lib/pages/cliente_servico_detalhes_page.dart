@@ -783,7 +783,7 @@ class _ClienteServicoDetalhesPageState extends State<ClienteServicoDetalhesPage>
                         child: Row(
                           children: [
                             Icon(
-                              servico.tipoEntrega == 'Taxi Dog' ? Icons.local_taxi : Icons.directions_walk,
+                              (servico.tipoEntrega == 'Taxi Dog' || servico.tipoEntrega == 'Apenas Busca' || servico.tipoEntrega == 'Apenas Entrega') ? Icons.local_taxi : Icons.directions_walk,
                               size: 12,
                               color: Colors.orange,
                             ),
@@ -1120,14 +1120,26 @@ class _ClienteServicoDetalhesPageState extends State<ClienteServicoDetalhesPage>
             Row(
               children: [
                 Icon(
-                  agendamento.tipoEntrega == 'Taxi Dog' ? Icons.local_taxi : Icons.directions_walk,
+                  (agendamento.tipoEntrega == 'Taxi Dog' || agendamento.tipoEntrega == 'Apenas Busca' || agendamento.tipoEntrega == 'Apenas Entrega') ? Icons.local_taxi : Icons.directions_walk,
                   size: 14,
                   color: Colors.orange,
                 ),
                 const SizedBox(width: 6),
-                Text(
-                  '${agendamento.tipoEntrega}${agendamento.valorTaxiDog != null && agendamento.valorTaxiDog! > 0 ? ' - ${formatoMoeda.format(agendamento.valorTaxiDog!)}' : ''}',
-                  style: TextStyle(color: Colors.orange, fontSize: 11),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${agendamento.tipoEntrega}${agendamento.valorTaxiDog != null && agendamento.valorTaxiDog! > 0 ? ' - ${formatoMoeda.format(agendamento.valorTaxiDog!)}' : ''}',
+                        style: TextStyle(color: Colors.orange, fontSize: 11),
+                      ),
+                      if (agendamento.endereco != null && agendamento.endereco!.isNotEmpty)
+                        Text(
+                          'Endereço: ${agendamento.endereco}${agendamento.numeroEndereco != null && agendamento.numeroEndereco!.isNotEmpty ? ', ${agendamento.numeroEndereco}' : ''}${agendamento.bairroEntrega != null && agendamento.bairroEntrega!.isNotEmpty ? ' - ${agendamento.bairroEntrega}' : ''}',
+                          style: TextStyle(color: Colors.white70, fontSize: 10),
+                        ),
+                    ],
+                  ),
                 ),
               ],
             ),

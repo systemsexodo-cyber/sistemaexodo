@@ -20,6 +20,7 @@ import '../services/auth_service.dart';
 
 import '../theme.dart';
 import 'cliente_detalhes_page.dart';
+import 'configuracoes_agenda_page.dart';
 import 'package:uuid/uuid.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -134,6 +135,11 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                   ),
                   onPressed: () => dataService.forceSync(),
                   tooltip: 'Sincronizar Agora',
+                ),
+                IconButton(
+                  icon: const Icon(Icons.settings),
+                  onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ConfiguracoesAgendaPage())),
+                  tooltip: 'Configurações de Agendamento',
                 ),
                 IconButton(
                   icon: const Icon(Icons.add),
@@ -1416,7 +1422,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Pet: ${agendamento.pet?.nome ?? agendamento.petNome ?? "Não informado"}',
+                          'Pet: ${agendamento.pet?.nome ?? agendamento.petNome ?? "Não informado"} ${agendamento.pet?.raca != null ? "(${agendamento.pet!.raca})" : ""}',
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 13,
@@ -1450,12 +1456,12 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
-                      color: agendamento.tipoEntrega == 'Taxi Dog'
+                      color: (agendamento.tipoEntrega == 'Taxi Dog' || agendamento.tipoEntrega == 'Apenas Busca' || agendamento.tipoEntrega == 'Apenas Entrega')
                           ? Colors.green.withOpacity(0.2)
                           : Colors.blue.withOpacity(0.2),
                       borderRadius: BorderRadius.circular(6),
                       border: Border.all(
-                        color: agendamento.tipoEntrega == 'Taxi Dog'
+                        color: (agendamento.tipoEntrega == 'Taxi Dog' || agendamento.tipoEntrega == 'Apenas Busca' || agendamento.tipoEntrega == 'Apenas Entrega')
                             ? Colors.green.withOpacity(0.6)
                             : Colors.blue.withOpacity(0.6),
                         width: 1,
@@ -1465,11 +1471,11 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Icon(
-                          agendamento.tipoEntrega == 'Taxi Dog'
+                          (agendamento.tipoEntrega == 'Taxi Dog' || agendamento.tipoEntrega == 'Apenas Busca' || agendamento.tipoEntrega == 'Apenas Entrega')
                               ? Icons.local_shipping
                               : Icons.person,
                           size: 12,
-                          color: agendamento.tipoEntrega == 'Taxi Dog'
+                          color: (agendamento.tipoEntrega == 'Taxi Dog' || agendamento.tipoEntrega == 'Apenas Busca' || agendamento.tipoEntrega == 'Apenas Entrega')
                               ? Colors.green
                               : Colors.blue,
                         ),
@@ -1477,14 +1483,14 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                         Text(
                           agendamento.tipoEntrega!,
                           style: TextStyle(
-                            color: agendamento.tipoEntrega == 'Taxi Dog'
+                            color: (agendamento.tipoEntrega == 'Taxi Dog' || agendamento.tipoEntrega == 'Apenas Busca' || agendamento.tipoEntrega == 'Apenas Entrega')
                                 ? Colors.green
                                 : Colors.blue,
                             fontSize: 10,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-                        if (agendamento.tipoEntrega == 'Taxi Dog' && agendamento.valorTaxiDog != null && agendamento.valorTaxiDog! > 0) ...[
+                        if ((agendamento.tipoEntrega == 'Taxi Dog' || agendamento.tipoEntrega == 'Apenas Busca' || agendamento.tipoEntrega == 'Apenas Entrega') && agendamento.valorTaxiDog != null && agendamento.valorTaxiDog! > 0) ...[
                           const SizedBox(width: 4),
                           Text(
                             'R\$ ${agendamento.valorTaxiDog!.toStringAsFixed(2)}',
@@ -2005,12 +2011,12 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: agendamento.tipoEntrega == 'Taxi Dog' 
+                    color: (agendamento.tipoEntrega == 'Taxi Dog' || agendamento.tipoEntrega == 'Apenas Busca' || agendamento.tipoEntrega == 'Apenas Entrega')
                         ? Colors.green.withOpacity(0.2)
                         : Colors.blue.withOpacity(0.2),
                     borderRadius: BorderRadius.circular(8),
                     border: Border.all(
-                      color: agendamento.tipoEntrega == 'Taxi Dog'
+                      color: (agendamento.tipoEntrega == 'Taxi Dog' || agendamento.tipoEntrega == 'Apenas Busca' || agendamento.tipoEntrega == 'Apenas Entrega')
                           ? Colors.green.withOpacity(0.5)
                           : Colors.blue.withOpacity(0.5),
                     ),
@@ -2018,10 +2024,10 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                   child: Row(
                     children: [
                       Icon(
-                        agendamento.tipoEntrega == 'Taxi Dog'
+                        (agendamento.tipoEntrega == 'Taxi Dog' || agendamento.tipoEntrega == 'Apenas Busca' || agendamento.tipoEntrega == 'Apenas Entrega')
                             ? Icons.local_shipping
                             : Icons.person,
-                        color: agendamento.tipoEntrega == 'Taxi Dog'
+                        color: (agendamento.tipoEntrega == 'Taxi Dog' || agendamento.tipoEntrega == 'Apenas Busca' || agendamento.tipoEntrega == 'Apenas Entrega')
                             ? Colors.green
                             : Colors.blue,
                         size: 20,
@@ -2032,29 +2038,46 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'Entrega: ${agendamento.tipoEntrega}',
-                              style: TextStyle(
+                              'Entrega: ${agendamento.tipoEntrega}${agendamento.valorTaxiDog != null && agendamento.valorTaxiDog! > 0 ? ' - R\$ ${agendamento.valorTaxiDog!.toStringAsFixed(2)}' : ''}',
+                              style: const TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.bold,
                                 fontSize: 14,
                               ),
                             ),
-                            if (agendamento.tipoEntrega == 'Taxi Dog') ...[
+                            if (agendamento.tipoEntrega == 'Taxi Dog' || agendamento.tipoEntrega == 'Apenas Busca' || agendamento.tipoEntrega == 'Apenas Entrega') ...[
                               if (agendamento.bairroEntrega != null && agendamento.bairroEntrega!.isNotEmpty)
                                 Text(
                                   'Bairro: ${agendamento.bairroEntrega}',
-                                  style: TextStyle(
+                                  style: const TextStyle(
                                     color: Colors.white70,
                                     fontSize: 12,
                                   ),
                                 ),
-                              if (agendamento.valorTaxiDog != null && agendamento.valorTaxiDog! > 0)
+                              if (agendamento.endereco != null && agendamento.endereco!.isNotEmpty)
                                 Text(
-                                  'Taxa: R\$ ${agendamento.valorTaxiDog!.toStringAsFixed(2)}',
-                                  style: TextStyle(
-                                    color: Colors.green,
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.bold,
+                                  'Endereço: ${agendamento.endereco}${agendamento.numeroEndereco != null && agendamento.numeroEndereco!.isNotEmpty ? ', ${agendamento.numeroEndereco}' : ''}',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              if (agendamento.complemento != null && agendamento.complemento!.isNotEmpty)
+                                Text(
+                                  'Compl: ${agendamento.complemento}',
+                                  style: const TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              if (agendamento.pontoReferencia != null && agendamento.pontoReferencia!.isNotEmpty)
+                                Text(
+                                  'Ref: ${agendamento.pontoReferencia}',
+                                  style: const TextStyle(
+                                    color: Colors.amberAccent,
+                                    fontSize: 12,
+                                    fontStyle: FontStyle.italic,
                                   ),
                                 ),
                             ],
@@ -2808,21 +2831,65 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                         ),
                       ),
                       onChanged: (value) {
-                        if (value.length >= 10) { // Busca automática se tiver número completo
-                           final termo = value.replaceAll(RegExp(r'[^0-9]'), '');
-                           for (final c in dataService.clientes) {
-                             final tel = c.telefone.replaceAll(RegExp(r'[^0-9]'), '');
-                             final zap = (c.whatsapp ?? '').replaceAll(RegExp(r'[^0-9]'), '');
-                             if (tel == termo || zap == termo) {
-                               setState(() {
-                                 clienteSelecionado = c;
-                                 if (c.pets.length == 1) {
-                                   petsSelecionadosIds = [c.pets.first.id];
-                                 }
-                               });
-                               break;
-                             }
-                           }
+                        final termo = value.replaceAll(RegExp(r'[^0-9]'), '');
+                        if (termo.length >= 8) {
+                          for (final c in dataService.clientes) {
+                            final tel = c.telefone.replaceAll(RegExp(r'[^0-9]'), '');
+                            final zap = (c.whatsapp ?? '').replaceAll(RegExp(r'[^0-9]'), '');
+                            
+                            bool match = tel == termo || zap == termo;
+                            if (!match && termo.length >= 8) {
+                              if (tel.length >= 8 && tel.endsWith(termo.substring(termo.length - 8))) match = true;
+                              if (!match && zap.length >= 8 && zap.endsWith(termo.substring(termo.length - 8))) match = true;
+                            }
+
+                            if (match) {
+                              setState(() {
+                                clienteSelecionado = c;
+                                // Se tiver apenas um pet, seleciona automaticamente
+                                if (c.pets.length == 1) {
+                                  petsSelecionadosIds = [c.pets.first.id];
+                                } else {
+                                  petsSelecionadosIds = [];
+                                }
+                                
+                                // Preencher observações do cliente
+                                final observacoesCliente = <String>[];
+                                final enderecoCompleto = <String>[];
+                                if (c.endereco != null && c.endereco!.isNotEmpty) {
+                                  enderecoCompleto.add(c.endereco!);
+                                  if (c.numero != null && c.numero!.isNotEmpty) enderecoCompleto.add('nº ${c.numero}');
+                                  if (c.complemento != null && c.complemento!.isNotEmpty) enderecoCompleto.add('- ${c.complemento}');
+                                  if (c.bairro != null && c.bairro!.isNotEmpty) enderecoCompleto.add('- ${c.bairro}');
+                                  if (c.cidade != null && c.cidade!.isNotEmpty) enderecoCompleto.add('- ${c.cidade}');
+                                  if (c.estado != null && c.estado!.isNotEmpty) enderecoCompleto.add('/${c.estado}');
+                                  
+                                  if (enderecoCompleto.isNotEmpty) {
+                                    observacoesCliente.add('=== ENDEREÇO DO CLIENTE ===');
+                                    observacoesCliente.add(enderecoCompleto.join(' '));
+                                  }
+                                }
+                                
+                                if (c.observacoes != null && c.observacoes!.isNotEmpty) {
+                                  if (observacoesCliente.isNotEmpty) observacoesCliente.add('');
+                                  observacoesCliente.add('=== OBSERVAÇÕES DO CLIENTE ===');
+                                  observacoesCliente.add(c.observacoes!);
+                                }
+
+                                if (observacoesCliente.isNotEmpty) {
+                                  final textoAtual = observacoesController.text.trim();
+                                  if (!textoAtual.contains('=== ENDEREÇO DO CLIENTE ===')) {
+                                    if (textoAtual.isNotEmpty) {
+                                      observacoesController.text = '$textoAtual\n\n${observacoesCliente.join('\n')}';
+                                    } else {
+                                      observacoesController.text = observacoesCliente.join('\n');
+                                    }
+                                  }
+                                }
+                              });
+                              break;
+                            }
+                          }
                         }
                       },
                     ),
@@ -5664,6 +5731,41 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                         child: Text(
                                           'Pet Detalhes: ${sol.pet!.especie ?? ""} ${sol.pet!.sexo == "M" ? "♂" : sol.pet!.sexo == "F" ? "♀" : ""} ${sol.pet!.cor ?? ""} - Porte: ${sol.pet!.tamanho ?? "N/I"} - Peso: ${sol.pet!.peso != null ? "${sol.pet!.peso}kg" : "N/I"}',
                                           style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 11),
+                                        ),
+                                      ),
+                                    if (sol.tipoEntrega != null && sol.tipoEntrega != 'Retirada na Loja')
+                                      Container(
+                                        margin: const EdgeInsets.only(top: 12),
+                                        padding: const EdgeInsets.all(12),
+                                        decoration: BoxDecoration(
+                                          color: Colors.blueAccent.withOpacity(0.1),
+                                          borderRadius: BorderRadius.circular(12),
+                                          border: Border.all(color: Colors.blueAccent.withOpacity(0.2)),
+                                        ),
+                                        child: Row(
+                                          children: [
+                                            Icon(
+                                              sol.tipoEntrega == 'Taxi Dog' ? Icons.local_shipping_rounded : Icons.home_rounded, 
+                                              color: Colors.blueAccent, 
+                                              size: 20
+                                            ),
+                                            const SizedBox(width: 12),
+                                            Expanded(
+                                              child: Column(
+                                                crossAxisAlignment: CrossAxisAlignment.start,
+                                                children: [
+                                                  Text(
+                                                    'Solicitado: ${sol.tipoEntrega}',
+                                                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                                                  ),
+                                                  Text(
+                                                    'Bairro: ${sol.bairroEntrega ?? "Não informado"} ${sol.valorTaxiDog != null ? "(Taxa: R\$ ${sol.valorTaxiDog!.toStringAsFixed(2)})" : ""}',
+                                                    style: const TextStyle(color: Colors.white60, fontSize: 11),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ],
                                         ),
                                       ),
                                     if (sol.observacoes != null && sol.observacoes!.isNotEmpty) ...[

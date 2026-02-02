@@ -784,7 +784,6 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
               Tab(icon: Icon(Icons.info), text: 'Informações'),
               Tab(icon: Icon(Icons.gavel), text: 'Legal'),
               Tab(icon: Icon(Icons.settings), text: 'Layout'),
-              Tab(icon: Icon(Icons.pets), text: 'Taxi Dog'),
             ],
           ),
         ),
@@ -800,7 +799,6 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
               _buildAbaInformacoes(),
               _buildAbaLegal(),
               _buildAbaLayout(),
-              _buildAbaAgendamento(),
             ],
           ),
         ),
@@ -2484,108 +2482,7 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
     );
   }
 
-  Widget _buildAbaAgendamento() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Card(
-            color: Colors.white.withOpacity(0.1),
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(Icons.pets, color: Colors.white),
-                      const SizedBox(width: 8),
-                      const Text(
-                        'Bairros Atendidos (Taxi Dog)',
-                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Cadastre os bairros que aparecerão como opção no agendamento online.',
-                    style: TextStyle(color: Colors.white70, fontSize: 13),
-                  ),
-                  const SizedBox(height: 20),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _buildTextField(
-                          _novoBairroTaxiDogController,
-                          'Novo Bairro',
-                          hint: 'Ex: Centro',
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Padding(
-                        padding: const EdgeInsets.only(top: 24.0),
-                        child: ElevatedButton(
-                          onPressed: () {
-                            final nome = _novoBairroTaxiDogController.text.trim();
-                            if (nome.isNotEmpty) {
-                              setState(() {
-                                if (!_bairrosTaxiDog.contains(nome)) {
-                                  _bairrosTaxiDog.add(nome);
-                                }
-                                _novoBairroTaxiDogController.clear();
-                              });
-                            }
-                          },
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.green,
-                            padding: const EdgeInsets.all(16),
-                          ),
-                          child: const Icon(Icons.add, color: Colors.white),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-                  if (_bairrosTaxiDog.isEmpty)
-                    const Center(
-                      child: Padding(
-                        padding: EdgeInsets.all(20.0),
-                        child: Text(
-                          'Nenhum bairro cadastrado. O agendamento usará uma lista padrão.',
-                          style: TextStyle(color: Colors.white38, fontStyle: FontStyle.italic),
-                        ),
-                      ),
-                    )
-                  else
-                    ListView.separated(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: _bairrosTaxiDog.length,
-                      separatorBuilder: (_, __) => const Divider(color: Colors.white12),
-                      itemBuilder: (context, index) {
-                        final bairro = _bairrosTaxiDog[index];
-                        return ListTile(
-                          title: Text(bairro, style: const TextStyle(color: Colors.white)),
-                          trailing: IconButton(
-                            icon: const Icon(Icons.delete, color: Colors.redAccent),
-                            onPressed: () {
-                              setState(() {
-                                _bairrosTaxiDog.removeAt(index);
-                              });
-                            },
-                          ),
-                        );
-                      },
-                    ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  // O método _buildAbaAgendamento foi removido e movido para ConfiguracoesAgendaPage
 
   Widget _buildUploadBannerPromocional(
     String titulo,

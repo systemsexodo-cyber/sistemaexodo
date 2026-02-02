@@ -67,6 +67,12 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
   final _petEspecieController = TextEditingController();
   final _petCorController = TextEditingController();
   final _petObsController = TextEditingController();
+  
+  // Endereço para Taxi Dog
+  final _enderecoRuaController = TextEditingController();
+  final _enderecoNumeroController = TextEditingController();
+  final _enderecoComplementoController = TextEditingController();
+  final _pontoReferenciaController = TextEditingController();
 
   
   String? _servicoIdSelecionado;
@@ -90,6 +96,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
   List<Pet> _petsEncontrados = [];
   Cliente? _clienteEncontrado;
   bool _buscandoCliente = false;
+  String? _ultimoTelefoneBuscado; // Para evitar loops de busca
 
   @override
   void initState() {
@@ -99,47 +106,109 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
 
   void _onWhatsappChanged() {
     final tel = _whatsappController.text.replaceAll(RegExp(r'\D'), '');
-    // Buscar se tiver pelo menos 10 dígitos (DDD + 8 ou 9 dígitos)
-    if (tel.length >= 10) {
+    // Buscar se tiver pelo menos 8 dígitos (permitir busca parcial proativa)
+    if (tel.length >= 8) {
       _buscarClientePorTelefone(tel);
     }
   }
 
   Future<void> _buscarClientePorTelefone(String telefone) async {
-    if (_buscandoCliente) return;
+    if (_buscandoCliente || telefone.length < 8) {
+      if (telefone.length < 8 && _clienteEncontrado != null) {
+        setState(() {
+          _clienteEncontrado = null;
+          _petsEncontrados = [];
+        });
+      }
+      return;
+    }
 
     final dataService = Provider.of<DataService>(context, listen: false);
     
     // Evitar buscar se já for o mesmo cliente que acabamos de carregar
-    if (_clienteEncontrado?.telefone.replaceAll(RegExp(r'\D'), '') == telefone) return;
+    final normalizado = telefone.replaceAll(RegExp(r'\D'), '');
+    if (_clienteEncontrado != null) {
+      final t = _clienteEncontrado!.telefone.replaceAll(RegExp(r'\D'), '');
+      final w = (_clienteEncontrado!.whatsapp ?? '').replaceAll(RegExp(r'\D'), '');
+      if (t == normalizado || w == normalizado) return;
+    }
 
-    setState(() => _buscandoCliente = true);
+    debugPrint('>>> [Agendamento] 🔍 Buscando fone: $normalizado em ${dataService.clientes.length} clientes');
+
+    setState(() {
+      _buscandoCliente = true;
+      _ultimoTelefoneBuscado = normalizado;
+    });
 
     try {
-      // Procura na lista local de clientes (que deve estar sincronizada pelo DataService)
-      final encontrado = dataService.clientes.firstWhere(
-        (c) => c.telefone.replaceAll(RegExp(r'\D'), '') == telefone,
-        orElse: () => throw 'Cliente não encontrado'
-      );
+      // 1. Chamar o DataService que agora sabe buscar no Firebase se necessário
+      final candidatos = await dataService.buscarClientePorTelefone(normalizado);
 
-      setState(() {
-        _clienteEncontrado = encontrado;
-        _petsEncontrados = encontrado.pets;
-        // Preenche o nome se estiver vazio
-        if (_nomeController.text.isEmpty) {
-          _nomeController.text = encontrado.nome;
-        }
-      });
-      
-      debugPrint('>>> [AgendamentoPublico] Cliente encontrado: ${encontrado.nome} com ${_petsEncontrados.length} pets');
-    } catch (_) {
-      // Se mudar o telefone e não achar nada, limpamos a sugestão
-      if (_clienteEncontrado != null) {
-        setState(() {
-          _petsEncontrados = [];
-          _clienteEncontrado = null;
+      if (candidatos.isNotEmpty) {
+        // Priorizar o candidato que tem pets cadastrados
+        final sortedCandidatos = List<Cliente>.from(candidatos);
+        sortedCandidatos.sort((a, b) {
+          // 1. Quem tem pets ganha
+          if (a.pets.isNotEmpty && b.pets.isEmpty) return -1;
+          if (a.pets.isEmpty && b.pets.isNotEmpty) return 1;
+          
+          // 2. Quem tem mais pets ganha
+          if (a.pets.length != b.pets.length) return b.pets.length.compareTo(a.pets.length);
+          
+          // 3. Quem tem endereço ganha
+          bool aHasEnd = (a.endereco?.isNotEmpty ?? false);
+          bool bHasEnd = (b.endereco?.isNotEmpty ?? false);
+          if (aHasEnd && !bHasEnd) return -1;
+          if (!aHasEnd && bHasEnd) return 1;
+          
+          // 4. Mais recente ganha
+          return b.updatedAt.compareTo(a.updatedAt);
         });
+
+        final encontrado = sortedCandidatos.first;
+        
+        setState(() {
+          _clienteEncontrado = encontrado;
+          _petsEncontrados = encontrado.pets;
+          // Preenche o nome se estiver vazio
+          if (_nomeController.text.isEmpty) {
+            _nomeController.text = encontrado.nome;
+          }
+          
+          // Preenche o endereço se estiver vazio
+          if (_bairroEntrega == null) {
+            _bairroEntrega = encontrado.bairro;
+            _enderecoRuaController.text = encontrado.endereco ?? '';
+            _enderecoNumeroController.text = encontrado.numero ?? '';
+            _enderecoComplementoController.text = encontrado.complemento ?? '';
+            _pontoReferenciaController.text = encontrado.pontoReferencia ?? '';
+          }
+          
+          // Se houver apenas um pet, já pré-seleciona ele
+          if (_petsEncontrados.length == 1) {
+            final pet = _petsEncontrados.first;
+            _petNomeController.text = pet.nome;
+            _petRacaController.text = pet.raca ?? '';
+            _petCorController.text = pet.cor ?? '';
+            _petObsController.text = pet.observacoes ?? '';
+            _petEspecie = pet.especie ?? 'Cachorro';
+            _petSexo = pet.sexo ?? 'M';
+            _porteAnimal = pet.tamanho ?? 'Pequeno';
+            _pesoAproximado = pet.peso ?? 5.0;
+          }
+        });
+        debugPrint('>>> [Agendamento] ✅ Encontrado: ${encontrado.nome} com ${encontrado.pets.length} pets');
+      } else {
+        debugPrint('>>> [Agendamento] ❌ Ninguém encontrado para $normalizado');
+        if (_clienteEncontrado != null) {
+          setState(() {
+            _clienteEncontrado = null;
+            _petsEncontrados = [];
+          });
+        }
       }
+    } catch (e) {
+      debugPrint('>>> [Agendamento] ❌ Erro na busca: $e');
     } finally {
       if (mounted) setState(() => _buscandoCliente = false);
     }
@@ -152,6 +221,10 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     _petEspecieController.dispose();
     _petCorController.dispose();
     _petObsController.dispose();
+    _enderecoRuaController.dispose();
+    _enderecoNumeroController.dispose();
+    _enderecoComplementoController.dispose();
+    _pontoReferenciaController.dispose();
     super.dispose();
   }
 
@@ -160,7 +233,17 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
   Widget build(BuildContext context) {
     final authService = Provider.of<AuthService>(context);
     final dataService = Provider.of<DataService>(context);
-    final empresa = authService.obterEmpresaPorSlug(widget.slugEmpresa ?? '') ?? dataService.empresaAtual;
+    
+    // Priorização: Se o slug bater ou não houver slug, preferir a empresa do DataService
+    // pois ela é a fonte de verdade para a empresa ativa e seus dados frescos.
+    final slug = widget.slugEmpresa ?? '';
+    final empresaFromData = dataService.empresaAtual;
+    final empresaFromAuth = authService.obterEmpresaPorSlug(slug);
+    
+    final empresa = (slug.isNotEmpty && empresaFromData?.slug == slug) 
+        ? empresaFromData 
+        : (empresaFromAuth ?? empresaFromData);
+
     final bool moduloPet = empresa?.moduloPet ?? false;
 
     Color? pColor;
@@ -174,7 +257,31 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
 
     final primary = _LojaPublicaStyle.getPrimary(pColor);
 
-    print('>>> [AgendamentoPage] Construindo para: ${widget.slugEmpresa} | Empresa: ${empresa?.nomeExibicao}');
+    print('>>> [AgendamentoPage] Construindo para: ${widget.slugEmpresa} | Empresa: ${empresa?.nomeExibicao} | Clientes: ${dataService.clientes.length}');
+ 
+    // --- SINCRONIZAÇÃO DE DADOS EM TEMPO REAL ---
+    if (_clienteEncontrado != null && dataService.clientes.isNotEmpty) {
+      try {
+        final id = _clienteEncontrado!.id;
+        final latest = dataService.clientes.firstWhere(
+          (c) => c.id == id,
+          orElse: () => _clienteEncontrado!,
+        );
+        
+        // Se a referência mudou OU a lista de pets mudou (mesmo na mesma instância)
+        if (latest != _clienteEncontrado || latest.pets.length != _petsEncontrados.length) {
+          _clienteEncontrado = latest;
+          _petsEncontrados = latest.pets;
+          debugPrint('>>> [Agendamento] 🔄 Dados de ${latest.nome} atualizados (Pets: ${latest.pets.length})');
+        }
+      } catch (_) {}
+    }
+
+    final foneLimpo = _whatsappController.text.replaceAll(RegExp(r'\D'), '');
+    if (foneLimpo.length >= 8 && _clienteEncontrado == null && !_buscandoCliente && foneLimpo != _ultimoTelefoneBuscado) {
+       Future.microtask(() => _buscarClientePorTelefone(_whatsappController.text));
+    }
+    // --------------------------------------------
 
     return Scaffold(
       backgroundColor: _isDark ? _LojaPublicaStyle.backgroundColor : Colors.grey[100],
@@ -436,13 +543,63 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       case 3:
         final authService = Provider.of<AuthService>(context, listen: false);
         final dataService = Provider.of<DataService>(context, listen: false);
-        final empresa = authService.obterEmpresaPorSlug(widget.slugEmpresa ?? '') ?? dataService.empresaAtual;
+        
+        final slugP = widget.slugEmpresa ?? '';
+        final eFromData = dataService.empresaAtual;
+        final eFromAuth = authService.obterEmpresaPorSlug(slugP);
+        final empresa = (slugP.isNotEmpty && eFromData?.slug == slugP) ? eFromData : (eFromAuth ?? eFromData);
+
         final config = empresa?.configuracoes ?? {};
         final agendamentoConfig = config['agendamento'] as Map<String, dynamic>? ?? {};
-        final bairrosData = agendamentoConfig['bairrosTaxiDog'] as List<dynamic>? ?? [];
-        final bairrosCustom = bairrosData.map((e) => e.toString()).toList();
         
-        return _buildStepEntrega(bairrosCustom);
+        // --- CONSOLIDAÇÃO DE CONFIGURAÇÕES (Exclusivo da Agenda) ---
+        final Map<String, Map<String, dynamic>> bairrosUnicos = {};
+
+        void registerBairro(String nome, double taxa, {double? taxaBusca, double? taxaSoleva}) {
+          final nomeTrimmado = nome.trim();
+          if (nomeTrimmado.isEmpty) return;
+          
+          final chave = nomeTrimmado.toLowerCase();
+          if (!bairrosUnicos.containsKey(chave)) {
+            bairrosUnicos[chave] = {
+              'bairro': nomeTrimmado,
+              'taxa': taxa,
+              'taxaBusca': taxaBusca ?? taxa, // Fallback para taxa normal se não informado
+              'taxaSoleva': taxaSoleva ?? taxa, // Fallback para taxa normal se não informado
+            };
+          }
+        }
+
+        // 1. Taxas da Configuração V2 (Prioridade - Configurado na Engrenagem da Agenda)
+        final bairrosV2 = (agendamentoConfig['bairrosTaxiDogV2'] ?? config['bairrosTaxiDogV2']) as List<dynamic>?;
+        if (bairrosV2 != null) {
+          for (final item in bairrosV2) {
+            final m = Map<String, dynamic>.from(item);
+            registerBairro(
+              m['bairro'] ?? '', 
+              (m['taxa'] as num?)?.toDouble() ?? 0.0,
+              taxaBusca: (m['taxaBusca'] as num?)?.toDouble(),
+              taxaSoleva: (m['taxaSoleva'] as num?)?.toDouble(),
+            );
+          }
+        }
+
+        // 2. Bairros Simples V1 (Compatibilidade)
+        final bairrosV1 = (agendamentoConfig['bairrosTaxiDog'] ?? config['bairrosTaxiDog']) as List<dynamic>?;
+        if (bairrosV1 != null) {
+          for (final b in bairrosV1) {
+            registerBairro(b.toString(), 0.0);
+          }
+        }
+
+        if (bairrosUnicos.isNotEmpty) {
+          final sortedList = bairrosUnicos.values.toList();
+          sortedList.sort((a, b) => (a['bairro'] as String).compareTo(b['bairro'] as String));
+          return _buildStepEntregaV2(sortedList);
+        }
+
+        // 3. Fallback: Lista Padrão se nada estiver configurado
+        return _buildStepEntrega([]);
       case 4:
         return _buildStepHorario();
       default:
@@ -607,7 +764,46 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
           keyboardType: TextInputType.phone,
           validator: (v) => v!.isEmpty ? 'Obrigatório' : null,
           onChanged: (_) => _onWhatsappChanged(),
+          suffixIcon: _buscandoCliente 
+            ? Container(
+                padding: const EdgeInsets.all(12),
+                width: 44, 
+                height: 44,
+                child: Center(
+                  child: SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: _primaryColor),
+                  ),
+                ),
+              )
+            : _clienteEncontrado != null 
+              ? Container(
+                  width: 44,
+                  alignment: Alignment.center,
+                  child: Icon(Icons.check_circle_rounded, color: Colors.greenAccent),
+                )
+              : IconButton(
+                  icon: Icon(Icons.search_rounded, color: _primaryColor.withOpacity(0.5)),
+                  onPressed: () => _buscarClientePorTelefone(_whatsappController.text),
+                ),
         ),
+        if (_clienteEncontrado != null) ...[
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Row(
+              children: [
+                Icon(Icons.person_pin_circle_rounded, color: Colors.greenAccent, size: 14),
+                const SizedBox(width: 8),
+                Text(
+                  'Cliente reconhecido: ${_clienteEncontrado!.nome}',
+                  style: TextStyle(color: Colors.greenAccent, fontSize: 12, fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -687,6 +883,38 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
           const SizedBox(height: 24),
           const Divider(color: Colors.white10),
           const SizedBox(height: 24),
+        ] else if (_clienteEncontrado != null && !_buscandoCliente) ...[
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.blue.withOpacity(0.05),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: _primaryColor.withOpacity(0.2)),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.info_outline_rounded, color: _primaryColor, size: 24),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Bem-vindo de volta, ${_clienteEncontrado!.nome}!',
+                        style: TextStyle(color: _primaryColor, fontWeight: FontWeight.bold, fontSize: 14),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Não encontramos animais cadastrados em seu nome. Por favor, preencha os dados do seu pet abaixo.',
+                        style: TextStyle(color: _isDark ? Colors.white70 : Colors.black87, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 32),
         ],
         
         _buildTextField(
@@ -877,6 +1105,141 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     );
   }
 
+  Widget _buildStepEntregaV2(List<Map<String, dynamic>> bairrosConfig) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildStepTitle('Opções de Entrega', 'Como o pet chegará até nós?'),
+        const SizedBox(height: 32),
+        _buildOpcaoEntregaCard(
+          titulo: 'Eu levo e busco na loja',
+          subtitulo: 'Você traz seu pet e retira após o serviço.',
+          icon: Icons.store_rounded,
+          tipo: 'Retirada na Loja',
+        ),
+        const SizedBox(height: 16),
+        _buildOpcaoEntregaCard(
+          titulo: 'Taxi Dog (Leva e Traz)',
+          subtitulo: 'Nós buscamos o pet na sua casa e levamos de volta.',
+          icon: Icons.local_shipping_rounded,
+          tipo: 'Taxi Dog',
+        ),
+        const SizedBox(height: 16),
+        _buildOpcaoEntregaCard(
+          titulo: 'Apenas Busca (Nós buscamos)',
+          subtitulo: 'Nós buscamos o pet na sua casa, e você retira na loja.',
+          icon: Icons.arrow_downward_rounded,
+          tipo: 'Apenas Busca',
+        ),
+        const SizedBox(height: 16),
+        _buildOpcaoEntregaCard(
+          titulo: 'Apenas Entrega (Nós levamos)',
+          subtitulo: 'Você traz o pet na loja, e nós entregamos em casa.',
+          icon: Icons.arrow_upward_rounded,
+          tipo: 'Apenas Entrega',
+        ),
+        if (_tipoEntrega != 'Retirada na Loja') ...[
+          const SizedBox(height: 32),
+          Text(
+            'Informe seu bairro para o Taxi Dog:',
+            style: TextStyle(color: _isDark ? Colors.white70 : Colors.grey[700], fontSize: 13, fontWeight: FontWeight.w500),
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            value: _bairroEntrega,
+            dropdownColor: _isDark ? _LojaPublicaStyle.cardColor : Colors.white,
+            style: TextStyle(color: _isDark ? Colors.white : Colors.black87),
+            decoration: InputDecoration(
+              filled: true,
+              fillColor: _isDark ? Colors.white.withOpacity(0.05) : Colors.grey[100],
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
+              prefixIcon: Icon(Icons.location_on_rounded, color: _primaryColor),
+            ),
+            items: () {
+              // Proteção contra crash de valor não encontrado (ex: "parque")
+              final items = bairrosConfig.map((item) {
+                final String b = item['bairro'] ?? '';
+                // Omitir valor da taxa do cliente conforme pedido
+                return DropdownMenuItem(
+                  value: b, 
+                  child: Text(b),
+                );
+              }).toList();
+
+              // Se o bairro atual não está na lista, adicionamos para não crashar
+              if (_bairroEntrega != null && !bairrosConfig.any((e) => e['bairro'] == _bairroEntrega)) {
+                items.add(DropdownMenuItem(value: _bairroEntrega!, child: Text(_bairroEntrega!)));
+              }
+              return items;
+            }(),
+            onChanged: (val) {
+              final config = bairrosConfig.firstWhere((e) => e['bairro'] == val, orElse: () => {});
+              setState(() {
+                _bairroEntrega = val;
+                
+                // Definir valor com base no tipo selecionado
+                if (_tipoEntrega == 'Taxi Dog') {
+                   _valorTaxiDog = (config['taxa'] as num?)?.toDouble() ?? 0.0;
+                } else if (_tipoEntrega == 'Apenas Busca') {
+                   // Se não houver taxa específica de busca, usar a taxa normal (fallback)
+                   _valorTaxiDog = (config['taxaBusca'] as num?)?.toDouble() ?? (config['taxa'] as num?)?.toDouble() ?? 0.0;
+                } else if (_tipoEntrega == 'Apenas Entrega') {
+                   // Se não houver taxa específica de leva, usar a taxa normal (fallback)
+                   _valorTaxiDog = (config['taxaSoleva'] as num?)?.toDouble() ?? (config['taxa'] as num?)?.toDouble() ?? 0.0;
+                } else {
+                   _valorTaxiDog = 0.0;
+                }
+              });
+            },
+            validator: (v) => _tipoEntrega != 'Retirada na Loja' && v == null ? 'Selecione o bairro' : null,
+          ),
+          const SizedBox(height: 20),
+          _buildTextField(
+            controller: _enderecoRuaController,
+            label: 'Rua / Logradouro *',
+            icon: Icons.map_rounded,
+            placeholder: 'Nome da sua rua',
+            validator: (v) => _tipoEntrega != 'Retirada na Loja' && (v == null || v.isEmpty) ? 'Obrigatório para entrega' : null,
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                flex: 2,
+                child: _buildTextField(
+                  controller: _enderecoNumeroController,
+                  label: 'Número *',
+                  icon: Icons.home_rounded,
+                  placeholder: 'Ex: 123',
+                  validator: (v) => _tipoEntrega != 'Retirada na Loja' && (v == null || v.isEmpty) ? 'Obrigatório' : null,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 3,
+                child: _buildTextField(
+                  controller: _enderecoComplementoController,
+                  label: 'Complemento',
+                  icon: Icons.info_outline_rounded,
+                  placeholder: 'Apt, Bloco...',
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          _buildTextField(
+            controller: _pontoReferenciaController,
+            label: 'Ponto de Referência',
+            icon: Icons.assistant_navigation,
+            placeholder: 'Ex: Próximo ao mercado...',
+          ),
+        ],
+      ],
+    );
+  }
+
+  double _valorTaxiDog = 0.0;
+
   Widget _buildStepEntrega(List<String> bairrosCustom) {
     final List<String> bairros = bairrosCustom.isNotEmpty 
         ? (bairrosCustom..sort())
@@ -907,7 +1270,14 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
           icon: Icons.local_shipping_rounded,
           tipo: 'Taxi Dog',
         ),
-        if (_tipoEntrega == 'Taxi Dog') ...[
+        const SizedBox(height: 16),
+        _buildOpcaoEntregaCard(
+          titulo: 'Apenas Entrega (Traz por conta)',
+          subtitulo: 'Você traz o pet na loja, e nós entregamos em casa.',
+          icon: Icons.home_rounded,
+          tipo: 'Apenas Entrega',
+        ),
+        if (_tipoEntrega != 'Retirada na Loja') ...[
           const SizedBox(height: 32),
           Text(
             'Informe seu bairro para o Taxi Dog:',
@@ -926,7 +1296,47 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
             ),
             items: bairros.map((b) => DropdownMenuItem(value: b, child: Text(b))).toList(),
             onChanged: (val) => setState(() => _bairroEntrega = val),
-            validator: (v) => _tipoEntrega == 'Taxi Dog' && v == null ? 'Selecione o bairro' : null,
+            validator: (v) => _tipoEntrega != 'Retirada na Loja' && v == null ? 'Selecione o bairro' : null,
+          ),
+          const SizedBox(height: 20),
+          _buildTextField(
+            controller: _enderecoRuaController,
+            label: 'Rua / Logradouro *',
+            icon: Icons.map_rounded,
+            placeholder: 'Nome da sua rua',
+            validator: (v) => _tipoEntrega != 'Retirada na Loja' && (v == null || v.isEmpty) ? 'Obrigatório para entrega' : null,
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                flex: 2,
+                child: _buildTextField(
+                  controller: _enderecoNumeroController,
+                  label: 'Número *',
+                  icon: Icons.home_rounded,
+                  placeholder: 'Ex: 123',
+                  validator: (v) => _tipoEntrega != 'Retirada na Loja' && (v == null || v.isEmpty) ? 'Obrigatório' : null,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 3,
+                child: _buildTextField(
+                  controller: _enderecoComplementoController,
+                  label: 'Complemento',
+                  icon: Icons.info_outline_rounded,
+                  placeholder: 'Apt, Bloco...',
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          _buildTextField(
+            controller: _pontoReferenciaController,
+            label: 'Ponto de Referência',
+            icon: Icons.assistant_navigation,
+            placeholder: 'Ex: Próximo ao mercado...',
           ),
         ],
       ],
@@ -936,7 +1346,36 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
   Widget _buildOpcaoEntregaCard({required String titulo, required String subtitulo, required IconData icon, required String tipo}) {
     bool isSelected = _tipoEntrega == tipo;
     return InkWell(
-      onTap: () => setState(() => _tipoEntrega = tipo),
+      onTap: () {
+        setState(() {
+          _tipoEntrega = tipo;
+          
+          // Se o bairro já estiver selecionado, precisamos recalcular o valor do taxi dog
+          // com base na nova modalidade (só busca, só leva ou ambos)
+          if (_bairroEntrega != null) {
+            final dataService = Provider.of<DataService>(context, listen: false);
+            final config = dataService.empresaAtual?.configuracoes ?? {};
+            final agendamentoConfig = config['agendamento'] as Map<String, dynamic>? ?? {};
+            final bairrosConfig = (agendamentoConfig['bairrosTaxiDogV2'] ?? config['bairrosTaxiDogV2']) as List<dynamic>?;
+            
+            if (bairrosConfig != null) {
+              final bConfig = bairrosConfig.firstWhere((e) => e['bairro'] == _bairroEntrega, orElse: () => {});
+              
+              if (_tipoEntrega == 'Taxi Dog') {
+                _valorTaxiDog = (bConfig['taxa'] as num?)?.toDouble() ?? 0.0;
+              } else if (_tipoEntrega == 'Apenas Busca') {
+                _valorTaxiDog = (bConfig['taxaBusca'] as num?)?.toDouble() ?? (bConfig['taxa'] as num?)?.toDouble() ?? 0.0;
+              } else if (_tipoEntrega == 'Apenas Entrega') {
+                _valorTaxiDog = (bConfig['taxaSoleva'] as num?)?.toDouble() ?? (bConfig['taxa'] as num?)?.toDouble() ?? 0.0;
+              } else {
+                _valorTaxiDog = 0.0;
+              }
+            }
+          } else {
+            _valorTaxiDog = 0.0;
+          }
+        });
+      },
       borderRadius: BorderRadius.circular(20),
       child: Container(
         padding: const EdgeInsets.all(20),
@@ -1135,6 +1574,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     int maxLines = 1,
     String? Function(String?)? validator,
     void Function(String)? onChanged,
+    Widget? suffixIcon,
   }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1155,6 +1595,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
             hintText: placeholder,
             hintStyle: TextStyle(color: _isDark ? Colors.white.withOpacity(0.2) : Colors.grey[400]),
             prefixIcon: Icon(icon, color: _primaryColor, size: 20),
+            suffixIcon: suffixIcon,
             filled: true,
             fillColor: _isDark ? Colors.white.withOpacity(0.05) : Colors.grey[100],
             border: OutlineInputBorder(
@@ -1468,7 +1909,12 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
         duracaoMinutos: servicoAtual.duracaoPadraoMinutos ?? 60,
         status: 'Aguardando Confirmação',
         tipoEntrega: moduloPet ? _tipoEntrega : null,
-        bairroEntrega: moduloPet && _tipoEntrega == 'Taxi Dog' ? _bairroEntrega : null,
+        bairroEntrega: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _bairroEntrega : null,
+        valorTaxiDog: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _valorTaxiDog : null,
+        endereco: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _enderecoRuaController.text : null,
+        numeroEndereco: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _enderecoNumeroController.text : null,
+        complemento: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _enderecoComplementoController.text : null,
+        pontoReferencia: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _pontoReferenciaController.text : null,
         observacoes: 'SOLICITAÇÃO ONLINE DETALHADA',
       );
 
@@ -1668,18 +2114,27 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       duracaoMinutos: servico.duracaoPadraoMinutos ?? 60,
       status: 'Aguardando Confirmação',
       tipoEntrega: moduloPet ? _tipoEntrega : null,
-      bairroEntrega: moduloPet && _tipoEntrega == 'Taxi Dog' ? _bairroEntrega : null,
+      bairroEntrega: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _bairroEntrega : null,
+      valorTaxiDog: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _valorTaxiDog : null,
+      endereco: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _enderecoRuaController.text : null,
+      numeroEndereco: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _enderecoNumeroController.text : null,
+      complemento: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _enderecoComplementoController.text : null,
+      pontoReferencia: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _pontoReferenciaController.text : null,
       observacoes: 'SOLICITAÇÃO ONLINE ADICIONAL',
     );
 
     setState(() {
       _agendamentosCarrinho.add(agendamento);
-      // Resetar apenas campos do PET e SERVIÇO e HORÁRIO
+      // Resetar apenas campos do PET e SERVIÇO e HORÁRIO e ENDEREÇO
       _servicoIdSelecionado = null;
       _petNomeController.clear();
       _petRacaController.clear();
       _petCorController.clear();
       _petObsController.clear();
+      _enderecoRuaController.clear();
+      _enderecoNumeroController.clear();
+      _enderecoComplementoController.clear();
+      _pontoReferenciaController.clear();
       _dataSelecionada = null;
       _horaSelecionada = null;
       _currentStep = 0; // Volta para o início para o próximo pet
@@ -1754,6 +2209,10 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                         _petEspecieController.clear();
                         _petCorController.clear();
                         _petObsController.clear();
+                        _enderecoRuaController.clear();
+                        _enderecoNumeroController.clear();
+                        _enderecoComplementoController.clear();
+                        _pontoReferenciaController.clear();
                         _dataSelecionada = null;
                         _horaSelecionada = null;
                       });

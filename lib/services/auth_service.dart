@@ -563,11 +563,32 @@ class AuthService extends ChangeNotifier {
         debugPrint('>>> [AuthService] ✅ Empresa encontrada por slug GERADO: ${encontrada.nomeExibicao} (ID: ${encontrada.id})');
         return encontrada;
       } catch (_) {
-        debugPrint('>>> [AuthService] ❌ Nenhuma empresa encontrada para: "$slugLower"');
+        debugPrint('>>> [AuthService] ❌ Nenhuma empresa encontrada locamente para: "$slugLower"');
         return null;
       }
     }
   }
+
+  /// Busca uma empresa pelo slug, tentando Firebase se não encontrar localmente
+  Future<Empresa?> buscarEmpresaPorSlugAsync(String slug) async {
+    // 1. Tentar local
+    final local = obterEmpresaPorSlug(slug);
+    if (local != null) return local;
+
+    // 2. Tentar Firebase
+    debugPrint('>>> [AuthService] 🔍 Empresa não em memória, buscando no Firebase: $slug');
+    final remota = await _firebaseService.buscarEmpresaPorSlug(slug);
+    if (remota != null) {
+      if (!_empresas.any((e) => e.id == remota.id)) {
+        _empresas.add(remota);
+        notifyListeners();
+      }
+      return remota;
+    }
+
+    return null;
+  }
+
 
   /// Obtém usuários de uma empresa específica
   List<Usuario> getUsuariosDaEmpresa(String empresaId) {

@@ -101,11 +101,20 @@ class DataService extends ChangeNotifier {
   final String _instanceId = DateTime.now().millisecondsSinceEpoch.toString();
   Timer? _syncTimer;
   StreamSubscription? _agendamentosSubscription;
+  StreamSubscription? _produtosSubscription;
+  StreamSubscription? _servicosSubscription;
+  
+  // Status de Sincronização
+  DateTime? _ultimaSincronizacaoSucesso;
+  bool _syncEmAndamento = false;
+  bool _isModoLeve = false;
 
   @override
   void dispose() {
     _syncTimer?.cancel();
     _agendamentosSubscription?.cancel();
+    _produtosSubscription?.cancel();
+    _servicosSubscription?.cancel();
     _debounceSalvamento?.cancel();
     _syncQueue.dispose();
     super.dispose();
@@ -118,7 +127,7 @@ class DataService extends ChangeNotifier {
   bool _salvandoDados = false;
   static const Duration _debounceDelay = Duration(seconds: 3); // 3 segundos para reduzir travamentos
   DateTime? _ultimaSincronizacao;
-  static const Duration _intervaloSincronizacao = Duration(minutes: 5); // Sincronizar no máximo a cada 5 minutos
+  static const Duration _intervaloSincronizacao = Duration(minutes: 30); // Sincronizar no máximo a cada 30 minutos
   
   // Empresa atual para isolamento de dados
   String? _empresaIdAtual;
@@ -136,16 +145,42 @@ class DataService extends ChangeNotifier {
     }
   }
 
+  /// Atualiza os dados da empresa no Firebase e localmente
+  Future<void> atualizarDadosEmpresa(Empresa empresa) async {
+    _empresaAtual = empresa;
+    if (_firebaseHabilitado) {
+      await _firebaseService.salvarEmpresa(empresa);
+    }
+    notifyListeners();
+  }
+
   
   // Estado de carregamento
   bool _isLoading = false;
   String _mensagemLoading = 'Carregando...';
   bool get isLoading => _isLoading;
   String get mensagemLoading => _mensagemLoading;
-  
+  DateTime? get ultimaSincronizacaoSucesso => _ultimaSincronizacaoSucesso;
+  bool get syncEmAndamento => _syncEmAndamento;
+  bool get isModoLeve => _isModoLeve;
+
+  /// Retorna uma mensagem amigável sobre o status da sincronização
+  String get getSyncStatusText {
+    if (_syncEmAndamento) return 'Sincronizando...';
+    if (_ultimaSincronizacaoSucesso == null) return 'Aguardando sincronização...';
+    
+    final agora = DateTime.now();
+    final diferenca = agora.difference(_ultimaSincronizacaoSucesso!);
+    
+    if (diferenca.inSeconds < 60) return 'Atualizado agora';
+    if (diferenca.inMinutes < 60) return 'Atualizado há ${diferenca.inMinutes} min';
+    return 'Atualizado há ${diferenca.inHours} h';
+  }
+
   /// Define a empresa atual e recarrega os dados
-  /// IMPORTANTE: Cada empresa carrega seus dados de forma ISOLADA
-  Future<void> definirEmpresaAtual(String? empresaId) async {
+  /// [modoLeve]: Se true, carrega apenas dados essenciais (otimizado para loja pública)
+  Future<void> definirEmpresaAtual(String? empresaId, {bool modoLeve = false}) async {
+    _isModoLeve = modoLeve;
     if (_empresaIdAtual == empresaId) {
       print('>>> DataService: Empresa já está definida: $empresaId - pulando recarregamento');
       return;
@@ -211,10 +246,10 @@ class DataService extends ChangeNotifier {
     
     // Recarregar dados APENAS da nova empresa (isoladamente)
     if (empresaId != null) {
-      print('>>> DataService: 📥 Carregando dados ISOLADOS da empresa: $empresaId');
+      print('>>> DataService: 📥 Carregando dados ISOLADOS da empresa: $empresaId (Modo Leve: $modoLeve)');
       _mensagemLoading = 'Carregando dados da empresa...';
       notifyListeners();
-      await iniciarSincronizacao();
+      await iniciarSincronizacao(modoLeve: modoLeve);
     } else {
       print('>>> DataService: ⚠ Empresa não definida - dados não serão carregados');
     }
@@ -227,8 +262,45 @@ class DataService extends ChangeNotifier {
     // Iniciar timer de sincronização automática
     _reiniciarTimerSincronizacao();
     
-    // Iniciar stream de agendamentos em tempo real
+    // Iniciar streams de sincronização em tempo real (Otimizado)
+    _iniciarStreamsTempoReal();
+  }
+
+  /// Inicia todos os streams de tempo real necessários
+  void _iniciarStreamsTempoReal() {
+    _agendamentosSubscription?.cancel();
+    _produtosSubscription?.cancel();
+    _servicosSubscription?.cancel();
+
+    if (_empresaIdAtual == null || !_firebaseHabilitado) return;
+
+    debugPrint('>>> [Sync] 📡 Ativando Streams de Tempo Real (Modo Leve: $_isModoLeve)');
+    
+    // 1. Agendamentos (Sempre em tempo real)
     _iniciarStreamAgendamentos();
+
+    // 2. Produtos e Serviços (Tempo real apenas se houver necessidade de atualização instantânea na UI)
+    // Para loja pública, isso é essencial para refletir mudanças de preço/estoque sem refresh
+    _iniciarStreamProdutos();
+    _iniciarStreamServicos();
+  }
+
+  void _iniciarStreamProdutos() {
+    if (_empresaIdAtual == null) return;
+    _produtosSubscription = _firebaseService.getProdutosStream(_empresaIdAtual!).listen((novos) {
+      debugPrint('>>> [Sync] 📦 Stream de Produtos: ${novos.length} itens recebidos');
+      _atualizarListaInPlace(_produtos, novos);
+      notifyListeners();
+    });
+  }
+
+  void _iniciarStreamServicos() {
+    if (_empresaIdAtual == null) return;
+    _servicosSubscription = _firebaseService.getServicosStream(_empresaIdAtual!).listen((novos) {
+      debugPrint('>>> [Sync] 🛠 Stream de Serviços: ${novos.length} itens recebidos');
+      _atualizarListaInPlace(_tiposServico, novos);
+      notifyListeners();
+    });
   }
 
   void _iniciarStreamAgendamentos() {
@@ -357,7 +429,7 @@ class DataService extends ChangeNotifier {
   
   /// Método público para recarregar dados manualmente
   /// Mostra loading durante o carregamento
-  Future<void> recarregarDados() async {
+  Future<void> recarregarDados({bool modoLeve = false}) async {
     if (_empresaIdAtual == null) {
       print('>>> ⚠ Não é possível recarregar: empresa não definida');
       return;
@@ -368,7 +440,7 @@ class DataService extends ChangeNotifier {
     notifyListeners();
     
     try {
-      await iniciarSincronizacao();
+      await iniciarSincronizacao(modoLeve: modoLeve);
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -381,7 +453,7 @@ class DataService extends ChangeNotifier {
     print('>>> DataService criado com instanceId: $_instanceId');
   }
 
-  Future<void> iniciarSincronizacao() async {
+  Future<void> iniciarSincronizacao({bool modoLeve = false}) async {
     // Atualizar mensagem de loading
     if (_isLoading) {
       _mensagemLoading = 'Sincronizando dados...';
@@ -399,8 +471,8 @@ class DataService extends ChangeNotifier {
           _mensagemLoading = 'Carregando dados do Firebase...';
           notifyListeners();
         }
-        print('>>> 🔥 Firebase é PRINCIPAL - Carregando dados do Firebase...');
-        await _carregarDadosDoFirebase().timeout(
+        print('>>> 🔥 Firebase é PRINCIPAL - Carregando dados do Firebase (Modo Leve: $modoLeve)...');
+        await _carregarDadosDoFirebase(modoLeve: modoLeve).timeout(
           const Duration(seconds: 45),
           onTimeout: () {
             print('>>> ⚠ Timeout ao carregar do Firebase (45s) - usando fallback');
@@ -1783,6 +1855,47 @@ class DataService extends ChangeNotifier {
       }
     }
   }
+
+  /// Busca um cliente por telefone (procura localmente e no Firebase se necessário)
+  Future<List<Cliente>> buscarClientePorTelefone(String telefone) async {
+    final normalizado = telefone.replaceAll(RegExp(r'\D'), '');
+    if (normalizado.isEmpty) return [];
+
+    // 1. Procurar localmente na memória primeiro (rápido)
+    final candidatosLocais = _clientes.where((c) {
+      final t = c.telefone.replaceAll(RegExp(r'\D'), '');
+      final w = (c.whatsapp ?? '').replaceAll(RegExp(r'\D'), '');
+      return t == normalizado || w == normalizado;
+    }).toList();
+
+    if (candidatosLocais.isNotEmpty) {
+      debugPrint('>>> [DataService] Cliente encontrado localmente para o telefone $normalizado');
+      return candidatosLocais;
+    }
+
+    // 2. Se não encontrou e tem Firebase, buscar no Firebase
+    if (_firebaseHabilitado && _empresaIdAtual != null) {
+      debugPrint('>>> [DataService] 🔍 Cliente não em memória, buscando no Firebase: $normalizado');
+      try {
+        final remotos = await _firebaseService.buscarClientesPorTelefone(_empresaIdAtual!, normalizado);
+        if (remotos.isNotEmpty) {
+          // Adicionar à lista local (cache)
+          for (final c in remotos) {
+            if (!_clientes.any((loc) => loc.id == c.id)) {
+              _clientes.add(c);
+            }
+          }
+          notifyListeners();
+          return remotos;
+        }
+      } catch (e) {
+        debugPrint('>>> [DataService] Erro na busca remota: $e');
+      }
+    }
+
+    return [];
+  }
+
 
   void deleteContaPagar(String id) {
     _contasPagar.removeWhere((c) => c.id == id);
@@ -3343,12 +3456,21 @@ class DataService extends ChangeNotifier {
     }
   }
 
-  void deleteTaxaEntrega(String id) {
+  Future<void> deleteTaxaEntrega(String id) async {
     _taxasEntrega.removeWhere((t) => t.id == id);
     notifyListeners();
     _salvarAutomaticamente();
-    // Nota: Não há método de remoção individual no FirebaseService para taxa de entrega
-    // A remoção será feita na próxima sincronização completa
+    
+    // Remover do Firebase se habilitado
+    if (_firebaseHabilitado && _empresaIdAtual != null) {
+      try {
+        await _firebaseService.removerTaxaEntrega(_empresaIdAtual!, id);
+        debugPrint('>>> [TaxaEntrega] ✅ Removida do Firebase com sucesso!');
+      } catch (e) {
+        debugPrint('>>> [TaxaEntrega] ❌ Erro ao remover do Firebase: $e');
+        _adicionarSincronizacaoPendente();
+      }
+    }
   }
 
   /// Busca taxa de entrega por bairro (case-insensitive)
@@ -3972,27 +4094,33 @@ class DataService extends ChangeNotifier {
 
   // ============ Métodos de Persistência ============
 
-  /// Carrega todos os dados salvos do localStorage
-  /// Carrega dados do Firebase APENAS da empresa atual
-  Future<void> _carregarDadosDoFirebase() async {
+  /// [modoLeve]: Se true, carrega apenas o essencial (Produtos, Servicos, Agendamentos)
+  Future<void> _carregarDadosDoFirebase({bool modoLeve = false}) async {
     if (_empresaIdAtual == null) {
       print('>>> ⚠ _carregarDadosDoFirebase: Empresa não definida - não é possível carregar dados do Firebase');
       return;
     }
+
+    if (_syncEmAndamento) {
+      debugPrint('>>> [Sync] ⏳ Sincronização já em andamento, aguardando...');
+      return;
+    }
+    
+    _syncEmAndamento = true;
+    notifyListeners();
     
     try {
+      final finalModoLeve = modoLeve || _isModoLeve;
       print('>>> 🔥 ========================================');
-      print('>>> 🔥 Carregando dados do Firebase');
+      print('>>> 🔥 Carregando dados do Firebase (Modo Leve: $finalModoLeve)');
       print('>>> 🔥 Empresa: $_empresaIdAtual');
       print('>>> 🔥 ========================================');
-      final dados = await _firebaseService.carregarTudoDoFirebase(_empresaIdAtual!)
-          .timeout(
-            const Duration(seconds: 45),
-            onTimeout: () {
-              print('>>> ⚠ Timeout ao carregar do Firebase (45s) - usando fallback');
-              throw TimeoutException('Firebase timeout');
-            },
-          );
+      
+      final dados = finalModoLeve 
+          ? await _firebaseService.carregarDadosLevesDoFirebase(_empresaIdAtual!)
+          : await _firebaseService.carregarTudoDoFirebase(_empresaIdAtual!);
+          
+      final results = await Future.value(dados);
       
       // Verificar se há dados no Firebase (incluindo agendamentos)
       final temDados = dados['clientes']?.isNotEmpty == true ||
@@ -4255,6 +4383,24 @@ class DataService extends ChangeNotifier {
         print('>>> [Agendamentos] ⚠️ Campo agendamentos_servico é null no Firebase');
       }
 
+      // Carregar taxas de entrega - ISOLAMENTO: Apenas dados da empresa atual do Firebase
+      if (dados['taxas_entrega'] != null && dados['taxas_entrega'].isNotEmpty) {
+        final novasTaxas = (dados['taxas_entrega'] as List)
+            .map((map) => TaxaEntrega.fromMap(map as Map<String, dynamic>)).toList();
+        // ISOLAMENTO: Firebase já filtra por empresaId
+        for (final taxa in novasTaxas) {
+          final index = _taxasEntrega.indexWhere((t) => t.id == taxa.id);
+          if (index >= 0) {
+            _taxasEntrega[index] = taxa;
+          } else {
+            _taxasEntrega.add(taxa);
+          }
+        }
+        print('>>> ✓ ${novasTaxas.length} taxas de entrega carregadas do Firebase para empresa $_empresaIdAtual (isoladas)');
+      } else {
+        print('>>> ✓ Nenhuma taxa de entrega encontrada no Firebase para empresa $_empresaIdAtual');
+      }
+
       // Carregar links de vendedores - ISOLAMENTO: Apenas dados da empresa atual do Firebase
       if (dados['links_vendedores'] != null && dados['links_vendedores'].isNotEmpty) {
         final novosLinks = (dados['links_vendedores'] as List)
@@ -4281,14 +4427,21 @@ class DataService extends ChangeNotifier {
         print('>>> ✓ Nenhuma comissão de vendedor encontrada no Firebase para empresa $_empresaIdAtual');
       }
 
-      // Sincronizar com localStorage após carregar do Firebase
-      await _salvarTodosDados();
+      // NOTA: Removido o salvamento forçado aqui para evitar loops de carregamento/salvamento
+      // await _salvarTodosDados();
+      _ultimaSincronizacaoSucesso = DateTime.now();
+      debugPrint('>>> [Sync] ✅ Sincronização concluída com sucesso às ${_ultimaSincronizacaoSucesso.toString()}');
+      
     } catch (e, stackTrace) {
-      print('>>> ✗ Erro ao carregar dados do Firebase: $e');
-      print('>>> StackTrace: $stackTrace');
+      debugPrint('>>> [Sync] ❌ ERRO na sincronização: $e');
+      debugPrint('>>> StackTrace: $stackTrace');
       rethrow;
+    } finally {
+      _syncEmAndamento = false;
+      notifyListeners();
     }
   }
+
 
   Future<void> _carregarDadosSalvos() async {
     // GARANTIR que só carrega se houver empresa definida
@@ -4802,7 +4955,7 @@ class DataService extends ChangeNotifier {
       // Sincronizar com Firebase apenas se:
       // 1. Firebase está habilitado
       // 2. Tem empresa selecionada
-      // 3. Passou o intervalo mínimo desde última sincronização (ou é operação crítica)
+      // 3. Passou o intervalo de 30 minutos (ou é operação crítica)
       final agora = DateTime.now();
       final deveSincronizar = aguardarFirebase || 
         _ultimaSincronizacao == null || 
@@ -4859,8 +5012,14 @@ class DataService extends ChangeNotifier {
       return;
     }
     
+    // Verificação de cota antes de tentar
+    if (!_firebaseHabilitado) {
+      debugPrint('>>> [Sync] ⚠️ Firebase desabilitado (provável cota excedida), pulando...');
+      return;
+    }
+    
     try {
-      // Timeout de 30 segundos para evitar travamentos
+      // Timeout de 60 segundos para evitar travamentos
       await _firebaseService.sincronizarTudo(
         empresaId: _empresaIdAtual!,
         clientes: _clientes,
@@ -4886,18 +5045,39 @@ class DataService extends ChangeNotifier {
         linksVendedores: _linksVendedores,
         comissoesVendedores: _comissoesVendedores,
       ).timeout(
-        const Duration(seconds: 30),
+        const Duration(seconds: 60),
         onTimeout: () {
-          debugPrint('>>> [Sync] ⚠️ Timeout ao sincronizar com Firebase (30s)');
+          debugPrint('>>> [Sync] ⚠️ Timeout ao sincronizar com Firebase (60s)');
           throw TimeoutException('Timeout na sincronização com Firebase');
         },
       );
       
       debugPrint('>>> [Sync] ✅ Sincronização com Firebase concluída com sucesso');
     } catch (e, stackTrace) {
+      final errorStr = e.toString().toLowerCase();
+      if (errorStr.contains('quota') || errorStr.contains('resource-exhausted')) {
+        debugPrint('>>> [Sync] ⚠️⚠️⚠️ COTA EXCEDIDA NO FIREBASE! DESABILITANDO SYNC AUTOMÁTICO ⚠️⚠️⚠️');
+        _firebaseHabilitado = false;
+      }
       debugPrint('>>> [Sync] ❌ Erro ao sincronizar com Firebase: $e');
       debugPrint('>>> [Sync] StackTrace: $stackTrace');
-      rethrow; // Re-lança para que o chamador possa tratar
+      rethrow; 
+    }
+  }
+
+  /// Sincronização forçada iniciada pelo usuário
+  Future<void> sincronizarManualmente() async {
+    _isLoading = true;
+    _mensagemLoading = 'Sincronizando com nuvem...';
+    notifyListeners();
+    
+    try {
+      _firebaseHabilitado = true; // Tenta reabilitar caso tenha caído por cota
+      await _sincronizarComFirebase();
+      _ultimaSincronizacao = DateTime.now();
+    } finally {
+      _isLoading = false;
+      notifyListeners();
     }
   }
 

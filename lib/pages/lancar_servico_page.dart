@@ -70,6 +70,10 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
   String? _bairroEntrega;
   double? _valorTaxiDog;
   final _valorTaxiDogController = TextEditingController();
+  final _ruaController = TextEditingController();
+  final _numeroController = TextEditingController();
+  final _complementoController = TextEditingController();
+  final _referenciaController = TextEditingController();
   
   // Busca de cliente
   final _buscaClienteController = TextEditingController();
@@ -122,6 +126,11 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
     _valorComissaoController.dispose();
     _buscaClienteController.dispose();
     _buscaClienteFocusNode.dispose();
+    _valorTaxiDogController.dispose();
+    _ruaController.dispose();
+    _numeroController.dispose();
+    _complementoController.dispose();
+    _referenciaController.dispose();
     super.dispose();
   }
 
@@ -328,6 +337,10 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
       tipoEntrega: _tipoEntrega,
       valorTaxiDog: _valorTaxiDog,
       bairroEntrega: _bairroEntrega,
+      endereco: _ruaController.text.trim(),
+      numeroEndereco: _numeroController.text.trim(),
+      complemento: _complementoController.text.trim(),
+      pontoReferencia: _referenciaController.text.trim(),
     );
 
     setState(() {
@@ -366,6 +379,10 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
     _tipoEntrega = null;
     _bairroEntrega = null;
     _valorTaxiDog = null;
+    _ruaController.clear();
+    _numeroController.clear();
+    _complementoController.clear();
+    _referenciaController.clear();
 
     // Cadastrar serviço automaticamente para poder buscar depois (não bloqueia)
     _cadastrarServicoAutomaticamente(novoServico).then((_) {
@@ -645,6 +662,10 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
                   bairroEntrega: itemServico.bairroEntrega,
                   pedidoId: pedido.id, // ID do pedido relacionado
                   numeroPedido: pedido.numero, // Número do pedido (SRV-0001, etc.)
+                  endereco: itemServico.endereco,
+                  numeroEndereco: itemServico.numeroEndereco,
+                  complemento: itemServico.complemento,
+                  pontoReferencia: itemServico.pontoReferencia,
                 );
                 
                 // Validação de conflito REMOVIDA - permitir múltiplos agendamentos no mesmo horário
@@ -1231,52 +1252,83 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
                 ],
               ),
               const SizedBox(height: 12),
-              Row(
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
                 children: [
-                  Expanded(
-                    child: ChoiceChip(
-                      label: const Text('Cliente busca'),
-                      selected: _tipoEntrega == 'Cliente busca',
-                      onSelected: (selected) {
-                        if (selected) {
-                          setState(() {
-                            _tipoEntrega = 'Cliente busca';
-                            _bairroEntrega = null;
-                            _valorTaxiDog = null;
-                            _valorTaxiDogController.clear();
-                          });
-                        }
-                      },
-                      selectedColor: Colors.blue.withOpacity(0.3),
-                      labelStyle: TextStyle(
-                        color: _tipoEntrega == 'Cliente busca' ? Colors.white : Colors.white70,
-                        fontWeight: _tipoEntrega == 'Cliente busca' ? FontWeight.bold : FontWeight.normal,
-                      ),
+                  ChoiceChip(
+                    label: const Text('Cliente busca'),
+                    selected: _tipoEntrega == 'Cliente busca',
+                    onSelected: (selected) {
+                      if (selected) {
+                        setState(() {
+                          _tipoEntrega = 'Cliente busca';
+                          _bairroEntrega = null;
+                          _valorTaxiDog = null;
+                          _valorTaxiDogController.clear();
+                        });
+                      }
+                    },
+                    selectedColor: Colors.blue.withOpacity(0.3),
+                    labelStyle: TextStyle(
+                      color: _tipoEntrega == 'Cliente busca' ? Colors.white : Colors.white70,
+                      fontWeight: _tipoEntrega == 'Cliente busca' ? FontWeight.bold : FontWeight.normal,
                     ),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ChoiceChip(
-                      label: const Text('Taxi Dog'),
-                      selected: _tipoEntrega == 'Taxi Dog',
-                      onSelected: (selected) {
-                        if (selected) {
-                          setState(() {
-                            _tipoEntrega = 'Taxi Dog';
-                            _calcularValorTaxiDog();
-                          });
-                        }
-                      },
-                      selectedColor: Colors.green.withOpacity(0.3),
-                      labelStyle: TextStyle(
-                        color: _tipoEntrega == 'Taxi Dog' ? Colors.white : Colors.white70,
-                        fontWeight: _tipoEntrega == 'Taxi Dog' ? FontWeight.bold : FontWeight.normal,
-                      ),
+                  ChoiceChip(
+                    label: const Text('Taxi Dog'),
+                    selected: _tipoEntrega == 'Taxi Dog',
+                    onSelected: (selected) {
+                      if (selected) {
+                        setState(() {
+                          _tipoEntrega = 'Taxi Dog';
+                          _calcularValorTaxiDog();
+                        });
+                      }
+                    },
+                    selectedColor: Colors.green.withOpacity(0.3),
+                    labelStyle: TextStyle(
+                      color: _tipoEntrega == 'Taxi Dog' ? Colors.white : Colors.white70,
+                      fontWeight: _tipoEntrega == 'Taxi Dog' ? FontWeight.bold : FontWeight.normal,
+                    ),
+                  ),
+                  ChoiceChip(
+                    label: const Text('Apenas Busca'),
+                    selected: _tipoEntrega == 'Apenas Busca',
+                    onSelected: (selected) {
+                      if (selected) {
+                        setState(() {
+                          _tipoEntrega = 'Apenas Busca';
+                          _calcularValorTaxiDog();
+                        });
+                      }
+                    },
+                    selectedColor: Colors.orange.withOpacity(0.3),
+                    labelStyle: TextStyle(
+                      color: _tipoEntrega == 'Apenas Busca' ? Colors.white : Colors.white70,
+                      fontWeight: _tipoEntrega == 'Apenas Busca' ? FontWeight.bold : FontWeight.normal,
+                    ),
+                  ),
+                  ChoiceChip(
+                    label: const Text('Apenas Entrega'),
+                    selected: _tipoEntrega == 'Apenas Entrega',
+                    onSelected: (selected) {
+                      if (selected) {
+                        setState(() {
+                          _tipoEntrega = 'Apenas Entrega';
+                          _calcularValorTaxiDog();
+                        });
+                      }
+                    },
+                    selectedColor: Colors.orange.withOpacity(0.3),
+                    labelStyle: TextStyle(
+                      color: _tipoEntrega == 'Apenas Entrega' ? Colors.white : Colors.white70,
+                      fontWeight: _tipoEntrega == 'Apenas Entrega' ? FontWeight.bold : FontWeight.normal,
                     ),
                   ),
                 ],
               ),
-              if (_tipoEntrega == 'Taxi Dog') ...[
+              if (_tipoEntrega == 'Taxi Dog' || _tipoEntrega == 'Apenas Busca' || _tipoEntrega == 'Apenas Entrega') ...[
                 const SizedBox(height: 12),
                 Container(
                   padding: const EdgeInsets.all(12),
@@ -1291,10 +1343,68 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
                       if (_clienteSelecionado != null && _clienteSelecionado!.bairro != null && _clienteSelecionado!.bairro!.isNotEmpty) ...[
                         Text(
                           'Bairro: ${_clienteSelecionado!.bairro}',
-                          style: const TextStyle(color: Colors.white70, fontSize: 14),
+                          style: const TextStyle(color: Colors.white70, fontSize: 13),
                         ),
                         const SizedBox(height: 8),
                       ],
+                      Row(
+                        children: [
+                          Expanded(
+                            flex: 3,
+                            child: TextField(
+                              controller: _ruaController,
+                              style: const TextStyle(color: Colors.white, fontSize: 13),
+                              decoration: const InputDecoration(
+                                labelText: 'Rua',
+                                labelStyle: TextStyle(color: Colors.white70),
+                                isDense: true,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            flex: 1,
+                            child: TextField(
+                              controller: _numeroController,
+                              style: const TextStyle(color: Colors.white, fontSize: 13),
+                              decoration: const InputDecoration(
+                                labelText: 'Nº',
+                                labelStyle: TextStyle(color: Colors.white70),
+                                isDense: true,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _complementoController,
+                              style: const TextStyle(color: Colors.white, fontSize: 13),
+                              decoration: const InputDecoration(
+                                labelText: 'Complemento',
+                                labelStyle: TextStyle(color: Colors.white70),
+                                isDense: true,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: TextField(
+                              controller: _referenciaController,
+                              style: const TextStyle(color: Colors.white, fontSize: 13),
+                              decoration: const InputDecoration(
+                                labelText: 'Referência',
+                                labelStyle: TextStyle(color: Colors.white70),
+                                isDense: true,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
                       TextField(
                         controller: _valorTaxiDogController,
                         keyboardType: const TextInputType.numberWithOptions(decimal: true),
@@ -1418,7 +1528,46 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
     }
     
     final dataService = Provider.of<DataService>(context, listen: false);
+    final empresa = dataService.empresaAtual;
+    
     try {
+      // Buscar configurações de bairro na empresa
+      final config = empresa?.configuracoes ?? {};
+      final agendamentoConfig = config['agendamento'] as Map<String, dynamic>? ?? {};
+      final bairrosConfig = (agendamentoConfig['bairrosTaxiDogV2'] ?? config['bairrosTaxiDogV2']) as List<dynamic>?;
+
+      if (bairrosConfig != null) {
+        final bConfig = bairrosConfig.firstWhere((e) => e['bairro'].toString().toLowerCase().trim() == bairro.toLowerCase().trim(), orElse: () => null);
+        
+        if (bConfig != null) {
+          double valor = 0.0;
+          if (_tipoEntrega == 'Taxi Dog') {
+            valor = (bConfig['taxa'] as num?)?.toDouble() ?? 0.0;
+          } else if (_tipoEntrega == 'Apenas Busca') {
+            valor = (bConfig['taxaBusca'] as num?)?.toDouble() ?? (bConfig['taxa'] as num?)?.toDouble() ?? 0.0;
+          } else if (_tipoEntrega == 'Apenas Entrega') {
+            valor = (bConfig['taxaSoleva'] as num?)?.toDouble() ?? (bConfig['taxa'] as num?)?.toDouble() ?? 0.0;
+          }
+
+          setState(() {
+            _valorTaxiDog = valor > 0 ? valor : null;
+            _bairroEntrega = bConfig['bairro'];
+            if (valor > 0) {
+              _valorTaxiDogController.text = valor.toStringAsFixed(2).replaceAll('.', ',');
+            } else {
+              _valorTaxiDogController.clear();
+            }
+            // Preencher endereço do cliente
+            _ruaController.text = _clienteSelecionado?.endereco ?? '';
+            _numeroController.text = _clienteSelecionado?.numero ?? '';
+            _complementoController.text = _clienteSelecionado?.complemento ?? '';
+            _referenciaController.text = _clienteSelecionado?.pontoReferencia ?? '';
+          });
+          return;
+        }
+      }
+
+      // Fallback para taxas de entrega legadas se não encontrar na V2
       final taxa = dataService.taxasEntrega.firstWhere(
         (t) => t.bairro.toLowerCase().trim() == bairro.toLowerCase().trim() && t.ativo,
       );
@@ -1426,12 +1575,22 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
         _valorTaxiDog = taxa.valor;
         _bairroEntrega = taxa.bairro;
         _valorTaxiDogController.text = taxa.valor.toStringAsFixed(2).replaceAll('.', ',');
+        // Preencher endereço do cliente
+        _ruaController.text = _clienteSelecionado?.endereco ?? '';
+        _numeroController.text = _clienteSelecionado?.numero ?? '';
+        _complementoController.text = _clienteSelecionado?.complemento ?? '';
+        _referenciaController.text = _clienteSelecionado?.pontoReferencia ?? '';
       });
     } catch (e) {
       setState(() {
         _valorTaxiDog = null;
         _bairroEntrega = bairro;
         _valorTaxiDogController.clear();
+        // Limpar campos de endereço ou preencher se cliente tiver
+        _ruaController.text = _clienteSelecionado?.endereco ?? '';
+        _numeroController.text = _clienteSelecionado?.numero ?? '';
+        _complementoController.text = _clienteSelecionado?.complemento ?? '';
+        _referenciaController.text = _clienteSelecionado?.pontoReferencia ?? '';
       });
     }
   }

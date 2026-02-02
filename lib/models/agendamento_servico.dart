@@ -31,6 +31,10 @@ class AgendamentoServico {
   final String? clienteNome; // Nome do cliente (para agendamentos online/convidados)
   final String? clienteTelefone; // Telefone do cliente (para consulta online)
   final String? petNome; // Nome do pet (para agendamentos online/convidados)
+  final String? endereco; // Rua/Logradouro para Taxi Dog
+  final String? numeroEndereco; // Número para Taxi Dog
+  final String? complemento; // Complemento para Taxi Dog
+  final String? pontoReferencia; // Ponto de referência para Taxi Dog
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -57,6 +61,10 @@ class AgendamentoServico {
     this.clienteNome,
     this.clienteTelefone,
     this.petNome,
+    this.endereco,
+    this.numeroEndereco,
+    this.complemento,
+    this.pontoReferencia,
     List<ItemMaterial>? materiais,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -135,6 +143,10 @@ class AgendamentoServico {
     String? clienteNome,
     String? clienteTelefone,
     String? petNome,
+    String? endereco,
+    String? numeroEndereco,
+    String? complemento,
+    String? pontoReferencia,
   }) {
     return AgendamentoServico(
       id: id ?? this.id,
@@ -162,6 +174,10 @@ class AgendamentoServico {
       clienteNome: clienteNome ?? this.clienteNome,
       clienteTelefone: clienteTelefone ?? this.clienteTelefone,
       petNome: petNome ?? this.petNome,
+      endereco: endereco ?? this.endereco,
+      numeroEndereco: numeroEndereco ?? this.numeroEndereco,
+      complemento: complemento ?? this.complemento,
+      pontoReferencia: pontoReferencia ?? this.pontoReferencia,
     );
   }
 
@@ -186,6 +202,10 @@ class AgendamentoServico {
       'clienteNome': clienteNome,
       'clienteTelefone': clienteTelefone,
       'petNome': petNome,
+      'endereco': endereco,
+      'numeroEndereco': numeroEndereco,
+      'complemento': complemento,
+      'pontoReferencia': pontoReferencia,
       'pet': pet?.toMap(), // Incluir objeto pet para evitar perda de dados online
       'materiais': materiais.map((m) => m.toMap()).toList(),
       'createdAt': createdAt.toIso8601String(),
@@ -223,6 +243,10 @@ class AgendamentoServico {
       clienteNome: map['clienteNome']?.toString(),
       clienteTelefone: map['clienteTelefone']?.toString(),
       petNome: map['petNome']?.toString(),
+      endereco: map['endereco']?.toString(),
+      numeroEndereco: map['numeroEndereco']?.toString(),
+      complemento: map['complemento']?.toString(),
+      pontoReferencia: map['pontoReferencia']?.toString(),
       pet: map['pet'] != null ? Pet.fromMap(Map<String, dynamic>.from(map['pet'])) : null,
     );
   }

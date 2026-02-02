@@ -77,32 +77,25 @@ class _LojaPublicaWrapperState extends State<LojaPublicaWrapper> {
     _ultimoSlugProcessado = currentSlug;
 
     try {
-      // 1. Aguardar carregamento inicial das empresas
-      // Se temos um slug, vale a pena esperar um pouco mais
-      int tentativas = 0;
-      int maxTentativas = (currentSlug != null && currentSlug.isNotEmpty) ? 20 : 10; // Esperar até 10s se tiver slug
-      
-      // Se temos um slug, vale a pena esperar as empresas chegarem
-      while (tentativas < maxTentativas) {
-        // Se já temos empresas, tentar encontrar a solicitada
-        if (authService.empresas.isNotEmpty) {
-           final slugDeteccaoLocal = widget.slugEmpresa;
-           if (slugDeteccaoLocal != null && slugDeteccaoLocal.isNotEmpty) {
-              final detectada = authService.obterEmpresaPorSlug(slugDeteccaoLocal);
-              if (detectada != null) break; // Encontramos!
-           } else if (slugDeteccaoLocal == null || slugDeteccaoLocal.isEmpty) {
-              break; // Sem slug, qualquer empresa (ou nenhuma) serve
-           }
+      // 1. Tentar encontrar a empresa solicitada IMEDIATAMENTE (Otimizado)
+      if (currentSlug != null && currentSlug.isNotEmpty) {
+        final detectada = await authService.buscarEmpresaPorSlugAsync(currentSlug);
+        if (detectada != null) {
+          print('>>> [LojaPublica] ✅ Empresa detectada via Busca Direta: ${detectada.nomeExibicao}');
         }
+      }
+
+      // Se não encontrou via busca direta ou não tem slug, vamos esperar um pouco se o AuthService ainda estiver carregando
+      int tentativas = 0;
+      int maxTentativas = 10; // Esperar até 5s no total
+      
+      while (tentativas < maxTentativas) {
+        if (authService.empresas.isNotEmpty) break;
         
-        // Se ainda está carregando inicial ou a lista está vazia, esperamos
-        if (authService.isCarregandoDados || authService.empresas.isEmpty) {
+        if (authService.isCarregandoDados) {
           await Future.delayed(const Duration(milliseconds: 500));
           tentativas++;
         } else {
-          // Se não está carregando e já temos empresas (e não achamos o slug no break acima),
-          // vamos dar uma última chance (mais 1s) caso o sync do Firebase ainda esteja rolando
-          await Future.delayed(const Duration(seconds: 1));
           break;
         }
       }
@@ -140,7 +133,7 @@ class _LojaPublicaWrapperState extends State<LojaPublicaWrapper> {
 
       // 2. Localizar Empresa
       if (slugDeteccao != null && slugDeteccao.isNotEmpty) {
-        final empresaPorSlug = authService.obterEmpresaPorSlug(slugDeteccao);
+        final empresaPorSlug = await authService.buscarEmpresaPorSlugAsync(slugDeteccao);
         if (empresaPorSlug != null) {
           empresaIdParaUsar = empresaPorSlug.id;
           dataService.setEmpresaAtual(empresaPorSlug); // SETAR OBJETO COMPLETO
@@ -185,13 +178,13 @@ class _LojaPublicaWrapperState extends State<LojaPublicaWrapper> {
       if (empresaIdParaUsar != null && empresaIdParaUsar.isNotEmpty) {
         if (dataService.empresaIdAtual != empresaIdParaUsar) {
           print('>>> [LojaPublica] Definindo nova empresa no DataService: $empresaIdParaUsar');
-          await dataService.definirEmpresaAtual(empresaIdParaUsar).timeout(
+          await dataService.definirEmpresaAtual(empresaIdParaUsar, modoLeve: true).timeout(
             const Duration(seconds: 25),
             onTimeout: () => print('>>> [LojaPublica] Timeout definirEmpresaAtual'),
           );
         } else {
           print('>>> [LojaPublica] Empresa já ativa, apenas recarregando...');
-          await dataService.recarregarDados().timeout(
+          await dataService.recarregarDados(modoLeve: true).timeout(
             const Duration(seconds: 25),
             onTimeout: () => print('>>> [LojaPublica] Timeout recarregarDados'),
           );
