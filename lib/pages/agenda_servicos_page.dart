@@ -1764,6 +1764,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
     AgendamentoServico agendamento,
     DataService dataService,
   ) {
+    bool localProcessando = false;
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -2327,21 +2328,63 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
             ],
           ),
           if (agendamento.status == 'Aguardando Confirmação') ...[
-            ElevatedButton(
-              onPressed: () async {
-                await dataService.rejeitarAgendamento(agendamento.id);
-                if (context.mounted) Navigator.pop(context);
-              },
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade900),
-              child: const Text('Rejeitar'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                await dataService.aprovarAgendamento(agendamento.id);
-                if (context.mounted) Navigator.pop(context);
-              },
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.purple),
-              child: const Text('Aprovar'),
+            StatefulBuilder(
+              builder: (context, setBtnState) {
+                // localProcessando is captured from outside if we define it in the method scope,
+                // but for StatefulBuilder it's better to use a local variable that survives rebuilds.
+                // Since this is a callback, we can use a closure-captured variable.
+                return Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ElevatedButton(
+                      onPressed: localProcessando ? null : () async {
+                        setBtnState(() => localProcessando = true);
+                        try {
+                          await dataService.rejeitarAgendamento(agendamento.id);
+                          if (context.mounted) Navigator.pop(context);
+                        } catch (e) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('Erro ao rejeitar: $e'), backgroundColor: Colors.red),
+                            );
+                          }
+                        } finally {
+                          if (context.mounted) setBtnState(() => localProcessando = false);
+                        }
+                      },
+                      style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade900),
+                      child: const Text('Rejeitar'),
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton(
+                      onPressed: localProcessando ? null : () async {
+                        setBtnState(() => localProcessando = true);
+                        try {
+                          await dataService.aprovarAgendamento(agendamento.id);
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Agendamento aprovado com sucesso!'), backgroundColor: Colors.green),
+                            );
+                            Navigator.pop(context);
+                          }
+                        } catch (e) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('Erro ao aprovar: $e'), backgroundColor: Colors.red),
+                            );
+                          }
+                        } finally {
+                          if (context.mounted) setBtnState(() => localProcessando = false);
+                        }
+                      },
+                      style: ElevatedButton.styleFrom(backgroundColor: Colors.purple),
+                      child: localProcessando 
+                        ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                        : const Text('Aprovar'),
+                    ),
+                  ],
+                );
+              }
             ),
           ],
           TextButton(

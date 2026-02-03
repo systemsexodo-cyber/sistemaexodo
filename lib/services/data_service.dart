@@ -315,8 +315,19 @@ class DataService extends ChangeNotifier {
       
       bool houveMudanca = false;
       
-      // Se o snapshot está vazio, e tínhamos dados, pode ser que tudo foi deletado ou empresa filtrada
-      // Mas para segurança, vamos apenas atualizar o que temos
+      // 1. Identificar agendamentos removidos do Firebase mas que estão locais
+      final idsNoFirebase = novosAgendamentos.map((a) => a.id).toSet();
+      final agendamentosParaRemover = _agendamentosServico
+          .where((a) => !idsNoFirebase.contains(a.id))
+          .toList();
+
+      if (agendamentosParaRemover.isNotEmpty) {
+        for (var a in agendamentosParaRemover) {
+          _agendamentosServico.removeWhere((local) => local.id == a.id);
+          houveMudanca = true;
+          debugPrint('>>> [Sync] 🗑️ Agendamento removido remotamente: ${a.id}');
+        }
+      }
       
       for (final agendamento in novosAgendamentos) {
         final index = _agendamentosServico.indexWhere((a) => a.id == agendamento.id);
@@ -375,12 +386,14 @@ class DataService extends ChangeNotifier {
         }
       }
       
-      final todosIds = novosAgendamentos.map((a) => a.id).join(', ');
-      debugPrint('>>> [Sync] 📋 IDs no Snapshot: $todosIds');
-      
       if (houveMudanca) {
         debugPrint('>>> [Sync] 🔔 Mudança detectada no Stream. Total em memória: ${_agendamentosServico.length}');
         notifyListeners();
+        // Salvar localmente o estado sincronizado
+        _storage.salvarLista(
+          _getChaveComEmpresa(LocalStorageService.keyAgendamentosServico),
+          _agendamentosServico,
+        );
       } else {
         debugPrint('>>> [Sync] 💤 Snapshot recebido mas sem mudanças relevantes');
       }
@@ -3033,7 +3046,8 @@ class DataService extends ChangeNotifier {
       // Forçar salvamento local
       _salvarAutomaticamente();
       
-      // Notificar cliente via WhatsApp
+      // Notificar cliente via WhatsApp em BACKGROUND para não travar a UI
+      // ignore: unawaited_futures
       _enviarNotificacaoWhatsAppAgendamento(agendamentoAtualizado, isNovo: false);
       
       // Notificar novamente para garantir que a UI refletiu o salvamento
@@ -3065,7 +3079,8 @@ class DataService extends ChangeNotifier {
         }
       }
       
-      // Notificar cliente via WhatsApp
+      // Notificar cliente via WhatsApp em background
+      // ignore: unawaited_futures
       _enviarNotificacaoWhatsAppAgendamento(agendamentoAtualizado, isNovo: false);
 
       notifyListeners();
