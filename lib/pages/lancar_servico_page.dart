@@ -401,12 +401,12 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
     final precoBase = itemServico.valor;
     final valorAdicional = itemServico.valorAdicional;
     
-    // Nome do serviço: usar o nome base, com descrição adicional se houver
+    // Nome do serviço: usar SEMPRE o nome base para o template
+    // para evitar poluição com bairros/taxi dog na lista global
     String nomeServico = itemServico.descricao;
-    if (itemServico.descricaoAdicional != null && 
-        itemServico.descricaoAdicional!.isNotEmpty) {
-      nomeServico = '${itemServico.descricao} - ${itemServico.descricaoAdicional}';
-    }
+    
+    // A descrição adicional continua indo para o campo 'descricao' do template
+    // para facilitar a identificação, mas o NOME permanece limpo.
 
     // Normalizar nome para comparação (remover diferenças de separadores: -, +, etc)
     String normalizarNomeParaComparacao(String nome) {

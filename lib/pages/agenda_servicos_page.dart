@@ -5845,14 +5845,18 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                                   }
                                                   
                                                   // Se não houver mais solicitações, fecha o modal após um breve delay
-                                                  final restantes = currentDataService.agendamentosServico
-                                                      .where((a) => a.status == 'Aguardando Confirmação')
-                                                      .length;
-                                                  if (restantes == 0 && context.mounted) {
-                                                    Future.delayed(const Duration(milliseconds: 800), () {
-                                                      if (context.mounted) Navigator.pop(context);
-                                                    });
-                                                  }
+                                                  // Usar delay para garantir que a UI processou a mudança
+                                                  Future.delayed(const Duration(milliseconds: 300), () {
+                                                    if (context.mounted) {
+                                                      final dataS = Provider.of<DataService>(context, listen: false);
+                                                      final itens = dataS.agendamentosServico
+                                                          .where((a) => a.status == 'Aguardando Confirmação')
+                                                          .length;
+                                                      if (itens == 0) {
+                                                        Navigator.pop(context);
+                                                      }
+                                                    }
+                                                  });
                                                 } catch (e) {
                                                 ScaffoldMessenger.of(context).showSnackBar(
                                                   SnackBar(content: Text('Erro: $e'), backgroundColor: Colors.red),
@@ -5888,14 +5892,18 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                                   }
 
                                                   // Se não houver mais solicitações, fecha o modal após um breve delay
-                                                  final restantes = currentDataService.agendamentosServico
-                                                      .where((a) => a.status == 'Aguardando Confirmação')
-                                                      .length;
-                                                  if (restantes == 0 && context.mounted) {
-                                                    Future.delayed(const Duration(milliseconds: 800), () {
-                                                      if (context.mounted) Navigator.pop(context);
-                                                    });
-                                                  }
+                                                  // Usar delay para garantir que a UI processou a mudança
+                                                  Future.delayed(const Duration(milliseconds: 300), () {
+                                                    if (context.mounted) {
+                                                      final dataS = Provider.of<DataService>(context, listen: false);
+                                                      final itens = dataS.agendamentosServico
+                                                          .where((a) => a.status == 'Aguardando Confirmação')
+                                                          .length;
+                                                      if (itens == 0) {
+                                                        Navigator.pop(context);
+                                                      }
+                                                    }
+                                                  });
                                                 } catch (e) {
                                                 ScaffoldMessenger.of(context).showSnackBar(
                                                   SnackBar(content: Text('Erro: $e'), backgroundColor: Colors.red),

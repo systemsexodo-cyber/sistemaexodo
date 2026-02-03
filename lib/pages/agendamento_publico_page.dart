@@ -630,7 +630,12 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
 
   Widget _buildStepServicos(bool moduloPet) {
     final dataService = Provider.of<DataService>(context);
-    final servicos = dataService.servicos;
+    // Filtrar serviços para não mostrar duplicatas causadas por lançamentos com Taxi Dog
+    final servicos = dataService.servicos.where((s) {
+      final n = s.nome.toLowerCase();
+      // Não mostrar serviços que foram poluídos com Taxi Dog no nome
+      return !n.contains('taxi dog') && !n.contains('entrega');
+    }).toList();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -683,17 +688,13 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            // Nome do Serviço (com + se houver adicional para facilitar entendimento de combo)
-                            RichText(
-                              text: TextSpan(
-                                style: TextStyle(color: _isDark ? Colors.white : Colors.black87, fontWeight: FontWeight.bold, fontSize: 18),
-                                children: [
-                                  TextSpan(text: servico.nome),
-                                  if (servico.descricaoAdicional?.isNotEmpty ?? false) ...[
-                                    const TextSpan(text: ' + ', style: TextStyle(color: Colors.purpleAccent, fontSize: 20)),
-                                    TextSpan(text: servico.descricaoAdicional!, style: const TextStyle(color: Colors.purpleAccent)),
-                                  ],
-                                ],
+                            // Nome do Serviço (Nome limpo conforme solicitado)
+                            Text(
+                              servico.nome,
+                              style: TextStyle(
+                                color: _isDark ? Colors.white : Colors.black87, 
+                                fontWeight: FontWeight.bold, 
+                                fontSize: 18
                               ),
                             ),
                             if (servico.descricao?.isNotEmpty ?? false) ...[
@@ -710,11 +711,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
-                          if (servico.valorAdicional > 0)
-                             Text(
-                              '${servico.nome}: R\$ ${servico.preco.toStringAsFixed(2)} + ${servico.descricaoAdicional ?? "Adicional"}: R\$ ${servico.valorAdicional.toStringAsFixed(2)}',
-                              style: TextStyle(color: Colors.greenAccent.withOpacity(0.8), fontSize: 9, fontWeight: FontWeight.w500),
-                            ),
+                           // Removido breakdown detalhado para evitar duplicidade visual
                           Text(
                             'R\$ ${servico.precoTotal.toStringAsFixed(2)}',
                             style: GoogleFonts.outfit(
@@ -2185,18 +2182,18 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                 Container(
                   padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
-                    color: (horarioOcupado ? Colors.orange : Colors.green).withOpacity(0.1),
+                    color: Colors.green.withOpacity(0.1),
                     shape: BoxShape.circle,
                   ),
-                  child: Icon(
-                    horarioOcupado ? Icons.warning_amber_rounded : Icons.check_circle_rounded, 
-                    color: horarioOcupado ? Colors.orange : Colors.green, 
+                  child: const Icon(
+                    Icons.check_circle_rounded, 
+                    color: Colors.green, 
                     size: 80
                   ),
                 ),
                 const SizedBox(height: 24),
                 Text(
-                  horarioOcupado ? 'Solicitações Enviadas' : 'Tudo pronto!',
+                  'Solicitação Enviada!',
                   style: GoogleFonts.outfit(color: textColor, fontSize: 24, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 16),

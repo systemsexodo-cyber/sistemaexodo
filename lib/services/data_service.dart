@@ -370,7 +370,9 @@ class DataService extends ChangeNotifier {
           final isNovoMaisRecente = agendamentoCompleto.updatedAt.isAfter(local.updatedAt);
           final isStatusDiferente = local.status != agendamentoCompleto.status;
           
-          if (isNovoMaisRecente || (isStatusDiferente && !local.updatedAt.isAfter(agendamentoCompleto.updatedAt))) {
+          // CRÍTICO: Se temos uma mudança de status local (ex: Agendado) e o remoto volta com status antigo (Aguardando)
+          // mas com o mesmo updatedAt (ou anterior), ignoramos para evitar que o Firebase "desfaça" nossa aprovação.
+          if (isNovoMaisRecente || (isStatusDiferente && agendamentoCompleto.updatedAt.isAfter(local.updatedAt))) {
             _agendamentosServico[index] = agendamentoCompleto;
             houveMudanca = true;
             debugPrint('>>> [Sync] ✅ MUDANÇA APLICADA: ${agendamento.id} (${local.status} -> ${agendamentoCompleto.status})');
@@ -3016,46 +3018,49 @@ class DataService extends ChangeNotifier {
       final agendamento = _agendamentosServico[index];
       
       // Atribuir número sequencial se ainda não tiver um válido (muito comum em agendamentos online)
-      String numero = agendamento.numero;
-      if (numero.isEmpty || numero == 'AGD-0000' || numero == 'TS-999') {
-        numero = getProximoNumeroAgendamento();
-        debugPrint('>>> [Agendamento] Gerado novo número para aprovação: $numero');
-      }
-
-      final agendamentoAtualizado = agendamento.copyWith(
-        numero: numero,
-        status: 'Agendado',
-        updatedAt: DateTime.now(),
-      );
-      
-      debugPrint('>>> [Agendamento] ✅ Aprovando: ${agendamento.id} (${agendamento.status} -> Agendado)');
-      
-      _agendamentosServico[index] = agendamentoAtualizado;
-      notifyListeners();
-      
-      // Sincronizar com Firebase IMEDIATAMENTE (sem debounce para aprovações)
-      if (_firebaseHabilitado && _empresaIdAtual != null) {
-        try {
-          await _firebaseService.salvarAgendamentoServico(_empresaIdAtual!, agendamentoAtualizado);
-          debugPrint('>>> [Agendamento] ✅ Salvo no Firebase com sucesso');
-        } catch (e) {
-          debugPrint('>>> [Agendamento] ❌ Erro ao aprovar no Firebase: $e');
-        }
-      }
-      
-      // Forçar salvamento local
-      _salvarAutomaticamente();
-      
-      // Notificar cliente via WhatsApp em BACKGROUND para não travar a UI
-      // ignore: unawaited_futures
-      _enviarNotificacaoWhatsAppAgendamento(agendamentoAtualizado, isNovo: false);
-      
-      // Notificar novamente para garantir que a UI refletiu o salvamento
-      notifyListeners();
-    } else {
-      debugPrint('>>> [Agendamento] ❌ ERRO: Agendamento $agendamentoId não encontrado para aprovação!');
+    String numero = agendamento.numero;
+    if (numero.isEmpty || numero == 'AGD-0000' || numero == 'TS-999') {
+      numero = getProximoNumeroAgendamento();
+      debugPrint('>>> [Agendamento] Gerado novo número para aprovação: $numero');
     }
+
+    final agendamentoAtualizado = agendamento.copyWith(
+      numero: numero,
+      status: 'Agendado',
+      updatedAt: DateTime.now(),
+    );
+    
+    debugPrint('>>> [Agendamento] ✅ Aprovando: ${agendamento.id} (${agendamento.status} -> Agendado)');
+    
+    // Atualizar TODAS as instâncias com este ID (evitar fantasmas de duplicatas em memória)
+    _agendamentosServico.removeWhere((a) => a.id == agendamentoId);
+    _agendamentosServico.add(agendamentoAtualizado);
+    
+    notifyListeners();
+    
+    // Sincronizar com Firebase IMEDIATAMENTE (sem debounce para aprovações)
+    if (_firebaseHabilitado && _empresaIdAtual != null) {
+      try {
+        await _firebaseService.salvarAgendamentoServico(_empresaIdAtual!, agendamentoAtualizado);
+        debugPrint('>>> [Agendamento] ✅ Salvo no Firebase com sucesso');
+      } catch (e) {
+        debugPrint('>>> [Agendamento] ❌ Erro ao aprovar no Firebase: $e');
+      }
+    }
+    
+    // Forçar salvamento local
+    _salvarAutomaticamente();
+    
+    // Notificar cliente via WhatsApp em BACKGROUND para não travar a UI
+    // ignore: unawaited_futures
+    _enviarNotificacaoWhatsAppAgendamento(agendamentoAtualizado, isNovo: false);
+    
+    // Notificar novamente para garantir que a UI refletiu o salvamento
+    notifyListeners();
+  } else {
+    debugPrint('>>> [Agendamento] ❌ ERRO: Agendamento $agendamentoId não encontrado para aprovação!');
   }
+}
 
   /// Rejeita um agendamento (muda status para 'Cancelado')
   Future<void> rejeitarAgendamento(String agendamentoId) async {
@@ -3063,74 +3068,39 @@ class DataService extends ChangeNotifier {
     if (index != -1) {
       final agendamento = _agendamentosServico[index];
       final agendamentoAtualizado = agendamento.copyWith(
-        status: 'Cancelado',
-        updatedAt: DateTime.now(),
-      );
-      _agendamentosServico[index] = agendamentoAtualizado;
-      notifyListeners();
-      _salvarAutomaticamente();
-      
-      // Sincronizar com Firebase
-      if (_firebaseHabilitado && _empresaIdAtual != null) {
-        try {
-          await _firebaseService.salvarAgendamentoServico(_empresaIdAtual!, agendamentoAtualizado);
-        } catch (e) {
-          debugPrint('>>> [Agendamento] Erro ao rejeitar no Firebase: $e');
-        }
+      status: 'Cancelado',
+      updatedAt: DateTime.now(),
+    );
+    
+    // Atualizar TODAS as instâncias com este ID
+    _agendamentosServico.removeWhere((a) => a.id == agendamentoId);
+    _agendamentosServico.add(agendamentoAtualizado);
+    
+    notifyListeners();
+    _salvarAutomaticamente();
+    
+    // Sincronizar com Firebase
+    if (_firebaseHabilitado && _empresaIdAtual != null) {
+      try {
+        await _firebaseService.salvarAgendamentoServico(_empresaIdAtual!, agendamentoAtualizado);
+      } catch (e) {
+        debugPrint('>>> [Agendamento] Erro ao rejeitar no Firebase: $e');
       }
-      
-      // Notificar cliente via WhatsApp em background
-      // ignore: unawaited_futures
-      _enviarNotificacaoWhatsAppAgendamento(agendamentoAtualizado, isNovo: false);
-
-      notifyListeners();
     }
+    
+    // Notificar cliente via WhatsApp em background
+    // ignore: unawaited_futures
+    _enviarNotificacaoWhatsAppAgendamento(agendamentoAtualizado, isNovo: false);
+
+    notifyListeners();
   }
+}
 
   /// Verifica se há conflito de horário para um agendamento
 
   // ============ CRUD Pedido ============
 
   Future<void> addPedido(Pedido pedido) async {
-    // Verificar se algum serviço tem valor adicional e cadastrar automaticamente
-    for (final itemServico in pedido.servicos) {
-      if (itemServico.valorAdicional > 0) {
-        // Verificar se já existe um serviço com esse nome e preço total
-        final precoTotal = itemServico.valor + itemServico.valorAdicional;
-        final nomeServico = itemServico.descricaoAdicional != null && 
-                           itemServico.descricaoAdicional!.isNotEmpty
-            ? '${itemServico.descricao} + ${itemServico.descricaoAdicional}'
-            : '${itemServico.descricao} (com adicional)';
-        
-        // Verificar se já existe um serviço similar
-        final servicoExistente = _tiposServico.firstWhere(
-          (s) => s.nome == nomeServico && s.preco == precoTotal,
-          orElse: () => Servico(
-            id: '',
-            nome: '',
-            preco: 0,
-            createdAt: DateTime.now(),
-            updatedAt: DateTime.now(),
-          ),
-        );
-        
-        // Se não existe, cadastrar novo serviço
-        if (servicoExistente.id.isEmpty) {
-          final novoServico = Servico(
-            id: DateTime.now().millisecondsSinceEpoch.toString(),
-            nome: nomeServico,
-            descricao: itemServico.descricaoAdicional ?? 
-                      'Serviço com valor adicional de R\$ ${itemServico.valorAdicional.toStringAsFixed(2)}',
-            preco: itemServico.valor, // Preço BASE (sem o adicional)
-            valorAdicional: itemServico.valorAdicional, // Valor adicional separado
-            descricaoAdicional: itemServico.descricaoAdicional, // Descrição do adicional
-            createdAt: DateTime.now(),
-            updatedAt: DateTime.now(),
-          );
-          await addTipoServico(novoServico);
-        }
-      }
-    }
     
     _pedidos.add(pedido);
     debugPrint('>>> Pedido adicionado: ${pedido.numero} (id=${pedido.id})');
@@ -3181,45 +3151,6 @@ class DataService extends ChangeNotifier {
   }
 
   Future<void> updatePedido(Pedido pedido) async {
-    // Verificar se algum serviço tem valor adicional e cadastrar automaticamente
-    for (final itemServico in pedido.servicos) {
-      if (itemServico.valorAdicional > 0) {
-        // Verificar se já existe um serviço com esse nome e preço total
-        final precoTotal = itemServico.valor + itemServico.valorAdicional;
-        final nomeServico = itemServico.descricaoAdicional != null && 
-                           itemServico.descricaoAdicional!.isNotEmpty
-            ? '${itemServico.descricao} + ${itemServico.descricaoAdicional}'
-            : '${itemServico.descricao} (com adicional)';
-        
-        // Verificar se já existe um serviço similar
-        final servicoExistente = _tiposServico.firstWhere(
-          (s) => s.nome == nomeServico && s.preco == precoTotal,
-          orElse: () => Servico(
-            id: '',
-            nome: '',
-            preco: 0,
-            createdAt: DateTime.now(),
-            updatedAt: DateTime.now(),
-          ),
-        );
-        
-        // Se não existe, cadastrar novo serviço
-        if (servicoExistente.id.isEmpty) {
-          final novoServico = Servico(
-            id: DateTime.now().millisecondsSinceEpoch.toString(),
-            nome: nomeServico,
-            descricao: itemServico.descricaoAdicional ?? 
-                      'Serviço com valor adicional de R\$ ${itemServico.valorAdicional.toStringAsFixed(2)}',
-            preco: itemServico.valor, // Preço BASE (sem o adicional)
-            valorAdicional: itemServico.valorAdicional, // Valor adicional separado
-            descricaoAdicional: itemServico.descricaoAdicional, // Descrição do adicional
-            createdAt: DateTime.now(),
-            updatedAt: DateTime.now(),
-          );
-          await addTipoServico(novoServico);
-        }
-      }
-    }
     
     final index = _pedidos.indexWhere((p) => p.id == pedido.id);
     debugPrint('>>> DataService.updatePedido: id=${pedido.id}, index=$index');
