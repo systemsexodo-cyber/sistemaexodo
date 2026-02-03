@@ -350,21 +350,28 @@ class DataService extends ChangeNotifier {
         );
 
         if (index >= 0) {
-          debugPrint('>>> [Sync] 🔄 Verificando existente: ${agendamento.id}');
-          // Comparar status e updatedAt (garantir que não estamos retrocedendo ou ignorando mudanças)
           final local = _agendamentosServico[index];
-          if (local.status != agendamentoCompleto.status || 
-              local.updatedAt.millisecondsSinceEpoch != agendamentoCompleto.updatedAt.millisecondsSinceEpoch) {
+          
+          // SÓ ATUALIZA SE:
+          // 1. O status for diferente E (o novo for mais recente OU o status for 'Concluído'/'Cancelado' que são estados finais)
+          // 2. O updatedAt do novo for estritamente mais recente que o local
+          
+          final isNovoMaisRecente = agendamentoCompleto.updatedAt.isAfter(local.updatedAt);
+          final isStatusDiferente = local.status != agendamentoCompleto.status;
+          
+          if (isNovoMaisRecente || (isStatusDiferente && !local.updatedAt.isAfter(agendamentoCompleto.updatedAt))) {
             _agendamentosServico[index] = agendamentoCompleto;
             houveMudanca = true;
-            debugPrint('>>> [Sync] ✅ MUDANÇA REAL APLICADA: ${agendamento.id} (${local.status} -> ${agendamentoCompleto.status})');
+            debugPrint('>>> [Sync] ✅ MUDANÇA APLICADA: ${agendamento.id} (${local.status} -> ${agendamentoCompleto.status})');
+          } else if (isStatusDiferente) {
+             debugPrint('>>> [Sync] ⚠️ IGNORANDO mudança de status antiga/concorrente para ${agendamento.id}: Local(${local.status}, ${local.updatedAt}) vs Remoto(${agendamentoCompleto.status}, ${agendamentoCompleto.updatedAt})');
           }
         } else {
-          // Evitar qualquer chance de duplicata fantasma verificando novamente antes de adicionar
+          // Evitar duplicatas
           _agendamentosServico.removeWhere((a) => a.id == agendamentoCompleto.id);
           _agendamentosServico.add(agendamentoCompleto);
           houveMudanca = true;
-          debugPrint('>>> [Sync] ✨ NOVO AGENDAMENTO ADICIONADO via Stream: ${agendamentoCompleto.id}');
+          debugPrint('>>> [Sync] ✨ NOVO AGENDAMENTO: ${agendamentoCompleto.id}');
         }
       }
       
@@ -3008,19 +3015,31 @@ class DataService extends ChangeNotifier {
         updatedAt: DateTime.now(),
       );
       
+      debugPrint('>>> [Agendamento] ✅ Aprovando: ${agendamento.id} (${agendamento.status} -> Agendado)');
+      
       _agendamentosServico[index] = agendamentoAtualizado;
       notifyListeners();
-      _salvarAutomaticamente();
       
-      // Sincronizar com Firebase
+      // Sincronizar com Firebase IMEDIATAMENTE (sem debounce para aprovações)
       if (_firebaseHabilitado && _empresaIdAtual != null) {
-        _firebaseService.salvarAgendamentoServico(_empresaIdAtual!, agendamentoAtualizado).catchError((e) {
-          debugPrint('>>> [Agendamento] Erro ao aprovar no Firebase: $e');
-        });
+        try {
+          await _firebaseService.salvarAgendamentoServico(_empresaIdAtual!, agendamentoAtualizado);
+          debugPrint('>>> [Agendamento] ✅ Salvo no Firebase com sucesso');
+        } catch (e) {
+          debugPrint('>>> [Agendamento] ❌ Erro ao aprovar no Firebase: $e');
+        }
       }
+      
+      // Forçar salvamento local
+      _salvarAutomaticamente();
       
       // Notificar cliente via WhatsApp
       _enviarNotificacaoWhatsAppAgendamento(agendamentoAtualizado, isNovo: false);
+      
+      // Notificar novamente para garantir que a UI refletiu o salvamento
+      notifyListeners();
+    } else {
+      debugPrint('>>> [Agendamento] ❌ ERRO: Agendamento $agendamentoId não encontrado para aprovação!');
     }
   }
 
@@ -3039,13 +3058,17 @@ class DataService extends ChangeNotifier {
       
       // Sincronizar com Firebase
       if (_firebaseHabilitado && _empresaIdAtual != null) {
-        _firebaseService.salvarAgendamentoServico(_empresaIdAtual!, agendamentoAtualizado).catchError((e) {
+        try {
+          await _firebaseService.salvarAgendamentoServico(_empresaIdAtual!, agendamentoAtualizado);
+        } catch (e) {
           debugPrint('>>> [Agendamento] Erro ao rejeitar no Firebase: $e');
-        });
+        }
       }
       
       // Notificar cliente via WhatsApp
       _enviarNotificacaoWhatsAppAgendamento(agendamentoAtualizado, isNovo: false);
+
+      notifyListeners();
     }
   }
 
