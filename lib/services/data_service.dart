@@ -301,6 +301,36 @@ class DataService extends ChangeNotifier {
     });
   }
 
+  /// Auxiliar para atualizar ou adicionar um agendamento na lista local com controle de versão/data
+  /// Retorna true se houve mudança real na lista
+  bool _upsertAgendamentoLocal(AgendamentoServico novo, {bool prioritario = false}) {
+    final index = _agendamentosServico.indexWhere((a) => a.id == novo.id);
+    
+    if (index != -1) {
+      final existente = _agendamentosServico[index];
+      
+      // Só atualizar se o novo for mais recente ou se for uma ação direta (prioritária)
+      if (prioritario || novo.updatedAt.isAfter(existente.updatedAt)) {
+        _agendamentosServico.removeWhere((a) => a.id == novo.id);
+        if (prioritario) {
+          _agendamentosServico.insert(0, novo);
+        } else {
+          _agendamentosServico.add(novo);
+        }
+        return true;
+      }
+      return false;
+    } else {
+      // Novo agendamento
+      if (prioritario) {
+        _agendamentosServico.insert(0, novo);
+      } else {
+        _agendamentosServico.add(novo);
+      }
+      return true;
+    }
+  }
+
   void _iniciarStreamAgendamentos() {
     _agendamentosSubscription?.cancel();
     if (_empresaIdAtual == null || !_firebaseHabilitado) return;
@@ -328,27 +358,10 @@ class DataService extends ChangeNotifier {
       }
       
       for (final agendamento in novosAgendamentos) {
-        // Encontrar TODAS as instâncias locais (para limpar duplicatas se houver)
-        final localInstances = _agendamentosServico.where((a) => a.id == agendamento.id).toList();
-        
         final agendamentoCompleto = _vincularReferenciasAgendamento(agendamento);
-
-        if (localInstances.isNotEmpty) {
-          final local = localInstances.first;
-          
-          final isNovoMaisRecente = agendamentoCompleto.updatedAt.isAfter(local.updatedAt);
-          
-          if (isNovoMaisRecente) {
-            // Garantir que removemos todas e adicionamos a nova
-            _agendamentosServico.removeWhere((a) => a.id == agendamento.id);
-            _agendamentosServico.add(agendamentoCompleto);
-            houveMudanca = true;
-            debugPrint('>>> [Sync] ✅ MUDANÇA APLICADA via Stream: ${agendamento.id} (Novo status: ${agendamentoCompleto.status})');
-          }
-        } else {
-          _agendamentosServico.add(agendamentoCompleto);
+        if (_upsertAgendamentoLocal(agendamentoCompleto)) {
           houveMudanca = true;
-          debugPrint('>>> [Sync] ✨ NOVO AGENDAMENTO via Stream: ${agendamentoCompleto.id} status=${agendamentoCompleto.status}');
+          debugPrint('>>> [Sync] ✅ MUDANÇA via Stream: ${agendamento.id} (${agendamentoCompleto.status})');
         }
       }
       
@@ -2988,11 +3001,8 @@ class DataService extends ChangeNotifier {
     // Isso evita que ele suma da agenda caso o filtro dependa destes objetos
     final agendamentoAtualizado = _vincularReferenciasAgendamento(agendamentoPrevio);
     
-    debugPrint('>>> [Agendamento] ✅ Aprovando: ${agendamento.id} (${agendamento.status} -> Agendado)');
-    
-    // Garantir que a lista local tem a referência mais atualizada
-    _agendamentosServico.removeWhere((a) => a.id == agendamentoId);
-    _agendamentosServico.insert(0, agendamentoAtualizado); // Inserir no início para prioridade no getter
+    // Garantir que a lista local tem a referência mais atualizada e em destaque
+    _upsertAgendamentoLocal(agendamentoAtualizado, prioritario: true);
     
     notifyListeners();
     forceUpdate(); // Forçar rebuild global para garantir que o sino e agenda atualizem
