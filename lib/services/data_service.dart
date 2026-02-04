@@ -328,74 +328,38 @@ class DataService extends ChangeNotifier {
       }
       
       for (final agendamento in novosAgendamentos) {
-        final index = _agendamentosServico.indexWhere((a) => a.id == agendamento.id);
+        // Encontrar TODAS as instâncias locais (para limpar duplicatas se houver)
+        final localInstances = _agendamentosServico.where((a) => a.id == agendamento.id).toList();
         
-        // Processar referências (Serviço, Cliente, Pet)
-        Servico? servico;
-        if (agendamento.servicoId != null && !agendamento.servicoId!.startsWith('vacina_')) {
-          try {
-            servico = _tiposServico.firstWhere((s) => s.id == agendamento.servicoId);
-          } catch (_) {}
-        }
-        
-        Cliente? cliente;
-        if (agendamento.clienteId != null) {
-          try {
-            cliente = _clientes.firstWhere((c) => c.id == agendamento.clienteId);
-          } catch (_) {}
-        }
-        
-        Pet? pet;
-        if (agendamento.petId != null && cliente != null) {
-          try {
-            pet = cliente.pets.firstWhere((p) => p.id == agendamento.petId);
-          } catch (_) {}
-        }
+        final agendamentoCompleto = _vincularReferenciasAgendamento(agendamento);
 
-        final agendamentoCompleto = agendamento.copyWith(
-          servico: servico,
-          cliente: cliente,
-          pet: pet,
-        );
-
-        if (index >= 0) {
-          final local = _agendamentosServico[index];
-          
-          // SÓ ATUALIZA SE:
-          // 1. O status for diferente E (o novo for mais recente OU o status for 'Concluído'/'Cancelado' que são estados finais)
-          // 2. O updatedAt do novo for estritamente mais recente que o local
+        if (localInstances.isNotEmpty) {
+          final local = localInstances.first;
           
           final isNovoMaisRecente = agendamentoCompleto.updatedAt.isAfter(local.updatedAt);
-          final isStatusDiferente = local.status != agendamentoCompleto.status;
           
-          // CRÍTICO: Se temos uma mudança de status local (ex: Agendado) e o remoto volta com status antigo (Aguardando)
-          // mas com o mesmo updatedAt (ou anterior), ignoramos para evitar que o Firebase "desfaça" nossa aprovação.
-          if (isNovoMaisRecente || (isStatusDiferente && agendamentoCompleto.updatedAt.isAfter(local.updatedAt))) {
-            _agendamentosServico[index] = agendamentoCompleto;
+          if (isNovoMaisRecente) {
+            // Garantir que removemos todas e adicionamos a nova
+            _agendamentosServico.removeWhere((a) => a.id == agendamento.id);
+            _agendamentosServico.add(agendamentoCompleto);
             houveMudanca = true;
-            debugPrint('>>> [Sync] ✅ MUDANÇA APLICADA: ${agendamento.id} (${local.status} -> ${agendamentoCompleto.status})');
-          } else if (isStatusDiferente) {
-             debugPrint('>>> [Sync] ⚠️ IGNORANDO mudança de status antiga/concorrente para ${agendamento.id}: Local(${local.status}, ${local.updatedAt}) vs Remoto(${agendamentoCompleto.status}, ${agendamentoCompleto.updatedAt})');
+            debugPrint('>>> [Sync] ✅ MUDANÇA APLICADA via Stream: ${agendamento.id} (Novo status: ${agendamentoCompleto.status})');
           }
         } else {
-          // Evitar duplicatas
-          _agendamentosServico.removeWhere((a) => a.id == agendamentoCompleto.id);
           _agendamentosServico.add(agendamentoCompleto);
           houveMudanca = true;
-          debugPrint('>>> [Sync] ✨ NOVO AGENDAMENTO: ${agendamentoCompleto.id}');
+          debugPrint('>>> [Sync] ✨ NOVO AGENDAMENTO via Stream: ${agendamentoCompleto.id} status=${agendamentoCompleto.status}');
         }
       }
       
       if (houveMudanca) {
-        debugPrint('>>> [Sync] 🔔 Mudança detectada no Stream. Total em memória: ${_agendamentosServico.length}');
+        debugPrint('>>> [Sync] 🔔 Notificando UI sobre mudanças no Stream. Total: ${_agendamentosServico.length}');
         notifyListeners();
         // Salvar localmente o estado sincronizado
         _storage.salvarLista(
           _getChaveComEmpresa(LocalStorageService.keyAgendamentosServico),
           _agendamentosServico,
         );
-      } else {
-        debugPrint('>>> [Sync] 💤 Snapshot recebido mas sem mudanças relevantes');
       }
     }, onError: (e) {
       debugPrint('>>> [Sync] ❌ Erro Crítico no Stream de Agendamentos: $e');
@@ -2802,49 +2766,11 @@ class DataService extends ChangeNotifier {
     // Validação de conflito de horário REMOVIDA - permitir múltiplos agendamentos no mesmo horário
     // A duração do serviço é mantida apenas para informação, sem bloquear outros agendamentos
 
-    // Carregar referências atualizadas
-    // Para vacinas, não há serviço cadastrado (servicoId começa com "vacina_")
-    Servico? servico;
-    if (agendamento.servicoId != null && !agendamento.servicoId!.startsWith('vacina_')) {
-      try {
-        servico = _tiposServico.firstWhere(
-          (s) => s.id == agendamento.servicoId,
-        );
-      } catch (e) {
-        debugPrint('>>> ⚠ Serviço ${agendamento.servicoId ?? "null"} não encontrado ao atualizar agendamento');
-        servico = null;
-      }
-    } else {
-      // É uma vacina, não precisa de serviço cadastrado
-      servico = null;
-    }
-    
-    final cliente = agendamento.clienteId != null
-        ? _clientes.firstWhere(
-            (c) => c.id == agendamento.clienteId,
-            orElse: () => _clientes.first,
-          )
-        : null;
-    
-    // Carregar pet se houver
-    Pet? pet;
-    if (agendamento.petId != null && cliente != null) {
-      try {
-        pet = cliente.pets.firstWhere(
-          (p) => p.id == agendamento.petId,
-        );
-      } catch (e) {
-        debugPrint('>>> ⚠ Pet ${agendamento.petId} não encontrado ao atualizar agendamento');
-        pet = null;
-      }
-    }
+    final agendamentoPrevio = agendamento.copyWith(
+    updatedAt: DateTime.now(),
+  );
 
-    final agendamentoAtualizado = agendamento.copyWith(
-      servico: servico,
-      cliente: cliente,
-      pet: pet,
-      updatedAt: DateTime.now(),
-    );
+  final agendamentoAtualizado = _vincularReferenciasAgendamento(agendamentoPrevio);
     _agendamentosServico[index] = agendamentoAtualizado;
     notifyListeners();
     
@@ -3009,6 +2935,36 @@ class DataService extends ChangeNotifier {
     return true;
   }
 
+  /// Vincula as referências (Serviço, Cliente, Pet) a um agendamento com base nos IDs
+  AgendamentoServico _vincularReferenciasAgendamento(AgendamentoServico agendamento) {
+    Servico? servico;
+    if (agendamento.servicoId != null && !agendamento.servicoId!.startsWith('vacina_')) {
+      try {
+        servico = _tiposServico.firstWhere((s) => s.id == agendamento.servicoId);
+      } catch (_) {}
+    }
+
+    Cliente? cliente;
+    if (agendamento.clienteId != null) {
+      try {
+        cliente = _clientes.firstWhere((c) => c.id == agendamento.clienteId);
+      } catch (_) {}
+    }
+
+    Pet? pet;
+    if (agendamento.petId != null && cliente != null) {
+      try {
+        pet = cliente.pets.firstWhere((p) => p.id == agendamento.petId);
+      } catch (_) {}
+    }
+
+    return agendamento.copyWith(
+      servico: servico,
+      cliente: cliente,
+      pet: pet,
+    );
+  }
+
   /// Aprova um agendamento (muda status de 'Aguardando Confirmação' para 'Agendado')
   Future<void> aprovarAgendamento(String agendamentoId) async {
     final index = _agendamentosServico.indexWhere((a) => a.id == agendamentoId);
@@ -3022,19 +2978,24 @@ class DataService extends ChangeNotifier {
       debugPrint('>>> [Agendamento] Gerado novo número para aprovação: $numero');
     }
 
-    final agendamentoAtualizado = agendamento.copyWith(
+    final agendamentoPrevio = agendamento.copyWith(
       numero: numero,
       status: 'Agendado',
       updatedAt: DateTime.now(),
     );
     
+    // Vincular referências para garantir que o agendamento tenha os objetos (Serviço, Cliente, Pet)
+    // Isso evita que ele suma da agenda caso o filtro dependa destes objetos
+    final agendamentoAtualizado = _vincularReferenciasAgendamento(agendamentoPrevio);
+    
     debugPrint('>>> [Agendamento] ✅ Aprovando: ${agendamento.id} (${agendamento.status} -> Agendado)');
     
-    // Atualizar TODAS as instâncias com este ID (evitar fantasmas de duplicatas em memória)
+    // Garantir que a lista local tem a referência mais atualizada
     _agendamentosServico.removeWhere((a) => a.id == agendamentoId);
-    _agendamentosServico.add(agendamentoAtualizado);
+    _agendamentosServico.insert(0, agendamentoAtualizado); // Inserir no início para prioridade no getter
     
     notifyListeners();
+    forceUpdate(); // Forçar rebuild global para garantir que o sino e agenda atualizem
     
     // Sincronizar com Firebase IMEDIATAMENTE (sem debounce para aprovações)
     if (_firebaseHabilitado && _empresaIdAtual != null) {
@@ -3065,10 +3026,12 @@ class DataService extends ChangeNotifier {
     final index = _agendamentosServico.indexWhere((a) => a.id == agendamentoId);
     if (index != -1) {
       final agendamento = _agendamentosServico[index];
-      final agendamentoAtualizado = agendamento.copyWith(
+      final agendamentoPrevio = agendamento.copyWith(
       status: 'Cancelado',
       updatedAt: DateTime.now(),
     );
+    
+    final agendamentoAtualizado = _vincularReferenciasAgendamento(agendamentoPrevio);
     
     // Atualizar TODAS as instâncias com este ID
     _agendamentosServico.removeWhere((a) => a.id == agendamentoId);
@@ -4100,17 +4063,21 @@ class DataService extends ChangeNotifier {
       return;
     }
     
+    // Otimização: No modo silencioso (que roda a cada 45s), não recarregar agendamentos, produtos e serviços
+    // se eles já estiverem sendo sincronizados via Stream. Isso reduz carga no Firebase e previne race conditions.
+    final finalModoLeve = modoLeve || _isModoLeve;
+    final isSilentSync = _syncTimer != null && _syncTimer!.isActive;
+
     _syncEmAndamento = true;
     notifyListeners();
     
     try {
-      final finalModoLeve = modoLeve || _isModoLeve;
       print('>>> 🔥 ========================================');
       print('>>> 🔥 Carregando dados do Firebase (Modo Leve: $finalModoLeve)');
       print('>>> 🔥 Empresa: $_empresaIdAtual');
       print('>>> 🔥 ========================================');
       
-      final dados = finalModoLeve 
+      final dados = (finalModoLeve || isSilentSync)
           ? await _firebaseService.carregarDadosLevesDoFirebase(_empresaIdAtual!)
           : await _firebaseService.carregarTudoDoFirebase(_empresaIdAtual!);
       
@@ -4135,16 +4102,16 @@ class DataService extends ChangeNotifier {
         notifyListeners(); // Notificar progresso
       }
 
-      // Carregar produtos
-      if (dados['produtos'] != null) {
+      // Carregar produtos - Otimizado: Pular se em sync silencioso e stream ativo
+      if (dados['produtos'] != null && (!isSilentSync || _produtosSubscription == null)) {
         final novos = (dados['produtos'] as List).map((map) => Produto.fromMap(map as Map<String, dynamic>)).toList();
         _atualizarListaInPlace(_produtos, novos);
         print('>>> ✓ ${novos.length} produtos carregados do Firebase');
         notifyListeners(); // Notificar progresso
       }
 
-      // Carregar serviços
-      if (dados['servicos'] != null) {
+      // Carregar serviços - Otimizado: Pular se em sync silencioso e stream ativo
+      if (dados['servicos'] != null && (!isSilentSync || _servicosSubscription == null)) {
         final novos = (dados['servicos'] as List).map((map) => Servico.fromMap(map as Map<String, dynamic>)).toList();
         _atualizarListaInPlace(_tiposServico, novos);
         print('>>> ✓ ${novos.length} serviços carregados do Firebase');
@@ -4295,9 +4262,8 @@ class DataService extends ChangeNotifier {
         print('>>> ✓ ${novasMesas.length} mesas/comandas carregadas do Firebase (total: ${_mesasComandas.length})');
       }
 
-      // Carregar agendamentos de serviço - NÃO LIMPAR, apenas adicionar/atualizar
-      // Carregar agendamentos - CRÍTICO: Verificar se há dados
-      if (dados['agendamentos_servico'] != null) {
+      // Carregar agendamentos de serviço - Otimizado: Pular se em sync silencioso e stream ativo
+      if (dados['agendamentos_servico'] != null && (!isSilentSync || _agendamentosSubscription == null)) {
         final agendamentosRaw = dados['agendamentos_servico'] as List;
         print('>>> [Agendamentos] 🔍 Encontrados ${agendamentosRaw.length} agendamentos no Firebase');
         
@@ -4308,48 +4274,7 @@ class DataService extends ChangeNotifier {
               final agendamento = AgendamentoServico.fromMap(map as Map<String, dynamic>);
               print('>>> [Agendamentos] Processando: ${agendamento.numero} (ID: ${agendamento.id})');
               
-              // Carregar referências de serviço, cliente e pet
-              // Para vacinas, não há serviço cadastrado (servicoId começa com "vacina_")
-              Servico? servico;
-              if (agendamento.servicoId != null && !agendamento.servicoId!.startsWith('vacina_')) {
-                try {
-                  servico = _tiposServico.firstWhere(
-                    (s) => s.id == agendamento.servicoId,
-                  );
-                } catch (e) {
-                  print('>>> ⚠ Serviço ${agendamento.servicoId ?? "null"} não encontrado ao carregar agendamento ${agendamento.id} do Firebase');
-                  servico = null;
-                }
-              } else {
-                // É uma vacina, não precisa de serviço cadastrado
-                servico = null;
-              }
-              Cliente? cliente;
-              if (agendamento.clienteId != null) {
-                try {
-                  cliente = _clientes.firstWhere(
-                    (c) => c.id == agendamento.clienteId,
-                  );
-                } catch (e) {
-                  print('>>> ⚠ Cliente ${agendamento.clienteId} não encontrado para agendamento ${agendamento.id} do Firebase');
-                  cliente = null;
-                }
-              }
-              
-              // Carregar pet se houver
-              Pet? pet;
-              if (agendamento.petId != null && cliente != null) {
-                try {
-                  pet = cliente.pets.firstWhere(
-                    (p) => p.id == agendamento.petId,
-                  );
-                } catch (e) {
-                  print('>>> ⚠ Pet ${agendamento.petId} não encontrado para agendamento ${agendamento.id} do Firebase');
-                  pet = null;
-                }
-              }
-              
-              return agendamento.copyWith(servico: servico, cliente: cliente, pet: pet);
+              return _vincularReferenciasAgendamento(agendamento);
             } catch (e, stackTrace) {
               print('>>> ❌ ERRO ao processar agendamento do Firebase: $e');
               print('>>> StackTrace: $stackTrace');
