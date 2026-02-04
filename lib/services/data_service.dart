@@ -3043,9 +3043,8 @@ class DataService extends ChangeNotifier {
     
     final agendamentoAtualizado = _vincularReferenciasAgendamento(agendamentoPrevio);
     
-    // Atualizar TODAS as instâncias com este ID
-    _agendamentosServico.removeWhere((a) => a.id == agendamentoId);
-    _agendamentosServico.add(agendamentoAtualizado);
+    // Atualizar a instância com prioridade
+    _upsertAgendamentoLocal(agendamentoAtualizado, prioritario: true);
     
     notifyListeners();
     _salvarAutomaticamente();
@@ -4297,8 +4296,7 @@ class DataService extends ChangeNotifier {
           
           // Atualizar ou adicionar agendamentos (evitar duplicatas e limpar duplicatas históricas)
           for (final agendamento in novosAgendamentos) {
-            _agendamentosServico.removeWhere((a) => a.id == agendamento.id);
-            _agendamentosServico.add(agendamento);
+            _upsertAgendamentoLocal(agendamento);
           }
           
           print('>>> [Agendamentos] ✅✅✅ CARREGAMENTO CONCLUÍDO! ✅✅✅');

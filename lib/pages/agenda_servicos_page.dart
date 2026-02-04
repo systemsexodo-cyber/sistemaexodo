@@ -5906,10 +5906,14 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                           child: ElevatedButton(
                                             onPressed: () async {
                                                 try {
+                                                  // Capturar o ScaffoldMessenger ANTES de qualquer pop ou mudança de contexto
+                                                  final messenger = ScaffoldMessenger.of(context);
+                                                  
                                                   await currentDataService.aprovarAgendamento(sol.id);
+                                                  
                                                   if (context.mounted) {
-                                                    ScaffoldMessenger.of(context).hideCurrentSnackBar();
-                                                    ScaffoldMessenger.of(context).showSnackBar(
+                                                    messenger.hideCurrentSnackBar();
+                                                    messenger.showSnackBar(
                                                       const SnackBar(
                                                         content: Text('Solicitação aprovada com sucesso!'), 
                                                         backgroundColor: Colors.green,
@@ -5919,7 +5923,6 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                                   }
 
                                                   // Se não houver mais solicitações, fecha o modal após um breve delay
-                                                  // Usar delay para garantir que a UI processou a mudança
                                                   Future.delayed(const Duration(milliseconds: 300), () {
                                                     if (context.mounted) {
                                                       final dataS = Provider.of<DataService>(context, listen: false);
@@ -5929,13 +5932,17 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                                       if (itens == 0) {
                                                         Navigator.pop(context);
                                                       }
+                                                      // Forçar atualização local da agenda
+                                                      dataS.forceUpdate();
                                                     }
                                                   });
                                                 } catch (e) {
-                                                ScaffoldMessenger.of(context).showSnackBar(
-                                                  SnackBar(content: Text('Erro: $e'), backgroundColor: Colors.red),
-                                                );
-                                              }
+                                                  if (context.mounted) {
+                                                    ScaffoldMessenger.of(context).showSnackBar(
+                                                      SnackBar(content: Text('Erro: $e'), backgroundColor: Colors.red),
+                                                    );
+                                                  }
+                                                }
                                             },
                                             style: ElevatedButton.styleFrom(
                                               backgroundColor: const Color(0xFFFF9800),
