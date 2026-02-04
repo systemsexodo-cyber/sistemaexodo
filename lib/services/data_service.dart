@@ -297,6 +297,7 @@ class DataService extends ChangeNotifier {
     _servicosSubscription = _firebaseService.getServicosStream(_empresaIdAtual!).listen((novos) {
       debugPrint('>>> [Sync] 🛠 Stream de Serviços: ${novos.length} itens recebidos');
       _atualizarListaInPlace(_tiposServico, novos);
+      _reVincularTodosAgendamentos(); // Garantir que agendamentos pendentes agora achem seus serviços
       notifyListeners();
     });
   }
@@ -306,11 +307,16 @@ class DataService extends ChangeNotifier {
   bool _upsertAgendamentoLocal(AgendamentoServico novo, {bool prioritario = false}) {
     final index = _agendamentosServico.indexWhere((a) => a.id == novo.id);
     
+    // Normalizar datas para milissegundos para evitar problemas de precisão micro/mili entre Web/Firebase
+    final novoMs = novo.updatedAt.millisecondsSinceEpoch;
+
     if (index != -1) {
       final existente = _agendamentosServico[index];
+      final existenteMs = existente.updatedAt.millisecondsSinceEpoch;
       
       // Só atualizar se o novo for mais recente ou se for uma ação direta (prioritária)
-      if (prioritario || novo.updatedAt.isAfter(existente.updatedAt)) {
+      // Usamos >= para o prioritário para garantir que mesmo com tempo igual (mesmo doc) ele se mova na lista se necessário
+      if (prioritario || novoMs > existenteMs) {
         _agendamentosServico.removeWhere((a) => a.id == novo.id);
         if (prioritario) {
           _agendamentosServico.insert(0, novo);
@@ -328,6 +334,26 @@ class DataService extends ChangeNotifier {
         _agendamentosServico.add(novo);
       }
       return true;
+    }
+  }
+
+  /// Re-vincula referências de todos os agendamentos (útil quando serviços/clientes carregam depois)
+  void _reVincularTodosAgendamentos() {
+    bool houveMudanca = false;
+    for (int i = 0; i < _agendamentosServico.length; i++) {
+      final antes = _agendamentosServico[i];
+      final depois = _vincularReferenciasAgendamento(antes);
+      
+      // Se alguma referência (servico, cliente, pet) foi preenchida ou mudou
+      if (antes.servico != depois.servico || 
+          antes.cliente != depois.cliente || 
+          antes.pet != depois.pet) {
+        _agendamentosServico[i] = depois;
+        houveMudanca = true;
+      }
+    }
+    if (houveMudanca) {
+      notifyListeners();
     }
   }
 
@@ -3012,6 +3038,7 @@ class DataService extends ChangeNotifier {
       try {
         await _firebaseService.salvarAgendamentoServico(_empresaIdAtual!, agendamentoAtualizado);
         debugPrint('>>> [Agendamento] ✅ Salvo no Firebase com sucesso');
+        notifyListeners(); 
       } catch (e) {
         debugPrint('>>> [Agendamento] ❌ Erro ao aprovar no Firebase: $e');
       }
@@ -4403,6 +4430,7 @@ class DataService extends ChangeNotifier {
           }
         }
         print('>>> ✓ ${clientesFiltrados.length} clientes carregados da empresa $_empresaIdAtual (isolados)');
+        _reVincularTodosAgendamentos(); // Re-vincular para que agendamentos achem seus clientes
       } else {
         print('>>> ✓ Nenhum cliente encontrado para empresa $_empresaIdAtual');
       }
