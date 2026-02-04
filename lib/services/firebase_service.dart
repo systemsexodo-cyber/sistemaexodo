@@ -480,9 +480,9 @@ class FirebaseService {
         _applyFilter(_getSubCollection(empresaId, _subCollectionLinksVendedores)).get(),
         _applyFilter(_getSubCollection(empresaId, _subCollectionComissoesVendedores)).get(),
       ]).timeout(
-        const Duration(seconds: 45),
+        const Duration(seconds: 90),
         onTimeout: () {
-          debugPrint('>>> [Firebase] ⚠ Timeout ao carregar dados (45s)');
+          debugPrint('>>> [Firebase] ⚠ Timeout ao carregar dados (90s)');
           throw TimeoutException('Timeout ao carregar dados do Firebase');
         },
       );
@@ -554,9 +554,9 @@ class FirebaseService {
         _applyFilter(_getSubCollection(empresaId, _subCollectionFuncionarios)).get(),
         _applyFilter(_getSubCollection(empresaId, _subCollectionLinksVendedores)).get(),
       ]).timeout(
-        const Duration(seconds: 30),
+        const Duration(seconds: 60),
         onTimeout: () {
-          debugPrint('>>> [Firebase] ⚠ Timeout ao carregar dados leves (30s)');
+          debugPrint('>>> [Firebase] ⚠ Timeout ao carregar dados leves (60s)');
           throw TimeoutException('Timeout ao carregar dados essenciais do Firebase');
         },
       );

@@ -240,15 +240,16 @@ class DataService extends ChangeNotifier {
     
     // DEFINIR NOVA EMPRESA
     _empresaIdAtual = empresaId;
-    if (_empresaAtual?.id != empresaId) {
-      _empresaAtual = null; // Limpar para evitar dados obsoletos apenas se for realmente outra empresa
-    }
-    
-    // Recarregar dados APENAS da nova empresa (isoladamente)
     if (empresaId != null) {
-      print('>>> DataService: 📥 Carregando dados ISOLADOS da empresa: $empresaId (Modo Leve: $modoLeve)');
-      _mensagemLoading = 'Carregando dados da empresa...';
-      notifyListeners();
+      if (_empresaAtual?.id != empresaId) {
+        _empresaAtual = null; // Limpar para evitar dados obsoletos apenas se for realmente outra empresa
+      }
+      
+      // Recarregar dados APENAS da nova empresa (isoladamente)
+      // Iniciar streams de sincronização em tempo real IMEDIATAMENTE (Otimizado para grandes volumes)
+      // Isso permite que os dados comecem a aparecer via Stream enquanto o carregamento pesado (get) ainda executa.
+      _iniciarStreamsTempoReal();
+      
       await iniciarSincronizacao(modoLeve: modoLeve);
     } else {
       print('>>> DataService: ⚠ Empresa não definida - dados não serão carregados');
@@ -261,9 +262,6 @@ class DataService extends ChangeNotifier {
 
     // Iniciar timer de sincronização automática
     _reiniciarTimerSincronizacao();
-    
-    // Iniciar streams de sincronização em tempo real (Otimizado)
-    _iniciarStreamsTempoReal();
   }
 
   /// Inicia todos os streams de tempo real necessários
@@ -4115,8 +4113,6 @@ class DataService extends ChangeNotifier {
       final dados = finalModoLeve 
           ? await _firebaseService.carregarDadosLevesDoFirebase(_empresaIdAtual!)
           : await _firebaseService.carregarTudoDoFirebase(_empresaIdAtual!);
-          
-      final results = await Future.value(dados);
       
       // Verificar se há dados no Firebase (incluindo agendamentos)
       final temDados = dados['clientes']?.isNotEmpty == true ||
@@ -4136,6 +4132,7 @@ class DataService extends ChangeNotifier {
         final novos = (dados['clientes'] as List).map((map) => Cliente.fromMap(map as Map<String, dynamic>)).toList();
         _atualizarListaInPlace(_clientes, novos);
         print('>>> ✓ ${novos.length} clientes carregados do Firebase');
+        notifyListeners(); // Notificar progresso
       }
 
       // Carregar produtos
@@ -4143,6 +4140,7 @@ class DataService extends ChangeNotifier {
         final novos = (dados['produtos'] as List).map((map) => Produto.fromMap(map as Map<String, dynamic>)).toList();
         _atualizarListaInPlace(_produtos, novos);
         print('>>> ✓ ${novos.length} produtos carregados do Firebase');
+        notifyListeners(); // Notificar progresso
       }
 
       // Carregar serviços
@@ -4150,6 +4148,7 @@ class DataService extends ChangeNotifier {
         final novos = (dados['servicos'] as List).map((map) => Servico.fromMap(map as Map<String, dynamic>)).toList();
         _atualizarListaInPlace(_tiposServico, novos);
         print('>>> ✓ ${novos.length} serviços carregados do Firebase');
+        notifyListeners(); // Notificar progresso
       }
 
       // Carregar pedidos - ISOLAMENTO: Apenas dados da empresa atual do Firebase
@@ -4369,6 +4368,7 @@ class DataService extends ChangeNotifier {
           
           print('>>> [Agendamentos] ✅✅✅ CARREGAMENTO CONCLUÍDO! ✅✅✅');
           print('>>> [Agendamentos]   - Total na lista: ${_agendamentosServico.length}');
+          notifyListeners(); // Notificar progresso CRÍTICO
           
           // Migrar agendamentos sem número válido
           migrarAgendamentosSemNumero();

@@ -197,6 +197,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
     final countsTipo = <String, int>{};
     for (var a in agendamentosParaContarTipo) {
       final tipo = _getTipoServico(a);
+      // Normalizar para contagem
       countsTipo[tipo] = (countsTipo[tipo] ?? 0) + 1;
     }
 
@@ -351,7 +352,14 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                 ],
                 // Serviços cadastrados que não sejam os básicos acima
                 ...dataService.servicos
-                    .where((s) => !['Banho', 'Tosa', 'Vacina'].contains(s.nome))
+                    .where((s) {
+                      final n = s.nome.toLowerCase().trim();
+                      // Não mostrar serviços básicos que já possuem chips fixos (normalizado)
+                      if (n == 'banho' || n == 'tosa' || n == 'vacina') return false;
+                      // Não mostrar serviços poluídos com Taxi Dog ou Entrega no nome
+                      if (n.contains('taxi dog') || n.contains('entrega')) return false;
+                      return true;
+                    })
                     .map((servico) {
                   final qte = countsTipo[servico.nome] ?? 0;
                   return Padding(
@@ -563,8 +571,28 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
 
   // Retorna o tipo de serviço baseado no nome
   String _getTipoServico(AgendamentoServico agendamento) {
+    // 1. Tentar identificar por nome do serviço de forma normalizada
+    final nomeServico = (agendamento.servico?.nome ?? agendamento.servicoNome ?? '').toLowerCase().trim();
+    
+    if (nomeServico == 'banho' || nomeServico.contains('banho ') || nomeServico.startsWith('banho')) { // Ex: "Banho", "Banho e Tosa" (inicia com banho)
+       // Se for exatamente "banho" ou começar com banho, podemos agrupar se o usuário preferir, 
+       // mas se for "Banho e Tosa", talvez seja melhor categorizar como preferir.
+       // Seguindo a lógica atual de agendamento_publico_page:
+       if (nomeServico.contains('banho')) return 'Banho';
+    }
+    
+    if (nomeServico == 'vacina' || nomeServico.contains('vacinar')) return 'Vacina';
+    if (nomeServico == 'tosa' && !nomeServico.contains('comp')) return 'Tosa'; // Apenas "Tosa" simples
+    
+    // 2. Se for um serviço cadastrado e não for um dos básicos acima, retornar nome original para chip dinâmico
     if (agendamento.servico != null) {
-      return agendamento.servico!.nome;
+      final n = agendamento.servico!.nome;
+      final nl = n.toLowerCase();
+      // Se for um dos básicos em qualquer case, retornar Capitalizado
+      if (nl == 'banho') return 'Banho';
+      if (nl == 'tosa') return 'Tosa';
+      if (nl == 'vacina') return 'Vacina';
+      return n;
     }
     
     final dataService = Provider.of<DataService>(context, listen: false);
@@ -574,7 +602,6 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
       return 'Serviço';
     }
 
-    final nomeServico = agendamento.servicoNome?.toLowerCase() ?? '';
     final observacoes = agendamento.observacoes?.toLowerCase() ?? '';
     final textoCompleto = '$nomeServico $observacoes';
     

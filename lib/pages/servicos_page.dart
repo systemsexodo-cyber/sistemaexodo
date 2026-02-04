@@ -264,6 +264,39 @@ class ServicosPage extends StatelessWidget {
                       },
                       tooltip: 'Editar serviço',
                     ),
+                    IconButton(
+                      icon: const Icon(Icons.delete, color: Colors.redAccent),
+                      onPressed: () {
+                        showDialog(
+                          context: context,
+                          builder: (context) => AlertDialog(
+                            title: const Text('Deletar Serviço'),
+                            content: Text('Tem certeza que deseja deletar o serviço "${servico.nome}"?'),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(context),
+                                child: const Text('Cancelar'),
+                              ),
+                              TextButton(
+                                onPressed: () {
+                                  dataService.deleteTipoServico(servico.id);
+                                  Navigator.pop(context);
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('Serviço removido com sucesso!'),
+                                      backgroundColor: Colors.redAccent,
+                                    ),
+                                  );
+                                },
+                                child: const Text('Deletar', style: TextStyle(color: Colors.redAccent)),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                      tooltip: 'Deletar serviço',
+                    ),
+                    const SizedBox(width: 8),
                     Text(
                       'R\$ ${(precoBase + valorAdicional).toStringAsFixed(2)}',
                       style: TextStyle(

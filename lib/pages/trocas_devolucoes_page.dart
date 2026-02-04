@@ -1035,7 +1035,7 @@ class _SelecionarItensTrocaPageState extends State<_SelecionarItensTrocaPage> {
         // Devolver ao estoque
         try {
           // Tentar buscar pelo ID primeiro (mais confiável), depois pelo nome
-          Produto? produto;
+          late Produto produto;
           try {
             produto = dataService.produtos.firstWhere(
               (p) => p.id == item.id,
@@ -1785,16 +1785,18 @@ class _SelecionarNovosProdutosPageState
     for (final item in widget.itensDevolver) {
       try {
         // Tentar buscar pelo ID primeiro (mais confiável), depois pelo nome
-        Produto? produto;
+        late Produto produto;
+        bool encontrou = false;
         try {
           if (item.produtoId != null && item.produtoId!.isNotEmpty) {
             produto = dataService.produtos.firstWhere(
               (p) => p.id == item.produtoId,
             );
+            encontrou = true;
           }
         } catch (_) {}
         
-        if (produto == null) {
+        if (!encontrou) {
           produto = dataService.produtos.firstWhere(
             (p) => p.nome == item.nome,
           );

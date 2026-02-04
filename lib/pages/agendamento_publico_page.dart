@@ -302,6 +302,9 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     if (foneLimpo.length >= 8 && _clienteEncontrado == null && !_buscandoCliente && foneLimpo != _ultimoTelefoneBuscado) {
        Future.microtask(() => _buscarClientePorTelefone(_whatsappController.text));
     }
+    
+    // Feedback de carregamento global no topo se estiver sincronizando
+    final bool isSyncingData = dataService.isLoading && dataService.firebaseHabilitado;
     // --------------------------------------------
 
     return Scaffold(
@@ -310,6 +313,14 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
         title: Text(empresa?.nomeExibicao ?? 'Agendamento'),
         backgroundColor: primary,
         elevation: 0,
+        bottom: isSyncingData ? PreferredSize(
+          preferredSize: const Size.fromHeight(2),
+          child: LinearProgressIndicator(
+            backgroundColor: Colors.white.withOpacity(0.1),
+            valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
+            minHeight: 2,
+          ),
+        ) : null,
         actions: [
           TextButton.icon(
             onPressed: () => _mostrarConsultaAgendamentos(primary),
@@ -645,9 +656,23 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
           moduloPet ? 'Selecione o serviço desejado para o seu pet.' : 'Selecione o serviço desejado.',
         ),
         const SizedBox(height: 24),
-        if (servicos.isEmpty)
-          _buildEmptyState('Nenhum serviço disponível no momento.')
-        else
+      if (servicos.isEmpty && dataService.isLoading)
+        Center(
+          child: Column(
+            children: [
+              const SizedBox(height: 40),
+              CircularProgressIndicator(color: _primaryColor),
+              const SizedBox(height: 16),
+              Text(
+                'Sincronizando serviços...',
+                style: TextStyle(color: _isDark ? _LojaPublicaStyle.textSecondaryColor : Colors.grey[600]),
+              ),
+            ],
+          ),
+        )
+      else if (servicos.isEmpty)
+        _buildEmptyState('Nenhum serviço disponível no momento.')
+      else
           ListView.separated(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
