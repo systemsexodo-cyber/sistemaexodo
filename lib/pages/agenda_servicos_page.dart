@@ -5879,9 +5879,18 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                                       final itens = dataS.agendamentosServico
                                                           .where((a) => a.status == 'Aguardando Confirmação')
                                                           .length;
+                                                      
+                                                      // Limpar filtros para garantir que a mudança seja visível (opcional para rejeição, mas bom para consistência)
+                                                      setState(() {
+                                                         _termoBusca = '';
+                                                         _buscaController.clear();
+                                                         _filtroStatus = null;
+                                                      });
+
                                                       if (itens == 0) {
                                                         Navigator.pop(context);
                                                       }
+                                                      dataS.forceUpdate();
                                                     }
                                                   });
                                                 } catch (e) {
@@ -5922,20 +5931,29 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                                     );
                                                   }
 
-                                                  // Se não houver mais solicitações, fecha o modal após um breve delay
-                                                  Future.delayed(const Duration(milliseconds: 300), () {
-                                                    if (context.mounted) {
-                                                      final dataS = Provider.of<DataService>(context, listen: false);
-                                                      final itens = dataS.agendamentosServico
-                                                          .where((a) => a.status == 'Aguardando Confirmação')
-                                                          .length;
-                                                      if (itens == 0) {
-                                                        Navigator.pop(context);
-                                                      }
-                                                      // Forçar atualização local da agenda
-                                                      dataS.forceUpdate();
-                                                    }
-                                                  });
+                                                   // Se não houver mais solicitações, fecha o modal após um breve delay
+                                                   Future.delayed(const Duration(milliseconds: 300), () {
+                                                     if (context.mounted) {
+                                                       final dataS = Provider.of<DataService>(context, listen: false);
+                                                       final itens = dataS.agendamentosServico
+                                                           .where((a) => a.status == 'Aguardando Confirmação')
+                                                           .length;
+                                                       
+                                                       // Limpar filtros locais para que o agendamento apareça no fundo
+                                                       setState(() {
+                                                          _termoBusca = '';
+                                                          _buscaController.clear();
+                                                          _filtroStatus = null; // Mostrar todos
+                                                          _filtroTipo = 'Todos';
+                                                       });
+
+                                                       if (itens == 0) {
+                                                         Navigator.pop(context);
+                                                       }
+                                                       // Forçar atualização local da agenda
+                                                       dataS.forceUpdate();
+                                                     }
+                                                   });
                                                 } catch (e) {
                                                   if (context.mounted) {
                                                     ScaffoldMessenger.of(context).showSnackBar(

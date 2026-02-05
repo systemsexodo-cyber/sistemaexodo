@@ -3067,6 +3067,7 @@ class DataService extends ChangeNotifier {
     
     // Notificar novamente para garantir que a UI refletiu o salvamento
     notifyListeners();
+    forceUpdate(); // Forçar rebuild global para garantir que o sino e agenda atualizem
   } else {
     debugPrint('>>> [Agendamento] ❌ ERRO: Agendamento $agendamentoId não encontrado para aprovação!');
   }
@@ -3104,6 +3105,7 @@ class DataService extends ChangeNotifier {
     _enviarNotificacaoWhatsAppAgendamento(agendamentoAtualizado, isNovo: false);
 
     notifyListeners();
+    forceUpdate();
   }
 }
 
@@ -3653,6 +3655,7 @@ class DataService extends ChangeNotifier {
       );
       // Notificar listeners IMEDIATAMENTE para atualizar a UI
       notifyListeners();
+      print('>>> notifyListeners() chamado');
       
       // Salvar localmente IMEDIATAMENTE (sem debounce)
       try {
