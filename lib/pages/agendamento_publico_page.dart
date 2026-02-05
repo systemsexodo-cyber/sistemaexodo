@@ -2019,6 +2019,9 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
         await dataService.addAgendamentoServico(agdFinal);
       }
 
+      // Garantir que a UI local seja notificada (refresh do carrinho/contadores)
+      dataService.notifyListeners();
+
       if (mounted) {
         _mostrarSucesso(horarioOcupado: algumOcupado);
       }

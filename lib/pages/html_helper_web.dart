@@ -50,3 +50,6 @@ void updateUrl(String path, {bool replace = false}) {
   }
 }
 
+/// Stream de foco da janela no navegador
+Stream<dynamic> get onWindowFocus => html.window.onFocus;
+

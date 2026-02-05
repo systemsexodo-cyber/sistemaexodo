@@ -27,6 +27,9 @@ import 'package:sistema_exodo_novo/services/whatsapp_service.dart';
 import 'package:sistema_exodo_novo/models/empresa.dart';
 import 'package:uuid/uuid.dart';
 
+// Import condicional para Web
+import '../pages/html_helper_stub.dart' if (dart.library.html) '../pages/html_helper_web.dart' as html_helper;
+
 // Re-export TipoPessoa para facilitar uso
 export 'package:sistema_exodo_novo/models/cliente.dart' show TipoPessoa;
 
@@ -260,6 +263,16 @@ class DataService extends ChangeNotifier {
     notifyListeners();
     print('>>> DataService: ✓ Troca de empresa concluída - dados isolados');
 
+  // Registrar listener de foco para Web (acordar o app se ficar em background)
+  if (kIsWeb) {
+    html_helper.onWindowFocus.listen((_) {
+      debugPrint('>>> [SISTEMA] Janela focada - Verificando conexões de Stream...');
+      if (_empresaIdAtual != null && _firebaseHabilitado) {
+        _iniciarStreamAgendamentos(); // Reiniciar para garantir dados frescos
+      }
+    });
+  }
+
     // Iniciar timer de sincronização automática
     _reiniciarTimerSincronizacao();
   }
@@ -315,8 +328,8 @@ class DataService extends ChangeNotifier {
       final existenteMs = existente.updatedAt.millisecondsSinceEpoch;
       
       // Só atualizar se o novo for mais recente ou se for uma ação direta (prioritária)
-      // Usamos >= para o prioritário para garantir que mesmo com tempo igual (mesmo doc) ele se mova na lista se necessário
-      if (prioritario || novoMs > existenteMs) {
+      // Usamos >= para garantir que atualizações vindas do server com mesma data (mesmo ms) sejam aceitas
+      if (prioritario || novoMs >= existenteMs) {
         _agendamentosServico.removeWhere((a) => a.id == novo.id);
         if (prioritario) {
           _agendamentosServico.insert(0, novo);
@@ -361,47 +374,48 @@ class DataService extends ChangeNotifier {
     _agendamentosSubscription?.cancel();
     if (_empresaIdAtual == null || !_firebaseHabilitado) return;
 
-    debugPrint('>>> [Sync] 📡 Iniciando Stream de Agendamentos em Tempo Real para Empresa: $_empresaIdAtual');
+    final timestamp = '${DateTime.now().hour}:${DateTime.now().minute}:${DateTime.now().second}';
+    debugPrint('>>> [Sync] 📡 [$timestamp] Iniciando Stream: empresas/$_empresaIdAtual/agendamentos_servico');
+    
     _agendamentosSubscription = _firebaseService
         .getAgendamentosStream(_empresaIdAtual!)
         .listen((novosAgendamentos) {
-      debugPrint('>>> [Sync] 📥 Snapshot recebido via Stream. Documentos: ${novosAgendamentos.length}');
+      debugPrint('>>> [Sync] 📥 [$timestamp] Snapshot recebido: ${novosAgendamentos.length} docs em agendamentos_servico');
       
       bool houveMudanca = false;
       
-      // 1. Identificar agendamentos removidos do Firebase mas que estão locais
-      final idsNoFirebase = novosAgendamentos.map((a) => a.id).toSet();
-      final agendamentosParaRemover = _agendamentosServico
-          .where((a) => !idsNoFirebase.contains(a.id))
-          .toList();
-
-      if (agendamentosParaRemover.isNotEmpty) {
-        for (var a in agendamentosParaRemover) {
-          _agendamentosServico.removeWhere((local) => local.id == a.id);
-          houveMudanca = true;
-          debugPrint('>>> [Sync] 🗑️ Agendamento removido remotamente: ${a.id}');
-        }
-      }
+      // 1. Remover locais que não existem mais no Firebase (Sincronização de deleção)
+      final idsRemotos = novosAgendamentos.map((a) => a.id).toSet();
+      final idsLocaisAntes = _agendamentosServico.map((a) => a.id).toSet();
       
+      _agendamentosServico.removeWhere((a) {
+        if (!idsRemotos.contains(a.id)) {
+          houveMudanca = true;
+          debugPrint('>>> [Sync] 🗑️ Removendo localmente agendamento deletado no server: ${a.id}');
+          return true;
+        }
+        return false;
+      });
+
+      // 2. Upsert (Adicionar ou Atualizar)
       for (final agendamento in novosAgendamentos) {
         final agendamentoCompleto = _vincularReferenciasAgendamento(agendamento);
         if (_upsertAgendamentoLocal(agendamentoCompleto)) {
           houveMudanca = true;
-          debugPrint('>>> [Sync] ✅ MUDANÇA via Stream: ${agendamento.id} (${agendamentoCompleto.status})');
+          debugPrint('>>> [Sync] ✅ ATUALIZAÇÃO detectada via Stream: ${agendamento.id} (${agendamentoCompleto.status})');
         }
       }
       
+      // Sempre notificar a UI ao receber snapshot para garantir que contadores e filtros reflitam o estado atual
+      notifyListeners();
+      
       if (houveMudanca) {
-        debugPrint('>>> [Sync] 🔔 Notificando UI sobre mudanças no Stream. Total: ${_agendamentosServico.length}');
-        notifyListeners();
-        // Salvar localmente o estado sincronizado
-        _storage.salvarLista(
-          _getChaveComEmpresa(LocalStorageService.keyAgendamentosServico),
-          _agendamentosServico,
-        );
+        debugPrint('>>> [Sync] 🔔 Mudança real processada. Total: ${_agendamentosServico.length}');
+        _salvarAutomaticamente(); // Sincroniza cache local (LocalStorage)
       }
     }, onError: (e) {
-      debugPrint('>>> [Sync] ❌ Erro Crítico no Stream de Agendamentos: $e');
+      debugPrint('>>> [Sync] ❌ ERRO no Stream de Agendamentos: $e');
+      Future.delayed(const Duration(seconds: 10), () => _iniciarStreamAgendamentos());
     });
   }
 

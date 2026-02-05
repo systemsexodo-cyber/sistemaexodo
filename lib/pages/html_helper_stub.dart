@@ -30,3 +30,6 @@ void updateUrl(String path, {bool replace = false}) {
   // Não faz nada fora da Web
 }
 
+/// Stream de foco da janela (stub)
+Stream<dynamic> get onWindowFocus => const Stream.empty();
+
