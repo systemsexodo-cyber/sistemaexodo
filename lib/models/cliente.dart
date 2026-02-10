@@ -58,6 +58,9 @@ class Cliente {
   final String? senha; // Senha para login no e-commerce (hash ou texto simples)
   final String? emailLogin; // Email usado para login (pode ser diferente do email principal)
   
+  // Configurações específicas
+  final bool habilitaTaxiDog; // Define se o cliente pode agendar com Taxi Dog
+  
   // Controle
   final bool ativo;
   final DateTime createdAt;
@@ -94,6 +97,7 @@ class Cliente {
     this.motivoBloqueio,
     this.senha,
     this.emailLogin,
+    this.habilitaTaxiDog = false,
     this.ativo = true,
     required this.createdAt,
     required this.updatedAt,
@@ -197,6 +201,7 @@ class Cliente {
       motivoBloqueio: map['motivoBloqueio']?.toString(),
       senha: map['senha']?.toString(),
       emailLogin: map['emailLogin']?.toString(),
+      habilitaTaxiDog: map['habilitaTaxiDog'] ?? false,
       ativo: map['ativo'] ?? true,
       createdAt: DateParser.parse(map['createdAt']),
       updatedAt: DateParser.parse(map['updatedAt']),
@@ -236,6 +241,7 @@ class Cliente {
       'motivoBloqueio': motivoBloqueio,
       'senha': senha,
       'emailLogin': emailLogin,
+      'habilitaTaxiDog': habilitaTaxiDog,
       'ativo': ativo,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
@@ -273,6 +279,7 @@ class Cliente {
     String? motivoBloqueio,
     String? senha,
     String? emailLogin,
+    bool? habilitaTaxiDog,
     bool? ativo,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -308,6 +315,7 @@ class Cliente {
       motivoBloqueio: motivoBloqueio ?? this.motivoBloqueio,
       senha: senha ?? this.senha,
       emailLogin: emailLogin ?? this.emailLogin,
+      habilitaTaxiDog: habilitaTaxiDog ?? this.habilitaTaxiDog,
       ativo: ativo ?? this.ativo,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,

@@ -27,8 +27,17 @@ import 'funcionarios_page.dart';
 import 'personalizar_loja_page.dart';
 import 'gerenciar_imagens_page.dart';
 import 'agenda_servicos_page.dart';
+import 'caixa_page.dart';
+import 'comissoes_page.dart';
+import 'entregas_page.dart';
+import 'empresas_page.dart';
+import 'taxas_entrega_page.dart';
+import 'historico_vendas_page.dart';
+import 'historico_operacoes_page.dart';
+import 'gerenciar_usuarios_page.dart';
+import 'trocas_devolucoes_page.dart';
+import 'configuracoes_agenda_page.dart';
 import '../services/data_service.dart';
-// import 'ordens_servico_page.dart';
 
 // Import condicional para Web
 import 'html_helper_stub.dart' if (dart.library.html) 'html_helper_web.dart' as html_helper;
@@ -318,10 +327,23 @@ class _HomePageState extends State<HomePage> {
     // Inicializar locale
     
     // Se temos uma página inicial via URL, navegar para ela após o build
-    if (widget.initialPage != null && widget.initialPage != 'home') {
+    if (widget.initialPage != null && widget.initialPage != 'home' && widget.initialPage != '') {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _navegarParaPaginaInicial(widget.initialPage!);
       });
+    }
+  }
+
+  @override
+  void didUpdateWidget(HomePage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Se a página inicial mudar via URL (ex: navegação back/forward no browser)
+    if (widget.initialPage != oldWidget.initialPage && 
+        widget.initialPage != null && 
+        widget.initialPage != 'home' && 
+        widget.initialPage != '') {
+      debugPrint('>>> [HomePage] Rota mudou via Widget Update: ${widget.initialPage}');
+      _navegarParaPaginaInicial(widget.initialPage!);
     }
   }
 
@@ -332,6 +354,7 @@ class _HomePageState extends State<HomePage> {
     switch (route) {
       case 'clientes': page = const ClientesPage(); urlPath = '/clientes'; break;
       case 'produtos': page = ProdutosPage(); urlPath = '/produtos'; break;
+      case 'servico':
       case 'servicos': page = ServicosPage(); urlPath = '/servicos'; break;
       case 'pedidos': page = const PedidosPage(); urlPath = '/pedidos'; break;
       case 'venda-direta': 
@@ -347,23 +370,43 @@ class _HomePageState extends State<HomePage> {
       case 'personalizar-loja': page = const PersonalizarLojaPage(); urlPath = '/personalizar-loja'; break;
       case 'agenda-pet': page = AgendaServicosPage(); urlPath = '/agenda-pet'; break;
       case 'gerenciar-imagens': page = const GerenciarImagensPage(); urlPath = '/gerenciar-imagens'; break;
+      case 'caixa': page = const CaixaPage(); urlPath = '/caixa'; break;
+      case 'comissoes': page = const ComissoesPage(); urlPath = '/comissoes'; break;
+      case 'entregas': page = const EntregasPage(); urlPath = '/entregas'; break;
+      case 'empresas': page = const EmpresasPage(); urlPath = '/empresas'; break;
+      case 'taxas-entrega': page = const TaxasEntregaPage(); urlPath = '/taxas-entrega'; break;
+      case 'gerenciar-permissoes': page = const GerenciarPermissoesPage(); urlPath = '/gerenciar-permissoes'; break;
+      case 'historico-vendas': page = const HistoricoVendasPage(); urlPath = '/historico-vendas'; break;
+      case 'historico-operacoes': page = const HistoricoOperacoesPage(); urlPath = '/historico-operacoes'; break;
+      case 'gerenciar-usuarios': 
+        final empresa = Provider.of<DataService>(context, listen: false).empresaAtual;
+        if (empresa != null) {
+          page = GerenciarUsuariosPage(empresa: empresa);
+        }
+        urlPath = '/gerenciar-usuarios'; 
+        break;
+      case 'trocas-devolucoes': page = const TrocasDevolucoesBuscarPage(); urlPath = '/trocas-devolucoes'; break;
+      case 'configuracoes-agenda': page = const ConfiguracoesAgendaPage(); urlPath = '/configuracoes-agenda'; break;
     }
 
     if (page != null) {
       debugPrint('>>> [HomePage] Navegação automática para: $route');
-      // Usar pushing normal mas com a URL correta
+      
+      // Se for Web, garantir que o link original seja mantido/atualizado
+      if (kIsWeb && urlPath != null) {
+         html_helper.updateUrl(urlPath, replace: true);
+      }
+
+      // Usar push mas verificar se já não estamos nela
       Navigator.push(
         context,
         MaterialPageRoute(builder: (_) => page!),
       ).then((_) {
-        // Ao voltar, garante que a URL volte para home
-        html_helper.updateUrl('/');
+        // Ao voltar, garante que a URL volte para home (/)
+        if (kIsWeb) {
+          html_helper.updateUrl('/');
+        }
       });
-      // Importante: Não chamamos updateUrl aqui porque ele já deve estar no path correto
-      // se veio pelo boot. Mas vamos chamar por segurança se não for boot.
-      if (kIsWeb) {
-         html_helper.updateUrl(urlPath ?? '/');
-      }
     }
   }
 

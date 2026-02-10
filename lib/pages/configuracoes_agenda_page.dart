@@ -17,6 +17,7 @@ class _ConfiguracoesAgendaPageState extends State<ConfiguracoesAgendaPage> {
   final _taxaBuscaController = TextEditingController();
   final _taxaSolevaController = TextEditingController();
   List<Map<String, dynamic>> _bairrosConfig = [];
+  List<Map<String, dynamic>> _horariosIndisponiveis = [];
   bool _isLoading = false;
 
   @override
@@ -47,6 +48,11 @@ class _ConfiguracoesAgendaPageState extends State<ConfiguracoesAgendaPage> {
           }).toList();
         }
       }
+
+      final horariosData = agendamentoConfig['horariosIndisponiveis'] as List<dynamic>?;
+      if (horariosData != null) {
+        _horariosIndisponiveis = horariosData.map((e) => Map<String, dynamic>.from(e)).toList();
+      }
     }
   }
 
@@ -61,6 +67,7 @@ class _ConfiguracoesAgendaPageState extends State<ConfiguracoesAgendaPage> {
       
       agendamentoConfig['bairrosTaxiDogV2'] = _bairrosConfig;
       agendamentoConfig['bairrosTaxiDog'] = _bairrosConfig.map((e) => e['bairro']).toList();
+      agendamentoConfig['horariosIndisponiveis'] = _horariosIndisponiveis;
       
       novasConfigs['agendamento'] = agendamentoConfig;
       novasConfigs['bairrosTaxiDogV2'] = _bairrosConfig;
@@ -131,6 +138,52 @@ class _ConfiguracoesAgendaPageState extends State<ConfiguracoesAgendaPage> {
     });
   }
 
+  Future<void> _adicionarHorarioIndisponivel() async {
+    final TimeOfDay? inicio = await showTimePicker(
+      context: context,
+      initialTime: const TimeOfDay(hour: 12, minute: 0),
+      helpText: 'HORÁRIO DE INÍCIO',
+    );
+
+    if (inicio == null) return;
+
+    final TimeOfDay? fim = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay(hour: inicio.hour + 1, minute: inicio.minute),
+      helpText: 'HORÁRIO DE TÉRMINO',
+    );
+
+    if (fim == null) return;
+
+    // Validar se fim > inicio
+    final double inicioDouble = inicio.hour + inicio.minute / 60.0;
+    final double fimDouble = fim.hour + fim.minute / 60.0;
+
+    if (fimDouble <= inicioDouble) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('O horário de término deve ser após o início.'), backgroundColor: Colors.orange),
+        );
+      }
+      return;
+    }
+
+    setState(() {
+      _horariosIndisponiveis.add({
+        'inicio': '${inicio.hour.toString().padLeft(2, '0')}:${inicio.minute.toString().padLeft(2, '0')}',
+        'fim': '${fim.hour.toString().padLeft(2, '0')}:${fim.minute.toString().padLeft(2, '0')}',
+      });
+      // Ordenar por horário de início
+      _horariosIndisponiveis.sort((a, b) => a['inicio'].toString().compareTo(b['inicio'].toString()));
+    });
+  }
+
+  void _removerHorario(int index) {
+    setState(() {
+      _horariosIndisponiveis.removeAt(index);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -165,14 +218,16 @@ class _ConfiguracoesAgendaPageState extends State<ConfiguracoesAgendaPage> {
             ),
             const SizedBox(height: 16),
             _buildListaBairros(),
+            const SizedBox(height: 48),
+            _buildHorariosIndisponiveisSection(),
             const SizedBox(height: 32),
-            if (_bairrosConfig.isNotEmpty)
+            if (_bairrosConfig.isNotEmpty || _horariosIndisponiveis.isNotEmpty)
               ElevatedButton.icon(
                 onPressed: _isLoading ? null : _salvarConfiguracoes,
                 icon: _isLoading 
                   ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
                   : const Icon(Icons.check_circle_outline),
-                label: Text(_isLoading ? 'Salvando...' : 'Salvar Todas as Taxas'),
+                label: Text(_isLoading ? 'Salvando...' : 'Salvar Todas as Configurações'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.green,
                   foregroundColor: Colors.white,
@@ -186,6 +241,96 @@ class _ConfiguracoesAgendaPageState extends State<ConfiguracoesAgendaPage> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildHorariosIndisponiveisSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Colors.orangeAccent.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: Colors.orangeAccent.withOpacity(0.2)),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.block_flipped, color: Colors.orangeAccent, size: 32),
+              const SizedBox(width: 16),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Horários Indisponíveis',
+                      style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      'Defina intervalos de tempo onde agendamentos não serão permitidos (ex: almoço).',
+                      style: TextStyle(color: Colors.white60, fontSize: 13),
+                    ),
+                  ],
+                ),
+              ),
+              ElevatedButton(
+                onPressed: _adicionarHorarioIndisponivel,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.orangeAccent,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                child: const Text('Bloquear Horário'),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        if (_horariosIndisponiveis.isEmpty)
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.all(40.0),
+              child: Column(
+                children: [
+                  Icon(Icons.event_available, size: 48, color: Colors.white.withOpacity(0.1)),
+                  const SizedBox(height: 16),
+                  const Text('Todos os horários estão liberados.', style: TextStyle(color: Colors.white24)),
+                ],
+              ),
+            ),
+          )
+        else
+          ListView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: _horariosIndisponiveis.length,
+            itemBuilder: (context, index) {
+              final item = _horariosIndisponiveis[index];
+              return Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.03),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.white.withOpacity(0.05)),
+                ),
+                child: ListTile(
+                  leading: const Icon(Icons.timer_off_outlined, color: Colors.orangeAccent),
+                  title: Text(
+                    'Das ${item['inicio']} às ${item['fim']}',
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                  ),
+                  subtitle: const Text('Indisponível para clientes', style: TextStyle(color: Colors.white54, fontSize: 12)),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                    onPressed: () => _removerHorario(index),
+                  ),
+                ),
+              );
+            },
+          ),
+      ],
     );
   }
 

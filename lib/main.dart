@@ -20,50 +20,12 @@ import 'package:sistema_exodo_novo/pages/loja_publica_wrapper.dart';
 import 'package:flutter/foundation.dart';
 import 'dart:html' as html show window;
 
-// VARIÁVEIS GLOBAIS PARA CAPTURAR A URL DE ENTRADA (Impedir limpeza do Flutter Web)
-bool _entradaPublica = false;
-bool _entradaAgenda = false;
-String? _entradaSlug;
-
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
-  // CAPTURA IMEDIATA DA URL (Ponto mais crítico)
   if (kIsWeb) {
     try {
-      final String href = html.window.location.href.toLowerCase();
-      final String path = (html.window.location.pathname ?? '').toLowerCase();
-      final String hash = html.window.location.hash.toLowerCase();
-      
-      print('>>> [SISTEMA] Captura de entrada: $href');
-      
-      _entradaAgenda = href.contains('agendamento');
-      bool isLoja = href.contains('loja') || href.contains('shop') || href.contains('ecommerce');
-      _entradaPublica = _entradaAgenda || isLoja;
-
-      final List<String> segments = [];
-      segments.addAll(path.split('/').where((s) => s.isNotEmpty));
-      String cleanHash = hash.replaceAll(RegExp(r'^[#!/? ]+'), '');
-      if (cleanHash.isNotEmpty) segments.addAll(cleanHash.split('/').where((s) => s.isNotEmpty));
-
-      if (_entradaAgenda) {
-        int idx = segments.indexOf('agendamento');
-        if (idx != -1 && idx + 1 < segments.length) _entradaSlug = segments[idx + 1];
-        else if (segments.isNotEmpty) _entradaSlug = segments.firstWhere((s) => s != 'agendamento', orElse: () => segments[0]);
-      } else if (isLoja) {
-        int idx = segments.indexOf('loja');
-        if (idx == -1) idx = segments.indexOf('shop');
-        if (idx != -1 && idx + 1 < segments.length) _entradaSlug = segments[idx + 1];
-        else if (segments.isNotEmpty) _entradaSlug = segments.firstWhere((s) => s != 'loja' && s != 'shop', orElse: () => segments[0]);
-      } else if (segments.isNotEmpty) {
-        const internos = {'login', 'home', 'dashboard', 'admin', 'auth', 'selecionar-empresa'};
-        if (!internos.contains(segments[0])) {
-          isLoja = true;
-          _entradaPublica = true;
-          _entradaSlug = segments[0];
-        }
-      }
-      print('>>> [SISTEMA] Rota detectada no BOOT: Publica=$_entradaPublica | Slug=$_entradaSlug');
+      print('>>> [SISTEMA] Iniciando Boot em modo Web');
     } catch (e) {
       print('>>> [SISTEMA] Erro no Boot: $e');
     }
@@ -159,77 +121,85 @@ void _carregarDadosEmBackground(DataService dataService, AuthService authService
   });
 }
 
-/// Utilitário para centralizar a detecção de rotas
 class AppRouter {
+  static const internos = {
+    'login', 'home', 'dashboard', 'admin', 'auth', 'selecionar-empresa', 'debug',
+    'clientes', 'produtos', 'servicos', 'servico', 'pedidos', 'venda-direta', 'pdv',
+    'entrada-mercadorias', 'contas-pagar', 'agenda-contas', 'cozinha-bar',
+    'mesas', 'links-vendedores', 'vendedor-dashboard', 'funcionarios',
+    'personalizar-loja', 'agenda-pet', 'gerenciar-imagens', 'caixa',
+    'comissoes', 'entregas', 'historico-vendas', 'historico-operacoes',
+    'gerenciar-usuarios', 'trocas-devolucoes', 'configuracoes-agenda',
+    'taxas-entrega', 'empresas', 'gerenciar-permissoes'
+  };
+
   static Map<String, dynamic> analisarUrl() {
-    if (!kIsWeb) return {'publico': false, 'slug': null, 'agenda': false, 'loja': false};
+    if (!kIsWeb) return {'publico': false, 'slug': null, 'agenda': false, 'loja': false, 'interna': null};
     
     try {
-      final rawHref = html.window.location.href.toLowerCase();
-      final rawPath = (html.window.location.pathname ?? '').toLowerCase();
-      final rawHash = html.window.location.hash.toLowerCase();
+      final String href = html.window.location.href.toLowerCase();
+      final String path = (html.window.location.pathname ?? '').toLowerCase();
+      final String hash = html.window.location.hash.toLowerCase();
       
-      // Detecção baseada no PATH ou HASH
-      final String fullPath = "$rawPath$rawHash";
+      debugPrint('>>> [AppRouter] ANÁLISE URL:');
+      debugPrint('    href: $href');
+      debugPrint('    path: $path');
+      debugPrint('    hash: $hash');
       
-      bool isAgenda = fullPath.contains('agendamento');
-      bool isLoja = fullPath.contains('loja') || fullPath.contains('shop');
-      String? slug;
-
       final List<String> segments = [];
-      segments.addAll(rawPath.split('/').where((s) => s.isNotEmpty));
-      String cleanHash = rawHash.replaceAll(RegExp(r'^[#!/? ]+'), '');
-      if (cleanHash.isNotEmpty) segments.addAll(cleanHash.split('/').where((s) => s.isNotEmpty));
-
-      if (isAgenda) {
-        int idx = segments.indexOf('agendamento');
-        if (idx != -1 && idx + 1 < segments.length) slug = segments[idx + 1];
-        else if (segments.isNotEmpty) slug = segments.firstWhere((s) => s != 'agendamento', orElse: () => segments[0]);
-      } else if (isLoja) {
-        int idx = segments.indexOf('loja');
-        if (idx == -1) idx = segments.indexOf('shop');
-        if (idx != -1 && idx + 1 < segments.length) slug = segments[idx + 1];
-        else if (segments.isNotEmpty) slug = segments.firstWhere((s) => s != 'loja' && s != 'shop', orElse: () => segments[0]);
-      } else if (segments.isNotEmpty) {
-        // Se tem apenas um segmento e não é rota interna, tratar como LOJA por padrão
-        // (Isso torna os links individuais: /loja/slug vs /agendamento/slug)
-        final first = segments[0];
-        const internos = {
-          'login', 'home', 'dashboard', 'admin', 'auth', 'selecionar-empresa', 'debug',
-          'clientes', 'produtos', 'servicos', 'pedidos', 'venda-direta', 'pdv',
-          'entrada-mercadorias', 'contas-pagar', 'agenda-contas', 'cozinha-bar',
-          'mesas', 'links-vendedores', 'vendedor-dashboard', 'funcionarios',
-          'personalizar-loja', 'agenda-pet', 'gerenciar-imagens'
-        };
-        
-        if (internos.contains(first)) {
-           return {
-            'publico': false,
-            'slug': null,
-            'agenda': false,
-            'loja': false,
-            'interna': first,
-            'href': rawHref
-          };
-        } else {
-          // Só trata como loja se NÃO for uma das rotas protegidas
-          isLoja = true;
-          slug = first;
-        }
+      segments.addAll(path.split('/').where((s) => s.isNotEmpty));
+      
+      String cleanHash = hash.replaceAll(RegExp(r'^[#!/? ]+'), '');
+      if (cleanHash.isNotEmpty) {
+        segments.addAll(cleanHash.split('/').where((s) => s.isNotEmpty));
       }
 
-      final res = {
-        'publico': isAgenda || isLoja,
-        'slug': slug,
-        'agenda': isAgenda,
-        'loja': isLoja,
-        'interna': null,
-        'href': rawHref
+      debugPrint('    segments: $segments');
+
+      if (segments.isEmpty) {
+        debugPrint('    RESULTADO: Home (sem segmentos)');
+        return {
+          'publico': false, 'slug': null, 'agenda': false, 'loja': false, 'interna': 'home', 'href': href
+        };
+      }
+
+      // Detecção de Agendamento
+      if (segments.contains('agendamento')) {
+        int idx = segments.indexOf('agendamento');
+        String? slug = (idx != -1 && idx + 1 < segments.length) ? segments[idx + 1] : null;
+        debugPrint('    RESULTADO: Agendamento Público | Slug: $slug');
+        return {
+          'publico': true, 'slug': slug, 'agenda': true, 'loja': false, 'interna': null, 'href': href
+        };
+      }
+
+      // Detecção de Loja
+      if (segments.contains('loja') || segments.contains('shop')) {
+        int idx = segments.indexOf('loja');
+        if (idx == -1) idx = segments.indexOf('shop');
+        String? slug = (idx != -1 && idx + 1 < segments.length) ? segments[idx + 1] : null;
+        debugPrint('    RESULTADO: Loja Pública | Slug: $slug');
+        return {
+          'publico': true, 'slug': slug, 'agenda': false, 'loja': true, 'interna': null, 'href': href
+        };
+      }
+
+      // Rota Interna
+      final first = segments[0];
+      if (internos.contains(first)) {
+        debugPrint('    RESULTADO: Rota Interna | Rota: $first');
+        return {
+          'publico': false, 'slug': null, 'agenda': false, 'loja': false, 'interna': first, 'href': href
+        };
+      }
+
+      // Fallback para Loja por Slug Direto (ex: /petshop)
+      debugPrint('    RESULTADO: Loja Pública por Slug Direto | Slug: $first');
+      return {
+        'publico': true, 'slug': first, 'agenda': false, 'loja': true, 'interna': null, 'href': href
       };
-      print('>>> [AppRouter] Analise: $res');
-      return res;
     } catch (e) {
-      print('>>> [AppRouter] Erro: $e');
+      debugPrint('>>> [AppRouter] Erro ao analisar URL: $e');
       return {'publico': false, 'slug': null, 'agenda': false, 'loja': false, 'interna': null};
     }
   }
@@ -246,19 +216,33 @@ class _MyAppState extends State<MyApp> {
   StreamSubscription? _hashChangeSubscription;
   StreamSubscription? _popStateSubscription;
 
+  // CACHE da análise de rota inicial - evita recalcular a cada rebuild do Consumer
+  Map<String, dynamic>? _rotaInicialCache;
+
   @override
   void initState() {
     super.initState();
+    
+    // Analisar a rota APENAS UMA VEZ no início
+    if (kIsWeb) {
+      _rotaInicialCache = AppRouter.analisarUrl();
+      debugPrint('>>> [MyApp] Rota inicial cacheada: $_rotaInicialCache');
+    }
+
     if (kIsWeb) {
       // 1. Ouvir mudanças no Hash (#)
       _hashChangeSubscription = html.window.onHashChange.listen((event) {
         debugPrint('>>> [Routing] Hash alterado: ${html.window.location.hash}');
+        // Reanalisar a URL somente se a mudança veio de navegação real do browser
+        _rotaInicialCache = AppRouter.analisarUrl();
         if (mounted) setState(() {});
       });
 
       // 2. Ouvir mudanças no Path (sem #) - Necessário para usePathUrlStrategy
       _popStateSubscription = html.window.onPopState.listen((event) {
         debugPrint('>>> [Routing] PopState alterado: ${html.window.location.pathname}');
+        // Reanalisar a URL somente quando o usuário navega pelo browser (back/forward)
+        _rotaInicialCache = AppRouter.analisarUrl();
         if (mounted) setState(() {});
       });
     }
@@ -275,12 +259,12 @@ class _MyAppState extends State<MyApp> {
   Widget build(BuildContext context) {
     return Consumer<AuthService>(
       builder: (context, authService, _) {
-        // 1. ANALISAR ROTA ATUAL DYNAMICAMENTE
-        final rotaMap = AppRouter.analisarUrl();
+        // 1. USAR ROTA CACHEADA - Não recalcular a cada rebuild do Consumer!
+        final rotaMap = _rotaInicialCache ?? AppRouter.analisarUrl();
         
-        final bool mostrarPublico = rotaMap['publico'] || _entradaPublica;
-        final String? slugEmpresa = rotaMap['slug'] ?? _entradaSlug;
-        final bool isAgendamentoRoute = rotaMap['agenda'] || _entradaAgenda;
+        final bool mostrarPublico = rotaMap['publico'] ?? false;
+        final String? slugEmpresa = rotaMap['slug'];
+        final bool isAgendamentoRoute = rotaMap['agenda'] ?? false;
         final String? subRotaInterna = rotaMap['interna'];
         final String? codigoLink = null;
 
@@ -289,9 +273,11 @@ class _MyAppState extends State<MyApp> {
         final cores = AppTheme.getCoresEmpresa(empresaCores?.corPrimaria, empresaCores?.corSecundaria);
 
         // LOG DE DIAGNÓSTICO FINAL
-        if (kDebugMode) {
-          print('>>> [SISTEMA-ROTA] Montando MaterialApp -> Público: $mostrarPublico');
-        }
+        debugPrint('>>> [SISTEMA-ROTA] Montando MaterialApp (cache):');
+        debugPrint('    Público: $mostrarPublico');
+        debugPrint('    Slug: $slugEmpresa');
+        debugPrint('    Agendamento: $isAgendamentoRoute');
+        debugPrint('    Rota Interna: $subRotaInterna');
 
         return MaterialApp(
           title: isAgendamentoRoute ? 'Agendamento Online' : 'Exodo',
@@ -335,13 +321,12 @@ class _AuthWrapperState extends State<AuthWrapper> {
   @override
   Widget build(BuildContext context) {
     if (kIsWeb) {
-      // SÓ faz bypass se for REALMENTE uma entrada pública e NÃO estiver tentando acessar admin
-      if (_entradaPublica && widget.subRota == null) {
-        print('>>> [AuthWrapper] BYPASS SEGURO: Usando dados de Boot');
+      final rotaMap = AppRouter.analisarUrl();
+      if (rotaMap['publico'] == true) {
         return LojaPublicaWrapper(
           codigoLink: '',
-          slugEmpresa: _entradaSlug,
-          forceAgendamento: _entradaAgenda,
+          slugEmpresa: rotaMap['slug'],
+          forceAgendamento: rotaMap['agenda'] == true,
         );
       }
     }
@@ -366,7 +351,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
             if (authService.isAuthenticated != true) {
               // Limpar empresa do DataService se não estiver autenticado
               if (dataService.empresaIdAtual != null) {
-                dataService.definirEmpresaAtual(null);
+                Future.microtask(() => dataService.definirEmpresaAtual(null));
               }
               return const LoginPage();
             }
@@ -375,7 +360,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
             if (authService.temEmpresaSelecionada != true) {
               // Limpar empresa do DataService se não tiver empresa selecionada
               if (dataService.empresaIdAtual != null) {
-                dataService.definirEmpresaAtual(null);
+                Future.microtask(() => dataService.definirEmpresaAtual(null));
               }
               // Importar SelecionarEmpresaPage aqui
               return const SelecionarEmpresaPage();
@@ -384,17 +369,18 @@ class _AuthWrapperState extends State<AuthWrapper> {
             // Se está autenticado e tem empresa, definir empresa no DataService e mostrar home
             final empresaAtual = authService.empresaAtual;
             if (empresaAtual != null && dataService.empresaIdAtual != empresaAtual.id) {
-              // Definir empresa no DataService (isso recarrega os dados)
-              dataService.definirEmpresaAtual(empresaAtual.id);
-              // Passar empresa completa para WhatsApp e outras funcionalidades
-              dataService.setEmpresaAtual(empresaAtual);
+              // Definir empresa no DataService de forma assíncrona
+              Future.microtask(() {
+                 dataService.definirEmpresaAtual(empresaAtual.id);
+                 dataService.setEmpresaAtual(empresaAtual);
+              });
               // Mostrar loading enquanto carrega
               return ExodoLoading(mensagem: 'Carregando dados da empresa...');
             }
             
             // Garantir que a empresa está sempre atualizada no DataService
             if (empresaAtual != null && dataService.empresaAtual != empresaAtual) {
-              dataService.setEmpresaAtual(empresaAtual);
+              Future.microtask(() => dataService.setEmpresaAtual(empresaAtual));
             }
 
             

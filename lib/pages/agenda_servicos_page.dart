@@ -47,6 +47,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
   bool _localeInicializado = false;
   String _filtroTipo = 'Todos'; // 'Todos', 'Banho', 'Vacina', 'Tosa', 'Outros'
   String? _filtroStatus; // null = todos, ou 'Agendado', 'Em Andamento', etc.
+  bool _filtrosExpandidos = false; // Controle de visibilidade dos filtros
 
   @override
   void initState() {
@@ -225,178 +226,227 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Campo de busca
-          TextField(
-            controller: _buscaController,
-            style: const TextStyle(color: Colors.white),
-            decoration: InputDecoration(
-              hintText: 'Buscar por nome do cliente...',
-              hintStyle: TextStyle(color: Colors.white.withOpacity(0.6)),
-              prefixIcon: const Icon(Icons.search, color: Colors.white70),
-              suffixIcon: _termoBusca.isNotEmpty
-                  ? IconButton(
-                      icon: const Icon(Icons.clear, color: Colors.white70),
-                      onPressed: () {
-                        setState(() {
-                          _buscaController.clear();
-                          _termoBusca = '';
-                        });
-                      },
-                    )
-                  : null,
-              filled: true,
-              fillColor: Colors.white.withOpacity(0.1),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: Colors.white.withOpacity(0.3)),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: Colors.white.withOpacity(0.3)),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: Colors.white, width: 2),
-              ),
-            ),
-            onChanged: (value) {
-              setState(() {
-                _termoBusca = value.toLowerCase();
-              });
-            },
-          ),
-          const SizedBox(height: 12),
-          
-          // FILA 1: STATUS
-          const Text('Filtrar por Status:', style: TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 6),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                _buildChipFiltro(
-                  'Todos', 
-                  _filtroStatus == null, 
-                  () => setState(() => _filtroStatus = null),
-                  color: Colors.blue
-                ),
-                const SizedBox(width: 8),
-                if (isModuloPet) ...[
-                  _buildChipFiltro(
-                    'Pendentes (${countsStatus['Aguardando Confirmação'] ?? 0})', 
-                    _filtroStatus == 'Aguardando Confirmação', 
-                    () => setState(() => _filtroStatus = 'Aguardando Confirmação'),
-                    color: Colors.orange
-                  ),
-                  const SizedBox(width: 8),
-                ],
-                _buildChipFiltro(
-                  'Agendados (${countsStatus['Agendado'] ?? 0})', 
-                  _filtroStatus == 'Agendado', 
-                  () => setState(() => _filtroStatus = 'Agendado'),
-                  color: Colors.blueAccent
-                ),
-                const SizedBox(width: 8),
-                _buildChipFiltro(
-                  'Em Andamento (${countsStatus['Em Andamento'] ?? 0})', 
-                  _filtroStatus == 'Em Andamento', 
-                  () => setState(() => _filtroStatus = 'Em Andamento'),
-                  color: Colors.amber
-                ),
-                const SizedBox(width: 8),
-                _buildChipFiltro(
-                  'Concluídos (${countsStatus['Concluído'] ?? 0})', 
-                  _filtroStatus == 'Concluído', 
-                  () => setState(() => _filtroStatus = 'Concluído'),
-                  color: Colors.green
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-
-          // FILA 2: SERVIÇOS
-          const Text('Filtrar por Serviço:', style: TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 6),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                _buildChipFiltro(
-                  'Todos', 
-                  _filtroTipo == 'Todos', 
-                  () => setState(() => _filtroTipo = 'Todos')
-                ),
-                if (isModuloPet) ...[
-                  const SizedBox(width: 8),
-                  _buildChipFiltro(
-                    'Banho (${countsTipo['Banho'] ?? 0})', 
-                    _filtroTipo == 'Banho', 
-                    () => setState(() => _filtroTipo = 'Banho'),
-                    color: Colors.cyan
-                  ),
-                  const SizedBox(width: 8),
-                  _buildChipFiltro(
-                    'Tosa (${countsTipo['Tosa'] ?? 0})', 
-                    _filtroTipo == 'Tosa', 
-                    () => setState(() => _filtroTipo = 'Tosa'),
-                    color: Colors.purpleAccent
-                  ),
-                  const SizedBox(width: 8),
-                  _buildChipFiltro(
-                    'Vacina (${countsTipo['Vacina'] ?? 0})', 
-                    _filtroTipo == 'Vacina', 
-                    () => setState(() => _filtroTipo = 'Vacina'),
-                    color: Colors.redAccent
-                  ),
-                ],
-                // Serviços cadastrados que não sejam os básicos acima
-                ...dataService.servicos
-                    .where((s) {
-                      final n = s.nome.toLowerCase().trim();
-                      // Não mostrar serviços básicos que já possuem chips fixos (normalizado)
-                      if (n == 'banho' || n == 'tosa' || n == 'vacina') return false;
-                      // Não mostrar serviços poluídos com Taxi Dog ou Entrega no nome
-                      if (n.contains('taxi dog') || n.contains('entrega')) return false;
-                      return true;
-                    })
-                    .map((servico) {
-                  final qte = countsTipo[servico.nome] ?? 0;
-                  return Padding(
-                    padding: const EdgeInsets.only(left: 8),
-                    child: _buildChipFiltro(
-                      '${servico.nome} ($qte)',
-                      _filtroTipo == servico.nome,
-                      () => setState(() => _filtroTipo = servico.nome),
+          // Campo de busca e Botão de Filtro
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _buscaController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    hintText: 'Buscar por nome do cliente...',
+                    hintStyle: TextStyle(color: Colors.white.withOpacity(0.6)),
+                    prefixIcon: const Icon(Icons.search, color: Colors.white70),
+                    suffixIcon: _termoBusca.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.clear, color: Colors.white70),
+                            onPressed: () {
+                              setState(() {
+                                _buscaController.clear();
+                                _termoBusca = '';
+                              });
+                            },
+                          )
+                        : null,
+                    filled: true,
+                    fillColor: Colors.white.withOpacity(0.1),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: Colors.white.withOpacity(0.3)),
                     ),
-                  );
-                }),
-                const SizedBox(width: 8),
-                _buildChipFiltro(
-                  'Outros (${countsTipo['Outros'] ?? 0})', 
-                  _filtroTipo == 'Outros', 
-                  () => setState(() => _filtroTipo = 'Outros')
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: Colors.white.withOpacity(0.3)),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(color: Colors.white, width: 2),
+                    ),
+                  ),
+                  onChanged: (value) {
+                    setState(() {
+                      _termoBusca = value.toLowerCase();
+                    });
+                  },
                 ),
-              ],
-            ),
+              ),
+              const SizedBox(width: 8),
+              // Botão Compacto para Filtros
+              Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: () => setState(() => _filtrosExpandidos = !_filtrosExpandidos),
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: _filtrosExpandidos ? Colors.orange.withOpacity(0.2) : Colors.white.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: _filtrosExpandidos ? Colors.orange : Colors.white.withOpacity(0.3),
+                      ),
+                    ),
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        Icon(
+                          _filtrosExpandidos ? Icons.filter_list_off : Icons.filter_list,
+                          color: _filtrosExpandidos ? Colors.orange : Colors.white70,
+                        ),
+                        if (!_filtrosExpandidos && (_filtroStatus != null || _filtroTipo != 'Todos'))
+                          Positioned(
+                            top: -2,
+                            right: -2,
+                            child: Container(
+                              width: 8,
+                              height: 8,
+                              decoration: const BoxDecoration(
+                                color: Colors.orange,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
           
-          if (_filtroStatus != null || _filtroTipo != 'Todos' || _termoBusca.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 12),
-              child: TextButton.icon(
-                onPressed: () {
-                  setState(() {
-                    _filtroStatus = null;
-                    _filtroTipo = 'Todos';
-                    _termoBusca = '';
-                    _buscaController.clear();
-                  });
-                },
-                icon: const Icon(Icons.filter_list_off, size: 16, color: Colors.white70),
-                label: const Text('Limpar Filtros', style: TextStyle(color: Colors.white70, fontSize: 12)),
+          if (_filtrosExpandidos) ...[
+            const SizedBox(height: 12),
+            // FILA 1: STATUS
+            const Text('Filtrar por Status:', style: TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 6),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  _buildChipFiltro(
+                    'Todos', 
+                    _filtroStatus == null, 
+                    () => setState(() => _filtroStatus = null),
+                    color: Colors.blue
+                  ),
+                  const SizedBox(width: 8),
+                  if (isModuloPet) ...[
+                    _buildChipFiltro(
+                      'Pendentes (${countsStatus['Aguardando Confirmação'] ?? 0})', 
+                      _filtroStatus == 'Aguardando Confirmação', 
+                      () => setState(() => _filtroStatus = 'Aguardando Confirmação'),
+                      color: Colors.orange
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                  _buildChipFiltro(
+                    'Agendados (${countsStatus['Agendado'] ?? 0})', 
+                    _filtroStatus == 'Agendado', 
+                    () => setState(() => _filtroStatus = 'Agendado'),
+                    color: Colors.blueAccent
+                  ),
+                  const SizedBox(width: 8),
+                  _buildChipFiltro(
+                    'Em Andamento (${countsStatus['Em Andamento'] ?? 0})', 
+                    _filtroStatus == 'Em Andamento', 
+                    () => setState(() => _filtroStatus = 'Em Andamento'),
+                    color: Colors.amber
+                  ),
+                  const SizedBox(width: 8),
+                  _buildChipFiltro(
+                    'Concluídos (${countsStatus['Concluído'] ?? 0})', 
+                    _filtroStatus == 'Concluído', 
+                    () => setState(() => _filtroStatus = 'Concluído'),
+                    color: Colors.green
+                  ),
+                ],
               ),
             ),
+            const SizedBox(height: 12),
+
+            // FILA 2: SERVIÇOS
+            const Text('Filtrar por Serviço:', style: TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 6),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  _buildChipFiltro(
+                    'Todos', 
+                    _filtroTipo == 'Todos', 
+                    () => setState(() => _filtroTipo = 'Todos')
+                  ),
+                  if (isModuloPet) ...[
+                    const SizedBox(width: 8),
+                    _buildChipFiltro(
+                      'Banho (${countsTipo['Banho'] ?? 0})', 
+                      _filtroTipo == 'Banho', 
+                      () => setState(() => _filtroTipo = 'Banho'),
+                      color: Colors.cyan
+                    ),
+                    const SizedBox(width: 8),
+                    _buildChipFiltro(
+                      'Tosa (${countsTipo['Tosa'] ?? 0})', 
+                      _filtroTipo == 'Tosa', 
+                      () => setState(() => _filtroTipo = 'Tosa'),
+                      color: Colors.purpleAccent
+                    ),
+                    const SizedBox(width: 8),
+                    _buildChipFiltro(
+                      'Vacina (${countsTipo['Vacina'] ?? 0})', 
+                      _filtroTipo == 'Vacina', 
+                      () => setState(() => _filtroTipo = 'Vacina'),
+                      color: Colors.redAccent
+                    ),
+                  ],
+                  // Serviços cadastrados que não sejam os básicos acima
+                  ...dataService.servicos
+                      .where((s) {
+                        final n = s.nome.toLowerCase().trim();
+                        // Não mostrar serviços básicos que já possuem chips fixos (normalizado)
+                        if (n == 'banho' || n == 'tosa' || n == 'vacina') return false;
+                        // Não mostrar serviços poluídos com Taxi Dog ou Entrega no nome
+                        if (n.contains('taxi dog') || n.contains('entrega')) return false;
+                        return true;
+                      })
+                      .map((servico) {
+                    final qte = countsTipo[servico.nome] ?? 0;
+                    return Padding(
+                      padding: const EdgeInsets.only(left: 8),
+                      child: _buildChipFiltro(
+                        '${servico.nome} ($qte)',
+                        _filtroTipo == servico.nome,
+                        () => setState(() => _filtroTipo = servico.nome),
+                      ),
+                    );
+                  }),
+                  const SizedBox(width: 8),
+                  _buildChipFiltro(
+                    'Outros (${countsTipo['Outros'] ?? 0})', 
+                    _filtroTipo == 'Outros', 
+                    () => setState(() => _filtroTipo = 'Outros')
+                  ),
+                ],
+              ),
+            ),
+            
+            if (_filtroStatus != null || _filtroTipo != 'Todos' || _termoBusca.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: TextButton.icon(
+                  onPressed: () {
+                    setState(() {
+                      _filtroStatus = null;
+                      _filtroTipo = 'Todos';
+                      _termoBusca = '';
+                      _buscaController.clear();
+                    });
+                  },
+                  icon: const Icon(Icons.filter_list_off, size: 16, color: Colors.white70),
+                  label: const Text('Limpar Filtros', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                ),
+              ),
+          ],
           const SizedBox(height: 12),
           // Seletor de visualização
           Row(
@@ -1176,200 +1226,263 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
   Widget _buildCardAgendamento(AgendamentoServico agendamento, DataService dataService) {
     final isVacina = _isAgendamentoVacina(agendamento);
     final corStatus = isVacina ? _getCorVacina() : _getCorStatus(agendamento.status);
-    final corFundo = isVacina ? _getCorFundoVacina() : _getCorFundoStatus(agendamento.status);
     final tipoServico = _getTipoServico(agendamento);
     final iconeServico = _getIconeTipoServico(agendamento);
+    final nomeCliente = agendamento.cliente?.nome ?? agendamento.clienteNome;
+    final nomePet = agendamento.pet?.nome ?? agendamento.petNome;
+    final racaPet = agendamento.pet?.raca;
+    final nomeServico = isVacina 
+        ? (agendamento.observacoes ?? 'Vacina')
+        : (agendamento.servico?.nome ?? 'Serviço');
+    final isTaxiDog = agendamento.tipoEntrega == 'Taxi Dog' || 
+        agendamento.tipoEntrega == 'Apenas Busca' || 
+        agendamento.tipoEntrega == 'Apenas Entrega';
     
     return GestureDetector(
       onTap: () => _mostrarDetalhesAgendamento(context, agendamento, dataService),
       child: Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.all(12),
+        margin: const EdgeInsets.only(bottom: 6),
         decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [
-              corFundo,
-              Color.lerp(corFundo, corStatus, 0.3)!,
-            ],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          borderRadius: BorderRadius.circular(12),
+          color: const Color(0xFF1A1A2E),
+          borderRadius: BorderRadius.circular(14),
           border: Border.all(
-            color: corStatus.withOpacity(0.8),
-            width: 2,
+            color: Colors.white.withOpacity(0.06),
+            width: 1,
           ),
           boxShadow: [
             BoxShadow(
-              color: corStatus.withOpacity(0.3),
+              color: Colors.black.withOpacity(0.2),
               blurRadius: 8,
               offset: const Offset(0, 2),
             ),
           ],
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // Ícone do tipo de serviço
+                // Barra lateral colorida (estilo Google Calendar)
                 Container(
-                  padding: const EdgeInsets.all(8),
+                  width: 5,
                   decoration: BoxDecoration(
-                    color: corStatus.withOpacity(0.3),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Icon(
-                    iconeServico,
                     color: corStatus,
-                    size: 24,
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(14),
+                      bottomLeft: Radius.circular(14),
+                    ),
                   ),
                 ),
-                const SizedBox(width: 12),
+                // Conteúdo principal
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Mostrar número do agendamento e número do serviço (se houver)
-                      if (agendamento.numeroPedido != null && agendamento.numeroPedido!.isNotEmpty)
-                        Text(
-                          '${agendamento.numeroPedido} • ${agendamento.numero}',
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.7),
-                            fontSize: 11,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        )
-                      else
-                        Text(
-                          agendamento.numero,
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.7),
-                            fontSize: 11,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      const SizedBox(height: 2),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  isVacina 
-                                      ? (agendamento.observacoes ?? 'Vacina') // Para vacinas, usar observações (descrição)
-                                      : (agendamento.servico?.nome ?? 'Serviço'),
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.bold,
-                                    shadows: [
-                                      Shadow(
-                                        color: Colors.black54,
-                                        blurRadius: 2,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Linha 1: Serviço + Horário + Ação
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Ícone do serviço
+                            Container(
+                              padding: const EdgeInsets.all(6),
+                              decoration: BoxDecoration(
+                                color: corStatus.withOpacity(0.15),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Icon(iconeServico, color: corStatus, size: 18),
+                            ),
+                            const SizedBox(width: 10),
+                            // Nome do serviço e tipo
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    nomeServico,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w700,
+                                      letterSpacing: 0.2,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  const SizedBox(height: 3),
+                                  // Badges: tipo + valor
+                                  Row(
+                                    children: [
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: corStatus.withOpacity(0.15),
+                                          borderRadius: BorderRadius.circular(4),
+                                        ),
+                                        child: Text(
+                                          tipoServico,
+                                          style: TextStyle(
+                                            color: corStatus,
+                                            fontSize: 9,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
                                       ),
+                                      if (agendamento.servico != null && agendamento.servico!.preco > 0) ...[
+                                        const SizedBox(width: 6),
+                                        Text(
+                                          'R\$ ${agendamento.servico!.precoTotal.toStringAsFixed(2)}',
+                                          style: TextStyle(
+                                            color: Colors.white.withOpacity(0.6),
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ],
                                     ],
                                   ),
-                                ),
-                                const SizedBox(height: 2),
-                                // Badge do tipo de serviço
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            // Coluna direita: Horário + Ação rápida
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                // Horário
                                 Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                                   decoration: BoxDecoration(
-                                    color: corStatus.withOpacity(0.2),
-                                    borderRadius: BorderRadius.circular(4),
-                                    border: Border.all(color: corStatus.withOpacity(0.5)),
+                                    color: corStatus.withOpacity(0.15),
+                                    borderRadius: BorderRadius.circular(8),
                                   ),
                                   child: Text(
-                                    tipoServico,
+                                    _formatoHora!.format(agendamento.dataAgendamento),
                                     style: TextStyle(
                                       color: corStatus,
-                                      fontSize: 9,
-                                      fontWeight: FontWeight.bold,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w800,
                                     ),
                                   ),
                                 ),
+                                const SizedBox(height: 4),
+                                // Ação rápida
+                                if (agendamento.status == 'Agendado')
+                                  _buildQuickActionButton(
+                                    icon: Icons.play_arrow_rounded,
+                                    color: Colors.amber,
+                                    tooltip: 'Iniciar',
+                                    onPressed: () => _marcarEmAndamento(agendamento, dataService),
+                                  ),
+                                if (agendamento.status == 'Em Andamento')
+                                  _buildQuickActionButton(
+                                    icon: Icons.check_circle_rounded,
+                                    color: Colors.green,
+                                    tooltip: 'Concluir',
+                                    onPressed: () => _marcarConcluido(agendamento, dataService),
+                                  ),
                               ],
                             ),
-                          ),
-                          // Ações rápidas
-                          if (agendamento.status == 'Agendado')
-                            IconButton(
-                              icon: const Icon(Icons.play_arrow, color: Colors.white),
-                              onPressed: () => _marcarEmAndamento(agendamento, dataService),
-                              tooltip: 'Iniciar',
-                              iconSize: 20,
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(),
-                            ),
-                          if (agendamento.status == 'Em Andamento')
-                            IconButton(
-                              icon: const Icon(Icons.check_circle, color: Colors.green),
-                              onPressed: () => _marcarConcluido(agendamento, dataService),
-                              tooltip: 'Concluir',
-                              iconSize: 20,
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(),
-                            ),
-                        ],
-                      ),
-                      // Mostrar valor do serviço
-                      if (agendamento.servico != null && agendamento.servico!.preco > 0) ...[
-                        const SizedBox(height: 2),
-                        Text(
-                          'R\$ ${agendamento.servico!.precoTotal.toStringAsFixed(2)}',
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.8),
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                          ),
+                          ],
                         ),
-                      ],
-                      // Mostrar materiais do agendamento e do serviço
-                      Builder(
-                        builder: (context) {
-                          final todosMateriais = [
-                            ...agendamento.materiais, // Materiais do agendamento (prioridade)
-                            if (agendamento.servico != null) ...agendamento.servico!.materiais, // Materiais do serviço
-                          ];
-                          if (todosMateriais.isEmpty) return const SizedBox.shrink();
-                          return Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                        // Linha 2: Cliente + Pet (compacta)
+                        if (nomeCliente != null || nomePet != null) ...[
+                          const SizedBox(height: 8),
+                          Row(
                             children: [
-                              const SizedBox(height: 4),
-                              Wrap(
+                              if (nomeCliente != null) ...[
+                                Icon(Icons.person_rounded, size: 13, color: Colors.white.withOpacity(0.5)),
+                                const SizedBox(width: 4),
+                                Flexible(
+                                  child: Text(
+                                    nomeCliente,
+                                    style: TextStyle(
+                                      color: Colors.white.withOpacity(0.85),
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                              if (nomeCliente != null && nomePet != null)
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                                  child: Text('•', style: TextStyle(color: Colors.white.withOpacity(0.3), fontSize: 12)),
+                                ),
+                              if (nomePet != null) ...[
+                                Icon(Icons.pets_rounded, size: 13, color: Colors.orange.withOpacity(0.7)),
+                                const SizedBox(width: 4),
+                                Flexible(
+                                  child: Text(
+                                    '$nomePet${racaPet != null ? ' ($racaPet)' : ''}',
+                                    style: TextStyle(
+                                      color: Colors.white.withOpacity(0.85),
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ],
+                        // Observações do pet (se houver, muito compacto)
+                        if (agendamento.pet?.observacoes != null && agendamento.pet!.observacoes!.isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Padding(
+                            padding: const EdgeInsets.only(left: 17),
+                            child: Text(
+                              agendamento.pet!.observacoes!,
+                              style: TextStyle(
+                                color: Colors.orange.withOpacity(0.5),
+                                fontSize: 10,
+                                fontStyle: FontStyle.italic,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                        // Materiais (compacto, inline)
+                        Builder(
+                          builder: (context) {
+                            final todosMateriais = [
+                              ...agendamento.materiais,
+                              if (agendamento.servico != null) ...agendamento.servico!.materiais,
+                            ];
+                            if (todosMateriais.isEmpty) return const SizedBox.shrink();
+                            return Padding(
+                              padding: const EdgeInsets.only(top: 6),
+                              child: Wrap(
                                 spacing: 4,
-                                runSpacing: 2,
+                                runSpacing: 3,
                                 children: todosMateriais.take(3).map((material) {
                                   return Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
                                     decoration: BoxDecoration(
-                                      color: material.isVacina 
-                                          ? Colors.green.withOpacity(0.3)
-                                          : Colors.blue.withOpacity(0.3),
+                                      color: (material.isVacina ? Colors.green : Colors.blue).withOpacity(0.12),
                                       borderRadius: BorderRadius.circular(4),
-                                      border: Border.all(
-                                        color: material.isVacina 
-                                            ? Colors.green.withOpacity(0.5)
-                                            : Colors.blue.withOpacity(0.5),
-                                        width: 1,
-                                      ),
                                     ),
                                     child: Row(
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
                                         Icon(
                                           material.isVacina ? Icons.vaccines : Icons.inventory_2,
-                                          size: 10,
-                                          color: Colors.white.withOpacity(0.9),
+                                          size: 9,
+                                          color: material.isVacina ? Colors.green : Colors.blue,
                                         ),
-                                        const SizedBox(width: 4),
+                                        const SizedBox(width: 3),
                                         Flexible(
                                           child: Text(
                                             '${material.produtoNome} (${material.quantidade.toStringAsFixed(material.quantidade % 1 == 0 ? 0 : 2)}${material.unidade != null ? ' ${material.unidade}' : ''})',
                                             style: TextStyle(
-                                              color: Colors.white.withOpacity(0.9),
+                                              color: Colors.white.withOpacity(0.7),
                                               fontSize: 9,
                                               fontWeight: FontWeight.w500,
                                             ),
@@ -1382,256 +1495,158 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                   );
                                 }).toList(),
                               ),
-                              if (todosMateriais.length > 3)
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 2),
-                                  child: Text(
-                                    '+${todosMateriais.length - 3} mais',
-                                    style: TextStyle(
-                                      color: Colors.white.withOpacity(0.7),
-                                      fontSize: 8,
-                                      fontStyle: FontStyle.italic,
+                            );
+                          },
+                        ),
+                        // Linha 3: Footer - Status + Taxi Dog + Receber
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            // Status pill
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: corStatus.withOpacity(0.12),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                agendamento.status.toUpperCase(),
+                                style: TextStyle(
+                                  color: corStatus,
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
+                            ),
+                            // Taxi Dog badge
+                            if (agendamento.tipoEntrega != null) ...[
+                              const SizedBox(width: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                                decoration: BoxDecoration(
+                                  color: (isTaxiDog ? Colors.green : Colors.blue).withOpacity(0.12),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      isTaxiDog ? Icons.local_shipping_rounded : Icons.person_rounded,
+                                      size: 11,
+                                      color: isTaxiDog ? Colors.green : Colors.blue,
                                     ),
+                                    const SizedBox(width: 3),
+                                    Text(
+                                      agendamento.tipoEntrega!,
+                                      style: TextStyle(
+                                        color: isTaxiDog ? Colors.green : Colors.blue,
+                                        fontSize: 9,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                    if (isTaxiDog && agendamento.valorTaxiDog != null && agendamento.valorTaxiDog! > 0) ...[
+                                      const SizedBox(width: 3),
+                                      Text(
+                                        'R\$ ${agendamento.valorTaxiDog!.toStringAsFixed(2)}',
+                                        style: TextStyle(
+                                          color: Colors.green.withOpacity(0.8),
+                                          fontSize: 8,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                            ],
+                            const Spacer(),
+                            // Recebido / Receber
+                            if (agendamento.recebido == true)
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                                decoration: BoxDecoration(
+                                  color: Colors.green.withOpacity(0.12),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.check_circle_rounded, size: 11, color: Colors.green.withOpacity(0.8)),
+                                    const SizedBox(width: 3),
+                                    Text(
+                                      'Recebido',
+                                      style: TextStyle(
+                                        color: Colors.green.withOpacity(0.8),
+                                        fontSize: 9,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              )
+                            else if (agendamento.status != 'Cancelado')
+                              InkWell(
+                                onTap: () => _marcarComoRecebido(context, agendamento, dataService),
+                                borderRadius: BorderRadius.circular(6),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: Colors.green.withOpacity(0.12),
+                                    borderRadius: BorderRadius.circular(6),
+                                    border: Border.all(color: Colors.green.withOpacity(0.25)),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(Icons.payment_rounded, size: 12, color: Colors.green.withOpacity(0.8)),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        'Receber',
+                                        style: TextStyle(
+                                          color: Colors.green.withOpacity(0.8),
+                                          fontSize: 9,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
-                            ],
-                          );
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    _formatoHora!.format(agendamento.dataAgendamento),
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
+                              ),
+                          ],
+                        ),
+                      ],
                     ),
                   ),
                 ),
               ],
             ),
-            if (agendamento.cliente != null || agendamento.clienteNome != null) ...[
-              const SizedBox(height: 6),
-              Row(
-                children: [
-                  const Icon(Icons.person, size: 14, color: Colors.white70),
-                  const SizedBox(width: 4),
-                  Expanded(
-                    child: Text(
-                      agendamento.cliente?.nome ?? agendamento.clienteNome ?? 'Cliente Não Identificado',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-            if (agendamento.pet != null || agendamento.petNome != null) ...[
-              const SizedBox(height: 6),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Icon(Icons.pets, size: 14, color: Colors.orange),
-                  const SizedBox(width: 4),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Pet: ${agendamento.pet?.nome ?? agendamento.petNome ?? "Não informado"} ${agendamento.pet?.raca != null ? "(${agendamento.pet!.raca})" : ""}',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        if (agendamento.pet?.observacoes != null && agendamento.pet!.observacoes!.isNotEmpty) ...[
-                          const SizedBox(height: 4),
-                          Text(
-                            agendamento.pet!.observacoes!,
-                            style: TextStyle(
-                              color: Colors.white.withOpacity(0.7),
-                              fontSize: 11,
-                              fontStyle: FontStyle.italic,
-                            ),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ],
-            // Indicador de tipo de entrega (Taxi Dog ou Cliente busca)
-            if (agendamento.tipoEntrega != null) ...[
-              const SizedBox(height: 6),
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: (agendamento.tipoEntrega == 'Taxi Dog' || agendamento.tipoEntrega == 'Apenas Busca' || agendamento.tipoEntrega == 'Apenas Entrega')
-                          ? Colors.green.withOpacity(0.2)
-                          : Colors.blue.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(6),
-                      border: Border.all(
-                        color: (agendamento.tipoEntrega == 'Taxi Dog' || agendamento.tipoEntrega == 'Apenas Busca' || agendamento.tipoEntrega == 'Apenas Entrega')
-                            ? Colors.green.withOpacity(0.6)
-                            : Colors.blue.withOpacity(0.6),
-                        width: 1,
-                      ),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          (agendamento.tipoEntrega == 'Taxi Dog' || agendamento.tipoEntrega == 'Apenas Busca' || agendamento.tipoEntrega == 'Apenas Entrega')
-                              ? Icons.local_shipping
-                              : Icons.person,
-                          size: 12,
-                          color: (agendamento.tipoEntrega == 'Taxi Dog' || agendamento.tipoEntrega == 'Apenas Busca' || agendamento.tipoEntrega == 'Apenas Entrega')
-                              ? Colors.green
-                              : Colors.blue,
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          agendamento.tipoEntrega!,
-                          style: TextStyle(
-                            color: (agendamento.tipoEntrega == 'Taxi Dog' || agendamento.tipoEntrega == 'Apenas Busca' || agendamento.tipoEntrega == 'Apenas Entrega')
-                                ? Colors.green
-                                : Colors.blue,
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        if ((agendamento.tipoEntrega == 'Taxi Dog' || agendamento.tipoEntrega == 'Apenas Busca' || agendamento.tipoEntrega == 'Apenas Entrega') && agendamento.valorTaxiDog != null && agendamento.valorTaxiDog! > 0) ...[
-                          const SizedBox(width: 4),
-                          Text(
-                            'R\$ ${agendamento.valorTaxiDog!.toStringAsFixed(2)}',
-                            style: const TextStyle(
-                              color: Colors.green,
-                              fontSize: 9,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                  const Spacer(),
-                  // Indicador de recebido
-                  if (agendamento.recebido == true)
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: Colors.green.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(
-                          color: Colors.green.withOpacity(0.6),
-                          width: 1,
-                        ),
-                      ),
-                      child: const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.check_circle,
-                            size: 12,
-                            color: Colors.green,
-                          ),
-                          SizedBox(width: 4),
-                          Text(
-                            'Recebido',
-                            style: TextStyle(
-                              color: Colors.green,
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                ],
-              ),
-            ],
-            const SizedBox(height: 6),
-            Row(
-              children: [
-                Expanded(
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: corStatus.withOpacity(0.3),
-                      borderRadius: BorderRadius.circular(6),
-                      border: Border.all(
-                        color: corStatus.withOpacity(0.6),
-                        width: 1,
-                      ),
-                    ),
-                    child: Text(
-                      agendamento.status.toUpperCase(),
-                      style: TextStyle(
-                        color: corStatus,
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 0.5,
-                      ),
-                    ),
-                  ),
-                ),
-                // Botão para marcar como recebido
-                if ((agendamento.recebido != true) && agendamento.status != 'Cancelado')
-                  const SizedBox(width: 8),
-                if ((agendamento.recebido != true) && agendamento.status != 'Cancelado')
-                  InkWell(
-                    onTap: () => _marcarComoRecebido(context, agendamento, dataService),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: Colors.green.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(
-                          color: Colors.green.withOpacity(0.6),
-                          width: 1,
-                        ),
-                      ),
-                      child: const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.payment,
-                            size: 14,
-                            color: Colors.green,
-                          ),
-                          SizedBox(width: 4),
-                          Text(
-                            'Receber',
-                            style: TextStyle(
-                              color: Colors.green,
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Botão de ação rápida compacto para o card
+  Widget _buildQuickActionButton({
+    required IconData icon,
+    required Color color,
+    required String tooltip,
+    required VoidCallback onPressed,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: onPressed,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding: const EdgeInsets.all(5),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.15),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: color.withOpacity(0.3)),
+          ),
+          child: Icon(icon, color: color, size: 16),
         ),
       ),
     );
@@ -5517,17 +5532,24 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
   }
   /// Mostra as solicitações de agendamento online (Aguardando Confirmação)
   void _mostrarSolicitacoesAgendamento(BuildContext context, DataService dataService) {
+    // Conjunto local de IDs processados (aprovados/rejeitados) para remoção imediata da lista
+    final Set<String> idsProcessados = {};
+    // Conjunto local de IDs em processamento (mostrando loading)
+    final Set<String> idsProcessando = {};
+    
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) {
+      builder: (modalContext) {
       return Scaffold(
         backgroundColor: Colors.transparent,
-        body: Consumer<DataService>(
-          builder: (context, currentDataService, _) {
+        body: StatefulBuilder(
+          builder: (sbContext, setModalState) {
+          return Consumer<DataService>(
+          builder: (consumerContext, currentDataService, _) {
             final solicitacoes = currentDataService.agendamentosServico
-                .where((a) => a.status == 'Aguardando Confirmação')
+                .where((a) => a.status == 'Aguardando Confirmação' && !idsProcessados.contains(a.id))
                 .toList();
 
             final totalTodos = currentDataService.agendamentosServico.length;
@@ -5539,8 +5561,17 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
             // Ordenar por data (mais recente primeiro)
             solicitacoes.sort((a, b) => b.dataAgendamento.compareTo(a.dataAgendamento));
 
+            // Se não tiver mais solicitações e temos IDs processados, fechar o modal
+            if (solicitacoes.isEmpty && idsProcessados.isNotEmpty) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (modalContext.mounted) {
+                  Navigator.pop(modalContext);
+                }
+              });
+            }
+
             return Container(
-              height: MediaQuery.of(context).size.height * 0.8,
+              height: MediaQuery.of(modalContext).size.height * 0.8,
               decoration: const BoxDecoration(
                 color: Color(0xFF1E1E2E), // Cor escura do sistema
                 borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
@@ -5590,7 +5621,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                         IconButton(
                           icon: const Icon(Icons.refresh, color: Colors.blueAccent, size: 20),
                           onPressed: () async {
-                             ScaffoldMessenger.of(context).showSnackBar(
+                             ScaffoldMessenger.of(modalContext).showSnackBar(
                               const SnackBar(content: Text('Buscando atualizações no Firebase...')),
                             );
                             await currentDataService.forceSync();
@@ -5600,11 +5631,12 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                         // Botão de Diagnóstico (Long Press na Info)
                         GestureDetector(
                           onLongPress: () async {
-                            ScaffoldMessenger.of(context).showSnackBar(
+                            ScaffoldMessenger.of(modalContext).showSnackBar(
                               const SnackBar(content: Text('Verificando Firestore...')),
                             );
                             final count = await FirebaseService.instance.contarAgendamentosPendentes(currentDataService.empresaIdAtual!);
-                            ScaffoldMessenger.of(context).showSnackBar(
+                            if (modalContext.mounted) {
+                            ScaffoldMessenger.of(modalContext).showSnackBar(
                               SnackBar(
                                 content: Text('Encontrados $count docs em: .../${currentDataService.empresaIdAtual}/agendamentos_servico'),
                                 backgroundColor: Colors.blueAccent,
@@ -5624,6 +5656,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                 ),
                               ),
                             );
+                            }
                           },
                           child: const Padding(
                             padding: EdgeInsets.symmetric(horizontal: 8.0),
@@ -5695,9 +5728,16 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
                             itemCount: solicitacoes.length,
                             separatorBuilder: (_, __) => const SizedBox(height: 16),
-                            itemBuilder: (context, index) {
+                            itemBuilder: (listContext, index) {
                               final sol = solicitacoes[index];
-                              return Container(
+                              final isProcessando = idsProcessando.contains(sol.id);
+                              return AnimatedOpacity(
+                                opacity: isProcessando ? 0.4 : 1.0,
+                                duration: const Duration(milliseconds: 300),
+                                child: AnimatedScale(
+                                  scale: isProcessando ? 0.95 : 1.0,
+                                  duration: const Duration(milliseconds: 300),
+                                  child: Container(
                                 padding: const EdgeInsets.all(20),
                                 decoration: BoxDecoration(
                                   color: Colors.white.withOpacity(0.05),
@@ -5761,7 +5801,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                           tooltip: (sol.clienteId == 'publico' || sol.clienteId == null)
                                             ? 'Vincular/Cadastrar Cliente'
                                             : 'Editar Cliente',
-                                          onPressed: () => _editarOuVincularCliente(context, sol, currentDataService),
+                                          onPressed: isProcessando ? null : () => _editarOuVincularCliente(modalContext, sol, currentDataService),
                                         ),
                                       ],
                                     ),
@@ -5854,16 +5894,46 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                       ),
                                     ],
                                     const SizedBox(height: 24),
+                                    if (isProcessando)
+                                      const Center(
+                                        child: Padding(
+                                          padding: EdgeInsets.symmetric(vertical: 8),
+                                          child: Row(
+                                            mainAxisAlignment: MainAxisAlignment.center,
+                                            children: [
+                                              SizedBox(
+                                                width: 20, height: 20,
+                                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.amber),
+                                              ),
+                                              SizedBox(width: 12),
+                                              Text('Processando...', style: TextStyle(color: Colors.amber, fontSize: 13)),
+                                            ],
+                                          ),
+                                        ),
+                                      )
+                                    else
                                     Row(
                                       children: [
                                         Expanded(
                                           child: ElevatedButton(
                                             onPressed: () async {
                                                 try {
+                                                  // Marcar como processando imediatamente
+                                                  setModalState(() {
+                                                    idsProcessando.add(sol.id);
+                                                  });
+                                                  
                                                   await currentDataService.rejeitarAgendamento(sol.id);
-                                                  if (context.mounted) {
-                                                    ScaffoldMessenger.of(context).hideCurrentSnackBar();
-                                                    ScaffoldMessenger.of(context).showSnackBar(
+                                                  
+                                                  // Marcar como processado para remoção imediata da lista
+                                                  setModalState(() {
+                                                    idsProcessando.remove(sol.id);
+                                                    idsProcessados.add(sol.id);
+                                                  });
+                                                  
+                                                  if (modalContext.mounted) {
+                                                    ScaffoldMessenger.of(modalContext).hideCurrentSnackBar();
+                                                    ScaffoldMessenger.of(modalContext).showSnackBar(
                                                       const SnackBar(
                                                         content: Text('Solicitação cancelada/rejeitada'),
                                                         behavior: SnackBarBehavior.floating,
@@ -5871,32 +5941,24 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                                     );
                                                   }
                                                   
-                                                  // Se não houver mais solicitações, fecha o modal após um breve delay
-                                                  // Usar delay para garantir que a UI processou a mudança
-                                                  Future.delayed(const Duration(milliseconds: 300), () {
-                                                    if (context.mounted) {
-                                                      final dataS = Provider.of<DataService>(context, listen: false);
-                                                      final itens = dataS.agendamentosServico
-                                                          .where((a) => a.status == 'Aguardando Confirmação')
-                                                          .length;
-                                                      
-                                                      // Limpar filtros para garantir que a mudança seja visível (opcional para rejeição, mas bom para consistência)
-                                                      setState(() {
-                                                         _termoBusca = '';
-                                                         _buscaController.clear();
-                                                         _filtroStatus = null;
-                                                      });
-
-                                                      if (itens == 0) {
-                                                        Navigator.pop(context);
-                                                      }
-                                                      dataS.forceUpdate();
-                                                    }
+                                                  // Limpar filtros da página principal
+                                                  setState(() {
+                                                     _termoBusca = '';
+                                                     _buscaController.clear();
+                                                     _filtroStatus = null;
                                                   });
+                                                  
+                                                  currentDataService.forceUpdate();
                                                 } catch (e) {
-                                                ScaffoldMessenger.of(context).showSnackBar(
-                                                  SnackBar(content: Text('Erro: $e'), backgroundColor: Colors.red),
-                                                );
+                                                  // Desfazer processando em caso de erro
+                                                  setModalState(() {
+                                                    idsProcessando.remove(sol.id);
+                                                  });
+                                                  if (modalContext.mounted) {
+                                                    ScaffoldMessenger.of(modalContext).showSnackBar(
+                                                      SnackBar(content: Text('Erro: $e'), backgroundColor: Colors.red),
+                                                    );
+                                                  }
                                               }
                                             },
                                             style: ElevatedButton.styleFrom(
@@ -5915,12 +5977,23 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                           child: ElevatedButton(
                                             onPressed: () async {
                                                 try {
+                                                  // Marcar como processando imediatamente
+                                                  setModalState(() {
+                                                    idsProcessando.add(sol.id);
+                                                  });
+                                                  
                                                   // Capturar o ScaffoldMessenger ANTES de qualquer pop ou mudança de contexto
-                                                  final messenger = ScaffoldMessenger.of(context);
+                                                  final messenger = ScaffoldMessenger.of(modalContext);
                                                   
                                                   await currentDataService.aprovarAgendamento(sol.id);
                                                   
-                                                  if (context.mounted) {
+                                                  // Marcar como processado para remoção imediata da lista
+                                                  setModalState(() {
+                                                    idsProcessando.remove(sol.id);
+                                                    idsProcessados.add(sol.id);
+                                                  });
+                                                  
+                                                  if (modalContext.mounted) {
                                                     messenger.hideCurrentSnackBar();
                                                     messenger.showSnackBar(
                                                       const SnackBar(
@@ -5930,33 +6003,24 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                                       ),
                                                     );
                                                   }
+                                                  
+                                                  // Limpar filtros locais para que o agendamento apareça na agenda
+                                                  setState(() {
+                                                     _termoBusca = '';
+                                                     _buscaController.clear();
+                                                     _filtroStatus = null; // Mostrar todos
+                                                     _filtroTipo = 'Todos';
+                                                  });
 
-                                                   // Se não houver mais solicitações, fecha o modal após um breve delay
-                                                   Future.delayed(const Duration(milliseconds: 300), () {
-                                                     if (context.mounted) {
-                                                       final dataS = Provider.of<DataService>(context, listen: false);
-                                                       final itens = dataS.agendamentosServico
-                                                           .where((a) => a.status == 'Aguardando Confirmação')
-                                                           .length;
-                                                       
-                                                       // Limpar filtros locais para que o agendamento apareça no fundo
-                                                       setState(() {
-                                                          _termoBusca = '';
-                                                          _buscaController.clear();
-                                                          _filtroStatus = null; // Mostrar todos
-                                                          _filtroTipo = 'Todos';
-                                                       });
-
-                                                       if (itens == 0) {
-                                                         Navigator.pop(context);
-                                                       }
-                                                       // Forçar atualização local da agenda
-                                                       dataS.forceUpdate();
-                                                     }
-                                                   });
+                                                  // Forçar atualização local da agenda
+                                                  currentDataService.forceUpdate();
                                                 } catch (e) {
-                                                  if (context.mounted) {
-                                                    ScaffoldMessenger.of(context).showSnackBar(
+                                                  // Desfazer processando em caso de erro
+                                                  setModalState(() {
+                                                    idsProcessando.remove(sol.id);
+                                                  });
+                                                  if (modalContext.mounted) {
+                                                    ScaffoldMessenger.of(modalContext).showSnackBar(
                                                       SnackBar(content: Text('Erro: $e'), backgroundColor: Colors.red),
                                                     );
                                                   }
@@ -5976,6 +6040,8 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                     ),
                                   ],
                                 ),
+                              ),
+                                ),
                               );
                             },
                           ),
@@ -5983,6 +6049,8 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                 ],
               ),
             );
+          },
+        );
           },
         ),
       );

@@ -35,13 +35,14 @@ class LojaPublicaWrapper extends StatefulWidget {
 
 class _LojaPublicaWrapperState extends State<LojaPublicaWrapper> {
   bool _dadosCarregados = false;
+  bool _estaCarregando = false; // Guarda para evitar loop infinito
   String? _empresaIdConfigurada;
   String? _ultimoSlugProcessado;
 
   @override
   void initState() {
     super.initState();
-    print('>>> [LojaPublicaWrapper] @INIT - Slug: ${widget.slugEmpresa}');
+    print('>>> [LojaPublicaWrapper] @INIT - Slug: ${widget.slugEmpresa} | ForceAgendamento: ${widget.forceAgendamento}');
     _carregarDados();
   }
 
@@ -58,18 +59,25 @@ class _LojaPublicaWrapperState extends State<LojaPublicaWrapper> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // Se ainda não carregamos os dados OU se carregamos o padrão mas as empresas acabaram de chegar, tentar de novo
+    
+    // Evitar disparar se já estamos carregando ou se já terminou com sucesso
+    if (_estaCarregando || _dadosCarregados) return;
+
     final authService = Provider.of<AuthService>(context);
-    // Retentar se ainda não carregamos com sucesso ou se estamos no fallback '1' mas mais empresas chegaram
-    if (!_dadosCarregados || (_empresaIdConfigurada == null)) {
-      if (authService.empresas.isNotEmpty) {
-        debugPrint('>>> [LojaPublicaWrapper] @CHANGES - Empresas chegaram, tentando carregar...');
-        _carregarDados();
-      }
+    // Retentar apenas se as empresas chegaram e ainda não configuramos o ID
+    if (_empresaIdConfigurada == null && authService.empresas.isNotEmpty) {
+      debugPrint('>>> [LojaPublicaWrapper] @CHANGES - Empresas chegaram, disparando carregamento...');
+      _carregarDados();
     }
   }
 
   Future<void> _carregarDados() async {
+    if (_estaCarregando) return;
+    
+    setState(() {
+      _estaCarregando = true;
+    });
+
     final dataService = Provider.of<DataService>(context, listen: false);
     final authService = Provider.of<AuthService>(context, listen: false);
     
@@ -119,7 +127,10 @@ class _LojaPublicaWrapperState extends State<LojaPublicaWrapper> {
                 'clientes', 'produtos', 'servicos', 'pedidos', 'venda-direta', 'pdv',
                 'entrada-mercadorias', 'contas-pagar', 'agenda-contas', 'cozinha-bar',
                 'mesas', 'links-vendedores', 'vendedor-dashboard', 'funcionarios',
-                'personalizar-loja', 'agenda-pet', 'gerenciar-imagens'
+                'personalizar-loja', 'agenda-pet', 'gerenciar-imagens', 'servico',
+                'caixa', 'comissoes', 'entregas', 'empresas', 'taxas-entrega', 
+                'gerenciar-permissoes', 'historico-vendas', 'historico-operacoes',
+                'gerenciar-usuarios', 'trocas-devolucoes', 'configuracoes-agenda'
               };
               if (!reservados.contains(first)) {
                 slugDeteccao = first;
@@ -195,6 +206,7 @@ class _LojaPublicaWrapperState extends State<LojaPublicaWrapper> {
         setState(() {
           _empresaIdConfigurada = empresaIdParaUsar;
           _dadosCarregados = true;
+          _estaCarregando = false;
         });
 
         // REFORÇO DE URL: Se for Web, garantir que o link original NÃO mude para '/'
@@ -215,6 +227,7 @@ class _LojaPublicaWrapperState extends State<LojaPublicaWrapper> {
       print('>>> [LojaPublica] ❌ Erro crítico no carregamento: $e');
       if (mounted) setState(() {
         _dadosCarregados = true;
+        _estaCarregando = false;
         _empresaIdConfigurada = _empresaIdConfigurada ?? '1'; // Fallback de emergência apenas em erro
       });
     }
@@ -281,10 +294,14 @@ class _LojaPublicaWrapperState extends State<LojaPublicaWrapper> {
       } catch (_) {}
     }
 
+    debugPrint('>>> [LojaPublicaWrapper] build() -> isAgendamento: $isAgendamento | forceAgendamento: ${widget.forceAgendamento}');
+
     Widget child;
     if (isAgendamento) {
+      debugPrint('>>> [LojaPublicaWrapper] Renderizando AgendamentoPublicoPage');
       child = AgendamentoPublicoPage(slugEmpresa: widget.slugEmpresa);
     } else {
+      debugPrint('>>> [LojaPublicaWrapper] Renderizando LojaPublicaPage');
       child = LojaPublicaPage(
         codigoLink: widget.codigoLink.isNotEmpty ? widget.codigoLink : null,
       );

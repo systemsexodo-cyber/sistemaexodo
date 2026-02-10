@@ -217,6 +217,12 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
             _porteAnimal = pet.tamanho ?? 'Pequeno';
             _pesoAproximado = pet.peso ?? 5.0;
           }
+          
+          // Se cliente não tem Taxi Dog habilitado, resetar para Retirada na Loja
+          if (!encontrado.habilitaTaxiDog && _tipoEntrega != 'Retirada na Loja') {
+            debugPrint('>>> [Agendamento] Cliente sem Taxi Dog habilitado - resetando para Retirada na Loja');
+            _tipoEntrega = 'Retirada na Loja';
+          }
         });
       } else {
         debugPrint('>>> [Agendamento] ❌ Nada encontrado para $normalizado');
@@ -233,6 +239,8 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       if (mounted) setState(() => _buscandoCliente = false);
     }
   }
+
+  @override
   void dispose() {
     _nomeController.dispose();
     _whatsappController.dispose();
@@ -1149,6 +1157,9 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
   }
 
   Widget _buildStepEntregaV2(List<Map<String, dynamic>> bairrosConfig) {
+    // Taxi Dog só aparece para clientes com habilitaTaxiDog ativado no cadastro
+    final bool clienteTemTaxiDog = _clienteEncontrado?.habilitaTaxiDog ?? false;
+    
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1160,27 +1171,30 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
           icon: Icons.store_rounded,
           tipo: 'Retirada na Loja',
         ),
-        const SizedBox(height: 16),
-        _buildOpcaoEntregaCard(
-          titulo: 'Taxi Dog (Leva e Traz)',
-          subtitulo: 'Nós buscamos o pet na sua casa e levamos de volta.',
-          icon: Icons.local_shipping_rounded,
-          tipo: 'Taxi Dog',
-        ),
-        const SizedBox(height: 16),
-        _buildOpcaoEntregaCard(
-          titulo: 'Apenas Busca (Nós buscamos)',
-          subtitulo: 'Nós buscamos o pet na sua casa, e você retira na loja.',
-          icon: Icons.arrow_downward_rounded,
-          tipo: 'Apenas Busca',
-        ),
-        const SizedBox(height: 16),
-        _buildOpcaoEntregaCard(
-          titulo: 'Apenas Entrega (Nós levamos)',
-          subtitulo: 'Você traz o pet na loja, e nós entregamos em casa.',
-          icon: Icons.arrow_upward_rounded,
-          tipo: 'Apenas Entrega',
-        ),
+        // Taxi Dog e derivados só aparecem se o cliente tem habilitaTaxiDog ativado
+        if (clienteTemTaxiDog) ...[
+          const SizedBox(height: 16),
+          _buildOpcaoEntregaCard(
+            titulo: 'Taxi Dog (Leva e Traz)',
+            subtitulo: 'Nós buscamos o pet na sua casa e levamos de volta.',
+            icon: Icons.local_shipping_rounded,
+            tipo: 'Taxi Dog',
+          ),
+          const SizedBox(height: 16),
+          _buildOpcaoEntregaCard(
+            titulo: 'Apenas Busca (Nós buscamos)',
+            subtitulo: 'Nós buscamos o pet na sua casa, e você retira na loja.',
+            icon: Icons.arrow_downward_rounded,
+            tipo: 'Apenas Busca',
+          ),
+          const SizedBox(height: 16),
+          _buildOpcaoEntregaCard(
+            titulo: 'Apenas Entrega (Nós levamos)',
+            subtitulo: 'Você traz o pet na loja, e nós entregamos em casa.',
+            icon: Icons.arrow_upward_rounded,
+            tipo: 'Apenas Entrega',
+          ),
+        ],
         if (_tipoEntrega != 'Retirada na Loja') ...[
           const SizedBox(height: 32),
           Text(
@@ -1295,6 +1309,9 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       bairros.sort();
     }
 
+    // Taxi Dog só aparece para clientes com habilitaTaxiDog ativado no cadastro
+    final bool clienteTemTaxiDog = _clienteEncontrado?.habilitaTaxiDog ?? false;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1306,20 +1323,23 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
           icon: Icons.store_rounded,
           tipo: 'Retirada na Loja',
         ),
-        const SizedBox(height: 16),
-        _buildOpcaoEntregaCard(
-          titulo: 'Taxi Dog (Leva e Traz)',
-          subtitulo: 'Nós buscamos o pet na sua casa e levamos de volta.',
-          icon: Icons.local_shipping_rounded,
-          tipo: 'Taxi Dog',
-        ),
-        const SizedBox(height: 16),
-        _buildOpcaoEntregaCard(
-          titulo: 'Apenas Entrega (Traz por conta)',
-          subtitulo: 'Você traz o pet na loja, e nós entregamos em casa.',
-          icon: Icons.home_rounded,
-          tipo: 'Apenas Entrega',
-        ),
+        // Taxi Dog e derivados só aparecem se o cliente tem habilitaTaxiDog ativado
+        if (clienteTemTaxiDog) ...[
+          const SizedBox(height: 16),
+          _buildOpcaoEntregaCard(
+            titulo: 'Taxi Dog (Leva e Traz)',
+            subtitulo: 'Nós buscamos o pet na sua casa e levamos de volta.',
+            icon: Icons.local_shipping_rounded,
+            tipo: 'Taxi Dog',
+          ),
+          const SizedBox(height: 16),
+          _buildOpcaoEntregaCard(
+            titulo: 'Apenas Entrega (Traz por conta)',
+            subtitulo: 'Você traz o pet na loja, e nós entregamos em casa.',
+            icon: Icons.home_rounded,
+            tipo: 'Apenas Entrega',
+          ),
+        ],
         if (_tipoEntrega != 'Retirada na Loja') ...[
           const SizedBox(height: 32),
           Text(
@@ -1528,16 +1548,42 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     );
     
     final duracao = dataService.servicos.firstWhere((s) => s.id == _servicoIdSelecionado, orElse: () => dataService.servicos.first).duracaoPadraoMinutos ?? 60;
-    bool disponivel = dataService.checkDisponibilidade(inicio, duracao, ignorarPendentes: false);
+    
+    // Verificar se é um horário bloqueado administrativamente (para mensagem específica)
+    bool isBloqueadoAdmin = false;
+    try {
+      final config = dataService.empresaAtual?.configuracoes?['agendamento'] as Map<String, dynamic>?;
+      final bloqueados = config?['horariosIndisponiveis'] as List<dynamic>?;
+      if (bloqueados != null) {
+        final double horaInicio = inicio.hour + inicio.minute / 60.0;
+        final double horaFim = horaInicio + (duracao / 60.0);
+        for (final b in bloqueados) {
+          final bMap = Map<String, dynamic>.from(b);
+          final bInParts = (bMap['inicio'] as String).split(':');
+          final bFiParts = (bMap['fim'] as String).split(':');
+          final double bIn = int.parse(bInParts[0]) + int.parse(bInParts[1]) / 60.0;
+          final double bFi = int.parse(bFiParts[0]) + int.parse(bFiParts[1]) / 60.0;
+          if (horaInicio < bFi && horaFim > bIn) {
+            isBloqueadoAdmin = true;
+            break;
+          }
+        }
+      }
+    } catch (_) {}
 
+    bool disponivel = dataService.checkDisponibilidade(inicio, duracao, ignorarPendentes: false);
 
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: disponivel ? Colors.green.withOpacity(0.1) : _primaryColor.withOpacity(0.1),
+        color: disponivel 
+            ? Colors.green.withOpacity(0.1) 
+            : (isBloqueadoAdmin ? Colors.red.withOpacity(0.1) : _primaryColor.withOpacity(0.1)),
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
-          color: disponivel ? Colors.green.withOpacity(0.3) : _primaryColor.withOpacity(0.3),
+          color: disponivel 
+              ? Colors.green.withOpacity(0.3) 
+              : (isBloqueadoAdmin ? Colors.red.withOpacity(0.3) : _primaryColor.withOpacity(0.3)),
         ),
       ),
       child: Row(
@@ -1545,11 +1591,11 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
           Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: disponivel ? Colors.green : _primaryColor,
+              color: disponivel ? Colors.green : (isBloqueadoAdmin ? Colors.red : _primaryColor),
               shape: BoxShape.circle,
             ),
             child: Icon(
-              disponivel ? Icons.check : Icons.notification_important_rounded,
+              disponivel ? Icons.check : (isBloqueadoAdmin ? Icons.block_rounded : Icons.notification_important_rounded),
               color: Colors.white,
               size: 16,
             ),
@@ -1560,18 +1606,24 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  disponivel ? 'Ótima escolha!' : 'Solicitação de Agendamento',
+                  disponivel 
+                      ? 'Ótima escolha!' 
+                      : (isBloqueadoAdmin ? 'Horário Indisponível' : 'Solicitação de Agendamento'),
                   style: TextStyle(
-                    color: disponivel ? Colors.green[300] : Colors.white,
+                    color: disponivel ? Colors.green[300] : (isBloqueadoAdmin ? Colors.red[300] : Colors.white),
                     fontWeight: FontWeight.bold,
                   ),
                 ),
                 Text(
                   disponivel 
                     ? 'Esse horário está livre em nossa agenda.' 
-                    : 'Faremos o possível para te atender! Prosiga com o agendamento e aguarde nossa confirmação.',
+                    : (isBloqueadoAdmin 
+                        ? 'Este horário não está disponível para agendamentos. Por favor, escolha outro horário.'
+                        : 'Faremos o possível para te atender! Prosiga com o agendamento e aguarde nossa confirmação.'),
                   style: TextStyle(
-                    color: disponivel ? Colors.green[100]?.withOpacity(0.7) : Colors.white.withOpacity(0.7),
+                    color: disponivel 
+                        ? Colors.green[100]?.withOpacity(0.7) 
+                        : (isBloqueadoAdmin ? Colors.red[100]?.withOpacity(0.7) : Colors.white.withOpacity(0.7)),
                     fontSize: 12,
                   ),
                 ),
@@ -1759,7 +1811,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
               child: OutlinedButton.icon(
                 onPressed: _enviando ? null : () => _adicionarAoCarrinho(moduloPet),
                 icon: const Icon(Icons.add_circle_outline),
-                label: const Text('Agendar outro Pet', style: TextStyle(fontWeight: FontWeight.bold)),
+                label: const Text('Solicitar para outro Pet', style: TextStyle(fontWeight: FontWeight.bold)),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: primaryColor,
                   side: BorderSide(color: primaryColor),
@@ -1820,7 +1872,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                           else ...[
                             Text(
                               noUltimoPasso 
-                                ? (_agendamentosCarrinho.isEmpty ? 'Finalizar Agendamento' : 'Finalizar TUDO (${_agendamentosCarrinho.length + 1})') 
+                                ? (_agendamentosCarrinho.isEmpty ? 'Enviar Solicitação' : 'Enviar TODAS (${_agendamentosCarrinho.length + 1})') 
                                 : 'Próximo Passo',
                               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white),
                             ),
@@ -1864,9 +1916,40 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       return;
     }
 
+    final dataService = Provider.of<DataService>(context, listen: false);
+
+    // Verificação extra de horário bloqueado administrativamente
+    try {
+      final inicio = DateTime(
+        _dataSelecionada!.year,
+        _dataSelecionada!.month,
+        _dataSelecionada!.day,
+        _horaSelecionada!.hour,
+        _horaSelecionada!.minute,
+      );
+      final duracao = dataService.servicos.firstWhere((s) => s.id == _servicoIdSelecionado, orElse: () => dataService.servicos.first).duracaoPadraoMinutos ?? 60;
+      
+      final config = dataService.empresaAtual?.configuracoes?['agendamento'] as Map<String, dynamic>?;
+      final bloqueados = config?['horariosIndisponiveis'] as List<dynamic>?;
+      if (bloqueados != null) {
+        final double horaInicio = inicio.hour + inicio.minute / 60.0;
+        final double horaFim = horaInicio + (duracao / 60.0);
+        for (final b in bloqueados) {
+          final bMap = Map<String, dynamic>.from(b);
+          final bInParts = (bMap['inicio'] as String).split(':');
+          final bFiParts = (bMap['fim'] as String).split(':');
+          final double bIn = int.parse(bInParts[0]) + int.parse(bInParts[1]) / 60.0;
+          final double bFi = int.parse(bFiParts[0]) + int.parse(bFiParts[1]) / 60.0;
+          if (horaInicio < bFi && horaFim > bIn) {
+             _showError('Este horário não está disponível para agendamentos. Por favor, escolha outro.');
+             return;
+          }
+        }
+      }
+    } catch (_) {}
+
     setState(() => _enviando = true);
 
-    final dataService = Provider.of<DataService>(context, listen: false);
     final authService = Provider.of<AuthService>(context, listen: false);
 
     try {
@@ -2052,7 +2135,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
               Icon(Icons.shopping_basket_rounded, color: primaryColor, size: 20),
               const SizedBox(width: 10),
               Text(
-                'Seus Agendamentos (${_agendamentosCarrinho.length})',
+                'Suas Solicitações (${_agendamentosCarrinho.length})',
                 style: GoogleFonts.outfit(color: _isDark ? Colors.white : Colors.black87, fontWeight: FontWeight.bold),
               ),
             ],
@@ -2107,6 +2190,36 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     }
 
     final dataService = Provider.of<DataService>(context, listen: false);
+
+    // Verificação de horário bloqueado administrativamente
+    try {
+      final inicio = DateTime(
+        _dataSelecionada!.year,
+        _dataSelecionada!.month,
+        _dataSelecionada!.day,
+        _horaSelecionada!.hour,
+        _horaSelecionada!.minute,
+      );
+      final duracao = dataService.servicos.firstWhere((s) => s.id == _servicoIdSelecionado, orElse: () => dataService.servicos.first).duracaoPadraoMinutos ?? 60;
+      
+      final config = dataService.empresaAtual?.configuracoes?['agendamento'] as Map<String, dynamic>?;
+      final bloqueados = config?['horariosIndisponiveis'] as List<dynamic>?;
+      if (bloqueados != null) {
+        final double horaInicio = inicio.hour + inicio.minute / 60.0;
+        final double horaFim = horaInicio + (duracao / 60.0);
+        for (final b in bloqueados) {
+          final bMap = Map<String, dynamic>.from(b);
+          final bInParts = (bMap['inicio'] as String).split(':');
+          final bFiParts = (bMap['fim'] as String).split(':');
+          final double bIn = int.parse(bInParts[0]) + int.parse(bInParts[1]) / 60.0;
+          final double bFi = int.parse(bFiParts[0]) + int.parse(bFiParts[1]) / 60.0;
+          if (horaInicio < bFi && horaFim > bIn) {
+             _showError('Este horário não está disponível para agendamentos.');
+             return;
+          }
+        }
+      }
+    } catch (_) {}
     final dataAgendamento = DateTime(
       _dataSelecionada!.year,
       _dataSelecionada!.month,
@@ -2186,7 +2299,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       _currentStep = 0; // Volta para o início para o próximo pet
     });
 
-    _showWarning('Agendamento adicionado! Você pode agendar outro pet agora.');
+    _showWarning('Solicitação adicionada! Você pode adicionar outro agendamento agora.');
   }
 
   void _mostrarSucesso({bool horarioOcupado = false}) {
@@ -2221,14 +2334,35 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                 ),
                 const SizedBox(height: 24),
                 Text(
-                  'Solicitação Enviada!',
+                  'Solicitação Recebida!',
                   style: GoogleFonts.outfit(color: textColor, fontSize: 24, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 16),
                 Text(
-                  'Recebemos suas solicitações de agendamento.',
+                  'Sua solicitação de agendamento foi recebida e será ANALISADA pela nossa equipe.',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: textSecondary),
+                  style: TextStyle(color: textSecondary, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.info_outline, color: Colors.orange, size: 20),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'ATENÇÃO: O agendamento NÃO está confirmado. Aguarde nossa aprovação para garantir o horário solicitado.',
+                          style: TextStyle(color: textColor, fontSize: 12, fontWeight: FontWeight.w500),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
                 const SizedBox(height: 16),
                 ..._agendamentosCarrinho.map((a) => Padding(

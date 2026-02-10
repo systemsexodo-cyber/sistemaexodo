@@ -2984,6 +2984,41 @@ class DataService extends ChangeNotifier {
         return false;
       }
     }
+
+    // Verificar conflitos com horários bloqueados (Configuração da Empresa)
+    try {
+      final config = _empresaAtual?.configuracoes?['agendamento'] as Map<String, dynamic>?;
+      final bloqueados = config?['horariosIndisponiveis'] as List<dynamic>?;
+      
+      if (bloqueados != null && bloqueados.isNotEmpty) {
+        final double horaInicio = inicio.hour + inicio.minute / 60.0;
+        final double horaFim = horaInicio + (duracaoMinutos / 60.0);
+        
+        for (final b in bloqueados) {
+          final bMap = Map<String, dynamic>.from(b);
+          final String? bInicioStr = bMap['inicio'];
+          final String? bFimStr = bMap['fim'];
+          
+          if (bInicioStr == null || bFimStr == null) continue;
+          
+          final bInicioParts = bInicioStr.split(':');
+          final bFimParts = bFimStr.split(':');
+          
+          if (bInicioParts.length != 2 || bFimParts.length != 2) continue;
+          
+          final double bInicio = int.parse(bInicioParts[0]) + int.parse(bInicioParts[1]) / 60.0;
+          final double bFim = int.parse(bFimParts[0]) + int.parse(bFimParts[1]) / 60.0;
+          
+          // Sobreposição: (InicioA < FimB) && (FimA > InicioB)
+          if (horaInicio < bFim && horaFim > bInicio) {
+            debugPrint('>>> [DataService] Horário bloqueado detectado: $bInicioStr - $bFimStr');
+            return false;
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('>>> [DataService] Erro ao validar horários bloqueados: $e');
+    }
     
     return true;
   }

@@ -217,6 +217,7 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
   DateTime? _dataNascimento;
   bool _ativo = true;
   bool _bloqueado = false;
+  bool _habilitaTaxiDog = false;
   
   // Pets
   List<Pet> _pets = [];
@@ -411,6 +412,7 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
       _limiteCreditoController.text = c.limiteCredito?.toStringAsFixed(2) ?? '';
       _ativo = c.ativo;
       _bloqueado = c.bloqueado;
+      _habilitaTaxiDog = c.habilitaTaxiDog;
       _pets = List.from(c.pets);
     }
   }
@@ -871,23 +873,39 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                 ),
                 const Divider(color: Colors.white12),
                 SwitchListTile(
-                  title: const Text(
-                    'Bloqueado',
-                    style: TextStyle(color: Colors.white),
-                  ),
-                  subtitle: Text(
-                    _bloqueado
-                        ? 'Cliente bloqueado para novas vendas'
-                        : 'Sem bloqueio',
-                    style: TextStyle(color: Colors.white.withOpacity(0.5)),
-                  ),
-                  value: _bloqueado,
-                  activeThumbColor: Colors.redAccent,
-                  onChanged: (value) => setState(() => _bloqueado = value),
+                title: const Text(
+                  'Bloqueado',
+                  style: TextStyle(color: Colors.white),
                 ),
-              ],
-            ),
+                subtitle: Text(
+                  _bloqueado
+                      ? 'Cliente bloqueado para novas vendas'
+                      : 'Sem bloqueio',
+                  style: TextStyle(color: Colors.white.withOpacity(0.5)),
+                ),
+                value: _bloqueado,
+                activeThumbColor: Colors.redAccent,
+                onChanged: (value) => setState(() => _bloqueado = value),
+              ),
+              const Divider(color: Colors.white12),
+              SwitchListTile(
+                title: const Text(
+                  'Habilita Taxi Dog',
+                  style: TextStyle(color: Colors.white),
+                ),
+                subtitle: Text(
+                  _habilitaTaxiDog
+                      ? 'Cliente pode agendar com Taxi Dog'
+                      : 'Opções de Taxi Dog ocultas no agendamento',
+                  style: TextStyle(color: Colors.white.withOpacity(0.5)),
+                ),
+                value: _habilitaTaxiDog,
+                activeThumbColor: Colors.blueAccent,
+                onChanged: (value) => setState(() => _habilitaTaxiDog = value),
+              ),
+            ],
           ),
+        ),
 
           const SizedBox(height: 24),
 
@@ -2750,6 +2768,7 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
           _limiteCreditoController.text.replaceAll(',', '.'),
         ),
         bloqueado: _bloqueado,
+        habilitaTaxiDog: _habilitaTaxiDog,
         ativo: _ativo,
         createdAt: widget.cliente?.createdAt ?? DateTime.now(),
         updatedAt: DateTime.now(),
