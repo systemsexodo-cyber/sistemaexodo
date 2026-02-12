@@ -1238,6 +1238,15 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
         agendamento.tipoEntrega == 'Apenas Busca' || 
         agendamento.tipoEntrega == 'Apenas Entrega';
     
+    // Verificar se faz parte de um grupo de múltiplos pets no mesmo horário
+    final isGrupoMultiPet = dataService.agendamentosServico.any((a) => 
+        a.id != agendamento.id &&
+        a.clienteId != null &&
+        a.clienteId == agendamento.clienteId &&
+        a.dataAgendamento.isAtSameMomentAs(agendamento.dataAgendamento) &&
+        a.status != 'Cancelado'
+    );
+
     return GestureDetector(
       onTap: () => _mostrarDetalhesAgendamento(context, agendamento, dataService),
       child: Container(
@@ -1246,13 +1255,13 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
           color: const Color(0xFF1A1A2E),
           borderRadius: BorderRadius.circular(14),
           border: Border.all(
-            color: Colors.white.withOpacity(0.06),
-            width: 1,
+            color: isGrupoMultiPet ? Colors.orange.withOpacity(0.3) : Colors.white.withOpacity(0.06),
+            width: isGrupoMultiPet ? 1.5 : 1,
           ),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.2),
-              blurRadius: 8,
+              color: isGrupoMultiPet ? Colors.orange.withOpacity(0.05) : Colors.black.withOpacity(0.2),
+              blurRadius: isGrupoMultiPet ? 10 : 8,
               offset: const Offset(0, 2),
             ),
           ],
@@ -1417,15 +1426,59 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                 Icon(Icons.pets_rounded, size: 13, color: Colors.orange.withOpacity(0.7)),
                                 const SizedBox(width: 4),
                                 Flexible(
-                                  child: Text(
-                                    '$nomePet${racaPet != null ? ' ($racaPet)' : ''}',
-                                    style: TextStyle(
-                                      color: Colors.white.withOpacity(0.85),
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
+                                  child: Builder(
+                                    builder: (context) {
+                                      // Buscar outros agendamentos do mesmo cliente no mesmo horário
+                                      final agendamentosMesmoHorario = dataService.agendamentosServico.where((a) => 
+                                        a.clienteId != null && 
+                                        a.clienteId == agendamento.clienteId && 
+                                        a.dataAgendamento.isAtSameMomentAs(agendamento.dataAgendamento) &&
+                                        a.status != 'Cancelado'
+                                      ).toList();
+
+                                      // Ordenar por ID para garantir ordem consistente
+                                      agendamentosMesmoHorario.sort((a, b) => a.id.compareTo(b.id));
+                                      
+                                      final totalPets = agendamentosMesmoHorario.length;
+                                      final indicePet = agendamentosMesmoHorario.indexWhere((a) => a.id == agendamento.id) + 1;
+
+                                      return Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Flexible(
+                                            child: Text(
+                                              '$nomePet${racaPet != null ? ' ($racaPet)' : ''}',
+                                              style: TextStyle(
+                                                color: Colors.white.withOpacity(0.85),
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w500,
+                                              ),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                          if (totalPets > 1) ...[
+                                            const SizedBox(width: 6),
+                                            Container(
+                                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                                              decoration: BoxDecoration(
+                                                color: Colors.orange.withOpacity(0.2),
+                                                borderRadius: BorderRadius.circular(4),
+                                                border: Border.all(color: Colors.orange.withOpacity(0.4), width: 0.5),
+                                              ),
+                                              child: Text(
+                                                'PET $indicePet DE $totalPets',
+                                                style: const TextStyle(
+                                                  color: Colors.orange,
+                                                  fontSize: 8,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ],
+                                      );
+                                    }
                                   ),
                                 ),
                               ],
@@ -1961,8 +2014,8 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                   return _buildInfoLinhaComBotoes(
                     'Telefone',
                     telefone,
-                    onWhatsApp: telefone != 'N/A' ? () => _abrirWhatsApp(telefone) : null,
-                    onCopy: telefone != 'N/A' ? () => _copiarTelefoneParaObservacoes(agendamento, telefone, dataService) : null,
+                    onWhatsApp: telefone != 'N/A' ? () => _abrirWhatsAppComDados(telefone, agendamento) : null,
+                    onCopy: telefone != 'N/A' ? () => _copiarTelefoneClipboard(telefone) : null,
                   );
                 },
               ),
@@ -2009,7 +2062,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                   children: [
                                     Expanded(
                                       child: Text(
-                                        '${agendamento.pet!.nome}${agendamento.pet!.especie != null ? ' (${agendamento.pet!.especie}${agendamento.pet!.raca != null ? ' - ${agendamento.pet!.raca}' : ''})' : ''}${agendamento.pet!.tamanho != null || agendamento.pet!.peso != null ? ' - ${[if (agendamento.pet!.tamanho != null) agendamento.pet!.tamanho, if (agendamento.pet!.peso != null) '${agendamento.pet!.peso}kg'].join(' • ')}' : ''}',
+                                        '${agendamento.pet!.nome}${agendamento.pet!.especie != null ? ' (${agendamento.pet!.especie}${agendamento.pet!.raca != null ? ' - ${agendamento.pet!.raca}' : ''})' : ''}${agendamento.pet!.tamanho != null || agendamento.pet!.peso != null ? ' - ${[if (agendamento.pet!.tamanho != null) agendamento.pet!.tamanho, if (agendamento.pet!.peso != null) '${agendamento.pet!.peso!.toStringAsFixed(2)}kg'].join(' • ')}' : ''}',
                                         style: const TextStyle(
                                           color: Colors.white,
                                           fontSize: 14,
@@ -2200,6 +2253,21 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                 _marcarComoRecebido(context, agendamento, dataService);
               },
             ),
+          // Botão para copiar todos os dados do agendamento
+          IconButton(
+            icon: const Icon(Icons.copy_all, color: Colors.green),
+            tooltip: 'Copiar Dados do Agendamento',
+            onPressed: () {
+              final texto = _montarTextoAgendamento(agendamento);
+              Clipboard.setData(ClipboardData(text: texto));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Dados do agendamento copiados!'),
+                  backgroundColor: Colors.green,
+                ),
+              );
+            },
+          ),
           // Botão para gerar PDF
           IconButton(
             icon: const Icon(Icons.picture_as_pdf, color: Colors.red),
@@ -2641,7 +2709,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                   IconButton(
                     icon: const Icon(Icons.copy, color: Colors.blue, size: 20),
                     onPressed: onCopy,
-                    tooltip: 'Copiar para Observações',
+                    tooltip: 'Copiar Telefone',
                     constraints: const BoxConstraints(),
                     padding: const EdgeInsets.symmetric(horizontal: 8),
                   ),
@@ -2653,7 +2721,140 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
     );
   }
 
-  void _abrirWhatsApp(String telefone) async {
+  /// Monta o texto formatado com todos os dados do agendamento para envio por WhatsApp
+  String _montarTextoAgendamento(AgendamentoServico agendamento) {
+    final buffer = StringBuffer();
+    
+    // Saudação e título
+    final nomeCliente = agendamento.cliente?.nome ?? agendamento.clienteNome ?? '';
+    buffer.writeln('Olá${nomeCliente.isNotEmpty ? ', *$nomeCliente*' : ''}! 👋');
+    buffer.writeln('');
+    buffer.writeln('Segue os dados do seu agendamento:');
+    buffer.writeln('');
+    
+    // ── Dados do Agendamento ──
+    buffer.writeln('📋 *AGENDAMENTO ${agendamento.numero}*');
+    buffer.writeln('');
+    
+    // Serviço e Valor
+    buffer.writeln('✂️ *Serviço:* ${agendamento.servico?.nome ?? 'N/A'}');
+    if (agendamento.servico != null && agendamento.servico!.preco > 0) {
+      buffer.writeln('💰 *Valor:* R\$ ${agendamento.servico!.precoTotal.toStringAsFixed(2)}');
+    }
+    if (agendamento.valorTaxiDog != null && agendamento.valorTaxiDog! > 0) {
+      buffer.writeln('🚗 *Taxa de Entrega:* R\$ ${agendamento.valorTaxiDog!.toStringAsFixed(2)}');
+      if (agendamento.servico != null && agendamento.servico!.preco > 0) {
+        final total = agendamento.servico!.precoTotal + agendamento.valorTaxiDog!;
+        buffer.writeln('💵 *Total:* R\$ ${total.toStringAsFixed(2)}');
+      }
+    }
+    buffer.writeln('');
+    
+    // Data e Horário
+    final dataFormatada = DateFormat('dd/MM/yyyy', 'pt_BR').format(agendamento.dataAgendamento);
+    final horaFormatada = DateFormat('HH:mm').format(agendamento.dataAgendamento);
+    final horaTermino = DateFormat('HH:mm').format(agendamento.dataAgendamento.add(Duration(minutes: agendamento.duracaoMinutos)));
+    buffer.writeln('📅 *Data:* $dataFormatada');
+    buffer.writeln('🕐 *Horário:* $horaFormatada às $horaTermino (${agendamento.duracaoMinutos} min)');
+    buffer.writeln('');
+    
+    // Pet
+    if (agendamento.pet != null) {
+      final pet = agendamento.pet!;
+      buffer.writeln('🐾 *Pet:* ${pet.nome}');
+      final detalhes = <String>[];
+      if (pet.especie != null) detalhes.add(pet.especie!);
+      if (pet.raca != null) detalhes.add(pet.raca!);
+      if (pet.tamanho != null) detalhes.add(pet.tamanho!);
+      if (pet.peso != null) detalhes.add('${pet.peso!.toStringAsFixed(2)}kg');
+      if (detalhes.isNotEmpty) {
+        buffer.writeln('   ${detalhes.join(' • ')}');
+      }
+      if (pet.observacoes != null && pet.observacoes!.isNotEmpty) {
+        buffer.writeln('   ⚠️ ${pet.observacoes}');
+      }
+      buffer.writeln('');
+    } else if (agendamento.petNome != null) {
+      buffer.writeln('🐾 *Pet:* ${agendamento.petNome}');
+      buffer.writeln('');
+    }
+    
+    // Entrega
+    if (agendamento.tipoEntrega != null) {
+      if (agendamento.tipoEntrega == 'Taxi Dog' || agendamento.tipoEntrega == 'Apenas Busca' || agendamento.tipoEntrega == 'Apenas Entrega') {
+        buffer.writeln('🚗 *Entrega:* ${agendamento.tipoEntrega}');
+        final enderecoPartes = <String>[];
+        if (agendamento.endereco != null && agendamento.endereco!.isNotEmpty) {
+          String rua = agendamento.endereco!;
+          if (agendamento.numeroEndereco != null && agendamento.numeroEndereco!.isNotEmpty) {
+            rua += ', ${agendamento.numeroEndereco}';
+          }
+          enderecoPartes.add(rua);
+        }
+        if (agendamento.complemento != null && agendamento.complemento!.isNotEmpty) {
+          enderecoPartes.add(agendamento.complemento!);
+        }
+        if (agendamento.bairroEntrega != null && agendamento.bairroEntrega!.isNotEmpty) {
+          enderecoPartes.add(agendamento.bairroEntrega!);
+        }
+        if (enderecoPartes.isNotEmpty) {
+          buffer.writeln('📍 *Endereço:* ${enderecoPartes.join(' - ')}');
+        }
+        if (agendamento.pontoReferencia != null && agendamento.pontoReferencia!.isNotEmpty) {
+          buffer.writeln('🔎 *Referência:* ${agendamento.pontoReferencia}');
+        }
+      } else {
+        buffer.writeln('🏪 *Entrega:* ${agendamento.tipoEntrega}');
+      }
+      buffer.writeln('');
+    }
+    
+    // Materiais
+    if (agendamento.materiais.isNotEmpty) {
+      buffer.writeln('💊 *Materiais:*');
+      for (final material in agendamento.materiais) {
+        final qtd = material.quantidade % 1 == 0
+            ? material.quantidade.toInt().toString()
+            : material.quantidade.toStringAsFixed(2);
+        buffer.writeln('   • ${material.produtoNome} - $qtd${material.unidade != null ? ' ${material.unidade}' : ''}');
+      }
+      buffer.writeln('');
+    }
+    
+    // Observações
+    if (agendamento.observacoes != null && agendamento.observacoes!.isNotEmpty) {
+      buffer.writeln('📝 *Obs:* ${agendamento.observacoes}');
+      buffer.writeln('');
+    }
+    
+    // Status
+    final statusEmoji = {
+      'Agendado': '✅',
+      'Em Andamento': '🔄',
+      'Concluído': '✔️',
+      'Cancelado': '❌',
+      'Aguardando Confirmação': '⏳',
+    };
+    buffer.writeln('${statusEmoji[agendamento.status] ?? '📊'} *Status:* ${agendamento.status}');
+    
+    return buffer.toString().trimRight();
+  }
+
+  void _abrirWhatsAppComDados(String telefone, AgendamentoServico agendamento) async {
+    // Copiar dados do agendamento para a área de transferência
+    final textoAgendamento = _montarTextoAgendamento(agendamento);
+    await Clipboard.setData(ClipboardData(text: textoAgendamento));
+    
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Dados do agendamento copiados! Cole no WhatsApp.'),
+          backgroundColor: Colors.green,
+          duration: Duration(seconds: 3),
+        ),
+      );
+    }
+
     final numeroLimpo = telefone.replaceAll(RegExp(r'\D'), '');
     if (numeroLimpo.isEmpty) return;
 
@@ -2680,32 +2881,15 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
     }
   }
 
-  void _copiarTelefoneParaObservacoes(AgendamentoServico agendamento, String telefone, DataService dataService) async {
-    final obsAntiga = agendamento.observacoes ?? '';
-    final novoTexto = obsAntiga.isEmpty ? telefone : '$obsAntiga\n$telefone';
-
-    try {
-      final agendamentoAtualizado = agendamento.copyWith(
-        observacoes: novoTexto,
-        updatedAt: DateTime.now(),
+  void _copiarTelefoneClipboard(String telefone) {
+    Clipboard.setData(ClipboardData(text: telefone));
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Telefone copiado!'),
+          backgroundColor: Colors.green,
+        ),
       );
-      await dataService.updateAgendamentoServico(agendamentoAtualizado);
-      
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Telefone copiado para as observações!'),
-            backgroundColor: Colors.green,
-          ),
-        );
-        Navigator.pop(context); // Fechar detalhes para mostrar atualizado
-      }
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erro ao atualizar observações: $e'), backgroundColor: Colors.red),
-        );
-      }
     }
   }
 
@@ -3743,8 +3927,36 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
     final servicos = dataService.servicos;
     final clientes = dataService.clientes;
     
-    Servico? servicoSelecionado = agendamento.servico;
-    Cliente? clienteSelecionado = agendamento.cliente;
+    // Buscar por ID na lista do DataService para garantir mesma referência do dropdown
+    Servico? servicoSelecionado;
+    if (agendamento.servicoId != null) {
+      try {
+        servicoSelecionado = servicos.firstWhere((s) => s.id == agendamento.servicoId);
+      } catch (_) {
+        servicoSelecionado = null; // Não usar referência externa ao dropdown
+      }
+    } else if (agendamento.servico != null) {
+      try {
+        servicoSelecionado = servicos.firstWhere((s) => s.id == agendamento.servico!.id);
+      } catch (_) {
+        servicoSelecionado = null;
+      }
+    }
+
+    Cliente? clienteSelecionado;
+    if (agendamento.clienteId != null && agendamento.clienteId != 'publico') {
+      try {
+        clienteSelecionado = clientes.firstWhere((c) => c.id == agendamento.clienteId);
+      } catch (_) {
+        clienteSelecionado = null; // Não usar referência externa ao dropdown
+      }
+    } else if (agendamento.cliente != null) {
+      try {
+        clienteSelecionado = clientes.firstWhere((c) => c.id == agendamento.cliente!.id);
+      } catch (_) {
+        clienteSelecionado = null;
+      }
+    }
     DateTime dataSelecionada = agendamento.dataAgendamento;
     TimeOfDay horaSelecionada = TimeOfDay.fromDateTime(agendamento.dataAgendamento);
     int duracaoMinutos = agendamento.duracaoMinutos;
@@ -3881,7 +4093,38 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                 
                 // Seleção de Pets (múltipla)
                 if (clienteSelecionado != null && clienteSelecionado!.pets.isNotEmpty) ...[
-                  const Text('Pets:', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('Pets:', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                      TextButton.icon(
+                        onPressed: () {
+                          setStateDialog(() {
+                            if (petsSelecionadosIds.length == clienteSelecionado!.pets.length) {
+                              // Se todos estão selecionados, desmarcar todos
+                              petsSelecionadosIds = [];
+                            } else {
+                              // Selecionar todos
+                              petsSelecionadosIds = clienteSelecionado!.pets.map((p) => p.id).toList();
+                            }
+                          });
+                        },
+                        icon: Icon(
+                          petsSelecionadosIds.length == clienteSelecionado!.pets.length
+                              ? Icons.deselect
+                              : Icons.select_all,
+                          size: 16,
+                          color: Colors.blueAccent,
+                        ),
+                        label: Text(
+                          petsSelecionadosIds.length == clienteSelecionado!.pets.length
+                              ? 'Desmarcar todos'
+                              : 'Selecionar todos',
+                          style: const TextStyle(color: Colors.blueAccent, fontSize: 12),
+                        ),
+                      ),
+                    ],
+                  ),
                   const SizedBox(height: 8),
                   Container(
                     decoration: BoxDecoration(
@@ -3892,7 +4135,8 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: clienteSelecionado!.pets.map((pet) {
-                        return RadioListTile<String>(
+                        final isSelecionado = petsSelecionadosIds.contains(pet.id);
+                        return CheckboxListTile(
                           title: Text(
                             pet.nome,
                             style: const TextStyle(color: Colors.white),
@@ -3903,18 +4147,48 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                   style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 12),
                                 )
                               : null,
-                          value: pet.id,
-                          groupValue: petsSelecionadosIds.isNotEmpty ? petsSelecionadosIds.first : null,
+                          value: isSelecionado,
                           activeColor: Colors.blueAccent,
+                          checkColor: Colors.white,
                           onChanged: (value) {
                             setStateDialog(() {
-                              petsSelecionadosIds = value != null ? [value] : [];
+                              if (value == true) {
+                                if (!petsSelecionadosIds.contains(pet.id)) {
+                                  petsSelecionadosIds.add(pet.id);
+                                }
+                              } else {
+                                petsSelecionadosIds.remove(pet.id);
+                              }
                             });
                           },
                         );
                       }).toList(),
                     ),
                   ),
+                  if (petsSelecionadosIds.length > 1)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.orange.withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.info_outline, color: Colors.orange, size: 16),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                '${petsSelecionadosIds.length} pets selecionados. Será criado um agendamento para cada pet adicional.',
+                                style: const TextStyle(color: Colors.orange, fontSize: 11),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                   const SizedBox(height: 16),
                 ],
                 // Tipo de Entrega
@@ -3929,16 +4203,28 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                   ),
                   dropdownColor: const Color(0xFF1E1E2E),
                   style: const TextStyle(color: Colors.white),
-                  items: [
-                    const DropdownMenuItem<String?>(
+                  items: const [
+                    DropdownMenuItem<String?>(
                       value: null,
                       child: Text('Não especificado'),
                     ),
-                    const DropdownMenuItem<String>(
-                      value: 'Taxi Dog',
-                      child: Text('Taxi Dog'),
+                    DropdownMenuItem<String>(
+                      value: 'Retirada na Loja',
+                      child: Text('Retirada na Loja'),
                     ),
-                    const DropdownMenuItem<String>(
+                    DropdownMenuItem<String>(
+                      value: 'Taxi Dog',
+                      child: Text('Taxi Dog (Leva e Traz)'),
+                    ),
+                    DropdownMenuItem<String>(
+                      value: 'Apenas Busca',
+                      child: Text('Apenas Busca'),
+                    ),
+                    DropdownMenuItem<String>(
+                      value: 'Apenas Entrega',
+                      child: Text('Apenas Entrega'),
+                    ),
+                    DropdownMenuItem<String>(
                       value: 'Cliente busca',
                       child: Text('Cliente busca'),
                     ),
@@ -3946,15 +4232,15 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                   onChanged: (value) {
                     setStateDialog(() {
                       tipoEntrega = value;
-                      if (value != 'Taxi Dog') {
+                      if (value == null || value == 'Retirada na Loja' || value == 'Cliente busca') {
                         valorTaxiDogController.clear();
                         bairroEntregaController.clear();
                       }
                     });
                   },
                 ),
-                // Campos de Taxi Dog
-                if (tipoEntrega == 'Taxi Dog') ...[
+                // Campos de endereço para Taxi Dog, Apenas Busca e Apenas Entrega
+                if (tipoEntrega == 'Taxi Dog' || tipoEntrega == 'Apenas Busca' || tipoEntrega == 'Apenas Entrega') ...[
                   const SizedBox(height: 16),
                   TextField(
                     controller: bairroEntregaController,
@@ -3970,7 +4256,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                     controller: valorTaxiDogController,
                     keyboardType: const TextInputType.numberWithOptions(decimal: true),
                     decoration: const InputDecoration(
-                      labelText: 'Valor Taxi Dog (R\$)',
+                      labelText: 'Valor da Taxa (R\$)',
                       labelStyle: TextStyle(color: Colors.white70),
                       border: OutlineInputBorder(),
                     ),
@@ -4079,15 +4365,6 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
             ),
             ElevatedButton(
               onPressed: () async {
-                if (servicoSelecionado == null) {
-                  ScaffoldMessenger.of(dialogContext).showSnackBar(
-                    const SnackBar(
-                      content: Text('Selecione um serviço'),
-                      backgroundColor: Colors.red,
-                    ),
-                  );
-                  return;
-                }
                 
                 final dataHoraCompleta = DateTime(
                   dataSelecionada.year,
@@ -4099,31 +4376,31 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                 
                 // Validação de conflito REMOVIDA - permitir múltiplos agendamentos no mesmo horário
                 try {
-                  // Processar valor do Taxi Dog
+                  // Processar valor da taxa de entrega
                   double? valorTaxiDog;
-                  if (tipoEntrega == 'Taxi Dog' && valorTaxiDogController.text.isNotEmpty) {
+                  if ((tipoEntrega == 'Taxi Dog' || tipoEntrega == 'Apenas Busca' || tipoEntrega == 'Apenas Entrega') && valorTaxiDogController.text.isNotEmpty) {
                     final valorTexto = valorTaxiDogController.text.replaceAll(',', '.').trim();
                     valorTaxiDog = double.tryParse(valorTexto);
                   }
 
-                  // Obter pet selecionado (primeiro da lista, ou null se nenhum)
-                  Pet? petSelecionado;
-                  String? petIdSelecionado;
+                  // Obter pets selecionados
+                  List<Pet> petsParaAgendar = [];
                   if (petsSelecionadosIds.isNotEmpty && clienteSelecionado != null) {
-                    petSelecionado = clienteSelecionado!.pets.firstWhere(
-                      (p) => petsSelecionadosIds.contains(p.id),
-                      orElse: () => clienteSelecionado!.pets.first,
-                    );
-                    petIdSelecionado = petSelecionado.id;
+                    petsParaAgendar = clienteSelecionado!.pets
+                        .where((p) => petsSelecionadosIds.contains(p.id))
+                        .toList();
                   }
+
+                  // Primeiro pet (ou null) atualiza o agendamento existente
+                  final primeiroPet = petsParaAgendar.isNotEmpty ? petsParaAgendar.first : null;
 
                   await dataService.updateAgendamentoServico(
                     agendamento.copyWith(
                       servicoId: servicoSelecionado?.id,
                       servico: servicoSelecionado,
                       clienteId: clienteSelecionado?.id,
-                      petId: petIdSelecionado,
-                      pet: petSelecionado,
+                      petId: primeiroPet?.id,
+                      pet: primeiroPet,
                       dataAgendamento: dataHoraCompleta,
                       duracaoMinutos: duracaoMinutos,
                       observacoes: observacoesController.text.trim().isEmpty
@@ -4131,20 +4408,53 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                           : observacoesController.text.trim(),
                       tipoEntrega: tipoEntrega,
                       valorTaxiDog: valorTaxiDog,
-                      bairroEntrega: tipoEntrega == 'Taxi Dog' && bairroEntregaController.text.isNotEmpty
+                      bairroEntrega: (tipoEntrega == 'Taxi Dog' || tipoEntrega == 'Apenas Busca' || tipoEntrega == 'Apenas Entrega') && bairroEntregaController.text.isNotEmpty
                           ? bairroEntregaController.text.trim()
                           : null,
                       updatedAt: DateTime.now(),
                     ),
                   );
+
+                  // Para cada pet adicional, criar novo agendamento
+                  int agendamentosCriados = 0;
+                  if (petsParaAgendar.length > 1) {
+                    for (int i = 1; i < petsParaAgendar.length; i++) {
+                      final petExtra = petsParaAgendar[i];
+                      final novoAgendamento = AgendamentoServico(
+                        id: '${DateTime.now().millisecondsSinceEpoch}_${petExtra.id}_$i',
+                        numero: '', // Será gerado automaticamente
+                        servicoId: servicoSelecionado?.id,
+                        servico: servicoSelecionado,
+                        clienteId: clienteSelecionado?.id,
+                        petId: petExtra.id,
+                        pet: petExtra,
+                        dataAgendamento: dataHoraCompleta,
+                        duracaoMinutos: duracaoMinutos,
+                        observacoes: observacoesController.text.trim().isEmpty
+                            ? null
+                            : observacoesController.text.trim(),
+                        status: agendamento.status,
+                        tipoEntrega: tipoEntrega,
+                        valorTaxiDog: valorTaxiDog,
+                        bairroEntrega: (tipoEntrega == 'Taxi Dog' || tipoEntrega == 'Apenas Busca' || tipoEntrega == 'Apenas Entrega') && bairroEntregaController.text.isNotEmpty
+                            ? bairroEntregaController.text.trim()
+                            : null,
+                      );
+                      await dataService.addAgendamentoServico(novoAgendamento);
+                      agendamentosCriados++;
+                    }
+                  }
                   
                   if (dialogContext.mounted) {
                     Navigator.pop(dialogContext);
+                    final mensagem = agendamentosCriados > 0
+                        ? 'Agendamento atualizado + $agendamentosCriados novo(s) criado(s)!'
+                        : 'Agendamento atualizado com sucesso!';
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Agendamento atualizado com sucesso!'),
+                      SnackBar(
+                        content: Text(mensagem),
                         backgroundColor: Colors.green,
-                        duration: Duration(seconds: 2),
+                        duration: const Duration(seconds: 2),
                       ),
                     );
                   }
@@ -5775,12 +6085,12 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                                   if ((sol.clienteTelefone ?? sol.cliente?.telefone) != null) ...[
                                                     const SizedBox(width: 8),
                                                     InkWell(
-                                                      onTap: () => _abrirWhatsApp(sol.clienteTelefone ?? sol.cliente!.telefone),
+                                                      onTap: () => _abrirWhatsAppComDados(sol.clienteTelefone ?? sol.cliente!.telefone, sol),
                                                       child: const Icon(Icons.chat, color: Colors.green, size: 16),
                                                     ),
                                                     const SizedBox(width: 8),
                                                     InkWell(
-                                                      onTap: () => _copiarTelefoneParaObservacoes(sol, sol.clienteTelefone ?? sol.cliente!.telefone, currentDataService),
+                                                      onTap: () => _copiarTelefoneClipboard(sol.clienteTelefone ?? sol.cliente!.telefone),
                                                       child: const Icon(Icons.copy, color: Colors.blueAccent, size: 16),
                                                     ),
                                                   ],

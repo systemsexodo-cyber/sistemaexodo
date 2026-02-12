@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'package:flutter/foundation.dart';
 import 'package:sistema_exodo_novo/models/cliente.dart';
 import 'package:sistema_exodo_novo/models/pedido.dart';
 import 'package:sistema_exodo_novo/models/ordem_servico.dart';
@@ -26,6 +25,9 @@ import 'package:sistema_exodo_novo/services/sync_queue_service.dart';
 import 'package:sistema_exodo_novo/services/whatsapp_service.dart';
 import 'package:sistema_exodo_novo/models/empresa.dart';
 import 'package:uuid/uuid.dart';
+
+import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/foundation.dart';
 
 // Import condicional para Web
 import '../pages/html_helper_stub.dart' if (dart.library.html) '../pages/html_helper_web.dart' as html_helper;
@@ -139,6 +141,25 @@ class DataService extends ChangeNotifier {
   // Empresa completa (para notificações WhatsApp)
   Empresa? _empresaAtual;
   Empresa? get empresaAtual => _empresaAtual;
+
+  // Player de Áudio para Notificações
+  final AudioPlayer _audioPlayer = AudioPlayer();
+
+  /// Toca o som de notificação quando chega um agendamento novo
+  Future<void> _tocarSomNotificacao() async {
+    try {
+      if (kIsWeb) {
+        // No Web, usamos o helper para tocar áudio se disponível
+        html_helper.playAudio('assets/sounds/notification.mp3', volume: 0.05);
+      } else {
+        await _audioPlayer.setVolume(0.05); // Volume EXTREMAMENTE baixo (5%)
+        await _audioPlayer.play(AssetSource('sounds/notification.mp3'));
+      }
+      debugPrint('>>> [Audio] 🔊 Som de notificação reproduzido (volume 5%)');
+    } catch (e) {
+      debugPrint('>>> [Audio] ⚠️ Erro ao tocar som: $e');
+    }
+  }
   
   /// Define a empresa completa (chamado pelo AuthService após selecionar empresa)
   void setEmpresaAtual(Empresa? empresa) {
@@ -398,12 +419,28 @@ class DataService extends ChangeNotifier {
       });
 
       // 2. Upsert (Adicionar ou Atualizar)
+      bool temNovoAgendamento = false;
       for (final agendamento in novosAgendamentos) {
+        // Verificar se é um agendamento realmente novo (não existia na lista local)
+        final isNovoParaLocal = !idsLocaisAntes.contains(agendamento.id);
+        
         final agendamentoCompleto = _vincularReferenciasAgendamento(agendamento);
         if (_upsertAgendamentoLocal(agendamentoCompleto)) {
           houveMudanca = true;
+          
+          // Se for novo para a lista local E não for a primeira carga (idsLocaisAntes não vazio ou check de flag)
+          // Tocar som apenas para agendamentos com status pendente ou recém-criados
+          if (isNovoParaLocal && idsLocaisAntes.isNotEmpty) {
+            temNovoAgendamento = true;
+            debugPrint('>>> [Sync] ✨ NOVO agendamento detectado: ${agendamento.id}');
+          }
+          
           debugPrint('>>> [Sync] ✅ ATUALIZAÇÃO detectada via Stream: ${agendamento.id} (${agendamentoCompleto.status})');
         }
+      }
+
+      if (temNovoAgendamento) {
+        _tocarSomNotificacao();
       }
       
       // Sempre notificar a UI ao receber snapshot para garantir que contadores e filtros reflitam o estado atual
@@ -2993,6 +3030,8 @@ class DataService extends ChangeNotifier {
       if (bloqueados != null && bloqueados.isNotEmpty) {
         final double horaInicio = inicio.hour + inicio.minute / 60.0;
         final double horaFim = horaInicio + (duracaoMinutos / 60.0);
+        final String dataStr = '${inicio.year}-${inicio.month.toString().padLeft(2, '0')}-${inicio.day.toString().padLeft(2, '0')}';
+        final int diaSemana = inicio.weekday; // 1=Mon ... 7=Sun
         
         for (final b in bloqueados) {
           final bMap = Map<String, dynamic>.from(b);
@@ -3000,6 +3039,44 @@ class DataService extends ChangeNotifier {
           final String? bFimStr = bMap['fim'];
           
           if (bInicioStr == null || bFimStr == null) continue;
+          
+          // Verificar se este bloqueio se aplica à data em questão
+          final String tipo = bMap['tipo']?.toString() ?? 'todos';
+          bool aplicaSeAData = false;
+          
+          switch (tipo) {
+            case 'dia':
+              // Dia específico
+              aplicaSeAData = bMap['data'] == dataStr;
+              break;
+            case 'periodo':
+              // Período (de-até)
+              final String? dataInicioStr = bMap['dataInicio'];
+              final String? dataFimStr = bMap['dataFim'];
+              if (dataInicioStr != null && dataFimStr != null) {
+                aplicaSeAData = dataStr.compareTo(dataInicioStr) >= 0 && dataStr.compareTo(dataFimStr) <= 0;
+              }
+              break;
+            case 'diaSemana':
+              // Dias da semana
+              final diasSemana = bMap['diasSemana'];
+              if (diasSemana is List) {
+                aplicaSeAData = diasSemana.any((d) => d == diaSemana);
+              }
+              break;
+            case 'todos':
+            default:
+              // Todos os dias (ou bloqueio antigo sem tipo)
+              // Compatibilidade: se tem campo 'data' sem 'tipo', tratar como dia específico
+              if (bMap['data'] != null && tipo == 'todos') {
+                aplicaSeAData = bMap['data'] == dataStr;
+              } else {
+                aplicaSeAData = true;
+              }
+              break;
+          }
+          
+          if (!aplicaSeAData) continue;
           
           final bInicioParts = bInicioStr.split(':');
           final bFimParts = bFimStr.split(':');
@@ -3011,7 +3088,7 @@ class DataService extends ChangeNotifier {
           
           // Sobreposição: (InicioA < FimB) && (FimA > InicioB)
           if (horaInicio < bFim && horaFim > bInicio) {
-            debugPrint('>>> [DataService] Horário bloqueado detectado: $bInicioStr - $bFimStr');
+            debugPrint('>>> [DataService] Horário bloqueado detectado: $bInicioStr - $bFimStr (tipo: $tipo)');
             return false;
           }
         }

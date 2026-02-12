@@ -53,3 +53,15 @@ void updateUrl(String path, {bool replace = false}) {
 /// Stream de foco da janela no navegador
 Stream<dynamic> get onWindowFocus => html.window.onFocus;
 
+/// Toca áudio no navegador
+void playAudio(String assetPath, {double volume = 1.0}) {
+  try {
+    // No Web, o Flutter gera os assets com um prefixo se necessário
+    final audio = html.AudioElement(assetPath);
+    audio.volume = volume; // Define o volume
+    audio.play();
+  } catch (e) {
+    print('Erro ao tocar áudio no Web: $e');
+  }
+}
+

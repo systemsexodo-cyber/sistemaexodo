@@ -139,26 +139,75 @@ class _ConfiguracoesAgendaPageState extends State<ConfiguracoesAgendaPage> {
   }
 
   Future<void> _adicionarHorarioIndisponivel() async {
+    // 1. Selecionar o tipo de bloqueio
+    final opcao = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E293B),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('Tipo de Bloqueio', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Escolha como deseja bloquear:', style: TextStyle(color: Colors.white60, fontSize: 13)),
+            const SizedBox(height: 16),
+            _buildOpcaoBloqueio(ctx, 'todos', Icons.all_inclusive, 'Todos os dias', 'Ex: almoço, intervalo fixo'),
+            _buildOpcaoBloqueio(ctx, 'dia', Icons.today, 'Dia específico', 'Bloquear uma data única'),
+            _buildOpcaoBloqueio(ctx, 'periodo', Icons.date_range, 'Período (de-até)', 'Bloquear vários dias seguidos'),
+            _buildOpcaoBloqueio(ctx, 'diaSemana', Icons.view_week, 'Dias da semana', 'Ex: toda segunda e terça'),
+          ],
+        ),
+      ),
+    );
+
+    if (opcao == null) return;
+
+    // 2. Coletar dados específicos de cada tipo
+    Map<String, dynamic> dadosBloqueio = {'tipo': opcao};
+
+    if (opcao == 'dia') {
+      final DateTime? data = await _selecionarData('SELECIONE O DIA PARA BLOQUEAR');
+      if (data == null) return;
+      dadosBloqueio['data'] = _formatarDataStr(data);
+    } else if (opcao == 'periodo') {
+      final DateTime? dataInicio = await _selecionarData('DATA DE INÍCIO DO BLOQUEIO');
+      if (dataInicio == null) return;
+      final DateTime? dataFim = await _selecionarData('DATA DE TÉRMINO DO BLOQUEIO', firstDate: dataInicio);
+      if (dataFim == null) return;
+      if (dataFim.isBefore(dataInicio)) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('A data final deve ser após a data inicial.'), backgroundColor: Colors.orange),
+          );
+        }
+        return;
+      }
+      dadosBloqueio['dataInicio'] = _formatarDataStr(dataInicio);
+      dadosBloqueio['dataFim'] = _formatarDataStr(dataFim);
+    } else if (opcao == 'diaSemana') {
+      final diasSelecionados = await _selecionarDiasSemana();
+      if (diasSelecionados == null || diasSelecionados.isEmpty) return;
+      dadosBloqueio['diasSemana'] = diasSelecionados;
+    }
+
+    // 3. Selecionar horário de início
     final TimeOfDay? inicio = await showTimePicker(
       context: context,
       initialTime: const TimeOfDay(hour: 12, minute: 0),
       helpText: 'HORÁRIO DE INÍCIO',
     );
-
     if (inicio == null) return;
 
+    // 4. Selecionar horário de término
     final TimeOfDay? fim = await showTimePicker(
       context: context,
       initialTime: TimeOfDay(hour: inicio.hour + 1, minute: inicio.minute),
       helpText: 'HORÁRIO DE TÉRMINO',
     );
-
     if (fim == null) return;
 
-    // Validar se fim > inicio
     final double inicioDouble = inicio.hour + inicio.minute / 60.0;
     final double fimDouble = fim.hour + fim.minute / 60.0;
-
     if (fimDouble <= inicioDouble) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -168,14 +217,164 @@ class _ConfiguracoesAgendaPageState extends State<ConfiguracoesAgendaPage> {
       return;
     }
 
+    dadosBloqueio['inicio'] = '${inicio.hour.toString().padLeft(2, '0')}:${inicio.minute.toString().padLeft(2, '0')}';
+    dadosBloqueio['fim'] = '${fim.hour.toString().padLeft(2, '0')}:${fim.minute.toString().padLeft(2, '0')}';
+
     setState(() {
-      _horariosIndisponiveis.add({
-        'inicio': '${inicio.hour.toString().padLeft(2, '0')}:${inicio.minute.toString().padLeft(2, '0')}',
-        'fim': '${fim.hour.toString().padLeft(2, '0')}:${fim.minute.toString().padLeft(2, '0')}',
+      _horariosIndisponiveis.add(dadosBloqueio);
+      _horariosIndisponiveis.sort((a, b) {
+        final tipoOrdem = {'todos': 0, 'diaSemana': 1, 'periodo': 2, 'dia': 3};
+        final ta = tipoOrdem[a['tipo'] ?? 'todos'] ?? 0;
+        final tb = tipoOrdem[b['tipo'] ?? 'todos'] ?? 0;
+        if (ta != tb) return ta.compareTo(tb);
+        return a['inicio'].toString().compareTo(b['inicio'].toString());
       });
-      // Ordenar por horário de início
-      _horariosIndisponiveis.sort((a, b) => a['inicio'].toString().compareTo(b['inicio'].toString()));
     });
+  }
+
+  Widget _buildOpcaoBloqueio(BuildContext ctx, String valor, IconData icon, String titulo, String subtitulo) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: InkWell(
+        onTap: () => Navigator.pop(ctx, valor),
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.05),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.white.withOpacity(0.08)),
+          ),
+          child: Row(
+            children: [
+              Icon(icon, color: Colors.orangeAccent, size: 24),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(titulo, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+                    Text(subtitulo, style: const TextStyle(color: Colors.white54, fontSize: 11)),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right, color: Colors.white30, size: 20),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<DateTime?> _selecionarData(String helpText, {DateTime? firstDate}) async {
+    return showDatePicker(
+      context: context,
+      initialDate: firstDate ?? DateTime.now(),
+      firstDate: firstDate ?? DateTime.now(),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+      helpText: helpText,
+      builder: (context, child) {
+        return Theme(
+          data: ThemeData.dark().copyWith(
+            colorScheme: const ColorScheme.dark(
+              primary: Colors.orangeAccent,
+              onPrimary: Colors.white,
+              surface: Color(0xFF1E293B),
+              onSurface: Colors.white,
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+  }
+
+  String _formatarDataStr(DateTime data) {
+    return '${data.year}-${data.month.toString().padLeft(2, '0')}-${data.day.toString().padLeft(2, '0')}';
+  }
+
+  String _formatarDataExibicao(String dataStr) {
+    return dataStr.split('-').reversed.join('/');
+  }
+
+  static const _nomesDiaSemana = {
+    1: 'Segunda',
+    2: 'Terça',
+    3: 'Quarta',
+    4: 'Quinta',
+    5: 'Sexta',
+    6: 'Sábado',
+    7: 'Domingo',
+  };
+
+  Future<List<int>?> _selecionarDiasSemana() async {
+    final selecionados = <int>{};
+    return showDialog<List<int>>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          backgroundColor: const Color(0xFF1E293B),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Text('Dias da Semana', style: TextStyle(color: Colors.white)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('Selecione os dias para bloquear:', style: TextStyle(color: Colors.white60, fontSize: 13)),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: _nomesDiaSemana.entries.map((e) {
+                  final isSel = selecionados.contains(e.key);
+                  return FilterChip(
+                    label: Text(e.value, style: TextStyle(color: isSel ? Colors.white : Colors.white70, fontSize: 13)),
+                    selected: isSel,
+                    selectedColor: Colors.orangeAccent,
+                    backgroundColor: Colors.white.withOpacity(0.05),
+                    checkmarkColor: Colors.white,
+                    onSelected: (v) {
+                      setDialogState(() {
+                        if (v) { selecionados.add(e.key); } else { selecionados.remove(e.key); }
+                      });
+                    },
+                  );
+                }).toList(),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+            ),
+            ElevatedButton(
+              onPressed: selecionados.isEmpty ? null : () => Navigator.pop(ctx, selecionados.toList()..sort()),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.orangeAccent),
+              child: const Text('Confirmar', style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _descricaoBloqueio(Map<String, dynamic> item) {
+    final tipo = item['tipo']?.toString() ?? 'todos';
+    switch (tipo) {
+      case 'dia':
+        return '📅 ${_formatarDataExibicao(item['data'].toString())}';
+      case 'periodo':
+        return '📅 ${_formatarDataExibicao(item['dataInicio'].toString())} até ${_formatarDataExibicao(item['dataFim'].toString())}';
+      case 'diaSemana':
+        final dias = (item['diasSemana'] as List<dynamic>).map((d) => _nomesDiaSemana[d] ?? '?').join(', ');
+        return '🔄 $dias';
+      default:
+        // Compatibilidade: bloqueios antigos sem 'tipo' mas com 'data'
+        if (item['data'] != null) {
+          return '📅 ${_formatarDataExibicao(item['data'].toString())}';
+        }
+        return '🔄 Todos os dias';
+    }
   }
 
   void _removerHorario(int index) {
@@ -321,7 +520,15 @@ class _ConfiguracoesAgendaPageState extends State<ConfiguracoesAgendaPage> {
                     'Das ${item['inicio']} às ${item['fim']}',
                     style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
                   ),
-                  subtitle: const Text('Indisponível para clientes', style: TextStyle(color: Colors.white54, fontSize: 12)),
+                  subtitle: Text(
+                    '${_descricaoBloqueio(item)} — Indisponível',
+                    style: TextStyle(
+                      color: (item['tipo'] ?? 'todos') == 'todos' && item['data'] == null 
+                        ? Colors.white54 
+                        : Colors.orangeAccent.withOpacity(0.8), 
+                      fontSize: 12,
+                    ),
+                  ),
                   trailing: IconButton(
                     icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
                     onPressed: () => _removerHorario(index),

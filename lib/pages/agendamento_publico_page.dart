@@ -1513,6 +1513,72 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     );
   }
 
+  /// Verifica se um horário está bloqueado administrativamente
+  /// Suporta tipos: todos, dia, periodo, diaSemana (e bloqueios antigos sem tipo)
+  bool _isHorarioBloqueadoAdmin(DataService dataService, DateTime inicio, int duracaoMinutos) {
+    try {
+      final config = dataService.empresaAtual?.configuracoes?['agendamento'] as Map<String, dynamic>?;
+      final bloqueados = config?['horariosIndisponiveis'] as List<dynamic>?;
+      if (bloqueados == null || bloqueados.isEmpty) return false;
+
+      final double horaInicio = inicio.hour + inicio.minute / 60.0;
+      final double horaFim = horaInicio + (duracaoMinutos / 60.0);
+      final String dataStr = '${inicio.year}-${inicio.month.toString().padLeft(2, '0')}-${inicio.day.toString().padLeft(2, '0')}';
+      final int diaSemana = inicio.weekday; // 1=Mon ... 7=Sun
+
+      for (final b in bloqueados) {
+        final bMap = Map<String, dynamic>.from(b);
+        final String? bInicioStr = bMap['inicio'] as String?;
+        final String? bFimStr = bMap['fim'] as String?;
+        if (bInicioStr == null || bFimStr == null) continue;
+
+        // Verificar se o bloqueio se aplica à data
+        final String tipo = bMap['tipo']?.toString() ?? 'todos';
+        bool aplicavel = false;
+
+        switch (tipo) {
+          case 'dia':
+            aplicavel = bMap['data'] == dataStr;
+            break;
+          case 'periodo':
+            final di = bMap['dataInicio']?.toString();
+            final df = bMap['dataFim']?.toString();
+            if (di != null && df != null) {
+              aplicavel = dataStr.compareTo(di) >= 0 && dataStr.compareTo(df) <= 0;
+            }
+            break;
+          case 'diaSemana':
+            final dias = bMap['diasSemana'];
+            if (dias is List) {
+              aplicavel = dias.any((d) => d == diaSemana);
+            }
+            break;
+          case 'todos':
+          default:
+            if (bMap['data'] != null && tipo == 'todos') {
+              aplicavel = bMap['data'] == dataStr;
+            } else {
+              aplicavel = true;
+            }
+            break;
+        }
+
+        if (!aplicavel) continue;
+
+        final bInParts = bInicioStr.split(':');
+        final bFiParts = bFimStr.split(':');
+        if (bInParts.length != 2 || bFiParts.length != 2) continue;
+        final double bIn = int.parse(bInParts[0]) + int.parse(bInParts[1]) / 60.0;
+        final double bFi = int.parse(bFiParts[0]) + int.parse(bFiParts[1]) / 60.0;
+
+        if (horaInicio < bFi && horaFim > bIn) {
+          return true;
+        }
+      }
+    } catch (_) {}
+    return false;
+  }
+
   Widget _buildDisponibilidadeCheck() {
     if (_verificandoDisponibilidade) {
       return Container(
@@ -1550,26 +1616,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     final duracao = dataService.servicos.firstWhere((s) => s.id == _servicoIdSelecionado, orElse: () => dataService.servicos.first).duracaoPadraoMinutos ?? 60;
     
     // Verificar se é um horário bloqueado administrativamente (para mensagem específica)
-    bool isBloqueadoAdmin = false;
-    try {
-      final config = dataService.empresaAtual?.configuracoes?['agendamento'] as Map<String, dynamic>?;
-      final bloqueados = config?['horariosIndisponiveis'] as List<dynamic>?;
-      if (bloqueados != null) {
-        final double horaInicio = inicio.hour + inicio.minute / 60.0;
-        final double horaFim = horaInicio + (duracao / 60.0);
-        for (final b in bloqueados) {
-          final bMap = Map<String, dynamic>.from(b);
-          final bInParts = (bMap['inicio'] as String).split(':');
-          final bFiParts = (bMap['fim'] as String).split(':');
-          final double bIn = int.parse(bInParts[0]) + int.parse(bInParts[1]) / 60.0;
-          final double bFi = int.parse(bFiParts[0]) + int.parse(bFiParts[1]) / 60.0;
-          if (horaInicio < bFi && horaFim > bIn) {
-            isBloqueadoAdmin = true;
-            break;
-          }
-        }
-      }
-    } catch (_) {}
+    bool isBloqueadoAdmin = _isHorarioBloqueadoAdmin(dataService, inicio, duracao);
 
     bool disponivel = dataService.checkDisponibilidade(inicio, duracao, ignorarPendentes: false);
 
@@ -1929,22 +1976,9 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       );
       final duracao = dataService.servicos.firstWhere((s) => s.id == _servicoIdSelecionado, orElse: () => dataService.servicos.first).duracaoPadraoMinutos ?? 60;
       
-      final config = dataService.empresaAtual?.configuracoes?['agendamento'] as Map<String, dynamic>?;
-      final bloqueados = config?['horariosIndisponiveis'] as List<dynamic>?;
-      if (bloqueados != null) {
-        final double horaInicio = inicio.hour + inicio.minute / 60.0;
-        final double horaFim = horaInicio + (duracao / 60.0);
-        for (final b in bloqueados) {
-          final bMap = Map<String, dynamic>.from(b);
-          final bInParts = (bMap['inicio'] as String).split(':');
-          final bFiParts = (bMap['fim'] as String).split(':');
-          final double bIn = int.parse(bInParts[0]) + int.parse(bInParts[1]) / 60.0;
-          final double bFi = int.parse(bFiParts[0]) + int.parse(bFiParts[1]) / 60.0;
-          if (horaInicio < bFi && horaFim > bIn) {
-             _showError('Este horário não está disponível para agendamentos. Por favor, escolha outro.');
-             return;
-          }
-        }
+      if (_isHorarioBloqueadoAdmin(dataService, inicio, duracao)) {
+        _showError('Este horário não está disponível para agendamentos. Por favor, escolha outro.');
+        return;
       }
     } catch (_) {}
 
@@ -2203,21 +2237,9 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       final duracao = dataService.servicos.firstWhere((s) => s.id == _servicoIdSelecionado, orElse: () => dataService.servicos.first).duracaoPadraoMinutos ?? 60;
       
       final config = dataService.empresaAtual?.configuracoes?['agendamento'] as Map<String, dynamic>?;
-      final bloqueados = config?['horariosIndisponiveis'] as List<dynamic>?;
-      if (bloqueados != null) {
-        final double horaInicio = inicio.hour + inicio.minute / 60.0;
-        final double horaFim = horaInicio + (duracao / 60.0);
-        for (final b in bloqueados) {
-          final bMap = Map<String, dynamic>.from(b);
-          final bInParts = (bMap['inicio'] as String).split(':');
-          final bFiParts = (bMap['fim'] as String).split(':');
-          final double bIn = int.parse(bInParts[0]) + int.parse(bInParts[1]) / 60.0;
-          final double bFi = int.parse(bFiParts[0]) + int.parse(bFiParts[1]) / 60.0;
-          if (horaInicio < bFi && horaFim > bIn) {
-             _showError('Este horário não está disponível para agendamentos.');
-             return;
-          }
-        }
+      if (_isHorarioBloqueadoAdmin(dataService, inicio, duracao)) {
+        _showError('Este horário não está disponível para agendamentos.');
+        return;
       }
     } catch (_) {}
     final dataAgendamento = DateTime(
@@ -2358,6 +2380,27 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                       Expanded(
                         child: Text(
                           'ATENÇÃO: O agendamento NÃO está confirmado. Aguarde nossa aprovação para garantir o horário solicitado.',
+                          style: TextStyle(color: textColor, fontSize: 12, fontWeight: FontWeight.w500),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.blue.withOpacity(0.3)),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.search_rounded, color: Colors.blue, size: 20),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '💡 Você pode consultar o status do seu agendamento a qualquer momento pelo ícone 🔍 "Meus Agendamentos" na página de agendamento.',
                           style: TextStyle(color: textColor, fontSize: 12, fontWeight: FontWeight.w500),
                         ),
                       ),
