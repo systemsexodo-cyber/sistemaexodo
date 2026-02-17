@@ -12,10 +12,12 @@ class ConfiguracoesAgendaPage extends StatefulWidget {
 }
 
 class _ConfiguracoesAgendaPageState extends State<ConfiguracoesAgendaPage> {
+  final _whatsappContatoController = TextEditingController();
   final _novoBairroController = TextEditingController();
   final _taxaController = TextEditingController();
   final _taxaBuscaController = TextEditingController();
   final _taxaSolevaController = TextEditingController();
+  bool _esconderValores = false;
   List<Map<String, dynamic>> _bairrosConfig = [];
   List<Map<String, dynamic>> _horariosIndisponiveis = [];
   bool _isLoading = false;
@@ -26,12 +28,25 @@ class _ConfiguracoesAgendaPageState extends State<ConfiguracoesAgendaPage> {
     _carregarConfiguracoes();
   }
 
+  @override
+  void dispose() {
+    _whatsappContatoController.dispose();
+    _novoBairroController.dispose();
+    _taxaController.dispose();
+    _taxaBuscaController.dispose();
+    _taxaSolevaController.dispose();
+    super.dispose();
+  }
+
   void _carregarConfiguracoes() {
     final dataService = Provider.of<DataService>(context, listen: false);
     final empresa = dataService.empresaAtual;
     if (empresa != null && empresa.configuracoes != null) {
       final config = empresa.configuracoes!;
       final agendamentoConfig = config['agendamento'] as Map<String, dynamic>? ?? {};
+      
+      _whatsappContatoController.text = agendamentoConfig['whatsappContato']?.toString() ?? '';
+      _esconderValores = agendamentoConfig['esconderValores'] as bool? ?? false;
       
       final bairrosData = (config['bairrosTaxiDogV2'] ?? agendamentoConfig['bairrosTaxiDogV2']) as List<dynamic>?;
       
@@ -68,6 +83,8 @@ class _ConfiguracoesAgendaPageState extends State<ConfiguracoesAgendaPage> {
       agendamentoConfig['bairrosTaxiDogV2'] = _bairrosConfig;
       agendamentoConfig['bairrosTaxiDog'] = _bairrosConfig.map((e) => e['bairro']).toList();
       agendamentoConfig['horariosIndisponiveis'] = _horariosIndisponiveis;
+      agendamentoConfig['whatsappContato'] = _whatsappContatoController.text.trim();
+      agendamentoConfig['esconderValores'] = _esconderValores;
       
       novasConfigs['agendamento'] = agendamentoConfig;
       novasConfigs['bairrosTaxiDogV2'] = _bairrosConfig;
@@ -408,6 +425,8 @@ class _ConfiguracoesAgendaPageState extends State<ConfiguracoesAgendaPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _buildHeader(),
+            const SizedBox(height: 32),
+            _buildConfiguracoesGerais(),
             const SizedBox(height: 32),
             _buildFormNovoBairro(),
             const SizedBox(height: 32),
@@ -763,6 +782,90 @@ class _ConfiguracoesAgendaPageState extends State<ConfiguracoesAgendaPage> {
         text,
         style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold),
       ),
+    );
+  }
+
+  Widget _buildConfiguracoesGerais() {
+    return Column(
+      children: [
+        // WhatsApp de Contato
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.05),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.chat_bubble_outline, color: Colors.greenAccent, size: 24),
+                  const SizedBox(width: 12),
+                  const Text(
+                    'WhatsApp / Contato da Loja',
+                    style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Número para onde serão enviadas as notificações.',
+                style: TextStyle(color: Colors.white60, fontSize: 12),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: _whatsappContatoController,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  labelText: 'Número do WhatsApp (com DDD)',
+                  labelStyle: const TextStyle(color: Colors.white60),
+                  hintText: 'Ex: 11999999999',
+                  prefixIcon: const Icon(Icons.phone, color: Colors.white30),
+                  enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white12)),
+                ),
+                keyboardType: TextInputType.phone,
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        // Esconder Valores
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.05),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.money_off, color: Colors.orangeAccent, size: 24),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Text(
+                      'Esconder Valores dos Serviços',
+                      style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  Switch(
+                    value: _esconderValores,
+                    onChanged: (v) => setState(() => _esconderValores = v),
+                    activeColor: Colors.greenAccent,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Se ativado, os clientes não verão o preço dos serviços durante o agendamento.',
+                style: TextStyle(color: Colors.white60, fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

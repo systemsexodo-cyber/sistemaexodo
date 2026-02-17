@@ -8,6 +8,7 @@ import 'package:sistema_exodo_novo/services/auth_service.dart';
 import 'package:intl/intl.dart';
 import 'dart:ui';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'dart:async';
 
 class AgendamentoPublicoPage extends StatefulWidget {
@@ -274,6 +275,9 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
         : (empresaFromAuth ?? empresaFromData);
 
     final bool moduloPet = empresa?.moduloPet ?? false;
+    final agendamentoConfig = (empresa?.configuracoes?['agendamento'] as Map<String, dynamic>?) ?? {};
+    final bool esconderValores = agendamentoConfig['esconderValores'] as bool? ?? false;
+    final String? whatsappLoja = agendamentoConfig['whatsappContato']?.toString();
 
     Color? pColor;
     Color? sColor;
@@ -355,8 +359,8 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                 key: _formKey,
                 child: Column(
                   children: [
-                    if (_agendamentosCarrinho.isNotEmpty) _buildResumoCarrinho(primary),
-                    _buildCurrentStepView(moduloPet),
+                    if (_agendamentosCarrinho.isNotEmpty) _buildResumoCarrinho(primary, esconderValores),
+                    _buildCurrentStepView(moduloPet, esconderValores),
                   ],
                 ),
               ),
@@ -564,7 +568,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     );
   }
 
-  Widget _buildCurrentStepView(bool moduloPet) {
+  Widget _buildCurrentStepView(bool moduloPet, bool esconderValores) {
     // Mapear o índice atual para o passo real
     int passoReal = _currentStep;
     if (!moduloPet) {
@@ -575,7 +579,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
 
     switch (passoReal) {
       case 0:
-        return _buildStepServicos(moduloPet);
+        return _buildStepServicos(moduloPet, esconderValores);
       case 1:
         return _buildStepDadosPessoais();
       case 2:
@@ -647,7 +651,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     }
   }
 
-  Widget _buildStepServicos(bool moduloPet) {
+  Widget _buildStepServicos(bool moduloPet, bool esconderValores) {
     final dataService = Provider.of<DataService>(context);
     // Filtrar serviços para não mostrar duplicatas causadas por lançamentos com Taxi Dog
     final servicos = dataService.servicos.where((s) {
@@ -745,14 +749,15 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
                            // Removido breakdown detalhado para evitar duplicidade visual
-                          Text(
-                            'R\$ ${servico.precoTotal.toStringAsFixed(2)}',
-                            style: GoogleFonts.outfit(
-                              color: isSelected ? Colors.white : _primaryColor,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 18,
+                          if (!esconderValores)
+                            Text(
+                              'R\$ ${servico.precoTotal.toStringAsFixed(2)}',
+                              style: GoogleFonts.outfit(
+                                color: isSelected ? Colors.white : _primaryColor,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 18,
+                              ),
                             ),
-                          ),
                           if (servico.duracaoPadraoMinutos != null)
                             Text(
                               '${servico.duracaoPadraoMinutos} min',
@@ -2140,7 +2145,12 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       dataService.notifyListeners();
 
       if (mounted) {
-        _mostrarSucesso(horarioOcupado: algumOcupado);
+        final configAgd = (dataService.empresaAtual?.configuracoes?['agendamento'] as Map<String, dynamic>?) ?? {};
+        _mostrarSucesso(
+          horarioOcupado: algumOcupado, 
+          agendamentosEnviados: todos, 
+          whatsappLoja: configAgd['whatsappContato']?.toString()
+        );
       }
 
     } catch (e) {
@@ -2152,7 +2162,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
   }
 
 
-  Widget _buildResumoCarrinho(Color primaryColor) {
+  Widget _buildResumoCarrinho(Color primaryColor, bool esconderValores) {
     return Container(
       margin: const EdgeInsets.only(bottom: 24),
       padding: const EdgeInsets.all(16),
@@ -2324,7 +2334,36 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     _showWarning('Solicitação adicionada! Você pode adicionar outro agendamento agora.');
   }
 
-  void _mostrarSucesso({bool horarioOcupado = false}) {
+  Future<void> _abrirWhatsAppNotificacao(String whatsapp, List<AgendamentoServico> agendamentos) async {
+    try {
+      final String tel = whatsapp.replaceAll(RegExp(r'\D'), '');
+      if (tel.isEmpty) return;
+
+      String mensagem = "*Novo Agendamento Realizado*\n\n";
+      mensagem += "*Cliente:* ${_nomeController.text}\n";
+      mensagem += "*WhatsApp:* ${_whatsappController.text}\n\n";
+      
+      for (var agd in agendamentos) {
+        mensagem += "--------------------------\n";
+        mensagem += "*Serviço:* ${agd.servico?.nome}\n";
+        if (agd.petNome != null) mensagem += "*Pet:* ${agd.petNome}\n";
+        mensagem += "*Data:* ${DateFormat('dd/MM/yyyy HH:mm').format(agd.dataAgendamento)}\n";
+        if (agd.tipoEntrega != null) mensagem += "*Entrega:* ${agd.tipoEntrega}\n";
+        if (agd.valorTaxiDog != null && agd.valorTaxiDog! > 0) mensagem += "*Taxa Taxi Dog:* R\$ ${agd.valorTaxiDog!.toStringAsFixed(2)}\n";
+      }
+
+      final String uri = "https://wa.me/$tel?text=${Uri.encodeComponent(mensagem)}";
+      
+      final Uri url = Uri.parse(uri);
+      if (await canLaunchUrl(url)) {
+        await launchUrl(url, mode: LaunchMode.externalApplication);
+      }
+    } catch (e) {
+      debugPrint('Erro ao abrir WhatsApp: $e');
+    }
+  }
+
+  void _mostrarSucesso({bool horarioOcupado = false, List<AgendamentoServico>? agendamentosEnviados, String? whatsappLoja}) {
     final cardColor = _isDark ? _LojaPublicaStyle.cardColor : Colors.white;
     final textColor = _isDark ? Colors.white : const Color(0xFF1E293B);
     final textSecondary = _isDark ? _LojaPublicaStyle.textSecondaryColor : Colors.black54;
@@ -2365,7 +2404,20 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                   textAlign: TextAlign.center,
                   style: TextStyle(color: textSecondary, fontWeight: FontWeight.w600),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 12),
+                if (whatsappLoja != null && whatsappLoja.isNotEmpty) ...[
+                  ElevatedButton.icon(
+                    onPressed: () => _abrirWhatsAppNotificacao(whatsappLoja, agendamentosEnviados ?? []),
+                    icon: const Icon(Icons.chat, color: Colors.white),
+                    label: const Text('Notificar Loja via WhatsApp', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green,
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                ],
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(

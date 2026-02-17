@@ -6113,6 +6113,11 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                             : 'Editar Cliente',
                                           onPressed: isProcessando ? null : () => _editarOuVincularCliente(modalContext, sol, currentDataService),
                                         ),
+                                        IconButton(
+                                          icon: const Icon(Icons.event_note_rounded, color: Colors.orange, size: 20),
+                                          tooltip: 'Editar Agendamento Completo',
+                                          onPressed: isProcessando ? null : () => _editarAgendamento(modalContext, sol, currentDataService),
+                                        ),
                                       ],
                                     ),
                                     const Padding(
