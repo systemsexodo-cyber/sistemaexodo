@@ -3454,6 +3454,31 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                       const Expanded(
                         child: Text('Pets:', style: TextStyle(color: Colors.white70, fontSize: 14)),
                       ),
+                      if (clienteSelecionado != null && clienteSelecionado!.pets.isNotEmpty)
+                        TextButton.icon(
+                          onPressed: () {
+                            setState(() {
+                              if (petsSelecionadosIds.length == clienteSelecionado!.pets.length) {
+                                petsSelecionadosIds = [];
+                              } else {
+                                petsSelecionadosIds = clienteSelecionado!.pets.map((p) => p.id).toList();
+                              }
+                            });
+                          },
+                          icon: Icon(
+                            petsSelecionadosIds.length == clienteSelecionado!.pets.length
+                                ? Icons.deselect
+                                : Icons.select_all,
+                            size: 16,
+                            color: Colors.blueAccent,
+                          ),
+                          label: Text(
+                            petsSelecionadosIds.length == clienteSelecionado!.pets.length
+                                ? 'Desmarcar todos'
+                                : 'Selecionar todos',
+                            style: const TextStyle(color: Colors.blueAccent, fontSize: 11),
+                          ),
+                        ),
                       TextButton.icon(
                         onPressed: () async {
                           // Buscar cliente atualizado antes de abrir o diálogo
@@ -3822,9 +3847,10 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                       : clienteAtualizado.pets.where((p) => petsSelecionadosIds.contains(p.id)).toList();
 
                   int agendamentosCriados = 0;
+                  final timestamp = DateTime.now().microsecondsSinceEpoch;
                   for (final pet in petsParaAgendar) {
                     final novoAgendamento = AgendamentoServico(
-                      id: '${DateTime.now().millisecondsSinceEpoch}_${pet?.id ?? 'sem_pet'}_${agendamentosCriados}',
+                      id: '${timestamp}_${pet?.id ?? 'sem_pet'}_$agendamentosCriados',
                       numero: '', // Será gerado automaticamente no addAgendamentoServico
                       servicoId: servicoSelecionado?.id,
                       servico: servicoSelecionado,
@@ -4418,10 +4444,11 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                   // Para cada pet adicional, criar novo agendamento
                   int agendamentosCriados = 0;
                   if (petsParaAgendar.length > 1) {
+                    final timestamp = DateTime.now().microsecondsSinceEpoch;
                     for (int i = 1; i < petsParaAgendar.length; i++) {
                       final petExtra = petsParaAgendar[i];
                       final novoAgendamento = AgendamentoServico(
-                        id: '${DateTime.now().millisecondsSinceEpoch}_${petExtra.id}_$i',
+                        id: '${timestamp}_${petExtra.id}_$i',
                         numero: '', // Será gerado automaticamente
                         servicoId: servicoSelecionado?.id,
                         servico: servicoSelecionado,
@@ -5415,7 +5442,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
           : 'Aplicar ${vacina.produtoNome}';
 
       final agendamento = AgendamentoServico(
-        id: 'vacina_${vacina.produtoId}_${DateTime.now().millisecondsSinceEpoch}',
+        id: 'vacina_${vacina.produtoId}_${DateTime.now().microsecondsSinceEpoch}',
         numero: '', // Será gerado automaticamente
         servicoId: servicoVacinaId,
         clienteId: cliente?.id,

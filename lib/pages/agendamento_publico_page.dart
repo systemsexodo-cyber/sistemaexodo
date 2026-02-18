@@ -98,6 +98,8 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
 
   // Busca de cliente/pet automático
   List<Pet> _petsEncontrados = [];
+  Pet? _petSendoEditado;
+  bool _mostrarFormularioPet = true;
   Cliente? _clienteEncontrado;
   bool _buscandoCliente = false;
   String? _ultimoTelefoneBuscado; // Para evitar loops de busca
@@ -219,6 +221,8 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
             _petSexo = pet.sexo ?? 'M';
             _porteAnimal = pet.tamanho ?? 'Pequeno';
             _pesoAproximado = pet.peso ?? 5.0;
+            _mostrarFormularioPet = false;
+            _petSendoEditado = pet;
           }
           
           // Se cliente não tem Taxi Dog habilitado, resetar para Retirada na Loja
@@ -916,7 +920,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
           ),
           const SizedBox(height: 16),
           SizedBox(
-            height: 90,
+            height: 115,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               itemCount: _petsEncontrados.length + 1,
@@ -924,7 +928,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
               itemBuilder: (context, index) {
                 if (index == _petsEncontrados.length) {
                   // Card para "Novo Pet"
-                  if (_modoMultiPets) return const SizedBox.shrink(); // Não permite "Novo Pet" no modo multi (por simplicidade inicial)
+                  if (_modoMultiPets) return const SizedBox.shrink(); 
 
                   bool isSelected = _petNomeController.text.isEmpty && _petsMultiSelecionados.isEmpty;
                   return _buildPetSelectionCard(
@@ -943,6 +947,8 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                         _porteAnimal = 'Pequeno';
                         _pesoAproximado = 5.0;
                         _petsMultiSelecionados.clear();
+                        _mostrarFormularioPet = true;
+                        _petSendoEditado = null;
                       });
                     },
                   );
@@ -966,6 +972,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                         } else {
                           _petsMultiSelecionados.add(pet);
                         }
+                        _mostrarFormularioPet = false;
                       } else {
                         _petNomeController.text = pet.nome;
                         _petRacaController.text = pet.raca ?? '';
@@ -976,6 +983,8 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                         _porteAnimal = pet.tamanho ?? 'Pequeno';
                         _pesoAproximado = pet.peso ?? 5.0;
                         _petsMultiSelecionados.clear();
+                        _mostrarFormularioPet = false;
+                        _petSendoEditado = pet;
                       }
                     });
                   },
@@ -983,9 +992,55 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
               },
             ),
           ),
-          const SizedBox(height: 24),
-          const Divider(color: Colors.white10),
-          const SizedBox(height: 24),
+
+          if (!_modoMultiPets && _petNomeController.text.isNotEmpty && !_mostrarFormularioPet) ...[
+             const SizedBox(height: 20),
+             Container(
+               padding: const EdgeInsets.all(16),
+               decoration: BoxDecoration(
+                 color: _primaryColor.withOpacity(0.05),
+                 borderRadius: BorderRadius.circular(16),
+                 border: Border.all(color: _primaryColor.withOpacity(0.2)),
+               ),
+               child: Column(
+                 crossAxisAlignment: CrossAxisAlignment.start,
+                 children: [
+                   Row(
+                     children: [
+                       Icon(Icons.check_circle_rounded, color: Colors.greenAccent, size: 20),
+                       const SizedBox(width: 10),
+                       Text(
+                         'Pet Selecionado: ${_petNomeController.text}',
+                         style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                       ),
+                     ],
+                   ),
+                   const SizedBox(height: 8),
+                   Text(
+                     'Raça: ${_petRacaController.text.isEmpty ? "Não informada" : _petRacaController.text} • Porte: $_porteAnimal',
+                     style: const TextStyle(color: Colors.white70, fontSize: 12),
+                   ),
+                   const SizedBox(height: 16),
+                   OutlinedButton.icon(
+                     onPressed: () => setState(() => _mostrarFormularioPet = true),
+                     icon: const Icon(Icons.edit_rounded, size: 16),
+                     label: const Text('Editar dados do pet'),
+                     style: OutlinedButton.styleFrom(
+                       foregroundColor: _primaryColor,
+                       side: BorderSide(color: _primaryColor.withOpacity(0.5)),
+                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                     ),
+                   ),
+                 ],
+               ),
+             ),
+          ],
+
+          if (_mostrarFormularioPet || (!_modoMultiPets && _petNomeController.text.isEmpty)) ...[
+            const SizedBox(height: 24),
+            const Divider(color: Colors.white10),
+            const SizedBox(height: 24),
+          ],
         ] else if (_clienteEncontrado != null && !_buscandoCliente) ...[
           Container(
             padding: const EdgeInsets.all(16),
@@ -1019,138 +1074,168 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
           ),
           const SizedBox(height: 32),
         ],
-        
-        _buildTextField(
-          controller: _petNomeController,
-          label: 'Nome do Pet *',
-          icon: Icons.pets_rounded,
-          placeholder: 'Nome do seu amigo',
-          validator: (v) => v!.isEmpty ? 'Obrigatório' : null,
-        ),
-        
-        const SizedBox(height: 20),
-        
-        Row(
-          children: [
-            Expanded(
-              child: _buildDropdown<String>(
-                label: 'Espécie',
-                icon: Icons.category_rounded,
-                value: _petEspecie,
-                items: ['Cachorro', 'Gato', 'Pássaro', 'Coelho', 'Outros'].map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
-                onChanged: (v) => setState(() => _petEspecie = v!),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _buildTextField(
-                controller: _petRacaController,
-                label: 'Raça *',
-                icon: Icons.search_rounded,
-                placeholder: 'Ex: Shih-tzu',
-                validator: (v) => v!.isEmpty ? 'Obrigatório' : null,
-              ),
-            ),
-          ],
-        ),
-        
-        const SizedBox(height: 20),
-        
-        Row(
-          children: [
-            Expanded(
-              child: _buildDropdown<String>(
-                label: 'Sexo',
-                icon: Icons.wc_rounded,
-                value: _petSexo,
-                items: [
-                  const DropdownMenuItem(value: 'M', child: Text('Macho')),
-                  const DropdownMenuItem(value: 'F', child: Text('Fêmea')),
+
+        if (_mostrarFormularioPet || (_petsEncontrados.isEmpty && _clienteEncontrado != null)) ...[
+          if (_petSendoEditado != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 20),
+              child: Row(
+                children: [
+                  Icon(Icons.edit_rounded, color: _primaryColor, size: 18),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Editando dados de ${_petSendoEditado!.nome}',
+                    style: TextStyle(color: _primaryColor, fontWeight: FontWeight.bold),
+                  ),
+                  const Spacer(),
+                  TextButton(
+                    onPressed: () => setState(() => _mostrarFormularioPet = false),
+                    child: const Text('Cancelar edição'),
+                  ),
                 ],
-                onChanged: (v) => setState(() => _petSexo = v!),
               ),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _buildTextField(
-                controller: _petCorController,
-                label: 'Cor',
-                icon: Icons.palette_rounded,
-                placeholder: 'Ex: Branco, Preto',
-              ),
-            ),
-          ],
-        ),
-        
-        const SizedBox(height: 32),
-        
-        Text(
-          'Qual o porte do pet?',
-          style: TextStyle(color: _isDark ? Colors.white : Colors.black87, fontWeight: FontWeight.w600, fontSize: 16),
-        ),
-        const SizedBox(height: 16),
-        Wrap(
-          spacing: 10,
-          runSpacing: 10,
-          children: _portes.map((porte) {
-            bool isSelected = _porteAnimal == porte;
-            return InkWell(
-              onTap: () => setState(() => _porteAnimal = porte),
-              borderRadius: BorderRadius.circular(12),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                decoration: BoxDecoration(
-                  color: isSelected ? _primaryColor : (_isDark ? Colors.white.withOpacity(0.05) : Colors.grey[100]),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: isSelected ? Colors.white.withOpacity(0.2) : (_isDark ? Colors.white.withOpacity(0.1) : Colors.grey[300]!),
-                  ),
-                ),
-                child: Text(
-                  porte,
-                  style: TextStyle(
-                    color: isSelected ? Colors.white : (_isDark ? _LojaPublicaStyle.textSecondaryColor : Colors.grey[600]),
-                    fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                  ),
+
+          _buildTextField(
+            controller: _petNomeController,
+            label: 'Nome do Pet *',
+            icon: Icons.pets_rounded,
+            placeholder: 'Nome do seu amigo',
+            validator: (v) {
+              if (_modoMultiPets && _petsMultiSelecionados.isNotEmpty) return null;
+              if (!_mostrarFormularioPet && _petNomeController.text.isNotEmpty) return null;
+              return v!.isEmpty ? 'Obrigatório' : null;
+            },
+          ),
+          
+          const SizedBox(height: 20),
+          
+          Row(
+            children: [
+              Expanded(
+                child: _buildDropdown<String>(
+                  label: 'Espécie',
+                  icon: Icons.category_rounded,
+                  value: _petEspecie,
+                  items: ['Cachorro', 'Gato', 'Pássaro', 'Coelho', 'Outros'].map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
+                  onChanged: (v) => setState(() => _petEspecie = v!),
                 ),
               ),
-            );
-          }).toList(),
-        ),
-        
-        const SizedBox(height: 32),
-        
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
-              'Peso aproximado:',
-              style: TextStyle(color: _isDark ? Colors.white70 : Colors.grey[700]),
-            ),
-            Text(
-              '${_pesoAproximado.toStringAsFixed(1)} kg',
-              style: TextStyle(color: _primaryColor, fontWeight: FontWeight.bold, fontSize: 18),
-            ),
-          ],
-        ),
-        Slider(
-          value: _pesoAproximado,
-          min: 0.5,
-          max: 80,
-          activeColor: _primaryColor,
-          inactiveColor: _isDark ? Colors.white.withOpacity(0.1) : Colors.grey[200],
-          onChanged: (val) => setState(() => _pesoAproximado = val),
-        ),
-        
-        const SizedBox(height: 20),
-        
-        _buildTextField(
-          controller: _petObsController,
-          label: 'Observações do Animal',
-          icon: Icons.notes_rounded,
-          placeholder: 'Ex: Ele é bravo, tem alergia a algum produto...',
-          maxLines: 3,
-        ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildTextField(
+                  controller: _petRacaController,
+                  label: 'Raça *',
+                  icon: Icons.search_rounded,
+                  placeholder: 'Ex: Shih-tzu',
+                  validator: (v) {
+                    if (_modoMultiPets && _petsMultiSelecionados.isNotEmpty) return null;
+                    if (!_mostrarFormularioPet && _petNomeController.text.isNotEmpty) return null;
+                    return v!.isEmpty ? 'Obrigatório' : null;
+                  },
+                ),
+              ),
+            ],
+          ),
+          
+          const SizedBox(height: 20),
+          
+          Row(
+            children: [
+              Expanded(
+                child: _buildDropdown<String>(
+                  label: 'Sexo',
+                  icon: Icons.wc_rounded,
+                  value: _petSexo,
+                  items: [
+                    const DropdownMenuItem(value: 'M', child: Text('Macho')),
+                    const DropdownMenuItem(value: 'F', child: Text('Fêmea')),
+                  ],
+                  onChanged: (v) => setState(() => _petSexo = v!),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildTextField(
+                  controller: _petCorController,
+                  label: 'Cor',
+                  icon: Icons.palette_rounded,
+                  placeholder: 'Ex: Branco, Preto',
+                ),
+              ),
+            ],
+          ),
+          
+          const SizedBox(height: 32),
+          
+          Text(
+            'Qual o porte do pet?',
+            style: TextStyle(color: _isDark ? Colors.white : Colors.black87, fontWeight: FontWeight.w600, fontSize: 16),
+          ),
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: _portes.map((porte) {
+              bool isSelected = _porteAnimal == porte;
+              return InkWell(
+                onTap: () => setState(() => _porteAnimal = porte),
+                borderRadius: BorderRadius.circular(12),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: isSelected ? _primaryColor : (_isDark ? Colors.white.withOpacity(0.05) : Colors.grey[100]),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: isSelected ? Colors.white.withOpacity(0.2) : (_isDark ? Colors.white.withOpacity(0.1) : Colors.grey[300]!),
+                    ),
+                  ),
+                  child: Text(
+                    porte,
+                    style: TextStyle(
+                      color: isSelected ? Colors.white : (_isDark ? _LojaPublicaStyle.textSecondaryColor : Colors.grey[600]),
+                      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                    ),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+          
+          const SizedBox(height: 32),
+          
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Peso aproximado:',
+                style: TextStyle(color: _isDark ? Colors.white70 : Colors.grey[700]),
+              ),
+              Text(
+                '${_pesoAproximado.toStringAsFixed(1)} kg',
+                style: TextStyle(color: _primaryColor, fontWeight: FontWeight.bold, fontSize: 18),
+              ),
+            ],
+          ),
+          Slider(
+            value: _pesoAproximado,
+            min: 0.5,
+            max: 80,
+            activeColor: _primaryColor,
+            inactiveColor: _isDark ? Colors.white.withOpacity(0.1) : Colors.grey[200],
+            onChanged: (val) => setState(() => _pesoAproximado = val),
+          ),
+          
+          const SizedBox(height: 20),
+          
+          _buildTextField(
+            controller: _petObsController,
+            label: 'Observações do Animal',
+            icon: Icons.notes_rounded,
+            placeholder: 'Ex: Ele é bravo, tem alergia a algum produto...',
+            maxLines: 3,
+          ),
+        ],
       ],
     );
   }
@@ -1180,31 +1265,38 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                 width: isSelected ? 2 : 1,
               ),
             ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(icon, color: isSelected ? _primaryColor : Colors.grey[400], size: 24),
-                const SizedBox(height: 8),
-                Text(
-                  title,
-                  style: TextStyle(
-                    color: isSelected ? Colors.white : (_isDark ? Colors.white70 : Colors.black87),
-                    fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                    fontSize: 13,
+            child: SingleChildScrollView(
+              physics: const NeverScrollableScrollPhysics(),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(icon, color: isSelected ? _primaryColor : Colors.grey[400], size: 24),
+                  const SizedBox(height: 4),
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      title,
+                      style: TextStyle(
+                        color: isSelected ? Colors.white : (_isDark ? Colors.white70 : Colors.black87),
+                        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                        fontSize: 13,
+                      ),
+                      maxLines: 1,
+                    ),
                   ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                Text(
-                  subtitle,
-                  style: TextStyle(
-                    color: isSelected ? _primaryColor : Colors.grey[500],
-                    fontSize: 10,
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      subtitle,
+                      style: TextStyle(
+                        color: isSelected ? _primaryColor : Colors.grey[500],
+                        fontSize: 10,
+                      ),
+                      maxLines: 1,
+                    ),
                   ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
+                ],
+              ),
             ),
           ),
           if (_modoMultiPets)
@@ -2078,7 +2170,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       // Se não existe, criar o cliente agora
       if (clienteReal == null) {
         clienteReal = Cliente(
-          id: 'pub_${DateTime.now().millisecondsSinceEpoch}',
+          id: 'pub_${DateTime.now().microsecondsSinceEpoch}',
           nome: _nomeController.text,
           telefone: _whatsappController.text,
           whatsapp: telefoneBusca,
@@ -2111,9 +2203,11 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       final List<AgendamentoServico> agendamentosAtuais = [];
       
       if (_modoMultiPets && _petsMultiSelecionados.isNotEmpty) {
+        final timestamp = DateTime.now().microsecondsSinceEpoch;
+        int counter = 0;
         for (var pet in _petsMultiSelecionados) {
           agendamentosAtuais.add(AgendamentoServico(
-            id: '${DateTime.now().millisecondsSinceEpoch}_${pet.id}',
+            id: '${timestamp}_${pet.id}_$counter',
             numero: '',
             servicoId: servicoAtual.id,
             servico: servicoAtual,
@@ -2153,7 +2247,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
         ) : null;
 
         agendamentosAtuais.add(AgendamentoServico(
-          id: DateTime.now().millisecondsSinceEpoch.toString(),
+          id: '${DateTime.now().microsecondsSinceEpoch}_single',
           numero: '',
           servicoId: servicoAtual.id,
           servico: servicoAtual,
@@ -2209,7 +2303,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
           if (petNoCliente == null) {
             // Novo pet, adicionar ao cliente
             final novoPet = agdFinal.pet ?? Pet(
-              id: 'per_${DateTime.now().millisecondsSinceEpoch}_${agdFinal.id}',
+              id: 'per_${DateTime.now().microsecondsSinceEpoch}',
               nome: agdFinal.petNome!,
               updatedAt: DateTime.now(),
               createdAt: DateTime.now(),
@@ -2224,6 +2318,28 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
             petId: petNoCliente.id,
             pet: petNoCliente,
           );
+
+          // Se o pet está sendo editado, atualizar seus dados agora
+          if (!_modoMultiPets && _petSendoEditado != null && _petSendoEditado!.id == petNoCliente.id && _mostrarFormularioPet) {
+            final petAtualizado = petNoCliente.copyWith(
+              nome: _petNomeController.text,
+              especie: _petEspecie,
+              raca: _petRacaController.text,
+              sexo: _petSexo,
+              cor: _petCorController.text,
+              tamanho: _porteAnimal,
+              peso: _pesoAproximado,
+              observacoes: _petObsController.text,
+              updatedAt: DateTime.now(),
+            );
+            
+            // Atualizar na lista do cliente
+            final novosPets = clienteReal!.pets.map((p) => p.id == petAtualizado.id ? petAtualizado : p).toList();
+            clienteReal = clienteReal!.copyWith(pets: novosPets, updatedAt: DateTime.now());
+            await dataService.updateCliente(clienteReal!);
+            
+            agdFinal = agdFinal.copyWith(pet: petAtualizado, petNome: petAtualizado.nome);
+          }
         }
 
         final disponivel = dataService.checkDisponibilidade(
@@ -2370,53 +2486,89 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       } catch (_) {}
     }
 
-    final petInfo = moduloPet ? Pet(
-      id: petExistente?.id ?? 'novo_${DateTime.now().millisecondsSinceEpoch}',
-      nome: _petNomeController.text,
-      especie: _petEspecie,
-      raca: _petRacaController.text,
-      sexo: _petSexo,
-      cor: _petCorController.text,
-      tamanho: _porteAnimal,
-      peso: _pesoAproximado,
-      observacoes: _petObsController.text,
-      updatedAt: DateTime.now(),
-      createdAt: petExistente?.createdAt ?? DateTime.now(),
-    ) : null;
+    final List<AgendamentoServico> agendamentosNovos = [];
+    final timestamp = DateTime.now().microsecondsSinceEpoch;
 
-    final agendamento = AgendamentoServico(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      numero: '',
-      servicoId: servico.id,
-      servico: servico,
-      clienteId: clienteExistente?.id ?? 'publico',
-      cliente: clienteExistente,
-      petId: petInfo?.id,
-      pet: petInfo,
-      clienteNome: _nomeController.text,
-      clienteTelefone: _whatsappController.text,
-      petNome: moduloPet ? _petNomeController.text : null,
-      dataAgendamento: dataAgendamento,
-      duracaoMinutos: servico.duracaoPadraoMinutos ?? 60,
-      status: 'Aguardando Confirmação',
-      tipoEntrega: moduloPet ? _tipoEntrega : null,
-      bairroEntrega: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _bairroEntrega : null,
-      valorTaxiDog: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _valorTaxiDog : null,
-      endereco: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _enderecoRuaController.text : null,
-      numeroEndereco: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _enderecoNumeroController.text : null,
-      complemento: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _enderecoComplementoController.text : null,
-      pontoReferencia: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _pontoReferenciaController.text : null,
-      observacoes: 'SOLICITAÇÃO ONLINE ADICIONAL',
-    );
+    if (_modoMultiPets && _petsMultiSelecionados.isNotEmpty) {
+      int counter = 0;
+      for (var pet in _petsMultiSelecionados) {
+        agendamentosNovos.add(AgendamentoServico(
+          id: '${timestamp}_cart_${pet.id}_$counter',
+          numero: '',
+          servicoId: servico.id,
+          servico: servico,
+          clienteId: clienteExistente?.id ?? 'publico',
+          cliente: clienteExistente,
+          petId: pet.id,
+          pet: pet,
+          clienteNome: _nomeController.text,
+          clienteTelefone: _whatsappController.text,
+          petNome: pet.nome,
+          dataAgendamento: dataAgendamento,
+          duracaoMinutos: servico.duracaoPadraoMinutos ?? 60,
+          status: 'Aguardando Confirmação',
+          tipoEntrega: moduloPet ? _tipoEntrega : null,
+          bairroEntrega: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _bairroEntrega : null,
+          valorTaxiDog: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _valorTaxiDog : null,
+          endereco: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _enderecoRuaController.text : null,
+          numeroEndereco: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _enderecoNumeroController.text : null,
+          complemento: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _enderecoComplementoController.text : null,
+          pontoReferencia: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _pontoReferenciaController.text : null,
+          observacoes: 'SOLICITAÇÃO ONLINE ADICIONAL (MULTI)',
+        ));
+        counter++;
+      }
+    } else {
+      final petInfo = moduloPet ? Pet(
+        id: petExistente?.id ?? 'novo_${DateTime.now().microsecondsSinceEpoch}',
+        nome: _petNomeController.text,
+        especie: _petEspecie,
+        raca: _petRacaController.text,
+        sexo: _petSexo,
+        cor: _petCorController.text,
+        tamanho: _porteAnimal,
+        peso: _pesoAproximado,
+        observacoes: _petObsController.text,
+        updatedAt: DateTime.now(),
+        createdAt: petExistente?.createdAt ?? DateTime.now(),
+      ) : null;
+
+      agendamentosNovos.add(AgendamentoServico(
+        id: '${timestamp}_cart_single',
+        numero: '',
+        servicoId: servico.id,
+        servico: servico,
+        clienteId: clienteExistente?.id ?? 'publico',
+        cliente: clienteExistente,
+        petId: petInfo?.id,
+        pet: petInfo,
+        clienteNome: _nomeController.text,
+        clienteTelefone: _whatsappController.text,
+        petNome: moduloPet ? _petNomeController.text : null,
+        dataAgendamento: dataAgendamento,
+        duracaoMinutos: servico.duracaoPadraoMinutos ?? 60,
+        status: 'Aguardando Confirmação',
+        tipoEntrega: moduloPet ? _tipoEntrega : null,
+        bairroEntrega: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _bairroEntrega : null,
+        valorTaxiDog: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _valorTaxiDog : null,
+        endereco: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _enderecoRuaController.text : null,
+        numeroEndereco: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _enderecoNumeroController.text : null,
+        complemento: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _enderecoComplementoController.text : null,
+        pontoReferencia: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _pontoReferenciaController.text : null,
+        observacoes: 'SOLICITAÇÃO ONLINE ADICIONAL',
+      ));
+    }
 
     setState(() {
-      _agendamentosCarrinho.add(agendamento);
-      // Resetar apenas campos do PET e SERVIÇO e HORÁRIO e ENDEREÇO
+      _agendamentosCarrinho.addAll(agendamentosNovos);
+      // Resetar campos
       _servicoIdSelecionado = null;
       _petNomeController.clear();
       _petRacaController.clear();
       _petCorController.clear();
       _petObsController.clear();
+      _petsMultiSelecionados.clear(); // Limpar seleção multi após adicionar ao carrinho
+      // Não resetar endereço se for o mesmo cliente
       _enderecoRuaController.clear();
       _enderecoNumeroController.clear();
       _enderecoComplementoController.clear();
