@@ -86,6 +86,8 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
   String? _bairroEntrega;
   String _petSexo = 'M'; // M ou F
   String _petEspecie = 'Cachorro';
+  bool _modoMultiPets = false;
+  List<Pet> _petsMultiSelecionados = [];
 
 
   bool _enviando = false;
@@ -872,14 +874,45 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
         const SizedBox(height: 32),
 
         if (_petsEncontrados.isNotEmpty) ...[
-          Text(
-            'Pets já cadastrados em seu telefone:',
-            style: TextStyle(
-              color: _primaryColor, 
-              fontWeight: FontWeight.bold, 
-              fontSize: 15,
-              letterSpacing: 0.5
-            ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Seus Pets Cadastrados:',
+                style: TextStyle(
+                  color: _primaryColor, 
+                  fontWeight: FontWeight.bold, 
+                  fontSize: 15,
+                  letterSpacing: 0.5
+                ),
+              ),
+              InkWell(
+                onTap: () {
+                  setState(() {
+                    _modoMultiPets = !_modoMultiPets;
+                    if (!_modoMultiPets) _petsMultiSelecionados.clear();
+                  });
+                },
+                child: Row(
+                  children: [
+                    Icon(
+                      _modoMultiPets ? Icons.check_circle_rounded : Icons.add_task_rounded,
+                      size: 18,
+                      color: _modoMultiPets ? Colors.greenAccent : _primaryColor.withOpacity(0.7),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      _modoMultiPets ? 'Concluir seleção' : 'Agendar vários',
+                      style: TextStyle(
+                        color: _modoMultiPets ? Colors.greenAccent : _primaryColor.withOpacity(0.7),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 16),
           SizedBox(
@@ -891,7 +924,9 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
               itemBuilder: (context, index) {
                 if (index == _petsEncontrados.length) {
                   // Card para "Novo Pet"
-                  bool isSelected = _petNomeController.text.isEmpty;
+                  if (_modoMultiPets) return const SizedBox.shrink(); // Não permite "Novo Pet" no modo multi (por simplicidade inicial)
+
+                  bool isSelected = _petNomeController.text.isEmpty && _petsMultiSelecionados.isEmpty;
                   return _buildPetSelectionCard(
                     title: 'Outro Pet',
                     subtitle: 'Novo cadastro',
@@ -907,13 +942,16 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                         _petSexo = 'M';
                         _porteAnimal = 'Pequeno';
                         _pesoAproximado = 5.0;
+                        _petsMultiSelecionados.clear();
                       });
                     },
                   );
                 }
 
                 final pet = _petsEncontrados[index];
-                bool isSelected = _petNomeController.text == pet.nome;
+                bool isSelected = _modoMultiPets 
+                    ? _petsMultiSelecionados.any((p) => p.id == pet.id)
+                    : _petNomeController.text == pet.nome;
 
                 return _buildPetSelectionCard(
                   title: pet.nome,
@@ -922,14 +960,23 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                   isSelected: isSelected,
                   onTap: () {
                     setState(() {
-                      _petNomeController.text = pet.nome;
-                      _petRacaController.text = pet.raca ?? '';
-                      _petCorController.text = pet.cor ?? '';
-                      _petObsController.text = pet.observacoes ?? '';
-                      _petEspecie = pet.especie ?? 'Cachorro';
-                      _petSexo = pet.sexo ?? 'M';
-                      _porteAnimal = pet.tamanho ?? 'Pequeno';
-                      _pesoAproximado = pet.peso ?? 5.0;
+                      if (_modoMultiPets) {
+                        if (isSelected) {
+                          _petsMultiSelecionados.removeWhere((p) => p.id == pet.id);
+                        } else {
+                          _petsMultiSelecionados.add(pet);
+                        }
+                      } else {
+                        _petNomeController.text = pet.nome;
+                        _petRacaController.text = pet.raca ?? '';
+                        _petCorController.text = pet.cor ?? '';
+                        _petObsController.text = pet.observacoes ?? '';
+                        _petEspecie = pet.especie ?? 'Cachorro';
+                        _petSexo = pet.sexo ?? 'M';
+                        _porteAnimal = pet.tamanho ?? 'Pequeno';
+                        _pesoAproximado = pet.peso ?? 5.0;
+                        _petsMultiSelecionados.clear();
+                      }
                     });
                   },
                 );
@@ -1119,44 +1166,58 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(16),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        width: 140,
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: isSelected ? _primaryColor.withOpacity(0.15) : (_isDark ? Colors.white.withOpacity(0.05) : Colors.grey[100]),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: isSelected ? _primaryColor : (_isDark ? Colors.white.withOpacity(0.1) : Colors.grey[300]!),
-            width: isSelected ? 2 : 1,
+      child: Stack(
+        children: [
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            width: 140,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: isSelected ? _primaryColor.withOpacity(0.15) : (_isDark ? Colors.white.withOpacity(0.05) : Colors.grey[100]),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: isSelected ? _primaryColor : (_isDark ? Colors.white.withOpacity(0.1) : Colors.grey[300]!),
+                width: isSelected ? 2 : 1,
+              ),
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, color: isSelected ? _primaryColor : Colors.grey[400], size: 24),
+                const SizedBox(height: 8),
+                Text(
+                  title,
+                  style: TextStyle(
+                    color: isSelected ? Colors.white : (_isDark ? Colors.white70 : Colors.black87),
+                    fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                    fontSize: 13,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                    color: isSelected ? _primaryColor : Colors.grey[500],
+                    fontSize: 10,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
           ),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, color: isSelected ? _primaryColor : Colors.grey[400], size: 24),
-            const SizedBox(height: 8),
-            Text(
-              title,
-              style: TextStyle(
-                color: isSelected ? Colors.white : (_isDark ? Colors.white70 : Colors.black87),
-                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                fontSize: 13,
+          if (_modoMultiPets)
+            Positioned(
+              top: 8,
+              right: 8,
+              child: Icon(
+                isSelected ? Icons.check_box_rounded : Icons.check_box_outline_blank_rounded,
+                color: isSelected ? _primaryColor : Colors.white24,
+                size: 18,
               ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
             ),
-            Text(
-              subtitle,
-              style: TextStyle(
-                color: isSelected ? _primaryColor : Colors.grey[500],
-                fontSize: 10,
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ],
-        ),
+        ],
       ),
     );
   }
@@ -2035,8 +2096,10 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
         }
       }
 
-      // Tentar encontrar pet para o agendamento ATUAL
-      if (moduloPet && _petNomeController.text.isNotEmpty) {
+      final bool moduloPet = dataService.empresaAtual?.moduloPet ?? false;
+
+      // Tentar encontrar pet para o agendamento ATUAL (se não for multi-pet)
+      if (moduloPet && !_modoMultiPets && _petNomeController.text.isNotEmpty) {
         try {
           petExistente = clienteReal.pets.firstWhere(
             (p) => p.nome.toLowerCase().trim() == _petNomeController.text.toLowerCase().trim()
@@ -2044,47 +2107,79 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
         } catch (_) {}
       }
 
-      final petInfoAtual = moduloPet ? Pet(
-        id: petExistente?.id ?? 'novo_${DateTime.now().millisecondsSinceEpoch}',
-        nome: _petNomeController.text,
-        especie: _petEspecie,
-        raca: _petRacaController.text,
-        sexo: _petSexo,
-        cor: _petCorController.text,
-        tamanho: _porteAnimal,
-        peso: _pesoAproximado,
-        observacoes: _petObsController.text,
-        updatedAt: DateTime.now(),
-        createdAt: petExistente?.createdAt ?? DateTime.now(),
-      ) : null;
+      // 1. Criar agendamento(s) atual(is)
+      final List<AgendamentoServico> agendamentosAtuais = [];
+      
+      if (_modoMultiPets && _petsMultiSelecionados.isNotEmpty) {
+        for (var pet in _petsMultiSelecionados) {
+          agendamentosAtuais.add(AgendamentoServico(
+            id: '${DateTime.now().millisecondsSinceEpoch}_${pet.id}',
+            numero: '',
+            servicoId: servicoAtual.id,
+            servico: servicoAtual,
+            clienteId: clienteReal!.id,
+            cliente: clienteReal,
+            petId: pet.id,
+            pet: pet,
+            clienteNome: _nomeController.text,
+            clienteTelefone: _whatsappController.text,
+            petNome: pet.nome,
+            dataAgendamento: dataAgendamentoAtual,
+            duracaoMinutos: servicoAtual.duracaoPadraoMinutos ?? 60,
+            status: 'Aguardando Confirmação',
+            tipoEntrega: moduloPet ? _tipoEntrega : null,
+            bairroEntrega: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _bairroEntrega : null,
+            valorTaxiDog: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _valorTaxiDog : null,
+            endereco: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _enderecoRuaController.text : null,
+            numeroEndereco: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _enderecoNumeroController.text : null,
+            complemento: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _enderecoComplementoController.text : null,
+            pontoReferencia: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _pontoReferenciaController.text : null,
+            observacoes: 'SOLICITAÇÃO ONLINE MÚLTIPLA',
+          ));
+        }
+      } else {
+        Pet? petInfoAtual = moduloPet ? Pet(
+          id: petExistente?.id ?? 'temp_${DateTime.now().millisecondsSinceEpoch}',
+          nome: _petNomeController.text,
+          especie: _petEspecie,
+          raca: _petRacaController.text,
+          sexo: _petSexo,
+          cor: _petCorController.text,
+          tamanho: _porteAnimal,
+          peso: _pesoAproximado,
+          observacoes: _petObsController.text,
+          updatedAt: DateTime.now(),
+          createdAt: petExistente?.createdAt ?? DateTime.now(),
+        ) : null;
 
-      final agendamentoAtual = AgendamentoServico(
-        id: DateTime.now().millisecondsSinceEpoch.toString(),
-        numero: '',
-        servicoId: servicoAtual.id,
-        servico: servicoAtual,
-        clienteId: clienteReal.id,
-        cliente: clienteReal,
-        petId: petInfoAtual?.id,
-        pet: petInfoAtual,
-        clienteNome: _nomeController.text,
-        clienteTelefone: _whatsappController.text,
-        petNome: moduloPet ? _petNomeController.text : null,
-        dataAgendamento: dataAgendamentoAtual,
-        duracaoMinutos: servicoAtual.duracaoPadraoMinutos ?? 60,
-        status: 'Aguardando Confirmação',
-        tipoEntrega: moduloPet ? _tipoEntrega : null,
-        bairroEntrega: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _bairroEntrega : null,
-        valorTaxiDog: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _valorTaxiDog : null,
-        endereco: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _enderecoRuaController.text : null,
-        numeroEndereco: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _enderecoNumeroController.text : null,
-        complemento: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _enderecoComplementoController.text : null,
-        pontoReferencia: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _pontoReferenciaController.text : null,
-        observacoes: 'SOLICITAÇÃO ONLINE DETALHADA',
-      );
+        agendamentosAtuais.add(AgendamentoServico(
+          id: DateTime.now().millisecondsSinceEpoch.toString(),
+          numero: '',
+          servicoId: servicoAtual.id,
+          servico: servicoAtual,
+          clienteId: clienteReal!.id,
+          cliente: clienteReal,
+          petId: petInfoAtual?.id,
+          pet: petInfoAtual,
+          clienteNome: _nomeController.text,
+          clienteTelefone: _whatsappController.text,
+          petNome: moduloPet ? _petNomeController.text : null,
+          dataAgendamento: dataAgendamentoAtual,
+          duracaoMinutos: servicoAtual.duracaoPadraoMinutos ?? 60,
+          status: 'Aguardando Confirmação',
+          tipoEntrega: moduloPet ? _tipoEntrega : null,
+          bairroEntrega: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _bairroEntrega : null,
+          valorTaxiDog: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _valorTaxiDog : null,
+          endereco: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _enderecoRuaController.text : null,
+          numeroEndereco: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _enderecoNumeroController.text : null,
+          complemento: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _enderecoComplementoController.text : null,
+          pontoReferencia: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _pontoReferenciaController.text : null,
+          observacoes: 'SOLICITAÇÃO ONLINE DETALHADA',
+        ));
+      }
 
       // 2. Unir com agendamentos já salvos no carrinho local
-      final todos = [..._agendamentosCarrinho, agendamentoAtual];
+      final todos = [..._agendamentosCarrinho, ...agendamentosAtuais];
       bool algumOcupado = false;
 
       // Garantir empresa ativa
