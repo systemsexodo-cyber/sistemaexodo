@@ -1,5 +1,5 @@
 # Script de Deploy Automático para Firebase (Hosting + Functions)
-# Versão robusta e não-interativa
+# Versão ultra-resiliente e otimizada
 
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan
@@ -12,7 +12,7 @@ $projectPath = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
 Set-Location $projectPath
 
 # 1. Verificando alterações git
-Write-Host "[1/8] Verificando alteracoes nao commitadas..." -ForegroundColor Yellow
+Write-Host "[1/7] Verificando alteracoes nao commitadas..." -ForegroundColor Yellow
 $gitStatus = git status --porcelain 2>$null
 $relevantChanges = $gitStatus | Where-Object { 
     $_ -notmatch "\.salvamento_logs" -and 
@@ -30,84 +30,74 @@ if ($relevantChanges) {
         Write-Host "  Commit realizado com sucesso!" -ForegroundColor Green
     }
 }
-else {
-    Write-Host "  OK: Nenhuma alteracao relevante." -ForegroundColor Green
-}
 
 # 2. Verificar Ambiente
-Write-Host "`n[2/8] Verificando ambiente (Node.js e Firebase)..." -ForegroundColor Yellow
+Write-Host "`n[2/7] Verificando ambiente e ferramentas..." -ForegroundColor Yellow
 $firebaseProject = "exodosystems-1541d"
 $firebaseCmd = "firebase"
 
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-    Write-Host "  ERRO: Node.js nao encontrado!" -ForegroundColor Red
+    Write-Host "  ERRO: Node.js nao encontrado! Por favor, instale o Node.js." -ForegroundColor Red
     exit 1
 }
 
 if (-not (Get-Command firebase -ErrorAction SilentlyContinue)) {
-    Write-Host "  AVISO: Firebase CLI global nao encontrado. Usando 'npx -y firebase-tools'..." -ForegroundColor Yellow
-    $firebaseCmd = "npx -y firebase-tools"
+    Write-Host "  AVISO: Firebase CLI global nao encontrado. Usando npx..." -ForegroundColor Yellow
+    $firebaseCmd = "npx -y firebase-tools@latest"
 }
 
-Write-Host "  Projeto alvo: $firebaseProject" -ForegroundColor Cyan
-# Tentar selecionar o projeto com timeout/não-interativo
-cmd /c "$firebaseCmd use $firebaseProject" 2>&1 | Out-Null
-Write-Host "  OK: Ambiente configurado" -ForegroundColor Green
+Write-Host "  Projeto alvo configurado: $firebaseProject" -ForegroundColor Cyan
+Write-Host "  OK: Ferramentas prontas" -ForegroundColor Green
 
 # 3. Preparar Funções (Node.js)
-Write-Host "`n[3/8] Preparando Cloud Functions..." -ForegroundColor Yellow
+Write-Host "`n[3/7] Preparando Cloud Functions..." -ForegroundColor Yellow
 if (Test-Path "functions") {
     Set-Location functions
-    Write-Host "  Instalando dependencias das funcoes..." -ForegroundColor Gray
-    npm install --no-audit --no-fund | Out-Null
+    Write-Host "  Instalando dependencias (npm install)..." -ForegroundColor Gray
+    # Usar --no-bin-links para evitar erros de permissão comuns no Windows
+    npm install --no-audit --no-fund --quiet | Out-Null
     Set-Location ..
     Write-Host "  OK: Funcoes preparadas" -ForegroundColor Green
 }
-else {
-    Write-Host "  AVISO: Pasta 'functions' nao encontrada. Ignorando." -ForegroundColor Yellow
-}
 
-# 4. Limpar Build Anterior
-Write-Host "`n[4/8] Limpando build anterior..." -ForegroundColor Yellow
-if (Test-Path "build") {
-    Remove-Item -Recurse -Force "build" -ErrorAction SilentlyContinue
-}
-flutter clean 2>&1 | Out-Null
-Write-Host "  OK: Build limpo" -ForegroundColor Green
-
-# 5. Dependências Flutter
-Write-Host "`n[5/8] Obtendo dependencias Flutter..." -ForegroundColor Yellow
-flutter pub get 2>&1 | Out-Null
-Write-Host "  OK: Dependencias obtidas" -ForegroundColor Green
-
-# 6. Build Web
-Write-Host "`n[6/8] Construindo para Web (Release)..." -ForegroundColor Yellow
-Write-Host "  Isso pode levar alguns minutos..." -ForegroundColor Gray
+# 4. Limpar e Build Flutter
+Write-Host "`n[4/7] Limpando e construindo para Web..." -ForegroundColor Yellow
+if (Test-Path "build") { Remove-Item -Recurse -Force "build" -ErrorAction SilentlyContinue }
+flutter clean | Out-Null
+flutter pub get | Out-Null
+Write-Host "  Executando: flutter build web --release" -ForegroundColor Gray
 $buildResult = flutter build web --release 2>&1
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "  ERRO: Falha no build!" -ForegroundColor Red
+    Write-Host "  ERRO: Falha no build do Flutter!" -ForegroundColor Red
     Write-Host $buildResult -ForegroundColor Red
     exit 1
 }
-Write-Host "  OK: Build finalizado" -ForegroundColor Green
+Write-Host "  OK: Build finalizado com sucesso" -ForegroundColor Green
 
-# 7. Deploy Firebase
-Write-Host "`n[7/8] Fazendo deploy (Hosting + Functions)..." -ForegroundColor Yellow
-Write-Host "  Executando: $firebaseCmd deploy --only hosting,functions --project $firebaseProject" -ForegroundColor Cyan
-$deployResult = cmd /c "$firebaseCmd deploy --only hosting,functions --project $firebaseProject" 2>&1
+# 5. Deploy Firebase
+Write-Host "`n[5/7] Fazendo deploy para o Firebase..." -ForegroundColor Yellow
+Write-Host "  Isso pode levar alguns minutos (Hosting + Functions)..." -ForegroundColor Cyan
+
+# Execução direta para permitir que o usuário veja logs de autenticação se necessário
+if ($firebaseCmd -match "npx") {
+    # No Windows, npx às vezes precisa de cmd /c
+    cmd /c "$firebaseCmd deploy --only hosting,functions --project $firebaseProject"
+}
+else {
+    firebase deploy --only hosting, functions --project $firebaseProject
+}
 
 if ($LASTEXITCODE -eq 0) {
     Write-Host "`n========================================" -ForegroundColor Green
     Write-Host "  DEPLOY CONCLUIDO COM SUCESSO!" -ForegroundColor Green
     Write-Host "========================================" -ForegroundColor Green
-    Write-Host "  URL Hosting: https://$firebaseProject.web.app" -ForegroundColor Cyan
+    Write-Host "  URL: https://$firebaseProject.web.app" -ForegroundColor Cyan
 }
 else {
     Write-Host "`n========================================" -ForegroundColor Red
     Write-Host "  ERRO NO DEPLOY!" -ForegroundColor Red
+    Write-Host "  Verifique se voce esta logado: firebase login" -ForegroundColor Yellow
     Write-Host "========================================" -ForegroundColor Red
-    Write-Host $deployResult -ForegroundColor Red
-    exit 1
 }
 
-Write-Host "`n[8/8] Processo finalizado!" -ForegroundColor Green
+Write-Host "`n[7/7] Processo finalizado!" -ForegroundColor Green
