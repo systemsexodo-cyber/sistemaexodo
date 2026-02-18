@@ -112,6 +112,11 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       []; // Pagamentos do pedido sendo editado
   double _descontoTotal = 0.0; // Desconto total da venda (R$)
   String? _observacoesVenda; // Observações da venda
+  int _gridSelectedIndex = -1;
+  int _cartSelectedIndex = -1;
+  int _categoriaSelectedIndex = -1;
+  bool _focoNoCarrinho = false; // false = grid de produtos, true = carrinho
+  bool _focoNasCategorias = false;
 
   final LocalStorageService _storage = LocalStorageService();
   static const String _keyCarrinhoPDV = 'exodo_carrinho_pdv';
@@ -440,6 +445,48 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     });
     // Salvar carrinho automaticamente
     _salvarCarrinho();
+  }
+
+  void _limparCarrinho() {
+    if (_carrinho.isEmpty) return;
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A2E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: const [
+            Icon(Icons.delete_sweep_rounded, color: Colors.redAccent, size: 28),
+            SizedBox(width: 12),
+            Text('Limpar Carrinho', style: TextStyle(color: Colors.white)),
+          ],
+        ),
+        content: const Text('Deseja realmente remover todos os itens do carrinho?', 
+          style: TextStyle(color: Colors.white70)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('CANCELAR', style: TextStyle(color: Colors.white54)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.redAccent,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            onPressed: () {
+              setState(() {
+                _carrinho.clear();
+                _descontoTotal = 0.0;
+              });
+              _salvarCarrinho();
+              Navigator.pop(context);
+            },
+            child: const Text('LIMPAR TUDO', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
   }
 
   void _aplicarDescontoItem(int index) {
@@ -904,55 +951,6 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     );
   }
 
-  void _limparCarrinho() {
-    if (_carrinho.isEmpty) return;
-    setState(() {
-      _carrinho.clear();
-    });
-    // Salvar carrinho vazio
-    _salvarCarrinho();
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1E1E2E),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Row(
-          children: [
-            Icon(Icons.warning_amber, color: Colors.orange, size: 28),
-            SizedBox(width: 12),
-            Text('Limpar Carrinho', style: TextStyle(color: Colors.white)),
-          ],
-        ),
-        content: const Text(
-          'Deseja remover todos os itens do carrinho?',
-          style: TextStyle(color: Colors.white70),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text(
-              'Cancelar',
-              style: TextStyle(color: Colors.white54),
-            ),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              setState(() {
-                _carrinho.clear();
-                _clienteSelecionado = null;
-                _pagamentosSalvos = [];
-              });
-              // Salvar carrinho vazio
-              _salvarCarrinho();
-              Navigator.pop(context);
-            },
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('Limpar'),
-          ),
-        ],
-      ),
-    );
-  }
 
   List<String> _getCategorias(DataService dataService) {
     final categorias = dataService.produtos
@@ -2415,6 +2413,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => _DialogPagamentoPDV(
+        subtotal: _totalCarrinhoSemDesconto,
+        descontoTotal: _totalCarrinhoSemDesconto - _totalCarrinho,
         totalCarrinho: _totalCarrinho,
         pagamentosIniciais: _pagamentosSalvos,
         cliente: _clienteSelecionado,
@@ -4441,73 +4441,250 @@ o padrão padrão (sem opções avançadas).
     // Verificar se já existe um Scaffold no contexto (ex: quando está dentro do TabBarView do PdvPage)
     final hasScaffold = Scaffold.maybeOf(context) != null;
 
-    final content = Column(
-      children: [
-        // Barra superior com busca, quantidade e cliente
-        _buildBarraSuperior(dataService),
-        // Área principal
-        Expanded(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Lado esquerdo: Categorias + Produtos
-              Expanded(
-                flex: 3,
-                child: Column(
-                  children: [
-                    // Categorias
-                    _buildCategorias(categorias),
-                    // Área de produtos
-                    Expanded(
-                      child: _termoBusca.isNotEmpty
-                          ? (itensEncontrados.isEmpty
-                                ? _buildNenhumResultado()
-                                : _buildGridItens(itensEncontrados))
-                          : _categoriaAtiva != null
-                          ? _buildGridProdutos(produtosCategoria)
-                          : _buildEstadoInicial(dataService),
-                    ),
-                  ],
-                ),
-              ),
-              // Lado direito: Carrinho com efeito glow
-              Container(
-                width: 380,
-                margin: const EdgeInsets.only(right: 16, bottom: 16),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [const Color(0xFF0D0D15), const Color(0xFF12121C)],
+    final content = Focus(
+      autofocus: true,
+      onKeyEvent: (node, event) {
+        if (event is KeyRepeatEvent) return KeyEventResult.ignored;
+        if (event is! KeyDownEvent) return KeyEventResult.ignored;
+
+        final key = event.logicalKey;
+
+        // Tecla ESC - Limpar carrinho
+        if (key == LogicalKeyboardKey.escape) {
+          _limparCarrinho();
+          return KeyEventResult.handled;
+        }
+
+        // Tecla F2 - Focar Campo de Busca
+        if (key == LogicalKeyboardKey.f2) {
+          _buscaFocusNode.requestFocus();
+          setState(() {
+            _focoNoCarrinho = false;
+            _focoNasCategorias = false;
+            _gridSelectedIndex = -1;
+            _cartSelectedIndex = -1;
+            _categoriaSelectedIndex = -1;
+          });
+          return KeyEventResult.handled;
+        }
+
+        // Navegação por Setas
+        if (key == LogicalKeyboardKey.arrowRight) {
+          if (_focoNasCategorias) {
+            final numCategorias = categorias.length + 1;
+            if (_categoriaSelectedIndex < numCategorias - 1) {
+              setState(() => _categoriaSelectedIndex++);
+              return KeyEventResult.handled;
+            } else if (_carrinho.isNotEmpty) {
+              setState(() {
+                _focoNasCategorias = false;
+                _focoNoCarrinho = true;
+                _cartSelectedIndex = 0;
+                _categoriaSelectedIndex = -1;
+              });
+              return KeyEventResult.handled;
+            }
+          }
+          if (!_focoNoCarrinho && _carrinho.isNotEmpty) {
+            setState(() {
+              _focoNoCarrinho = true;
+              _cartSelectedIndex = 0;
+              _gridSelectedIndex = -1;
+              _focoNasCategorias = false;
+            });
+            return KeyEventResult.handled;
+          }
+        }
+
+        if (key == LogicalKeyboardKey.arrowLeft) {
+          if (_focoNasCategorias) {
+            if (_categoriaSelectedIndex > 0) {
+              setState(() => _categoriaSelectedIndex--);
+              return KeyEventResult.handled;
+            }
+          }
+          if (_focoNoCarrinho) {
+            setState(() {
+              _focoNoCarrinho = false;
+              _focoNasCategorias = false;
+              _cartSelectedIndex = -1;
+              _gridSelectedIndex = 0;
+            });
+            return KeyEventResult.handled;
+          }
+        }
+
+        if (key == LogicalKeyboardKey.arrowDown) {
+          setState(() {
+            if (_focoNoCarrinho) {
+              if (_cartSelectedIndex < _carrinho.length - 1) {
+                _cartSelectedIndex++;
+              }
+            } else if (_focoNasCategorias) {
+              _focoNasCategorias = false;
+              _gridSelectedIndex = 0;
+            } else if (_buscaFocusNode.hasFocus) {
+              _focoNasCategorias = true;
+              _categoriaSelectedIndex = 0;
+              _buscaFocusNode.unfocus();
+            } else {
+              final maxItems = _termoBusca.isNotEmpty 
+                  ? _buscarItens(dataService).length 
+                  : (_categoriaAtiva != null ? _getProdutosPorCategoria(dataService).length : 0);
+              
+              if (_gridSelectedIndex < 0 && (maxItems > 0 || categorias.isNotEmpty)) {
+                _focoNasCategorias = true;
+                _categoriaSelectedIndex = 0;
+              } else if (_gridSelectedIndex + 3 < maxItems) {
+                _gridSelectedIndex += 3;
+              } else if (_gridSelectedIndex < 0 && maxItems > 0) {
+                _gridSelectedIndex = 0;
+              }
+            }
+          });
+          return KeyEventResult.handled;
+        }
+
+        if (key == LogicalKeyboardKey.arrowUp) {
+          setState(() {
+            if (_focoNoCarrinho) {
+              if (_cartSelectedIndex > 0) {
+                _cartSelectedIndex--;
+              }
+            } else if (_focoNasCategorias) {
+              _focoNasCategorias = false;
+              _buscaFocusNode.requestFocus();
+            } else {
+              if (_gridSelectedIndex >= 3) {
+                _gridSelectedIndex -= 3;
+              } else {
+                // Se estiver na primeira linha ou nada selecionado, sobe para categorias
+                _gridSelectedIndex = -1;
+                _focoNasCategorias = true;
+                _categoriaSelectedIndex = 0;
+              }
+            }
+          });
+          return KeyEventResult.handled;
+        }
+
+        // Enter - Adicionar ao carrinho ou Ações
+        if (key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.numpadEnter) {
+          if (_focoNasCategorias) {
+            final index = _categoriaSelectedIndex;
+            if (index == 0) {
+              setState(() {
+                _categoriaAtiva = null;
+                _termoBusca = '';
+                _buscaController.clear();
+              });
+            } else if (index > 0 && index <= categorias.length) {
+              final cat = categorias[index - 1];
+              setState(() {
+                _categoriaAtiva = _categoriaAtiva == cat ? null : cat;
+                _termoBusca = '';
+                _buscaController.clear();
+              });
+            }
+            return KeyEventResult.handled;
+          }
+          if (!_focoNoCarrinho && _gridSelectedIndex >= 0) {
+            final itens = _termoBusca.isNotEmpty 
+                ? _buscarItens(dataService) 
+                : (_categoriaAtiva != null ? _getProdutosPorCategoria(dataService) : []);
+            if (_gridSelectedIndex < itens.length) {
+              _adicionarAoCarrinho(itens[_gridSelectedIndex]);
+              return KeyEventResult.handled;
+            }
+          }
+        }
+
+        // Delete/Backspace - Remover do carrinho
+        if (key == LogicalKeyboardKey.delete || key == LogicalKeyboardKey.backspace) {
+          if (_focoNoCarrinho && _cartSelectedIndex >= 0 && _cartSelectedIndex < _carrinho.length) {
+            _removerItem(_cartSelectedIndex);
+            setState(() {
+              if (_carrinho.isEmpty) {
+                _focoNoCarrinho = false;
+                _cartSelectedIndex = -1;
+              } else if (_cartSelectedIndex >= _carrinho.length) {
+                _cartSelectedIndex = _carrinho.length - 1;
+              }
+            });
+            return KeyEventResult.handled;
+          }
+        }
+
+        return KeyEventResult.ignored;
+      },
+      child: Column(
+        children: [
+          // Barra superior com busca, quantidade e cliente
+          _buildBarraSuperior(dataService),
+          // Área principal
+          Expanded(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Lado esquerdo: Categorias + Produtos
+                Expanded(
+                  flex: 3,
+                  child: Column(
+                    children: [
+                      // Categorias
+                      _buildCategorias(categorias),
+                      // Área de produtos
+                      Expanded(
+                        child: _termoBusca.isNotEmpty
+                            ? (itensEncontrados.isEmpty
+                                  ? _buildNenhumResultado()
+                                  : _buildGridItens(itensEncontrados))
+                            : _categoriaAtiva != null
+                            ? _buildGridProdutos(produtosCategoria)
+                            : _buildEstadoInicial(dataService),
+                      ),
+                    ],
                   ),
-                  borderRadius: BorderRadius.circular(20),
-                  boxShadow: [
-                    // Glow ciano externo
-                    BoxShadow(
-                      color: Colors.cyanAccent.withOpacity(0.15),
-                      blurRadius: 40,
-                      spreadRadius: 5,
-                    ),
-                    // Glow interno sutil
-                    BoxShadow(
-                      color: Colors.cyan.withOpacity(0.08),
-                      blurRadius: 20,
-                      spreadRadius: -5,
-                    ),
-                    // Sombra de profundidade
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.5),
-                      blurRadius: 30,
-                      offset: const Offset(0, 15),
-                    ),
-                  ],
                 ),
-                child: _buildCarrinhoMelhorado(dataService),
-              ),
-            ],
+                // Lado direito: Carrinho com efeito glow
+                Container(
+                  width: 380,
+                  margin: const EdgeInsets.only(right: 16, bottom: 16),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [const Color(0xFF0D0D15), const Color(0xFF12121C)],
+                    ),
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      // Glow ciano externo
+                      BoxShadow(
+                        color: Colors.cyanAccent.withOpacity(0.15),
+                        blurRadius: 40,
+                        spreadRadius: 5,
+                      ),
+                      // Glow interno sutil
+                      BoxShadow(
+                        color: Colors.cyan.withOpacity(0.08),
+                        blurRadius: 20,
+                        spreadRadius: -5,
+                      ),
+                      // Sombra de profundidade
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.5),
+                        blurRadius: 30,
+                        offset: const Offset(0, 15),
+                      ),
+                    ],
+                  ),
+                  child: _buildCarrinhoMelhorado(dataService),
+                ),
+              ],
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
 
     // Se não há Scaffold no contexto (chamado diretamente da home), envolver em um
@@ -4649,18 +4826,51 @@ o padrão padrão (sem opções avançadas).
                   _categoriaAtiva = null;
                 }),
                 onSubmitted: (value) {
-                  // Se pressionar Enter e não houver resultados, abrir Diversos
                   if (value.trim().isNotEmpty) {
                     WidgetsBinding.instance.addPostFrameCallback((_) {
                       final dataService = Provider.of<DataService>(context, listen: false);
                       final resultados = _buscarItens(dataService);
-                      if (resultados.isEmpty) {
-                        // Verificar se o valor digitado é um número (preço)
+                      
+                      dynamic itemParaAdicionar;
+                      final termo = value.trim().toLowerCase();
+
+                      if (resultados.length == 1) {
+                        // Caso simples: apenas um resultado encontrado
+                        itemParaAdicionar = resultados.first;
+                      } else if (resultados.length > 1) {
+                        // Se houver mais de um, busca por um match EXATO de código ou barras
+                        // Isso evita lançar o item errado se o código for parte do nome de outro produto
+                        for (var item in resultados) {
+                          if (item is Produto) {
+                            if ((item.codigo?.toLowerCase() == termo) || 
+                                (item.codigoBarras?.toLowerCase() == termo)) {
+                              itemParaAdicionar = item;
+                              break;
+                            }
+                          }
+                        }
+                      }
+                      
+                      if (itemParaAdicionar != null) {
+                        // Lança o item encontrado
+                        _adicionarAoCarrinho(itemParaAdicionar);
+                        // A limpeza e o foco são tratados dentro do _adicionarAoCarrinho
+                      } else if (resultados.isEmpty) {
+                        // Se não houver resultados, verifica se digitou um preço direto (Venda Diversos)
                         final valorDigitado = double.tryParse(value.replaceAll(',', '.').trim());
                         _lancarDiversosRapido(precoInicial: valorDigitado);
                       }
+                      // Se houver múltiplos resultados sem match exato de código, deixa o usuário clicar no card
                     });
                   }
+                },
+                onTap: () {
+                  setState(() {
+                    _focoNasCategorias = false;
+                    _focoNoCarrinho = false;
+                    _gridSelectedIndex = -1;
+                    _categoriaSelectedIndex = -1;
+                  });
                 },
               ),
             ),
@@ -4853,11 +5063,14 @@ o padrão padrão (sem opções avançadas).
                     // Botão "Todos"
                     final isActive =
                         _categoriaAtiva == null && _termoBusca.isEmpty;
+                    final isSelected = _focoNasCategorias && _categoriaSelectedIndex == 0;
                     return GestureDetector(
                       onTap: () => setState(() {
                         _categoriaAtiva = null;
                         _termoBusca = '';
                         _buscaController.clear();
+                        _focoNasCategorias = true;
+                        _categoriaSelectedIndex = 0;
                       }),
                       child: Container(
                         margin: const EdgeInsets.only(right: 8),
@@ -4877,11 +5090,19 @@ o padrão padrão (sem opções avançadas).
                           color: isActive ? null : const Color(0xFF1E1E2E),
                           borderRadius: BorderRadius.circular(12),
                           border: Border.all(
-                            color: isActive
-                                ? Colors.blue
-                                : Colors.white.withOpacity(0.1),
+                            color: isSelected 
+                                ? Colors.cyanAccent 
+                                : (isActive ? Colors.blue : Colors.white.withOpacity(0.1)),
+                            width: isSelected ? 3 : 1,
                           ),
-                          boxShadow: isActive
+                          boxShadow: isSelected 
+                            ? [
+                                BoxShadow(
+                                  color: Colors.cyanAccent.withOpacity(0.3),
+                                  blurRadius: 10,
+                                )
+                              ]
+                            : (isActive
                               ? [
                                   BoxShadow(
                                     color: Colors.blue.withOpacity(0.3),
@@ -4889,7 +5110,7 @@ o padrão padrão (sem opções avançadas).
                                     offset: const Offset(0, 2),
                                   ),
                                 ]
-                              : null,
+                              : null),
                         ),
                         alignment: Alignment.center,
                         child: Row(
@@ -4919,11 +5140,14 @@ o padrão padrão (sem opções avançadas).
 
                   final categoria = categorias[index - 1];
                   final isActive = _categoriaAtiva == categoria;
+                  final isSelected = _focoNasCategorias && _categoriaSelectedIndex == index;
                   return GestureDetector(
                     onTap: () => setState(() {
                       _categoriaAtiva = isActive ? null : categoria;
                       _termoBusca = '';
                       _buscaController.clear();
+                      _focoNasCategorias = true;
+                      _categoriaSelectedIndex = index;
                     }),
                     child: Container(
                       margin: const EdgeInsets.only(right: 8),
@@ -4943,19 +5167,27 @@ o padrão padrão (sem opções avançadas).
                         color: isActive ? null : const Color(0xFF1E1E2E),
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(
-                          color: isActive
-                              ? Colors.purple
-                              : Colors.white.withOpacity(0.1),
+                          color: isSelected 
+                              ? Colors.cyanAccent 
+                              : (isActive ? Colors.purple : Colors.white.withOpacity(0.1)),
+                          width: isSelected ? 3 : 1,
                         ),
-                        boxShadow: isActive
+                        boxShadow: isSelected
                             ? [
                                 BoxShadow(
-                                  color: Colors.purple.withOpacity(0.3),
-                                  blurRadius: 8,
-                                  offset: const Offset(0, 2),
-                                ),
+                                  color: Colors.cyanAccent.withOpacity(0.3),
+                                  blurRadius: 10,
+                                )
                               ]
-                            : null,
+                            : (isActive
+                                ? [
+                                    BoxShadow(
+                                      color: Colors.purple.withOpacity(0.3),
+                                      blurRadius: 8,
+                                      offset: const Offset(0, 2),
+                                    ),
+                                  ]
+                                : null),
                       ),
                       alignment: Alignment.center,
                       child: Text(
@@ -5384,7 +5616,7 @@ o padrão padrão (sem opções avançadas).
       itemBuilder: (context, index) {
         final item = itens[index];
         final isProduto = item is Produto;
-        return _buildCardProduto(item, isProduto);
+        return _buildCardProduto(item, isProduto, index: index);
       },
     );
   }
@@ -5400,12 +5632,12 @@ o padrão padrão (sem opções avançadas).
       ),
       itemCount: produtos.length,
       itemBuilder: (context, index) {
-        return _buildCardProduto(produtos[index], true);
+        return _buildCardProduto(produtos[index], true, index: index);
       },
     );
   }
 
-  Widget _buildCardProduto(dynamic item, bool isProduto) {
+  Widget _buildCardProduto(dynamic item, bool isProduto, {int index = -1}) {
     final nome = item.nome as String;
     final preco = isProduto
         ? (item as Produto).precoAtual
@@ -5417,8 +5649,14 @@ o padrão padrão (sem opções avançadas).
     // Se for o produto Diversos (código 9999), abrir diálogo para descrição
     final isDiversos = isProduto && codigo == '9999';
 
+    final isSelected = !_focoNoCarrinho && _gridSelectedIndex == index && index != -1;
+
     return GestureDetector(
       onTap: () {
+        setState(() {
+          _focoNoCarrinho = false;
+          _gridSelectedIndex = index;
+        });
         if (isDiversos) {
           // Verificar se o termo de busca é um número (preço)
           final valorDigitado = double.tryParse(_termoBusca.replaceAll(',', '.').trim());
@@ -5438,11 +5676,18 @@ o padrão padrão (sem opções avançadas).
           ),
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: promocao
-                ? Colors.orange.withOpacity(0.5)
-                : Colors.transparent,
-            width: 2,
+            color: isSelected 
+                ? Colors.cyanAccent
+                : (promocao ? Colors.orange.withOpacity(0.5) : Colors.transparent),
+            width: isSelected ? 3 : 2,
           ),
+          boxShadow: isSelected ? [
+            BoxShadow(
+              color: Colors.cyanAccent.withOpacity(0.3),
+              blurRadius: 15,
+              spreadRadius: 2,
+            )
+          ] : null,
         ),
         child: Stack(
           children: [
@@ -5523,8 +5768,8 @@ o padrão padrão (sem opções avançadas).
                     nome,
                     style: const TextStyle(
                       color: Colors.white,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16, // Aumentado de 14
                     ),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
@@ -5535,8 +5780,8 @@ o padrão padrão (sem opções avançadas).
                     'R\$ ${preco.toStringAsFixed(2)}',
                     style: TextStyle(
                       color: promocao ? Colors.orange : Colors.greenAccent,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 18,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 22, // Aumentado de 18
                     ),
                   ),
                   // Estoque (apenas para produtos)
@@ -5645,13 +5890,26 @@ o padrão padrão (sem opções avançadas).
                     ),
                   ],
                 ),
-                child: Text(
-                  '$_totalItens',
-                  style: const TextStyle(
-                    color: Colors.cyanAccent,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 13,
-                  ),
+                child: Row(
+                  children: [
+                    Text(
+                      '$_totalItens',
+                      style: const TextStyle(
+                        color: Colors.cyanAccent,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 15,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      _totalItens == 1 ? 'ITEM' : 'ITENS',
+                      style: const TextStyle(
+                        color: Colors.cyanAccent,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 10,
+                      ),
+                    ),
+                  ],
                 ),
               ),
               if (_carrinho.isNotEmpty) ...[
@@ -5757,12 +6015,23 @@ o padrão padrão (sem opções avançadas).
                           size: 22,
                         ),
                       ),
-                      child: _ItemCarrinhoComHover(
-                        item: item,
-                        index: index,
-                        onAlterarQuantidade: (delta) => _alterarQuantidade(index, delta),
-                        onAplicarDesconto: () => _aplicarDescontoItem(index),
-                        onRemover: () => _removerItem(index),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: _focoNoCarrinho && _cartSelectedIndex == index
+                                ? Colors.cyanAccent
+                                : Colors.transparent,
+                            width: 2,
+                          ),
+                        ),
+                        child: _ItemCarrinhoComHover(
+                          item: item,
+                          index: index,
+                          onAlterarQuantidade: (delta) => _alterarQuantidade(index, delta),
+                          onAplicarDesconto: () => _aplicarDescontoItem(index),
+                          onRemover: () => _removerItem(index),
+                        ),
                       ),
                     );
                   },
@@ -5838,128 +6107,134 @@ o padrão padrão (sem opções avançadas).
                   ),
                 ),
               // Desconto total e Total com efeito glow
-              Column(
-                children: [
-                  if (_descontoTotal > 0) ...[
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Row(
-                          children: [
-                            GestureDetector(
-                              onTap: () => _aplicarDescontoTotal(),
-                              child: Icon(
-                                Icons.discount_rounded,
-                                color: Colors.orangeAccent,
-                                size: 16,
-                              ),
-                            ),
-                            const SizedBox(width: 6),
-                            Text(
-                              'Desconto Total',
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(0.5),
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
-                        ),
-                        Text(
-                          '-R\$ ${_descontoTotal.toStringAsFixed(2)}',
-                          style: const TextStyle(
-                            color: Colors.orangeAccent,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14,
-                          ),
-                        ),
-                      ],
+              // Painel de Total Vibrante e Gigante
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      const Color(0xFF0D0D15),
+                      const Color(0xFF1A1A2E),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: Colors.greenAccent.withOpacity(0.3),
+                    width: 1.5,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.greenAccent.withOpacity(0.15),
+                      blurRadius: 30,
+                      spreadRadius: 2,
                     ),
-                    const SizedBox(height: 6),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          'Subtotal',
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.5),
-                            fontSize: 12,
-                            decoration: TextDecoration.lineThrough,
-                          ),
-                        ),
-                        Text(
-                          'R\$ ${_totalCarrinhoSemDesconto.toStringAsFixed(2)}',
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.4),
-                            fontSize: 12,
-                            decoration: TextDecoration.lineThrough,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
                   ],
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
+                ),
+                child: Column(
+                  children: [
+                    // Subtotal e Descontos pequenos acima
+                    if (_descontoTotal > 0) ...[
                       Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Text(
-                            'TOTAL',
+                            'SUBTOTAL',
                             style: TextStyle(
-                              color: Colors.white.withOpacity(0.5),
-                              fontSize: 13,
-                              fontWeight: FontWeight.w500,
+                              color: Colors.white.withOpacity(0.4),
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
                               letterSpacing: 1,
                             ),
                           ),
-                          if (_descontoTotal == 0) ...[
-                            const SizedBox(width: 8),
-                            GestureDetector(
-                              onTap: () => _aplicarDescontoTotal(),
-                              child: Container(
-                                padding: const EdgeInsets.all(4),
-                                decoration: BoxDecoration(
-                                  color: Colors.orange.withOpacity(0.1),
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                child: const Icon(
-                                  Icons.discount_rounded,
-                                  color: Colors.orangeAccent,
-                                  size: 14,
-                                ),
-                              ),
+                          Text(
+                            'R\$ ${_totalCarrinhoSemDesconto.toStringAsFixed(2)}',
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.4),
+                              fontSize: 11,
+                              decoration: TextDecoration.lineThrough,
                             ),
-                          ],
+                          ),
                         ],
                       ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 6,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.greenAccent.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(12),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.greenAccent.withOpacity(0.3),
-                              blurRadius: 15,
-                              spreadRadius: 2,
+                      const SizedBox(height: 4),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text(
+                            'DESCONTO TOTAL',
+                            style: TextStyle(
+                              color: Colors.orangeAccent,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 1,
                             ),
-                          ],
+                          ),
+                          Text(
+                            '- R\$ ${_descontoTotal.toStringAsFixed(2)}',
+                            style: const TextStyle(
+                              color: Colors.orangeAccent,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 12),
+                        child: Divider(color: Colors.white10),
+                      ),
+                    ],
+                    // O VALOR PRINCIPAL
+                    Text(
+                      'TOTAL A PAGAR',
+                      style: TextStyle(
+                        color: Colors.greenAccent.withOpacity(0.8),
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 2,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        'R\$ ${_totalCarrinho.toStringAsFixed(2)}',
+                        style: const TextStyle(
+                          color: Colors.greenAccent,
+                          fontSize: 42,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: -1.5,
                         ),
-                        child: Text(
-                          'R\$ ${_totalCarrinho.toStringAsFixed(2)}',
-                          style: const TextStyle(
-                            color: Colors.greenAccent,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 22,
+                      ),
+                    ),
+                    if (_descontoTotal == 0) ...[
+                      const SizedBox(height: 8),
+                      GestureDetector(
+                        onTap: () => _aplicarDescontoTotal(),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.orange.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: Colors.orange.withOpacity(0.2)),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: const [
+                              Icon(Icons.discount_rounded, color: Colors.orangeAccent, size: 12),
+                              SizedBox(width: 4),
+                              Text(
+                                'ADD DESCONTO',
+                                style: TextStyle(color: Colors.orangeAccent, fontSize: 10, fontWeight: FontWeight.bold),
+                              ),
+                            ],
                           ),
                         ),
                       ),
                     ],
-                  ),
-                ],
+                  ],
+                ),
               ),
               const SizedBox(height: 12),
               // Botões de ação compactos com glow
@@ -6697,180 +6972,158 @@ class _ItemCarrinhoComHoverState extends State<_ItemCarrinhoComHover> {
       },
       child: Container(
         margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.all(10),
+        padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: Colors.white.withOpacity(0.05),
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.white.withOpacity(0.03)),
         ),
-        child: Row(
+        child: Column(
           children: [
-            // Ícone compacto com glow
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: corBackground.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(10),
-                boxShadow: [
-                  BoxShadow(
-                    color: corPrincipal.withOpacity(0.2),
-                    blurRadius: 8,
-                  ),
-                ],
-              ),
-              child: Icon(
-                item.isServico
-                    ? Icons.build_rounded
-                    : Icons.inventory_2_rounded,
-                color: corPrincipal,
-                size: 18,
-              ),
-            ),
-            const SizedBox(width: 10),
-            // Info compacta
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    item.nome,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w500,
-                      fontSize: 13,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    'R\$ ${item.preco.toStringAsFixed(2)} × ${item.quantidade}',
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.5),
-                      fontSize: 11,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            // Controles de quantidade minimalistas
+            // Linha Superior: Ícone, Nome e Botão Remover
             Row(
-              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                GestureDetector(
-                  onTap: () => widget.onAlterarQuantidade(-1),
-                  child: Container(
-                    padding: const EdgeInsets.all(6),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.08),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Icon(
-                      Icons.remove_rounded,
-                      color: item.quantidade > 1
-                          ? Colors.white60
-                          : Colors.redAccent,
-                      size: 14,
-                    ),
+                // Ícone compacto
+                Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: corBackground.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(
+                    item.isServico
+                        ? Icons.build_rounded
+                        : Icons.inventory_2_rounded,
+                    color: corPrincipal.withOpacity(0.7),
+                    size: 16,
                   ),
                 ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                  ),
+                const SizedBox(width: 10),
+                // Nome do Item
+                Expanded(
                   child: Text(
-                    '${item.quantidade}',
+                    item.nome,
                     style: const TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.bold,
                       fontSize: 14,
                     ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
+                const SizedBox(width: 4),
+                // Botão Remover discreto
                 GestureDetector(
-                  onTap: () => widget.onAlterarQuantidade(1),
-                  child: Container(
-                    padding: const EdgeInsets.all(6),
-                    decoration: BoxDecoration(
-                      color: corPrincipal.withOpacity(0.15),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Icon(
-                      Icons.add_rounded,
-                      color: corPrincipal,
-                      size: 14,
-                    ),
+                  onTap: widget.onRemover,
+                  child: Icon(
+                    Icons.close_rounded,
+                    color: Colors.white.withOpacity(0.2),
+                    size: 18,
                   ),
                 ),
               ],
             ),
-            const SizedBox(width: 10),
-            // Botão de desconto no item
-            GestureDetector(
-              onTap: widget.onAplicarDesconto,
-              child: Container(
-                padding: const EdgeInsets.all(6),
-                decoration: BoxDecoration(
-                  color: item.desconto > 0
-                      ? Colors.orange.withOpacity(0.2)
-                      : Colors.white.withOpacity(0.08),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Icon(
-                  Icons.discount_rounded,
-                  color: item.desconto > 0
-                      ? Colors.orangeAccent
-                      : Colors.white60,
-                  size: 16,
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            // Subtotal com glow
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
+            const SizedBox(height: 12),
+            // Linha Inferior: Controles, Desconto e Subtotal
+            Row(
               children: [
-                if (item.desconto > 0) ...[
-                  Text(
-                    'R\$ ${item.subtotalSemDesconto.toStringAsFixed(2)}',
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.4),
-                      fontSize: 10,
-                      decoration: TextDecoration.lineThrough,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    '-R\$ ${item.desconto.toStringAsFixed(2)}',
-                    style: const TextStyle(
-                      color: Colors.orangeAccent,
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
+                // Controles de Quantidade
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
-                  ),
+                  padding: const EdgeInsets.all(2),
                   decoration: BoxDecoration(
-                    color: corPrincipal.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                    boxShadow: [
-                      BoxShadow(
-                        color: corPrincipal.withOpacity(0.15),
-                        blurRadius: 8,
+                    color: Colors.black.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      GestureDetector(
+                        onTap: () => widget.onAlterarQuantidade(-1),
+                        child: Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.05),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Icon(
+                            Icons.remove_rounded,
+                            color: item.quantidade > 1 ? Colors.white70 : Colors.redAccent.withOpacity(0.5),
+                            size: 14,
+                          ),
+                        ),
+                      ),
+                      SizedBox(
+                        width: 28,
+                        child: Text(
+                          '${item.quantidade}',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ),
+                      GestureDetector(
+                        onTap: () => widget.onAlterarQuantidade(1),
+                        child: Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: corPrincipal.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Icon(
+                            Icons.add_rounded,
+                            color: corPrincipal,
+                            size: 14,
+                          ),
+                        ),
                       ),
                     ],
                   ),
-                  child: Text(
-                    'R\$ ${item.subtotal.toStringAsFixed(2)}',
-                    style: TextStyle(
-                      color: corPrincipal,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 13,
+                ),
+                const SizedBox(width: 8),
+                // Botão de Desconto
+                GestureDetector(
+                  onTap: widget.onAplicarDesconto,
+                  child: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: item.desconto > 0 ? Colors.orange.withOpacity(0.2) : Colors.white.withOpacity(0.05),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(
+                      Icons.discount_rounded,
+                      color: item.desconto > 0 ? Colors.orangeAccent : Colors.white30,
+                      size: 14,
                     ),
                   ),
+                ),
+                const Spacer(),
+                // Preço e Subtotal
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    if (item.desconto > 0)
+                      Text(
+                        '-R\$ ${item.desconto.toStringAsFixed(2)}',
+                        style: const TextStyle(
+                          color: Colors.orangeAccent,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    Text(
+                      'R\$ ${item.subtotal.toStringAsFixed(2)}',
+                      style: TextStyle(
+                        color: corPrincipal,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 16,
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -7242,6 +7495,8 @@ class _SeletorClienteWidgetState extends State<_SeletorClienteWidget> {
 
 // Dialog de pagamento do PDV - usa a mesma lógica do PagamentoWidget
 class _DialogPagamentoPDV extends StatefulWidget {
+  final double subtotal;
+  final double descontoTotal;
   final double totalCarrinho;
   final List<PagamentoPedido> pagamentosIniciais;
   final Function(List<PagamentoPedido>) onConfirmar;
@@ -7249,6 +7504,8 @@ class _DialogPagamentoPDV extends StatefulWidget {
   final Cliente? cliente; // Cliente para validar limite de crédito
 
   const _DialogPagamentoPDV({
+    required this.subtotal,
+    required this.descontoTotal,
     required this.totalCarrinho,
     required this.pagamentosIniciais,
     required this.onConfirmar,
@@ -8427,93 +8684,198 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
               borderRadius: BorderRadius.circular(2),
             ),
           ),
-          // Título
+          // Título e Total Super Nítido
           Padding(
-            padding: const EdgeInsets.all(20),
-            child: Row(
+            padding: const EdgeInsets.fromLTRB(24, 20, 24, 10),
+            child: Column(
               children: [
-                const Icon(Icons.payment, color: Colors.greenAccent, size: 28),
-                const SizedBox(width: 12),
-                const Text(
-                  'Finalizar Venda',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const Spacer(),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 8,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.green.withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    _formatoMoeda.format(widget.totalCarrinho),
-                    style: const TextStyle(
-                      color: Colors.greenAccent,
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.greenAccent.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(Icons.payment,
+                          color: Colors.greenAccent, size: 24),
                     ),
+                    const SizedBox(width: 12),
+                    const Text(
+                      'Resumo da Venda',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+                // Painel de Total Vibrante
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(24),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        const Color(0xFF0D0D15),
+                        const Color(0xFF161625),
+                      ],
+                    ),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: Colors.greenAccent.withOpacity(0.2),
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.greenAccent.withOpacity(0.05),
+                        blurRadius: 20,
+                        spreadRadius: 2,
+                      ),
+                    ],
                   ),
-                ),
-              ],
-            ),
-          ),
-
-          // Status do pagamento
-          Container(
-            margin: const EdgeInsets.symmetric(horizontal: 20),
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: _pagamentoCompleto
-                  ? Colors.green.withOpacity(0.1)
-                  : Colors.orange.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              children: [
-                Icon(
-                  _pagamentoCompleto ? Icons.check_circle : Icons.pending,
-                  color: _pagamentoCompleto
-                      ? Colors.greenAccent
-                      : Colors.orange,
-                  size: 20,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
                   child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      // Subtotal e Descontos em destaque
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'SUBTOTAL',
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.5),
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                  letterSpacing: 1,
+                                ),
+                              ),
+                              Text(
+                                _formatoMoeda.format(widget.subtotal),
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
+                          ),
+                          if (widget.descontoTotal > 0)
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                const Text(
+                                  'DESCONTOS',
+                                  style: TextStyle(
+                                    color: Colors.redAccent,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                    letterSpacing: 1,
+                                  ),
+                                ),
+                                Text(
+                                  '- ${_formatoMoeda.format(widget.descontoTotal)}',
+                                  style: const TextStyle(
+                                    color: Colors.redAccent,
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                        ],
+                      ),
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 16),
+                        child: Divider(color: Colors.white10),
+                      ),
+                      // TOTAL A PAGAR - GIGANTE E NÍTIDO
                       Text(
-                        _pagamentoCompleto
-                            ? 'Pagamento completo'
-                            : 'Falta: ${_formatoMoeda.format(_valorRestante)}',
+                        'TOTAL A PAGAR',
                         style: TextStyle(
-                          color: _pagamentoCompleto
-                              ? Colors.greenAccent
-                              : Colors.orange,
+                          color: Colors.greenAccent.withOpacity(0.8),
+                          fontSize: 14,
                           fontWeight: FontWeight.bold,
+                          letterSpacing: 2,
                         ),
                       ),
-                      if (_totalLancado > 0)
-                        Text(
-                          'Lançado: ${_formatoMoeda.format(_totalLancado)}',
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.5),
-                            fontSize: 12,
-                          ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _formatoMoeda.format(widget.totalCarrinho),
+                        style: const TextStyle(
+                          color: Colors.greenAccent,
+                          fontSize: 48,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: -1,
                         ),
+                      ),
                     ],
                   ),
                 ),
               ],
             ),
           ),
+
+          // Status do pagamento detalhado
+          if (_totalLancado > 0)
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: _pagamentoCompleto
+                    ? Colors.green.withOpacity(0.1)
+                    : Colors.orange.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: _pagamentoCompleto
+                      ? Colors.greenAccent.withOpacity(0.3)
+                      : Colors.orange.withOpacity(0.3),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    _pagamentoCompleto ? Icons.check_circle : Icons.hourglass_top,
+                    color: _pagamentoCompleto
+                        ? Colors.greenAccent
+                        : Colors.orange,
+                    size: 24,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _pagamentoCompleto
+                              ? 'PAGAMENTO CONCLUÍDO'
+                              : 'FALTA RECEBER: ${_formatoMoeda.format(_valorRestante)}',
+                          style: TextStyle(
+                            color: _pagamentoCompleto
+                                ? Colors.greenAccent
+                                : Colors.orange,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                          ),
+                        ),
+                        Text(
+                          'Valor Lançado: ${_formatoMoeda.format(_totalLancado)}',
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.6),
+                            fontSize: 13,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else
+            const SizedBox(height: 10),
 
           const SizedBox(height: 16),
 
