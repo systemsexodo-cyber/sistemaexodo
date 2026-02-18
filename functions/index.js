@@ -18,17 +18,25 @@ app.use(cors({ origin: true }));
 // Configurar multer para usar o diretório /tmp (o único gravável no Firebase Functions)
 const upload = multer({ dest: os.tmpdir() });
 
+// Middleware para logar todas as requisições (ajuda no diagnóstico)
+app.use((req, res, next) => {
+    console.log(`>>> [Functions] ${req.method} ${req.url}`);
+    next();
+});
+
 /**
  * Endpoint para processar certificado PFX
  * Retorna chave privada e certificado em formato PEM
+ * Suporta tanto o caminho direto quanto o prefixo /api
  */
-app.post('/processar-certificado', upload.single('certificado'), async (req, res) => {
+const processarHandler = async (req, res) => {
     try {
-        console.log('>>> [Functions] Recebido certificado para processar');
+        console.log('>>> [Functions] Iniciando processamento de certificado');
 
         if (!req.file) {
+            console.log('>>> [Functions] ❌ Arquivo não encontrado na requisição');
             return res.status(400).json({
-                erro: 'Certificado não fornecido',
+                erro: 'Certificado não fornecido. Certifique-se de enviar o arquivo no campo "certificado".',
                 sucesso: false
             });
         }
@@ -36,11 +44,10 @@ app.post('/processar-certificado', upload.single('certificado'), async (req, res
         const senha = req.body.senha || '';
         const caminhoArquivo = req.file.path;
 
-        console.log('>>> [Functions] Processando:', caminhoArquivo);
+        console.log(`>>> [Functions] Arquivo temporário: ${caminhoArquivo} (${req.file.size} bytes)`);
 
         // Ler arquivo PFX
         const pfxBytes = fs.readFileSync(caminhoArquivo);
-        console.log('>>> [Functions] Arquivo lido:', pfxBytes.length, 'bytes');
 
         // Converter para base64 para processar com node-forge
         const pfxBase64 = pfxBytes.toString('base64');
@@ -50,7 +57,7 @@ app.post('/processar-certificado', upload.single('certificado'), async (req, res
         try {
             p12 = forge.pkcs12.decodeBase64(pfxBase64, false, senha);
         } catch (e) {
-            // Limpar arquivo temporário
+            console.error('>>> [Functions] ❌ Erro ao decodificar P12:', e.message);
             if (fs.existsSync(caminhoArquivo)) fs.unlinkSync(caminhoArquivo);
 
             return res.status(400).json({
@@ -71,12 +78,10 @@ app.post('/processar-certificado', upload.single('certificado'), async (req, res
             for (let j = 0; j < safeContents.safeBags.length; j++) {
                 const bag = safeContents.safeBags[j];
 
-                // Chave privada
                 if (bag.type === forge.pki.oids.keyBag || bag.type === forge.pki.oids.pkcs8ShroudedKeyBag) {
                     if (bag.key) chavePrivada = bag.key;
                 }
 
-                // Certificado
                 if (bag.type === forge.pki.oids.certBag) {
                     if (bag.cert) {
                         certificadoX509 = bag.cert;
@@ -90,27 +95,24 @@ app.post('/processar-certificado', upload.single('certificado'), async (req, res
         }
 
         if (!chavePrivada || !certificadoX509) {
+            console.error('>>> [Functions] ❌ Componentes essenciais não encontrados no PFX');
             if (fs.existsSync(caminhoArquivo)) fs.unlinkSync(caminhoArquivo);
             return res.status(400).json({
-                erro: 'Chave privada ou certificado não encontrado no PFX',
+                erro: 'Chave privada ou certificado não encontrado no arquivo PFX fornecido.',
                 sucesso: false
             });
         }
 
-        // Converter para PEM
         const chavePrivadaPEM = forge.pki.privateKeyToPem(chavePrivada);
         const certificadoPEM = forge.pki.certificateToPem(certificadoX509);
 
-        // Extrair componentes RSA (úteis para algumas bibliotecas Dart)
+        // Componentes RSA
         const n = chavePrivada.n.toString(16);
         const d = chavePrivada.d.toString(16);
-        const p = chavePrivada.p.toString(16);
-        const q = chavePrivada.q.toString(16);
 
-        // Limpar arquivo temporário
         if (fs.existsSync(caminhoArquivo)) fs.unlinkSync(caminhoArquivo);
 
-        console.log('>>> [Functions] ✓ Certificado processado para CNPJ:', cnpj);
+        console.log(`>>> [Functions] ✅ Sucesso! CNPJ: ${cnpj || 'N/A'}`);
 
         res.json({
             sucesso: true,
@@ -118,8 +120,6 @@ app.post('/processar-certificado', upload.single('certificado'), async (req, res
                 pem: chavePrivadaPEM,
                 n: n,
                 d: d,
-                p: p,
-                q: q,
             },
             certificado: {
                 pem: certificadoPEM,
@@ -132,7 +132,7 @@ app.post('/processar-certificado', upload.single('certificado'), async (req, res
         });
 
     } catch (e) {
-        console.error('>>> [Functions] ERRO:', e);
+        console.error('>>> [Functions] ❌ ERRO INTERNO:', e);
         if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
         res.status(500).json({
             erro: 'Erro interno ao processar certificado',
@@ -140,12 +140,21 @@ app.post('/processar-certificado', upload.single('certificado'), async (req, res
             sucesso: false
         });
     }
-});
+};
+
+// Registrar as rotas
+app.post('/processar-certificado', upload.single('certificado'), processarHandler);
+app.post('/api/processar-certificado', upload.single('certificado'), processarHandler); // Suporte a prefixo se houver
 
 // Health check
 app.get('/health', (req, res) => {
-    res.json({ status: 'ok', source: 'Firebase Functions' });
+    res.json({
+        status: 'ok',
+        timestamp: new Date().toISOString(),
+        service: 'Conversor Certificado',
+        env: process.env.NODE_ENV
+    });
 });
 
 // Exportar a cloud function
-exports.api = functions.https.onRequest(app);
+exports.api = functions.region('us-central1').https.onRequest(app);

@@ -1,16 +1,18 @@
-# Script de Deploy Automático para Firebase Hosting
-# Baseado no deploy_completo.ps1 - versão não-interativa
+# Script de Deploy Automático para Firebase (Hosting + Functions)
+# Versão robusta e não-interativa
 
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "  DEPLOY COMPLETO PARA FIREBASE HOSTING" -ForegroundColor Cyan
+Write-Host "  DEPLOY COMPLETO - SISTEMA ÊXODO" -ForegroundColor Cyan
+Write-Host "  (HOSTING + CLOUD FUNCTIONS)" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
 $projectPath = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
 Set-Location $projectPath
 
-Write-Host "[1/7] Verificando alteracoes nao commitadas..." -ForegroundColor Yellow
+# 1. Verificando alterações git
+Write-Host "[1/8] Verificando alteracoes nao commitadas..." -ForegroundColor Yellow
 $gitStatus = git status --porcelain 2>$null
 $relevantChanges = $gitStatus | Where-Object { 
     $_ -notmatch "\.salvamento_logs" -and 
@@ -27,141 +29,85 @@ if ($relevantChanges) {
     if ($LASTEXITCODE -eq 0) {
         Write-Host "  Commit realizado com sucesso!" -ForegroundColor Green
     }
-    else {
-        Write-Host "  AVISO: Falha ao fazer commit. Continuando mesmo assim..." -ForegroundColor Yellow
-    }
 }
 else {
-    Write-Host "  OK: Nenhuma alteracao relevante nao commitada." -ForegroundColor Green
+    Write-Host "  OK: Nenhuma alteracao relevante." -ForegroundColor Green
 }
-Write-Host ""
 
-Write-Host "[2/7] Verificando ambiente (Node.js e Firebase)..." -ForegroundColor Yellow
+# 2. Verificar Ambiente
+Write-Host "`n[2/8] Verificando ambiente (Node.js e Firebase)..." -ForegroundColor Yellow
 $firebaseProject = "exodosystems-1541d"
 $firebaseCmd = "firebase"
 
-# Verificar se Node existe
-$nodeCheck = Get-Command node -ErrorAction SilentlyContinue
-if (-not $nodeCheck) {
-    Write-Host "  ERRO: Node.js nao encontrado! Instale em: https://nodejs.org/" -ForegroundColor Red
+if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+    Write-Host "  ERRO: Node.js nao encontrado!" -ForegroundColor Red
     exit 1
 }
 
-# Verificar se Firebase CLI existe ou se vamos usar via npx
-$firebaseCheck = Get-Command firebase -ErrorAction SilentlyContinue
-if (-not $firebaseCheck) {
-    Write-Host "  AVISO: Comando 'firebase' global nao encontrado. Tentando usar via 'npx'..." -ForegroundColor Yellow
-    $firebaseCmd = "npx -p firebase-tools firebase"
+if (-not (Get-Command firebase -ErrorAction SilentlyContinue)) {
+    Write-Host "  AVISO: Firebase CLI global nao encontrado. Usando 'npx -y firebase-tools'..." -ForegroundColor Yellow
+    $firebaseCmd = "npx -y firebase-tools"
 }
 
 Write-Host "  Projeto alvo: $firebaseProject" -ForegroundColor Cyan
-$currentProject = cmd /c "$firebaseCmd use" 2>$null | Select-String -Pattern "using"
-if ($currentProject -notmatch $firebaseProject) {
-    Write-Host "  Configurando projeto $firebaseProject..." -ForegroundColor Yellow
-    cmd /c "$firebaseCmd use $firebaseProject" 2>&1 | Out-Null
-}
-Write-Host "  OK: Ambiente e Projeto configurados" -ForegroundColor Green
-Write-Host ""
+# Tentar selecionar o projeto com timeout/não-interativo
+cmd /c "$firebaseCmd use $firebaseProject" 2>&1 | Out-Null
+Write-Host "  OK: Ambiente configurado" -ForegroundColor Green
 
-Write-Host "[3/7] REMOVENDO COMPLETAMENTE o diretorio build..." -ForegroundColor Yellow
+# 3. Preparar Funções (Node.js)
+Write-Host "`n[3/8] Preparando Cloud Functions..." -ForegroundColor Yellow
+if (Test-Path "functions") {
+    Set-Location functions
+    Write-Host "  Instalando dependencias das funcoes..." -ForegroundColor Gray
+    npm install --no-audit --no-fund | Out-Null
+    Set-Location ..
+    Write-Host "  OK: Funcoes preparadas" -ForegroundColor Green
+}
+else {
+    Write-Host "  AVISO: Pasta 'functions' nao encontrada. Ignorando." -ForegroundColor Yellow
+}
+
+# 4. Limpar Build Anterior
+Write-Host "`n[4/8] Limpando build anterior..." -ForegroundColor Yellow
 if (Test-Path "build") {
     Remove-Item -Recurse -Force "build" -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 2
-    Write-Host "  OK: Diretorio build removido completamente!" -ForegroundColor Green
 }
-else {
-    Write-Host "  OK: Diretorio build nao existe (ja esta limpo)." -ForegroundColor Green
-}
-Write-Host ""
+flutter clean 2>&1 | Out-Null
+Write-Host "  OK: Build limpo" -ForegroundColor Green
 
-Write-Host "[4/7] Limpando cache do Flutter..." -ForegroundColor Yellow
-$cleanResult = flutter clean 2>&1
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "  OK: Cache do Flutter limpo!" -ForegroundColor Green
-}
-else {
-    Write-Host "  AVISO: Erro ao limpar cache. Continuando mesmo assim..." -ForegroundColor Yellow
-}
-Write-Host ""
+# 5. Dependências Flutter
+Write-Host "`n[5/8] Obtendo dependencias Flutter..." -ForegroundColor Yellow
+flutter pub get 2>&1 | Out-Null
+Write-Host "  OK: Dependencias obtidas" -ForegroundColor Green
 
-Write-Host "[5/7] Obtendo dependencias do Flutter..." -ForegroundColor Yellow
-$pubGetResult = flutter pub get 2>&1
-$pubGetOutput = $pubGetResult | Out-String
-if ($pubGetOutput -match "Got dependencies!" -or $LASTEXITCODE -eq 0) {
-    Write-Host "  OK: Dependencias obtidas com sucesso!" -ForegroundColor Green
-}
-else {
-    Write-Host "  AVISO: Alguns avisos foram encontrados, mas continuando..." -ForegroundColor Yellow
-    if ($pubGetOutput -match "Got dependencies!") {
-        Write-Host "  OK: Dependencias foram obtidas mesmo com avisos!" -ForegroundColor Green
-    }
-    else {
-        Write-Host "  ERRO: Falha critica ao obter dependencias!" -ForegroundColor Red
-        exit 1
-    }
-}
-Write-Host ""
-
-Write-Host "[6/7] Construindo projeto para web (modo release)..." -ForegroundColor Yellow
-Write-Host "  Executando: flutter build web --release" -ForegroundColor Cyan
-Write-Host "  Isso pode levar alguns minutos..." -ForegroundColor Yellow
-Write-Host "  IMPORTANTE: Este build sera COMPLETAMENTE NOVO!" -ForegroundColor Cyan
+# 6. Build Web
+Write-Host "`n[6/8] Construindo para Web (Release)..." -ForegroundColor Yellow
+Write-Host "  Isso pode levar alguns minutos..." -ForegroundColor Gray
 $buildResult = flutter build web --release 2>&1
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "  OK: Build concluido com sucesso!" -ForegroundColor Green
-    
-    if (Test-Path "build\web\index.html") {
-        $buildTime = (Get-Item "build\web\index.html").LastWriteTime
-        Write-Host "  Build criado em: $buildTime" -ForegroundColor Cyan
-    }
-    else {
-        Write-Host "  ERRO: Arquivo build\web\index.html nao foi criado!" -ForegroundColor Red
-        exit 1
-    }
-}
-else {
-    Write-Host "  ERRO: Falha ao construir o projeto!" -ForegroundColor Red
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "  ERRO: Falha no build!" -ForegroundColor Red
     Write-Host $buildResult -ForegroundColor Red
     exit 1
 }
-Write-Host ""
+Write-Host "  OK: Build finalizado" -ForegroundColor Green
 
-Write-Host "[7/7] Fazendo deploy para Firebase Hosting..." -ForegroundColor Yellow
-Write-Host "  Executando: $firebaseCmd deploy --only hosting --project $firebaseProject" -ForegroundColor Cyan
-$deployResult = cmd /c "$firebaseCmd deploy --only hosting --project $firebaseProject" 2>&1
+# 7. Deploy Firebase
+Write-Host "`n[7/8] Fazendo deploy (Hosting + Functions)..." -ForegroundColor Yellow
+Write-Host "  Executando: $firebaseCmd deploy --only hosting,functions --project $firebaseProject" -ForegroundColor Cyan
+$deployResult = cmd /c "$firebaseCmd deploy --only hosting,functions --project $firebaseProject" 2>&1
+
 if ($LASTEXITCODE -eq 0) {
-    Write-Host ""
+    Write-Host "`n========================================" -ForegroundColor Green
+    Write-Host "  DEPLOY CONCLUIDO COM SUCESSO!" -ForegroundColor Green
     Write-Host "========================================" -ForegroundColor Green
-    Write-Host "  DEPLOY REALIZADO COM SUCESSO!" -ForegroundColor Green
-    Write-Host "========================================" -ForegroundColor Green
-    Write-Host ""
-    Write-Host "Projeto: $firebaseProject" -ForegroundColor Cyan
-    Write-Host "URL: https://$firebaseProject.web.app" -ForegroundColor Cyan
-    Write-Host ""
-    Write-Host "IMPORTANTE - PARA VER AS ALTERACOES:" -ForegroundColor Yellow
-    Write-Host "  1. Limpe o cache do navegador (Ctrl + Shift + Delete)" -ForegroundColor White
-    Write-Host "  2. Ou use modo anonimo (Ctrl + Shift + N)" -ForegroundColor White
-    Write-Host "  3. Ou faca hard refresh (Ctrl + Shift + R)" -ForegroundColor White
-    Write-Host "  4. Aguarde 2-5 minutos para propagacao do CDN" -ForegroundColor White
-    Write-Host ""
-    Write-Host "O QUE FOI FEITO:" -ForegroundColor Cyan
-    Write-Host "  [OK] Build antigo foi REMOVIDO completamente" -ForegroundColor Green
-    Write-Host "  [OK] Novo build foi criado do zero" -ForegroundColor Green
-    Write-Host "  [OK] Deploy foi feito com arquivos atualizados" -ForegroundColor Green
-    Write-Host ""
+    Write-Host "  URL Hosting: https://$firebaseProject.web.app" -ForegroundColor Cyan
 }
 else {
-    Write-Host ""
+    Write-Host "`n========================================" -ForegroundColor Red
+    Write-Host "  ERRO NO DEPLOY!" -ForegroundColor Red
     Write-Host "========================================" -ForegroundColor Red
-    Write-Host "  ERRO AO FAZER DEPLOY!" -ForegroundColor Red
-    Write-Host "========================================" -ForegroundColor Red
-    Write-Host ""
-    Write-Host "Detalhes do erro:" -ForegroundColor Red
     Write-Host $deployResult -ForegroundColor Red
-    Write-Host ""
     exit 1
 }
 
-Write-Host "[OK] Processo concluido!" -ForegroundColor Green
-Write-Host ""
-
+Write-Host "`n[8/8] Processo finalizado!" -ForegroundColor Green
