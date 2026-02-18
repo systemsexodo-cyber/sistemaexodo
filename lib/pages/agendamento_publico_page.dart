@@ -222,7 +222,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
             _porteAnimal = pet.tamanho ?? 'Pequeno';
             _pesoAproximado = pet.peso ?? 5.0;
             _mostrarFormularioPet = false;
-            _petSendoEditado = pet;
+            _petSendoEditado = null; // No auto-edit for selection to keep UI clean
           }
           
           // Se cliente não tem Taxi Dog habilitado, resetar para Retirada na Loja
@@ -964,11 +964,29 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                   subtitle: pet.raca ?? 'Sem raça',
                   icon: (pet.especie?.toLowerCase() ?? '') == 'gato' ? Icons.pets : Icons.pets_rounded,
                   isSelected: isSelected,
+                  onEdit: isSelected ? () {
+                    setState(() {
+                      _petSendoEditado = pet;
+                      _mostrarFormularioPet = true;
+                      _petNomeController.text = pet.nome;
+                      _petRacaController.text = pet.raca ?? '';
+                      _petCorController.text = pet.cor ?? '';
+                      _petObsController.text = pet.observacoes ?? '';
+                      _petEspecie = pet.especie ?? 'Cachorro';
+                      _petSexo = pet.sexo ?? 'M';
+                      _porteAnimal = pet.tamanho ?? 'Pequeno';
+                      _pesoAproximado = pet.peso ?? 5.0;
+                    });
+                  } : null,
                   onTap: () {
                     setState(() {
                       if (_modoMultiPets) {
                         if (isSelected) {
                           _petsMultiSelecionados.removeWhere((p) => p.id == pet.id);
+                          if (_petSendoEditado?.id == pet.id) {
+                            _petSendoEditado = null;
+                            _mostrarFormularioPet = false;
+                          }
                         } else {
                           _petsMultiSelecionados.add(pet);
                         }
@@ -1101,6 +1119,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
             label: 'Nome do Pet *',
             icon: Icons.pets_rounded,
             placeholder: 'Nome do seu amigo',
+            onChanged: (_) => _atualizarDadosPetSendoEditadoSync(),
             validator: (v) {
               if (_modoMultiPets && _petsMultiSelecionados.isNotEmpty) return null;
               if (!_mostrarFormularioPet && _petNomeController.text.isNotEmpty) return null;
@@ -1118,7 +1137,10 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                   icon: Icons.category_rounded,
                   value: _petEspecie,
                   items: ['Cachorro', 'Gato', 'Pássaro', 'Coelho', 'Outros'].map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
-                  onChanged: (v) => setState(() => _petEspecie = v!),
+                  onChanged: (v) {
+                    setState(() => _petEspecie = v!);
+                    _atualizarDadosPetSendoEditadoSync();
+                  },
                 ),
               ),
               const SizedBox(width: 12),
@@ -1128,6 +1150,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                   label: 'Raça *',
                   icon: Icons.search_rounded,
                   placeholder: 'Ex: Shih-tzu',
+                  onChanged: (_) => _atualizarDadosPetSendoEditadoSync(),
                   validator: (v) {
                     if (_modoMultiPets && _petsMultiSelecionados.isNotEmpty) return null;
                     if (!_mostrarFormularioPet && _petNomeController.text.isNotEmpty) return null;
@@ -1151,7 +1174,10 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                     const DropdownMenuItem(value: 'M', child: Text('Macho')),
                     const DropdownMenuItem(value: 'F', child: Text('Fêmea')),
                   ],
-                  onChanged: (v) => setState(() => _petSexo = v!),
+                  onChanged: (v) {
+                    setState(() => _petSexo = v!);
+                    _atualizarDadosPetSendoEditadoSync();
+                  },
                 ),
               ),
               const SizedBox(width: 12),
@@ -1161,6 +1187,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                   label: 'Cor',
                   icon: Icons.palette_rounded,
                   placeholder: 'Ex: Branco, Preto',
+                  onChanged: (_) => _atualizarDadosPetSendoEditadoSync(),
                 ),
               ),
             ],
@@ -1179,7 +1206,10 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
             children: _portes.map((porte) {
               bool isSelected = _porteAnimal == porte;
               return InkWell(
-                onTap: () => setState(() => _porteAnimal = porte),
+                onTap: () {
+                  setState(() => _porteAnimal = porte);
+                  _atualizarDadosPetSendoEditadoSync();
+                },
                 borderRadius: BorderRadius.circular(12),
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -1223,7 +1253,10 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
             max: 80,
             activeColor: _primaryColor,
             inactiveColor: _isDark ? Colors.white.withOpacity(0.1) : Colors.grey[200],
-            onChanged: (val) => setState(() => _pesoAproximado = val),
+            onChanged: (val) {
+              setState(() => _pesoAproximado = val);
+              _atualizarDadosPetSendoEditadoSync();
+            },
           ),
           
           const SizedBox(height: 20),
@@ -1234,10 +1267,39 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
             icon: Icons.notes_rounded,
             placeholder: 'Ex: Ele é bravo, tem alergia a algum produto...',
             maxLines: 3,
+            onChanged: (_) => _atualizarDadosPetSendoEditadoSync(),
           ),
         ],
       ],
     );
+  }
+
+  void _atualizarDadosPetSendoEditadoSync() {
+    if (_petSendoEditado == null) return;
+    
+    setState(() {
+      final updated = _petSendoEditado!.copyWith(
+        nome: _petNomeController.text,
+        especie: _petEspecie,
+        raca: _petRacaController.text,
+        sexo: _petSexo,
+        cor: _petCorController.text,
+        tamanho: _porteAnimal,
+        peso: _pesoAproximado,
+        observacoes: _petObsController.text,
+        updatedAt: DateTime.now(),
+      );
+      
+      _petSendoEditado = updated;
+      
+      // Update in multi-selected list
+      final idx = _petsMultiSelecionados.indexWhere((p) => p.id == updated.id);
+      if (idx != -1) _petsMultiSelecionados[idx] = updated;
+      
+      // Update in found pets (for card UI)
+      final idx2 = _petsEncontrados.indexWhere((p) => p.id == updated.id);
+      if (idx2 != -1) _petsEncontrados[idx2] = updated;
+    });
   }
 
 
@@ -1247,6 +1309,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     required IconData icon,
     required bool isSelected,
     required VoidCallback onTap,
+    VoidCallback? onEdit,
   }) {
     return InkWell(
       onTap: onTap,
@@ -1256,7 +1319,8 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
           AnimatedContainer(
             duration: const Duration(milliseconds: 200),
             width: 140,
-            padding: const EdgeInsets.all(12),
+            height: 100,
+            padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
               color: isSelected ? _primaryColor.withOpacity(0.15) : (_isDark ? Colors.white.withOpacity(0.05) : Colors.grey[100]),
               borderRadius: BorderRadius.circular(16),
@@ -1265,38 +1329,33 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                 width: isSelected ? 2 : 1,
               ),
             ),
-            child: SingleChildScrollView(
-              physics: const NeverScrollableScrollPhysics(),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(icon, color: isSelected ? _primaryColor : Colors.grey[400], size: 24),
-                  const SizedBox(height: 4),
-                  FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: Text(
-                      title,
-                      style: TextStyle(
-                        color: isSelected ? Colors.white : (_isDark ? Colors.white70 : Colors.black87),
-                        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                        fontSize: 13,
-                      ),
-                      maxLines: 1,
-                    ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, color: isSelected ? _primaryColor : Colors.grey[400], size: 24),
+                const SizedBox(height: 4),
+                Text(
+                  title,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: isSelected ? Colors.white : (_isDark ? Colors.white70 : Colors.black87),
+                    fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                    fontSize: 13,
                   ),
-                  FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: Text(
-                      subtitle,
-                      style: TextStyle(
-                        color: isSelected ? _primaryColor : Colors.grey[500],
-                        fontSize: 10,
-                      ),
-                      maxLines: 1,
-                    ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                Text(
+                  subtitle,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: isSelected ? _primaryColor : Colors.grey[500],
+                    fontSize: 10,
                   ),
-                ],
-              ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
             ),
           ),
           if (_modoMultiPets)
@@ -1307,6 +1366,23 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                 isSelected ? Icons.check_box_rounded : Icons.check_box_outline_blank_rounded,
                 color: isSelected ? _primaryColor : Colors.white24,
                 size: 18,
+              ),
+            ),
+          if (isSelected && onEdit != null)
+            Positioned(
+              top: 8,
+              left: 8,
+              child: InkWell(
+                onTap: onEdit,
+                child: Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: _primaryColor,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 1.5),
+                  ),
+                  child: const Icon(Icons.edit_rounded, color: Colors.white, size: 12),
+                ),
               ),
             ),
         ],
