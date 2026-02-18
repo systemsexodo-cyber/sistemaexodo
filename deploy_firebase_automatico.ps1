@@ -42,12 +42,20 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
 }
 
 if (-not (Get-Command firebase -ErrorAction SilentlyContinue)) {
-    Write-Host "  AVISO: Firebase CLI global nao encontrado. Usando npx..." -ForegroundColor Yellow
     $firebaseCmd = "npx -y firebase-tools@latest"
 }
 
+# Verificação de Autenticação (Login)
+Write-Host "  Verificando se voce esta logado no Firebase..." -ForegroundColor Gray
+$loginCheck = cmd /c "$firebaseCmd projects:list" 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "  ❌ ERRO: Voce nao esta logado no Firebase!" -ForegroundColor Red
+    Write-Host "  Por favor, execute primeiro: npx firebase login" -ForegroundColor Yellow
+    exit 1
+}
+
 Write-Host "  Projeto alvo configurado: $firebaseProject" -ForegroundColor Cyan
-Write-Host "  OK: Ferramentas prontas" -ForegroundColor Green
+Write-Host "  OK: Autenticacao confirmada" -ForegroundColor Green
 
 # 3. Preparar Funções (Node.js)
 Write-Host "`n[3/7] Preparando Cloud Functions..." -ForegroundColor Yellow
