@@ -454,39 +454,59 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1A1A2E),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Row(
-          children: const [
-            Icon(Icons.delete_sweep_rounded, color: Colors.redAccent, size: 28),
-            SizedBox(width: 12),
-            Text('Limpar Carrinho', style: TextStyle(color: Colors.white)),
+      builder: (context) => Focus(
+        autofocus: true,
+        onKeyEvent: (node, event) {
+          if (event is! KeyDownEvent) return KeyEventResult.ignored;
+          if (event.logicalKey == LogicalKeyboardKey.enter || event.logicalKey == LogicalKeyboardKey.numpadEnter) {
+            setState(() {
+              _carrinho.clear();
+              _descontoTotal = 0.0;
+            });
+            _salvarCarrinho();
+            Navigator.pop(context);
+            return KeyEventResult.handled;
+          }
+          if (event.logicalKey == LogicalKeyboardKey.escape) {
+            Navigator.pop(context);
+            return KeyEventResult.handled;
+          }
+          return KeyEventResult.ignored;
+        },
+        child: AlertDialog(
+          backgroundColor: const Color(0xFF1A1A2E),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Row(
+            children: const [
+              Icon(Icons.delete_sweep_rounded, color: Colors.redAccent, size: 28),
+              SizedBox(width: 12),
+              Text('Limpar Carrinho', style: TextStyle(color: Colors.white)),
+            ],
+          ),
+          content: const Text('Deseja realmente remover todos os itens do carrinho?', 
+            style: TextStyle(color: Colors.white70)),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('CANCELAR', style: TextStyle(color: Colors.white54)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.redAccent,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              onPressed: () {
+                setState(() {
+                  _carrinho.clear();
+                  _descontoTotal = 0.0;
+                });
+                _salvarCarrinho();
+                Navigator.pop(context);
+              },
+              child: const Text('LIMPAR TUDO', style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
           ],
         ),
-        content: const Text('Deseja realmente remover todos os itens do carrinho?', 
-          style: TextStyle(color: Colors.white70)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('CANCELAR', style: TextStyle(color: Colors.white54)),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.redAccent,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-            ),
-            onPressed: () {
-              setState(() {
-                _carrinho.clear();
-                _descontoTotal = 0.0;
-              });
-              _salvarCarrinho();
-              Navigator.pop(context);
-            },
-            child: const Text('LIMPAR TUDO', style: TextStyle(fontWeight: FontWeight.bold)),
-          ),
-        ],
       ),
     );
   }
@@ -4484,16 +4504,19 @@ o padrão padrão (sem opções avançadas).
                 _focoNoCarrinho = true;
                 _cartSelectedIndex = 0;
                 _categoriaSelectedIndex = -1;
+                _gridSelectedIndex = -1; // Reset grid
               });
               return KeyEventResult.handled;
             }
           }
-          if (!_focoNoCarrinho && _carrinho.isNotEmpty) {
+          // Se estiver nos produtos, seta direita pula para o carrinho
+          if (!_focoNoCarrinho && !_focoNasCategorias && _carrinho.isNotEmpty) {
             setState(() {
               _focoNoCarrinho = true;
               _cartSelectedIndex = 0;
               _gridSelectedIndex = -1;
               _focoNasCategorias = false;
+              _categoriaSelectedIndex = -1;
             });
             return KeyEventResult.handled;
           }
@@ -4506,12 +4529,16 @@ o padrão padrão (sem opções avançadas).
               return KeyEventResult.handled;
             }
           }
-          if (_focoNoCarrinho) {
+          // Se estiver nos produtos ou no carrinho, seta esquerda volta para a busca
+          if (_focoNoCarrinho || (!_focoNasCategorias && _gridSelectedIndex >= 0)) {
+            _buscaFocusNode.requestFocus();
             setState(() {
               _focoNoCarrinho = false;
               _focoNasCategorias = false;
               _cartSelectedIndex = -1;
-              _gridSelectedIndex = 0;
+              _gridSelectedIndex = -1;
+              _categoriaSelectedIndex = -1;
+              _termoBusca = _buscaController.text; // Mantém o texto mas foca
             });
             return KeyEventResult.handled;
           }
@@ -4525,10 +4552,13 @@ o padrão padrão (sem opções avançadas).
               }
             } else if (_focoNasCategorias) {
               _focoNasCategorias = false;
+              _categoriaSelectedIndex = -1; // Reset category selection
               _gridSelectedIndex = 0;
             } else if (_buscaFocusNode.hasFocus) {
               _focoNasCategorias = true;
               _categoriaSelectedIndex = 0;
+              _gridSelectedIndex = -1;
+              _cartSelectedIndex = -1;
               _atalhosFocusNode.requestFocus();
             } else {
               final maxItems = _termoBusca.isNotEmpty 
@@ -4538,6 +4568,8 @@ o padrão padrão (sem opções avançadas).
               if (_gridSelectedIndex < 0 && (maxItems > 0 || categorias.isNotEmpty)) {
                 _focoNasCategorias = true;
                 _categoriaSelectedIndex = 0;
+                _gridSelectedIndex = -1;
+                _cartSelectedIndex = -1;
                 _atalhosFocusNode.requestFocus();
               } else if (_gridSelectedIndex + 3 < maxItems) {
                 _gridSelectedIndex += 3;
@@ -4616,6 +4648,18 @@ o padrão padrão (sem opções avançadas).
                 _cartSelectedIndex = _carrinho.length - 1;
               }
             });
+            return KeyEventResult.handled;
+          }
+        }
+
+        // Teclas + e - para alterar quantidade no carrinho
+        if (_focoNoCarrinho && _cartSelectedIndex >= 0 && _cartSelectedIndex < _carrinho.length) {
+          if (key == LogicalKeyboardKey.numpadAdd || key == LogicalKeyboardKey.equal) {
+            _alterarQuantidade(_cartSelectedIndex, 1);
+            return KeyEventResult.handled;
+          }
+          if (key == LogicalKeyboardKey.minus || key == LogicalKeyboardKey.numpadSubtract) {
+            _alterarQuantidade(_cartSelectedIndex, -1);
             return KeyEventResult.handled;
           }
         }
