@@ -82,17 +82,17 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host "  OK: Build finalizado com sucesso" -ForegroundColor Green
 
-# 5. Deploy Firebase
-Write-Host "`n[5/7] Fazendo deploy para o Firebase..." -ForegroundColor Yellow
-Write-Host "  Isso pode levar alguns minutos (Hosting + Functions)..." -ForegroundColor Cyan
+# 5. Deploy Firebase (Apenas Hosting)
+Write-Host "`n[5/7] Fazendo deploy para o Firebase Hosting..." -ForegroundColor Yellow
+Write-Host "  Subindo apenas o site (Plano Spark)..." -ForegroundColor Cyan
 
 # Execução direta para permitir que o usuário veja logs de autenticação se necessário
 if ($firebaseCmd -match "npx") {
     # No Windows, npx às vezes precisa de cmd /c
-    cmd /c "$firebaseCmd deploy --only hosting,functions --project $firebaseProject"
+    cmd /c "$firebaseCmd deploy --only hosting --project $firebaseProject"
 }
 else {
-    firebase deploy --only hosting, functions --project $firebaseProject
+    firebase deploy --only hosting --project $firebaseProject
 }
 
 if ($LASTEXITCODE -eq 0) {
