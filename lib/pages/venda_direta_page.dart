@@ -117,6 +117,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   int _categoriaSelectedIndex = -1;
   bool _focoNoCarrinho = false; // false = grid de produtos, true = carrinho
   bool _focoNasCategorias = false;
+  final FocusNode _atalhosFocusNode = FocusNode();
 
   final LocalStorageService _storage = LocalStorageService();
   static const String _keyCarrinhoPDV = 'exodo_carrinho_pdv';
@@ -246,6 +247,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   void dispose() {
     _buscaController.dispose();
     _buscaFocusNode.dispose();
+    _atalhosFocusNode.dispose();
     super.dispose();
   }
 
@@ -4442,6 +4444,7 @@ o padrão padrão (sem opções avançadas).
     final hasScaffold = Scaffold.maybeOf(context) != null;
 
     final content = Focus(
+      focusNode: _atalhosFocusNode,
       autofocus: true,
       onKeyEvent: (node, event) {
         if (event is KeyRepeatEvent) return KeyEventResult.ignored;
@@ -4526,7 +4529,7 @@ o padrão padrão (sem opções avançadas).
             } else if (_buscaFocusNode.hasFocus) {
               _focoNasCategorias = true;
               _categoriaSelectedIndex = 0;
-              _buscaFocusNode.unfocus();
+              _atalhosFocusNode.requestFocus();
             } else {
               final maxItems = _termoBusca.isNotEmpty 
                   ? _buscarItens(dataService).length 
@@ -4535,6 +4538,7 @@ o padrão padrão (sem opções avançadas).
               if (_gridSelectedIndex < 0 && (maxItems > 0 || categorias.isNotEmpty)) {
                 _focoNasCategorias = true;
                 _categoriaSelectedIndex = 0;
+                _atalhosFocusNode.requestFocus();
               } else if (_gridSelectedIndex + 3 < maxItems) {
                 _gridSelectedIndex += 3;
               } else if (_gridSelectedIndex < 0 && maxItems > 0) {
@@ -4562,6 +4566,7 @@ o padrão padrão (sem opções avançadas).
                 _gridSelectedIndex = -1;
                 _focoNasCategorias = true;
                 _categoriaSelectedIndex = 0;
+                _atalhosFocusNode.requestFocus();
               }
             }
           });
