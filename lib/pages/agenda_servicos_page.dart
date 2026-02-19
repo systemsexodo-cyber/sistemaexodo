@@ -48,6 +48,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
   String _filtroTipo = 'Todos'; // 'Todos', 'Banho', 'Vacina', 'Tosa', 'Outros'
   String? _filtroStatus; // null = todos, ou 'Agendado', 'Em Andamento', etc.
   bool _filtrosExpandidos = false; // Controle de visibilidade dos filtros
+  bool _mostrarPendentes = true; // Filtro mestre para "Aguardando Confirmação"
 
   @override
   void initState() {
@@ -216,7 +217,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
     final isModuloPet = dataService.empresaAtual?.moduloPet ?? false;
 
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       decoration: BoxDecoration(
         color: Colors.black.withOpacity(0.3),
         border: Border(
@@ -224,7 +225,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
         ),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // Campo de busca e Botão de Filtro
           Row(
@@ -268,6 +269,44 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                       _termoBusca = value.toLowerCase();
                     });
                   },
+                ),
+              ),
+              const SizedBox(width: 8),
+              // Botão de Toggle para Pendentes (Aguardando Confirmação)
+              Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: () => setState(() => _mostrarPendentes = !(_mostrarPendentes ?? true)),
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: (_mostrarPendentes ?? true) ? Colors.amber.withOpacity(0.2) : Colors.white.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: (_mostrarPendentes ?? true) ? Colors.amber : Colors.white.withOpacity(0.3),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          (_mostrarPendentes ?? true) ? Icons.notifications_active : Icons.notifications_off,
+                          color: (_mostrarPendentes ?? true) ? Colors.amber : Colors.white70,
+                          size: 18,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Pendentes',
+                          style: TextStyle(
+                            color: (_mostrarPendentes ?? true) ? Colors.white : Colors.white70,
+                            fontSize: 11,
+                            fontWeight: (_mostrarPendentes ?? true) ? FontWeight.bold : FontWeight.normal,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
               const SizedBox(width: 8),
@@ -447,69 +486,91 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                 ),
               ),
           ],
-          const SizedBox(height: 12),
-          // Seletor de visualização
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              _buildBotaoVisualizacao('Dia', Icons.view_day),
-              const SizedBox(width: 8),
-              _buildBotaoVisualizacao('Semana', Icons.view_week),
-              const SizedBox(width: 8),
-              _buildBotaoVisualizacao('Mês', Icons.calendar_month),
-            ],
-          ),
-          const SizedBox(height: 16),
-          // Navegação de data
+          const SizedBox(height: 10),
+          // Seletor de visualização e Navegação
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              IconButton(
-                icon: const Icon(Icons.chevron_left, color: Colors.white),
-                onPressed: () {
-                  setState(() {
-                    if (_visualizacao == 'Dia') {
-                      _dataSelecionada = _dataSelecionada.subtract(const Duration(days: 1));
-                    } else if (_visualizacao == 'Semana') {
-                      _dataSelecionada = _dataSelecionada.subtract(const Duration(days: 7));
-                    } else {
-                      _dataSelecionada = DateTime(_dataSelecionada.year, _dataSelecionada.month - 1);
-                    }
-                  });
-                },
+              // Lado Esquerdo: Seletor (Compacto)
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _buildBotaoVisualizacao('Dia', Icons.view_day),
+                  const SizedBox(width: 4),
+                  _buildBotaoVisualizacao('Semana', Icons.view_week),
+                  const SizedBox(width: 4),
+                  _buildBotaoVisualizacao('Mês', Icons.calendar_month),
+                ],
               ),
-              GestureDetector(
-                onTap: () => _selecionarData(context),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: Colors.blue.withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.blue.withOpacity(0.5)),
+              
+              // Lado Direito: Navegador de Data (Destaque)
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.chevron_left, color: Colors.white70, size: 20),
+                    onPressed: () {
+                      setState(() {
+                        if (_visualizacao == 'Dia') {
+                          _dataSelecionada = _dataSelecionada.subtract(const Duration(days: 1));
+                        } else if (_visualizacao == 'Semana') {
+                          _dataSelecionada = _dataSelecionada.subtract(const Duration(days: 7));
+                        } else {
+                          _dataSelecionada = DateTime(_dataSelecionada.year, _dataSelecionada.month - 1);
+                        }
+                      });
+                    },
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
                   ),
-                  child: Text(
-                    _getTextoData(),
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
+                  const SizedBox(width: 8),
+                  GestureDetector(
+                    onTap: () => _selecionarData(context),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [Colors.blueAccent.withOpacity(0.4), Colors.blue.withOpacity(0.2)],
+                        ),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.blueAccent.withOpacity(0.5), width: 1.5),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.blue.withOpacity(0.1),
+                            blurRadius: 4,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: Text(
+                        _getTextoData(),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
                     ),
                   ),
-                ),
-              ),
-              IconButton(
-                icon: const Icon(Icons.chevron_right, color: Colors.white),
-                onPressed: () {
-                  setState(() {
-                    if (_visualizacao == 'Dia') {
-                      _dataSelecionada = _dataSelecionada.add(const Duration(days: 1));
-                    } else if (_visualizacao == 'Semana') {
-                      _dataSelecionada = _dataSelecionada.add(const Duration(days: 7));
-                    } else {
-                      _dataSelecionada = DateTime(_dataSelecionada.year, _dataSelecionada.month + 1);
-                    }
-                  });
-                },
+                  const SizedBox(width: 8),
+                  IconButton(
+                    icon: const Icon(Icons.chevron_right, color: Colors.white70, size: 20),
+                    onPressed: () {
+                      setState(() {
+                        if (_visualizacao == 'Dia') {
+                          _dataSelecionada = _dataSelecionada.add(const Duration(days: 1));
+                        } else if (_visualizacao == 'Semana') {
+                          _dataSelecionada = _dataSelecionada.add(const Duration(days: 7));
+                        } else {
+                          _dataSelecionada = DateTime(_dataSelecionada.year, _dataSelecionada.month + 1);
+                        }
+                      });
+                    },
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                ],
               ),
             ],
           ),
@@ -523,28 +584,29 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
     return GestureDetector(
       onTap: () => setState(() => _visualizacao = tipo),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
           color: isSelecionado 
               ? Colors.blue.withOpacity(0.3)
-              : Colors.transparent,
+              : Colors.white.withOpacity(0.05),
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
             color: isSelecionado 
-                ? Colors.blue
-                : Colors.white.withOpacity(0.2),
+                ? Colors.blueAccent
+                : Colors.white.withOpacity(0.1),
           ),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, color: isSelecionado ? Colors.blueAccent : Colors.white70, size: 18),
+            Icon(icon, color: isSelecionado ? Colors.blueAccent : Colors.white60, size: 14),
             const SizedBox(width: 4),
             Text(
               tipo,
               style: TextStyle(
-                color: isSelecionado ? Colors.white : Colors.white70,
+                color: isSelecionado ? Colors.white : Colors.white60,
                 fontWeight: isSelecionado ? FontWeight.bold : FontWeight.normal,
+                fontSize: 12,
               ),
             ),
           ],
@@ -699,6 +761,11 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
     }
     
     var agendamentos = dataService.getAgendamentosPorPeriodo(inicio, fim);
+    
+    // Filtro Mestre: Mostrar ou não pendentes
+    if (!(_mostrarPendentes ?? true)) {
+      agendamentos = agendamentos.where((a) => a.status != 'Aguardando Confirmação').toList();
+    }
     
     // Filtrar por tipo de serviço
     final filtroParaUsar = tipoFiltroOverride ?? _filtroTipo;
@@ -1502,6 +1569,43 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                             ),
                           ),
                         ],
+                        // Endereço de Entrega (Muito importante para visualização rápida)
+                        if (isTaxiDog && agendamento.endereco != null && agendamento.endereco!.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: Colors.green.withOpacity(0.08),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: Colors.green.withOpacity(0.2), width: 0.5),
+                            ),
+                            child: Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.all(4),
+                                  decoration: BoxDecoration(
+                                    color: Colors.green.withOpacity(0.2),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(Icons.location_on_rounded, size: 10, color: Colors.green),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    '${agendamento.endereco}${agendamento.numeroEndereco != null && agendamento.numeroEndereco!.isNotEmpty ? ', ${agendamento.numeroEndereco}' : ''}${agendamento.bairroEntrega != null ? ' - ${agendamento.bairroEntrega}' : ''}',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                         // Materiais (compacto, inline)
                         Builder(
                           builder: (context) {
@@ -2102,84 +2206,185 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
               _buildInfoLinha('Data/Hora', _formatoDataHora!.format(agendamento.dataAgendamento)),
               _buildInfoLinha('Duração', '${agendamento.duracaoMinutos} minutos'),
               _buildInfoLinha('Status', agendamento.status),
-              if (agendamento.tipoEntrega != null) ...[
-                const SizedBox(height: 12),
+              if (agendamento.tipoEntrega != null || (agendamento.endereco != null && agendamento.endereco!.isNotEmpty)) ...[
+                const SizedBox(height: 16),
                 Container(
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
                     color: (agendamento.tipoEntrega == 'Taxi Dog' || agendamento.tipoEntrega == 'Apenas Busca' || agendamento.tipoEntrega == 'Apenas Entrega')
-                        ? Colors.green.withOpacity(0.2)
-                        : Colors.blue.withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(8),
+                        ? Colors.green.withOpacity(0.1)
+                        : Colors.blue.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(16),
                     border: Border.all(
                       color: (agendamento.tipoEntrega == 'Taxi Dog' || agendamento.tipoEntrega == 'Apenas Busca' || agendamento.tipoEntrega == 'Apenas Entrega')
-                          ? Colors.green.withOpacity(0.5)
-                          : Colors.blue.withOpacity(0.5),
+                          ? Colors.green.withOpacity(0.3)
+                          : Colors.blue.withOpacity(0.3),
+                      width: 1.5,
                     ),
                   ),
-                  child: Row(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Icon(
-                        (agendamento.tipoEntrega == 'Taxi Dog' || agendamento.tipoEntrega == 'Apenas Busca' || agendamento.tipoEntrega == 'Apenas Entrega')
-                            ? Icons.local_shipping
-                            : Icons.person,
-                        color: (agendamento.tipoEntrega == 'Taxi Dog' || agendamento.tipoEntrega == 'Apenas Busca' || agendamento.tipoEntrega == 'Apenas Entrega')
-                            ? Colors.green
-                            : Colors.blue,
-                        size: 20,
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(
+                                (agendamento.tipoEntrega == 'Taxi Dog' || agendamento.tipoEntrega == 'Apenas Busca' || agendamento.tipoEntrega == 'Apenas Entrega')
+                                    ? Icons.local_shipping_rounded
+                                    : (agendamento.endereco != null ? Icons.location_on_rounded : Icons.person_rounded),
+                                color: (agendamento.tipoEntrega == 'Taxi Dog' || agendamento.tipoEntrega == 'Apenas Busca' || agendamento.tipoEntrega == 'Apenas Entrega')
+                                    ? Colors.green
+                                    : Colors.blue,
+                                size: 22,
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                agendamento.tipoEntrega != null ? 'DADOS DE ENTREGA' : 'ENDEREÇO INFORMADO',
+                                style: TextStyle(
+                                  color: (agendamento.tipoEntrega == 'Taxi Dog' || agendamento.tipoEntrega == 'Apenas Busca' || agendamento.tipoEntrega == 'Apenas Entrega')
+                                      ? Colors.green
+                                      : Colors.blue,
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 12,
+                                  letterSpacing: 1.2,
+                                ),
+                              ),
+                            ],
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: (agendamento.tipoEntrega == 'Taxi Dog' || agendamento.tipoEntrega == 'Apenas Busca' || agendamento.tipoEntrega == 'Apenas Entrega')
+                                  ? Colors.green.withOpacity(0.2)
+                                  : Colors.blue.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Text(
+                              agendamento.tipoEntrega ?? 'Dados de Endereço',
+                              style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Column(
+                      const SizedBox(height: 16),
+                      if (agendamento.tipoEntrega != 'Retirada na Loja' && agendamento.tipoEntrega != 'Cliente busca') ...[
+                        Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              'Entrega: ${agendamento.tipoEntrega}${agendamento.valorTaxiDog != null && agendamento.valorTaxiDog! > 0 ? ' - R\$ ${agendamento.valorTaxiDog!.toStringAsFixed(2)}' : ''}',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 14,
+                            Expanded(
+                              child: Builder(
+                                builder: (context) {
+                                  final enderecoExibicao = agendamento.endereco ?? agendamento.cliente?.endereco;
+                                  final numeroExibicao = agendamento.numeroEndereco ?? agendamento.cliente?.numero;
+                                  final bairroExibicao = agendamento.bairroEntrega ?? agendamento.cliente?.bairro;
+                                  final complementoExibicao = agendamento.complemento ?? agendamento.cliente?.complemento;
+                                  final pontoRefExibicao = agendamento.pontoReferencia ?? agendamento.cliente?.pontoReferencia;
+
+                                  return Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      if (enderecoExibicao != null && enderecoExibicao.isNotEmpty) ...[
+                                        Text(
+                                          '$enderecoExibicao${numeroExibicao != null && numeroExibicao.isNotEmpty ? ', $numeroExibicao' : ''}',
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w800,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                      ],
+                                      if (bairroExibicao != null && bairroExibicao.isNotEmpty)
+                                        Text(
+                                          'Bairro: $bairroExibicao',
+                                          style: TextStyle(
+                                            color: Colors.white.withOpacity(0.9),
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      if (complementoExibicao != null && complementoExibicao.isNotEmpty)
+                                        Text(
+                                          'Complemento: $complementoExibicao',
+                                          style: const TextStyle(color: Colors.white70, fontSize: 13),
+                                        ),
+                                      if (pontoRefExibicao != null && pontoRefExibicao.isNotEmpty) ...[
+                                        const SizedBox(height: 8),
+                                        Container(
+                                          padding: const EdgeInsets.all(8),
+                                          decoration: BoxDecoration(
+                                            color: Colors.amber.withOpacity(0.1),
+                                            borderRadius: BorderRadius.circular(8),
+                                            border: Border.all(color: Colors.amber.withOpacity(0.3)),
+                                          ),
+                                          child: Row(
+                                            children: [
+                                              const Icon(Icons.info_outline_rounded, color: Colors.amber, size: 14),
+                                              const SizedBox(width: 8),
+                                              Expanded(
+                                                child: Text(
+                                                  'REF: $pontoRefExibicao',
+                                                  style: const TextStyle(
+                                                    color: Colors.amber,
+                                                    fontSize: 11,
+                                                    fontWeight: FontWeight.bold,
+                                                    fontStyle: FontStyle.italic,
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    ],
+                                  );
+                                },
                               ),
                             ),
-                            if (agendamento.tipoEntrega == 'Taxi Dog' || agendamento.tipoEntrega == 'Apenas Busca' || agendamento.tipoEntrega == 'Apenas Entrega') ...[
-                              if (agendamento.bairroEntrega != null && agendamento.bairroEntrega!.isNotEmpty)
-                                Text(
-                                  'Bairro: ${agendamento.bairroEntrega}',
-                                  style: const TextStyle(
-                                    color: Colors.white70,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              if (agendamento.endereco != null && agendamento.endereco!.isNotEmpty)
-                                Text(
-                                  'Endereço: ${agendamento.endereco}${agendamento.numeroEndereco != null && agendamento.numeroEndereco!.isNotEmpty ? ', ${agendamento.numeroEndereco}' : ''}',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                              if (agendamento.complemento != null && agendamento.complemento!.isNotEmpty)
-                                Text(
-                                  'Compl: ${agendamento.complemento}',
-                                  style: const TextStyle(
-                                    color: Colors.white70,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              if (agendamento.pontoReferencia != null && agendamento.pontoReferencia!.isNotEmpty)
-                                Text(
-                                  'Ref: ${agendamento.pontoReferencia}',
-                                  style: const TextStyle(
-                                    color: Colors.amberAccent,
-                                    fontSize: 12,
-                                    fontStyle: FontStyle.italic,
-                                  ),
-                                ),
+                            if ((agendamento.endereco != null && agendamento.endereco!.isNotEmpty) || (agendamento.cliente?.endereco != null && agendamento.cliente!.endereco!.isNotEmpty)) ...[
+                               const SizedBox(width: 12),
+                               InkWell(
+                                 onTap: () async {
+                                   final end = agendamento.endereco ?? agendamento.cliente?.endereco ?? '';
+                                   final num = agendamento.numeroEndereco ?? agendamento.cliente?.numero ?? '';
+                                   final bai = agendamento.bairroEntrega ?? agendamento.cliente?.bairro ?? '';
+                                   final query = Uri.encodeComponent('$end, $num, $bai');
+                                   final url = 'https://www.google.com/maps/search/?api=1&query=$query';
+                                   if (await canLaunchUrl(Uri.parse(url))) {
+                                     await launchUrl(Uri.parse(url));
+                                   }
+                                 },
+                                 child: Container(
+                                   padding: const EdgeInsets.all(12),
+                                   decoration: BoxDecoration(
+                                     color: Colors.white.withOpacity(0.1),
+                                     shape: BoxShape.circle,
+                                     border: Border.all(color: Colors.white24),
+                                   ),
+                                   child: const Icon(Icons.map_rounded, color: Colors.white, size: 24),
+                                 ),
+                               ),
                             ],
                           ],
                         ),
-                      ),
+                        if (agendamento.valorTaxiDog != null && agendamento.valorTaxiDog! > 0) ...[
+                          const SizedBox(height: 12),
+                          const Divider(color: Colors.white12),
+                          const SizedBox(height: 8),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text('Taxa de Entrega:', style: TextStyle(color: Colors.white70, fontSize: 13)),
+                              Text(
+                                'R\$ ${agendamento.valorTaxiDog!.toStringAsFixed(2)}',
+                                style: const TextStyle(color: Colors.greenAccent, fontSize: 14, fontWeight: FontWeight.bold),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ],
                     ],
                   ),
                 ),
@@ -2908,6 +3113,10 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
     final valorTaxiDogController = TextEditingController();
     final bairroEntregaController = TextEditingController();
     final phoneController = TextEditingController(); // Novo controlador para busca por telefone
+    final enderecoController = TextEditingController(); // Novo controlador para endereço
+    final numeroEnderecoController = TextEditingController();
+    final complementoEnderecoController = TextEditingController();
+    final pontoReferenciaController = TextEditingController();
     final List<ItemMaterial> materiaisAgendamento = []; // Materiais/vacinas do agendamento
 
     await showDialog(
@@ -3021,18 +3230,27 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                 }
                               }
                               
-                              if (encontrado != null) {
-                                setState(() {
-                                  clienteSelecionado = encontrado;
-                                  // Se tiver apenas um pet, seleciona automaticamente
-                                  if (encontrado!.pets.length == 1) {
-                                    petsSelecionadosIds = [encontrado!.pets.first.id];
+                                      if (encontrado != null) {
+                                        final c = encontrado!;
+                                        setState(() {
+                                          clienteSelecionado = c;
+                                          
+                                          // Preencher endereço
+                                          enderecoController.text = c.endereco ?? '';
+                                          numeroEnderecoController.text = c.numero ?? '';
+                                          complementoEnderecoController.text = c.complemento ?? '';
+                                          pontoReferenciaController.text = c.pontoReferencia ?? '';
+                                          bairroEntregaController.text = c.bairro ?? '';
+
+                                      // Se tiver apenas um pet, seleciona automaticamente
+                                  if (c.pets.length == 1) {
+                                    petsSelecionadosIds = [c.pets.first.id];
                                   } else {
                                     petsSelecionadosIds = [];
                                   }
                                   
                                   // Preencher observações (reutilizando a lógica do Dropdown)
-                                  final value = encontrado;
+                                  final value = c;
                                   final observacoesCliente = <String>[];
                                   
                                   // Adicionar endereço do cliente
@@ -3115,6 +3333,14 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                             if (match) {
                               setState(() {
                                 clienteSelecionado = c;
+                                
+                                // Preencher endereço
+                                enderecoController.text = c.endereco ?? '';
+                                numeroEnderecoController.text = c.numero ?? '';
+                                complementoEnderecoController.text = c.complemento ?? '';
+                                pontoReferenciaController.text = c.pontoReferencia ?? '';
+                                bairroEntregaController.text = c.bairro ?? '';
+
                                 // Se tiver apenas um pet, seleciona automaticamente
                                 if (c.pets.length == 1) {
                                   petsSelecionadosIds = [c.pets.first.id];
@@ -3257,36 +3483,46 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                     }),
                   ],
                   onChanged: (value) {
+                    final v = value;
                     setState(() {
-                      clienteSelecionado = value;
+                      clienteSelecionado = v;
+                      // Preencher endereço
+                      if (v != null) {
+                        enderecoController.text = v.endereco ?? '';
+                        numeroEnderecoController.text = v.numero ?? '';
+                        complementoEnderecoController.text = v.complemento ?? '';
+                        pontoReferenciaController.text = v.pontoReferencia ?? '';
+                        bairroEntregaController.text = v.bairro ?? '';
+                      }
+
                       // Preencher observações com dados do cliente
-                      if (value != null) {
+                      if (v != null) {
                         final observacoesCliente = <String>[];
                         
                         // Adicionar endereço do cliente
                         final enderecoCompleto = <String>[];
-                        if (value.endereco != null && value.endereco!.isNotEmpty) {
-                          enderecoCompleto.add(value.endereco!);
-                          if (value.numero != null && value.numero!.isNotEmpty) {
-                            enderecoCompleto.add('nº ${value.numero}');
+                        if (v.endereco != null && v.endereco!.isNotEmpty) {
+                          enderecoCompleto.add(v.endereco!);
+                          if (v.numero != null && v.numero!.isNotEmpty) {
+                            enderecoCompleto.add('nº ${v.numero}');
                           }
-                          if (value.complemento != null && value.complemento!.isNotEmpty) {
-                            enderecoCompleto.add('- ${value.complemento}');
+                          if (v.complemento != null && v.complemento!.isNotEmpty) {
+                            enderecoCompleto.add('- ${v.complemento}');
                           }
-                          if (value.bairro != null && value.bairro!.isNotEmpty) {
-                            enderecoCompleto.add('- ${value.bairro}');
+                          if (v.bairro != null && v.bairro!.isNotEmpty) {
+                            enderecoCompleto.add('- ${v.bairro}');
                           }
-                          if (value.cidade != null && value.cidade!.isNotEmpty) {
-                            enderecoCompleto.add('- ${value.cidade}');
+                          if (v.cidade != null && v.cidade!.isNotEmpty) {
+                            enderecoCompleto.add('- ${v.cidade}');
                           }
-                          if (value.estado != null && value.estado!.isNotEmpty) {
-                            enderecoCompleto.add('/${value.estado}');
+                          if (v.estado != null && v.estado!.isNotEmpty) {
+                            enderecoCompleto.add('/${v.estado}');
                           }
-                          if (value.cep != null && value.cep!.isNotEmpty) {
-                            enderecoCompleto.add('CEP: ${value.cep}');
+                          if (v.cep != null && v.cep!.isNotEmpty) {
+                            enderecoCompleto.add('CEP: ${v.cep}');
                           }
-                          if (value.pontoReferencia != null && value.pontoReferencia!.isNotEmpty) {
-                            enderecoCompleto.add('Ponto de Referência: ${value.pontoReferencia}');
+                          if (v.pontoReferencia != null && v.pontoReferencia!.isNotEmpty) {
+                            enderecoCompleto.add('Ponto de Referência: ${v.pontoReferencia}');
                           }
                           
                           if (enderecoCompleto.isNotEmpty) {
@@ -3296,21 +3532,21 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                         }
                         
                         // Adicionar observações do cliente
-                        if (value.observacoes != null && value.observacoes!.isNotEmpty) {
+                        if (v.observacoes != null && v.observacoes!.isNotEmpty) {
                           if (observacoesCliente.isNotEmpty) {
                             observacoesCliente.add('');
                           }
                           observacoesCliente.add('=== OBSERVAÇÕES DO CLIENTE ===');
-                          observacoesCliente.add(value.observacoes!);
+                          observacoesCliente.add(v.observacoes!);
                         }
                         
                         // Adicionar dados extras do cliente
-                        if (value.dadosExtras != null && value.dadosExtras!.isNotEmpty) {
+                        if (v.dadosExtras != null && v.dadosExtras!.isNotEmpty) {
                           if (observacoesCliente.isNotEmpty) {
                             observacoesCliente.add('');
                           }
                           observacoesCliente.add('=== DADOS EXTRAS DO CLIENTE ===');
-                          value.dadosExtras!.forEach((key, valor) {
+                          v.dadosExtras!.forEach((key, valor) {
                             observacoesCliente.add('$key: $valor');
                           });
                         }
@@ -3447,6 +3683,55 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                   },
                 ),
                 const SizedBox(height: 16),
+                // Endereço (Novo campo solicitado)
+                const Text('Endereço (Opcional):', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: enderecoController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    hintText: 'Rua, Logradouro...',
+                    hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
+                    prefixIcon: const Icon(Icons.location_on, color: Colors.blueAccent, size: 20),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    filled: true,
+                    fillColor: Colors.white.withOpacity(0.05),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      flex: 2,
+                      child: TextField(
+                        controller: numeroEnderecoController,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: InputDecoration(
+                          hintText: 'Nº',
+                          hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                          filled: true,
+                          fillColor: Colors.white.withOpacity(0.05),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      flex: 3,
+                      child: TextField(
+                        controller: bairroEntregaController,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: InputDecoration(
+                          hintText: 'Bairro',
+                          hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                          filled: true,
+                          fillColor: Colors.white.withOpacity(0.05),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
                 // Seleção de Pets (múltipla)
                 if (clienteSelecionado != null) ...[
                   Row(
@@ -3642,23 +3927,89 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                   },
                 ),
                 // Campos de Taxi Dog
-                if (tipoEntrega == 'Taxi Dog') ...[
+                if (tipoEntrega == 'Taxi Dog' || tipoEntrega == 'Apenas Busca' || tipoEntrega == 'Apenas Entrega' || tipoEntrega == 'Cliente busca') ...[
                   const SizedBox(height: 16),
-                  const Text('Bairro:', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                  const Text('Rua / Logradouro:', style: TextStyle(color: Colors.white70, fontSize: 14)),
                   const SizedBox(height: 8),
                   TextField(
-                    controller: bairroEntregaController,
+                    controller: enderecoController,
                     style: const TextStyle(color: Colors.white),
                     decoration: InputDecoration(
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                       filled: true,
                       fillColor: Colors.white.withOpacity(0.05),
-                      hintText: 'Digite o bairro',
-                      hintStyle: TextStyle(color: Colors.white.withOpacity(0.5)),
                     ),
                   ),
                   const SizedBox(height: 16),
-                  const Text('Valor Taxi Dog (R\$):', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                  Row(
+                    children: [
+                      Expanded(
+                        flex: 2,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('Número:', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                            const SizedBox(height: 8),
+                            TextField(
+                              controller: numeroEnderecoController,
+                              style: const TextStyle(color: Colors.white),
+                              decoration: InputDecoration(
+                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                                filled: true,
+                                fillColor: Colors.white.withOpacity(0.05),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        flex: 3,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('Bairro:', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                            const SizedBox(height: 8),
+                            TextField(
+                              controller: bairroEntregaController,
+                              style: const TextStyle(color: Colors.white),
+                              decoration: InputDecoration(
+                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                                filled: true,
+                                fillColor: Colors.white.withOpacity(0.05),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  const Text('Complemento:', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: complementoEnderecoController,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      filled: true,
+                      fillColor: Colors.white.withOpacity(0.05),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text('Ponto de Referência:', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: pontoReferenciaController,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      filled: true,
+                      fillColor: Colors.white.withOpacity(0.05),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text('Valor da Taxa (R\$):', style: TextStyle(color: Colors.white70, fontSize: 14)),
                   const SizedBox(height: 8),
                   TextField(
                     controller: valorTaxiDogController,
@@ -3865,13 +4216,45 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                       status: 'Agendado',
                       tipoEntrega: tipoEntrega,
                       valorTaxiDog: valorTaxiDog,
-                      bairroEntrega: tipoEntrega == 'Taxi Dog' && bairroEntregaController.text.isNotEmpty
+                      bairroEntrega: bairroEntregaController.text.isNotEmpty
                           ? bairroEntregaController.text.trim()
+                          : null,
+                      endereco: enderecoController.text.isNotEmpty
+                          ? enderecoController.text.trim()
+                          : null,
+                      numeroEndereco: numeroEnderecoController.text.isNotEmpty
+                          ? numeroEnderecoController.text.trim()
+                          : null,
+                      complemento: complementoEnderecoController.text.isNotEmpty
+                          ? complementoEnderecoController.text.trim()
+                          : null,
+                      pontoReferencia: pontoReferenciaController.text.isNotEmpty
+                          ? pontoReferenciaController.text.trim()
                           : null,
                       materiais: List.from(materiaisAgendamento), // Copiar lista de materiais
                     );
 
                     await dataService.addAgendamentoServico(novoAgendamento);
+
+                    // Atualizar endereço no cadastro do cliente se houver mudanças
+                    if (clienteSelecionado != null && agendamentosCriados == 0) {
+                      final novoEnd = enderecoController.text.trim();
+                      final novoNum = numeroEnderecoController.text.trim();
+                      final novoBairro = bairroEntregaController.text.trim();
+                      
+                      if (novoEnd != (clienteSelecionado!.endereco ?? '') || 
+                          novoNum != (clienteSelecionado!.numero ?? '') || 
+                          novoBairro != (clienteSelecionado!.bairro ?? '')) {
+                        final clienteParaAtualizar = clienteSelecionado!.copyWith(
+                          endereco: novoEnd.isNotEmpty ? novoEnd : null,
+                          numero: novoNum.isNotEmpty ? novoNum : null,
+                          bairro: novoBairro.isNotEmpty ? novoBairro : null,
+                          updatedAt: DateTime.now(),
+                        );
+                        await dataService.updateCliente(clienteParaAtualizar);
+                      }
+                    }
+
                     agendamentosCriados++;
                     
                     // Criar agendamentos de reaplicação para vacinas
@@ -3992,7 +4375,11 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
     final valorTaxiDogController = TextEditingController(
       text: agendamento.valorTaxiDog != null ? agendamento.valorTaxiDog!.toStringAsFixed(2) : '',
     );
-    final bairroEntregaController = TextEditingController(text: agendamento.bairroEntrega ?? '');
+    final bairroEntregaController = TextEditingController(text: agendamento.bairroEntrega ?? agendamento.cliente?.bairro ?? '');
+    final enderecoController = TextEditingController(text: agendamento.endereco ?? agendamento.cliente?.endereco ?? '');
+    final numeroEnderecoController = TextEditingController(text: agendamento.numeroEndereco ?? agendamento.cliente?.numero ?? '');
+    final complementoEnderecoController = TextEditingController(text: agendamento.complemento ?? agendamento.cliente?.complemento ?? '');
+    final pontoReferenciaController = TextEditingController(text: agendamento.pontoReferencia ?? agendamento.cliente?.pontoReferencia ?? '');
     
     showDialog(
       context: context,
@@ -4058,6 +4445,16 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                   onChanged: (value) {
                     setStateDialog(() {
                       clienteSelecionado = value;
+                      
+                      // Preencher campos de endereço se estiverem vazios
+                      if (value != null) {
+                        if (enderecoController.text.isEmpty) enderecoController.text = value.endereco ?? '';
+                        if (numeroEnderecoController.text.isEmpty) numeroEnderecoController.text = value.numero ?? '';
+                        if (bairroEntregaController.text.isEmpty) bairroEntregaController.text = value.bairro ?? '';
+                        if (complementoEnderecoController.text.isEmpty) complementoEnderecoController.text = value.complemento ?? '';
+                        if (pontoReferenciaController.text.isEmpty) pontoReferenciaController.text = value.pontoReferencia ?? '';
+                      }
+
                       // Atualizar observações com dados do cliente
                       if (clienteSelecionado != null) {
                         String obsCliente = observacoesController.text;
@@ -4251,27 +4648,82 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                       child: Text('Apenas Entrega'),
                     ),
                     DropdownMenuItem<String>(
+                      value: 'Apenas Busca',
+                      child: Text('Apenas Busca'),
+                    ),
+                    DropdownMenuItem<String>(
                       value: 'Cliente busca',
-                      child: Text('Cliente busca'),
+                      child: Text('Cliente traz e busca'),
                     ),
                   ],
                   onChanged: (value) {
                     setStateDialog(() {
                       tipoEntrega = value;
-                      if (value == null || value == 'Retirada na Loja' || value == 'Cliente busca') {
-                        valorTaxiDogController.clear();
-                        bairroEntregaController.clear();
+                      // Se o cliente já informou endereço no cadastro ou no agendamento, manter os dados
+                      // mas limpar se for especificamente "Retirada na Loja" e não quisermos ver nada
+                      if (value == 'Retirada na Loja') {
+                        // Opcional: manter endereço para histórico mas ocultar campos
                       }
                     });
                   },
                 ),
                 // Campos de endereço para Taxi Dog, Apenas Busca e Apenas Entrega
-                if (tipoEntrega == 'Taxi Dog' || tipoEntrega == 'Apenas Busca' || tipoEntrega == 'Apenas Entrega') ...[
+                if (tipoEntrega == 'Taxi Dog' || tipoEntrega == 'Apenas Busca' || tipoEntrega == 'Apenas Entrega' || tipoEntrega == 'Cliente busca') ...[
                   const SizedBox(height: 16),
                   TextField(
-                    controller: bairroEntregaController,
+                    controller: enderecoController,
                     decoration: const InputDecoration(
-                      labelText: 'Bairro',
+                      labelText: 'Rua / Logradouro',
+                      labelStyle: TextStyle(color: Colors.white70),
+                      border: OutlineInputBorder(),
+                    ),
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Expanded(
+                        flex: 2,
+                        child: TextField(
+                          controller: numeroEnderecoController,
+                          decoration: const InputDecoration(
+                            labelText: 'Número',
+                            labelStyle: TextStyle(color: Colors.white70),
+                            border: OutlineInputBorder(),
+                          ),
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        flex: 3,
+                        child: TextField(
+                          controller: bairroEntregaController,
+                          decoration: const InputDecoration(
+                            labelText: 'Bairro',
+                            labelStyle: TextStyle(color: Colors.white70),
+                            border: OutlineInputBorder(),
+                          ),
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: complementoEnderecoController,
+                    decoration: const InputDecoration(
+                      labelText: 'Complemento',
+                      labelStyle: TextStyle(color: Colors.white70),
+                      border: OutlineInputBorder(),
+                    ),
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: pontoReferenciaController,
+                    decoration: const InputDecoration(
+                      labelText: 'Ponto de Referência',
                       labelStyle: TextStyle(color: Colors.white70),
                       border: OutlineInputBorder(),
                     ),
@@ -4434,9 +4886,11 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                           : observacoesController.text.trim(),
                       tipoEntrega: tipoEntrega,
                       valorTaxiDog: valorTaxiDog,
-                      bairroEntrega: (tipoEntrega == 'Taxi Dog' || tipoEntrega == 'Apenas Busca' || tipoEntrega == 'Apenas Entrega') && bairroEntregaController.text.isNotEmpty
-                          ? bairroEntregaController.text.trim()
-                          : null,
+                      bairroEntrega: bairroEntregaController.text.isNotEmpty ? bairroEntregaController.text.trim() : null,
+                      endereco: enderecoController.text.isNotEmpty ? enderecoController.text.trim() : null,
+                      numeroEndereco: numeroEnderecoController.text.isNotEmpty ? numeroEnderecoController.text.trim() : null,
+                      complemento: complementoEnderecoController.text.isNotEmpty ? complementoEnderecoController.text.trim() : null,
+                      pontoReferencia: pontoReferenciaController.text.isNotEmpty ? pontoReferenciaController.text.trim() : null,
                       updatedAt: DateTime.now(),
                     ),
                   );
@@ -4463,9 +4917,11 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                         status: agendamento.status,
                         tipoEntrega: tipoEntrega,
                         valorTaxiDog: valorTaxiDog,
-                        bairroEntrega: (tipoEntrega == 'Taxi Dog' || tipoEntrega == 'Apenas Busca' || tipoEntrega == 'Apenas Entrega') && bairroEntregaController.text.isNotEmpty
-                            ? bairroEntregaController.text.trim()
-                            : null,
+                        bairroEntrega: bairroEntregaController.text.isNotEmpty ? bairroEntregaController.text.trim() : null,
+                        endereco: enderecoController.text.isNotEmpty ? enderecoController.text.trim() : null,
+                        numeroEndereco: numeroEnderecoController.text.isNotEmpty ? numeroEnderecoController.text.trim() : null,
+                        complemento: complementoEnderecoController.text.isNotEmpty ? complementoEnderecoController.text.trim() : null,
+                        pontoReferencia: pontoReferenciaController.text.isNotEmpty ? pontoReferenciaController.text.trim() : null,
                       );
                       await dataService.addAgendamentoServico(novoAgendamento);
                       agendamentosCriados++;

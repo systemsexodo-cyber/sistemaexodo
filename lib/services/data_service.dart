@@ -147,18 +147,20 @@ class DataService extends ChangeNotifier {
 
   /// Toca o som de notificação quando chega um agendamento novo
   Future<void> _tocarSomNotificacao() async {
+    // Som desativado a pedido do usuário (som de grito/incômodo)
+    debugPrint('>>> [Audio] 🔇 Som de notificação desativado a pedido do usuário');
+    /* 
     try {
       if (kIsWeb) {
-        // No Web, usamos o helper para tocar áudio se disponível
-        html_helper.playAudio('assets/sounds/notification.mp3', volume: 0.05);
+        html_helper.playAudio('assets/sounds/notification.mp3', volume: 0.1);
       } else {
-        await _audioPlayer.setVolume(0.05); // Volume EXTREMAMENTE baixo (5%)
+        await _audioPlayer.setVolume(0.1); 
         await _audioPlayer.play(AssetSource('sounds/notification.mp3'));
       }
-      debugPrint('>>> [Audio] 🔊 Som de notificação reproduzido (volume 5%)');
     } catch (e) {
       debugPrint('>>> [Audio] ⚠️ Erro ao tocar som: $e');
     }
+    */
   }
   
   /// Define a empresa completa (chamado pelo AuthService após selecionar empresa)

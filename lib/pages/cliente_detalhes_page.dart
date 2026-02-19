@@ -387,14 +387,21 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
       _telefone2Controller.text = c.telefone2 ?? '';
       _whatsappController.text = c.whatsapp ?? '';
       // Separar tipo de logradouro e nome do logradouro
-      final enderecoCompleto = c.endereco ?? '';
-      if (enderecoCompleto.startsWith('Rua ') || enderecoCompleto.startsWith('rua ')) {
+      final enderecoCompleto = (c.endereco ?? '').trim();
+      final lowerEnd = enderecoCompleto.toLowerCase();
+      
+      if (lowerEnd.startsWith('rua ')) {
         _tipoLogradouro = 'Rua';
-        _enderecoController.text = enderecoCompleto.replaceFirst(RegExp(r'^[Rr]ua\s+'), '');
-      } else if (enderecoCompleto.startsWith('Avenida ') || enderecoCompleto.startsWith('avenida ') || 
-                 enderecoCompleto.startsWith('Av. ') || enderecoCompleto.startsWith('av. ')) {
+        _enderecoController.text = enderecoCompleto.substring(4);
+      } else if (lowerEnd.startsWith('r. ')) {
+        _tipoLogradouro = 'Rua';
+        _enderecoController.text = enderecoCompleto.substring(3);
+      } else if (lowerEnd.startsWith('avenida ')) {
         _tipoLogradouro = 'Avenida';
-        _enderecoController.text = enderecoCompleto.replaceFirst(RegExp(r'^[Aa]venida\s+|^[Aa]v\.\s+'), '');
+        _enderecoController.text = enderecoCompleto.substring(8);
+      } else if (lowerEnd.startsWith('av. ')) {
+        _tipoLogradouro = 'Avenida';
+        _enderecoController.text = enderecoCompleto.substring(4);
       } else {
         _tipoLogradouro = 'Rua';
         _enderecoController.text = enderecoCompleto;

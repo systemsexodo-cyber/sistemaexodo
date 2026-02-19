@@ -75,6 +75,8 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
   final _enderecoNumeroController = TextEditingController();
   final _enderecoComplementoController = TextEditingController();
   final _pontoReferenciaController = TextEditingController();
+  final _bairroController = TextEditingController();
+
 
   
   String? _servicoIdSelecionado;
@@ -110,6 +112,24 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     super.initState();
     _whatsappController.addListener(_onWhatsappChanged);
     _nomeController.addListener(_onNomeChanged);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _inicializarEmpresa();
+  }
+
+  Future<void> _inicializarEmpresa() async {
+    final dataService = Provider.of<DataService>(context, listen: false);
+    if (dataService.empresaIdAtual == null && widget.slugEmpresa != null) {
+      final authService = Provider.of<AuthService>(context, listen: false);
+      final emp = authService.obterEmpresaPorSlug(widget.slugEmpresa!);
+      if (emp != null) {
+        debugPrint('>>> [Agendamento] Inicializando empresa: ${emp.nomeExibicao} (${emp.id})');
+        await dataService.definirEmpresaAtual(emp.id, modoLeve: true);
+      }
+    }
   }
 
   void _onNomeChanged() {
@@ -204,6 +224,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
           
           if (_bairroEntrega == null || _enderecoRuaController.text.isEmpty) {
             _bairroEntrega = encontrado.bairro;
+            _bairroController.text = encontrado.bairro ?? '';
             _enderecoRuaController.text = encontrado.endereco ?? '';
             _enderecoNumeroController.text = encontrado.numero ?? '';
             _enderecoComplementoController.text = encontrado.complemento ?? '';
@@ -849,6 +870,36 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                   icon: Icon(Icons.search_rounded, color: _primaryColor.withOpacity(0.5)),
                   onPressed: () => _buscarClientePorTelefone(_whatsappController.text),
                 ),
+        ),
+        _buildTextField(
+          controller: _enderecoRuaController,
+          label: 'Sua rua (Opcional)',
+          icon: Icons.map_rounded,
+          placeholder: 'Ex: Rua das Flores',
+        ),
+        const SizedBox(height: 16),
+        Row(
+          children: [
+            Expanded(
+              flex: 2,
+              child: _buildTextField(
+                controller: _enderecoNumeroController,
+                label: 'Número',
+                icon: Icons.home_rounded,
+                placeholder: '123',
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              flex: 3,
+              child: _buildTextField(
+                controller: _bairroController, 
+                label: 'Bairro',
+                icon: Icons.location_city_rounded,
+                placeholder: 'Centro',
+              ),
+            ),
+          ],
         ),
         if (_clienteEncontrado != null) ...[
           const SizedBox(height: 8),
@@ -1592,7 +1643,14 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
               prefixIcon: Icon(Icons.location_on_rounded, color: _primaryColor),
             ),
             items: bairros.map((b) => DropdownMenuItem(value: b, child: Text(b))).toList(),
-            onChanged: (val) => setState(() => _bairroEntrega = val),
+            onChanged: (val) {
+              setState(() {
+                _bairroEntrega = val;
+                if (val != null && val != 'Outros') {
+                  _bairroController.text = val;
+                }
+              });
+            },
             validator: (v) => _tipoEntrega != 'Retirada na Loja' && v == null ? 'Selecione o bairro' : null,
           ),
           const SizedBox(height: 20),
@@ -2250,6 +2308,9 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
           nome: _nomeController.text,
           telefone: _whatsappController.text,
           whatsapp: telefoneBusca,
+          endereco: _enderecoRuaController.text.isNotEmpty ? _enderecoRuaController.text : null,
+          numero: _enderecoNumeroController.text.isNotEmpty ? _enderecoNumeroController.text : null,
+          bairro: _bairroController.text.isNotEmpty ? _bairroController.text : null,
           pets: [],
           createdAt: DateTime.now(),
           updatedAt: DateTime.now(),
@@ -2257,9 +2318,26 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
         await dataService.addCliente(clienteReal);
         if (mounted) setState(() => _clienteEncontrado = clienteReal);
       } else {
-        // Se existe mas o nome no formulário é diferente, atualizar
-        if (_nomeController.text.isNotEmpty && clienteReal.nome != _nomeController.text) {
-          clienteReal = clienteReal.copyWith(nome: _nomeController.text, updatedAt: DateTime.now());
+        // Se existe mas algum dado no formulário é diferente, atualizar
+        bool mudou = false;
+        String novoNome = _nomeController.text;
+        String novoEndereco = _enderecoRuaController.text;
+        String novoNumero = _enderecoNumeroController.text;
+        String novoBairro = _bairroController.text;
+
+        if (novoNome.isNotEmpty && clienteReal.nome != novoNome) mudou = true;
+        if (novoEndereco.isNotEmpty && clienteReal.endereco != novoEndereco) mudou = true;
+        if (novoNumero.isNotEmpty && clienteReal.numero != novoNumero) mudou = true;
+        if (novoBairro.isNotEmpty && clienteReal.bairro != novoBairro) mudou = true;
+
+        if (mudou) {
+          clienteReal = clienteReal.copyWith(
+            nome: novoNome.isNotEmpty ? novoNome : clienteReal.nome,
+            endereco: novoEndereco.isNotEmpty ? novoEndereco : clienteReal.endereco,
+            numero: novoNumero.isNotEmpty ? novoNumero : clienteReal.numero,
+            bairro: novoBairro.isNotEmpty ? novoBairro : clienteReal.bairro,
+            updatedAt: DateTime.now()
+          );
           await dataService.updateCliente(clienteReal);
         }
       }
@@ -2298,12 +2376,12 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
             duracaoMinutos: servicoAtual.duracaoPadraoMinutos ?? 60,
             status: 'Aguardando Confirmação',
             tipoEntrega: moduloPet ? _tipoEntrega : null,
-            bairroEntrega: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _bairroEntrega : null,
+            bairroEntrega: moduloPet ? (_bairroEntrega ?? _bairroController.text) : null,
             valorTaxiDog: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _valorTaxiDog : null,
-            endereco: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _enderecoRuaController.text : null,
-            numeroEndereco: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _enderecoNumeroController.text : null,
-            complemento: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _enderecoComplementoController.text : null,
-            pontoReferencia: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _pontoReferenciaController.text : null,
+            endereco: _enderecoRuaController.text.isNotEmpty ? _enderecoRuaController.text : null,
+            numeroEndereco: _enderecoNumeroController.text.isNotEmpty ? _enderecoNumeroController.text : null,
+            complemento: _enderecoComplementoController.text.isNotEmpty ? _enderecoComplementoController.text : null,
+            pontoReferencia: _pontoReferenciaController.text.isNotEmpty ? _pontoReferenciaController.text : null,
             observacoes: 'SOLICITAÇÃO ONLINE MÚLTIPLA',
           ));
         }
@@ -2338,12 +2416,12 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
           duracaoMinutos: servicoAtual.duracaoPadraoMinutos ?? 60,
           status: 'Aguardando Confirmação',
           tipoEntrega: moduloPet ? _tipoEntrega : null,
-          bairroEntrega: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _bairroEntrega : null,
+          bairroEntrega: moduloPet ? (_bairroEntrega ?? _bairroController.text) : null,
           valorTaxiDog: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _valorTaxiDog : null,
-          endereco: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _enderecoRuaController.text : null,
-          numeroEndereco: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _enderecoNumeroController.text : null,
-          complemento: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _enderecoComplementoController.text : null,
-          pontoReferencia: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _pontoReferenciaController.text : null,
+          endereco: _enderecoRuaController.text.isNotEmpty ? _enderecoRuaController.text : null,
+          numeroEndereco: _enderecoNumeroController.text.isNotEmpty ? _enderecoNumeroController.text : null,
+          complemento: _enderecoComplementoController.text.isNotEmpty ? _enderecoComplementoController.text : null,
+          pontoReferencia: _pontoReferenciaController.text.isNotEmpty ? _pontoReferenciaController.text : null,
           observacoes: 'SOLICITAÇÃO ONLINE DETALHADA',
         ));
       }
@@ -2367,6 +2445,28 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
           clienteId: clienteReal!.id,
           cliente: clienteReal,
         );
+
+        // SINCRONIZAÇÃO DE ENDEREÇO: Garantir que o endereço do agendamento seja salvo no cadastro do cliente se houver mudanças
+        final endAgd = agdFinal.endereco?.trim() ?? '';
+        final numAgd = agdFinal.numeroEndereco?.trim() ?? '';
+        final bairroAgd = (agdFinal.bairroEntrega ?? _bairroController.text).trim();
+
+        if (endAgd.isNotEmpty && (
+            endAgd != (clienteReal!.endereco ?? '').trim() ||
+            numAgd != (clienteReal!.numero ?? '').trim() ||
+            bairroAgd != (clienteReal!.bairro ?? '').trim()
+        )) {
+          clienteReal = clienteReal!.copyWith(
+            endereco: endAgd,
+            numero: numAgd,
+            complemento: agdFinal.complemento?.trim(),
+            pontoReferencia: agdFinal.pontoReferencia?.trim(),
+            bairro: bairroAgd,
+            updatedAt: DateTime.now(),
+          );
+          await dataService.updateCliente(clienteReal!);
+          agdFinal = agdFinal.copyWith(cliente: clienteReal);
+        }
 
         if (moduloPet && agdFinal.petNome != null && agdFinal.petNome!.isNotEmpty) {
           Pet? petNoCliente;
@@ -2586,10 +2686,10 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
           tipoEntrega: moduloPet ? _tipoEntrega : null,
           bairroEntrega: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _bairroEntrega : null,
           valorTaxiDog: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _valorTaxiDog : null,
-          endereco: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _enderecoRuaController.text : null,
-          numeroEndereco: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _enderecoNumeroController.text : null,
-          complemento: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _enderecoComplementoController.text : null,
-          pontoReferencia: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _pontoReferenciaController.text : null,
+          endereco: _enderecoRuaController.text.isNotEmpty ? _enderecoRuaController.text : null,
+          numeroEndereco: _enderecoNumeroController.text.isNotEmpty ? _enderecoNumeroController.text : null,
+          complemento: _enderecoComplementoController.text.isNotEmpty ? _enderecoComplementoController.text : null,
+          pontoReferencia: _pontoReferenciaController.text.isNotEmpty ? _pontoReferenciaController.text : null,
           observacoes: 'SOLICITAÇÃO ONLINE ADICIONAL (MULTI)',
         ));
         counter++;
@@ -2627,10 +2727,10 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
         tipoEntrega: moduloPet ? _tipoEntrega : null,
         bairroEntrega: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _bairroEntrega : null,
         valorTaxiDog: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _valorTaxiDog : null,
-        endereco: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _enderecoRuaController.text : null,
-        numeroEndereco: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _enderecoNumeroController.text : null,
-        complemento: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _enderecoComplementoController.text : null,
-        pontoReferencia: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _pontoReferenciaController.text : null,
+        endereco: _enderecoRuaController.text.isNotEmpty ? _enderecoRuaController.text : null,
+        numeroEndereco: _enderecoNumeroController.text.isNotEmpty ? _enderecoNumeroController.text : null,
+        complemento: _enderecoComplementoController.text.isNotEmpty ? _enderecoComplementoController.text : null,
+        pontoReferencia: _pontoReferenciaController.text.isNotEmpty ? _pontoReferenciaController.text : null,
         observacoes: 'SOLICITAÇÃO ONLINE ADICIONAL',
       ));
     }
@@ -2644,11 +2744,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       _petCorController.clear();
       _petObsController.clear();
       _petsMultiSelecionados.clear(); // Limpar seleção multi após adicionar ao carrinho
-      // Não resetar endereço se for o mesmo cliente
-      _enderecoRuaController.clear();
-      _enderecoNumeroController.clear();
-      _enderecoComplementoController.clear();
-      _pontoReferenciaController.clear();
+      // Não resetar endereço se for o mesmo cliente (Mantendo preenchido para o próximo pet)
       _dataSelecionada = null;
       _horaSelecionada = null;
       _currentStep = 0; // Volta para o início para o próximo pet
