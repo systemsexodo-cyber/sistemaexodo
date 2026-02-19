@@ -1,4 +1,5 @@
 @echo off
+chcp 1252 >nul
 setlocal enabledelayedexpansion
 title SISTEMA EXODO - GIT MANAGER PRO
 
@@ -38,14 +39,47 @@ goto menu
 
 :autopush
 echo.
+echo [CONFIG] Verificando identidade Git...
+git config user.email >nul 2>&1
+if %ERRORLEVEL% NEQ 0 (
+    echo Configurando identidade temporaria...
+    git config --local user.name "Usuario Exodo"
+    git config --local user.email "usuario@exodo.com"
+)
+
 echo [PASSO 1] Preparando arquivos...
+rem Primeiro, tenta salvar mudanças em submodulos conhecidos
+if exist "backend_pynfe\pynfe_dev\.git" (
+    echo ^>^>^> Verificando submodulo backend_pynfe\pynfe_dev...
+    cd backend_pynfe\pynfe_dev
+    git add .
+    git commit -m "atualizacao automatica submodule" >nul 2>&1
+    cd ..\..
+)
+
 git add .
+
 echo [PASSO 2] Criando ponto de salvamento...
 echo Digite o que voce fez (ex: ajuste no login):
 set /p commit_msg="Mensagem: "
 if "!commit_msg!"=="" set commit_msg=atualizacao automatica
 
 git commit -m "feat: !commit_msg!"
+if %ERRORLEVEL% NEQ 0 (
+    rem Se o commit falhou, pode ser que nao tenha nada para salvar
+    git status | findstr "nothing to commit" >nul
+    if !ERRORLEVEL! EQU 0 (
+        echo.
+        echo Sem alteracoes novas para salvar.
+    ) else (
+        echo.
+        echo !!! ERRO AO CRIAR PONTO DE SALVAMENTO !!!
+        echo Verifique os arquivos ou sua identidade git.
+        pause
+        goto menu
+    )
+)
+
 echo [PASSO 3] Enviando para o Porto Seguro (GitHub)...
 git push origin HEAD
 if %ERRORLEVEL% NEQ 0 (
@@ -115,4 +149,4 @@ pause
 goto menu
 
 :end
-exit
+goto :eof
