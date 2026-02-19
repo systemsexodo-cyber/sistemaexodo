@@ -886,8 +886,8 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
                   // LINK DIRETO (MAIS FÁCIL)
                   _buildLinkItem(
                     'Link da sua Loja (E-commerce)',
-                    '${html_helper.getWindowHost()}/loja/${_slugController.text.isNotEmpty ? _slugController.text : Empresa.gerarSlug(empresa.nomeExibicao)}',
-                    '${html_helper.getWindowOrigin()}/loja/${_slugController.text.isNotEmpty ? _slugController.text : Empresa.gerarSlug(empresa.nomeExibicao)}',
+                    '${html_helper.getWindowHost()}/loja/${Empresa.gerarSlug(_slugController.text.isNotEmpty ? _slugController.text : empresa.nomeExibicao)}',
+                    '${html_helper.getWindowOrigin()}/loja/${Empresa.gerarSlug(_slugController.text.isNotEmpty ? _slugController.text : empresa.nomeExibicao)}',
                   ),
                   
                   const SizedBox(height: 12),
@@ -895,8 +895,8 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
                   // LINK DE AGENDAMENTO
                   _buildLinkItem(
                     'Link de Agendamento Online',
-                    '${html_helper.getWindowHost()}/agendamento/${_slugController.text.isNotEmpty ? _slugController.text : Empresa.gerarSlug(empresa.nomeExibicao)}',
-                    '${html_helper.getWindowOrigin()}/agendamento/${_slugController.text.isNotEmpty ? _slugController.text : Empresa.gerarSlug(empresa.nomeExibicao)}',
+                    '${html_helper.getWindowHost()}/agendamento/${Empresa.gerarSlug(_slugController.text.isNotEmpty ? _slugController.text : empresa.nomeExibicao)}',
+                    '${html_helper.getWindowOrigin()}/agendamento/${Empresa.gerarSlug(_slugController.text.isNotEmpty ? _slugController.text : empresa.nomeExibicao)}',
                   ),
 
                 ],

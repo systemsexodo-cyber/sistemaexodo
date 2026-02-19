@@ -701,12 +701,12 @@ class FirebaseService {
   Future<Empresa?> buscarEmpresaPorSlug(String slug) async {
     try {
       final slugTrim = slug.trim();
-      final slugLower = slugTrim.toLowerCase();
-      debugPrint('>>> [Firebase] 🔍 Buscando empresa por slug: $slugLower');
+      final slugNormalized = Empresa.gerarSlug(slugTrim);
+      debugPrint('>>> [Firebase] 🔍 Buscando empresa por slug normalizado: $slugNormalized');
       
       // 1. Tentar buscar pelo campo 'slug' (sempre lowercase no banco por padrão)
       final snapshotSlug = await _firestore.collection(_collectionEmpresas)
-          .where('slug', isEqualTo: slugLower)
+          .where('slug', isEqualTo: slugNormalized)
           .get();
           
       if (snapshotSlug.docs.isNotEmpty) {
@@ -719,7 +719,8 @@ class FirebaseService {
         return Empresa.fromMap(docIdOrig.data()!);
       }
 
-      // 3. Tentar buscar por ID (Lowercase - Fallback para links digitados manualmente)
+      // 3. Tentar buscar por ID (Lowercased)
+      final slugLower = slugTrim.toLowerCase();
       if (slugLower != slugTrim) {
         final docIdLower = await _firestore.collection(_collectionEmpresas).doc(slugLower).get();
         if (docIdLower.exists) {

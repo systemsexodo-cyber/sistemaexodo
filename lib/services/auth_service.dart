@@ -540,34 +540,40 @@ class AuthService extends ChangeNotifier {
   }
 
   /// Busca uma empresa pelo slug (friendly URL) ou ID
-  Empresa? obterEmpresaPorSlug(String slug) {
+    Empresa? obterEmpresaPorSlug(String slug) {
     if (slug.isEmpty) return null;
-    final slugLower = slug.toLowerCase().trim();
     
-    debugPrint('>>> [AuthService] Buscando empresa para slug: "$slugLower" entre ${_empresas.length} empresas');
+    // Normalização agressiva do slug de busca
+    final slugLower = Empresa.gerarSlug(slug);
     
-    // Primeiro tentar correspondência exata de slug ou ID (case-insensitive para ambos)
+    debugPrint('>>> [AuthService] 🔍 Buscando empresa para slug normalizado: "$slugLower" (Original: "$slug")');
+    debugPrint('>>> [AuthService] 🏢 Empresas em memória: ${_empresas.length}');
+    
+    // 1. Tentar correspondência exata de slug ou ID
     try {
       final encontrada = _empresas.firstWhere(
-        (e) => (e.slug.toLowerCase() == slugLower || e.id.toLowerCase() == slugLower) && e.ativo,
+        (e) => (e.slug.toLowerCase() == slugLower || e.id.toLowerCase() == slugLower.toUpperCase() || e.id.toLowerCase() == slugLower) && e.ativo,
       );
-      debugPrint('>>> [AuthService] ✅ Empresa encontrada por slug EXATO: ${encontrada.nomeExibicao} (ID: ${encontrada.id})');
+      debugPrint('>>> [AuthService] ✅ Encontrada por Slug/ID: ${encontrada.nomeExibicao} (ID: ${encontrada.id})');
       return encontrada;
-    }
-    catch (_) {
-      // Se não achar pelo slug, tentar gerar slug do nome para comparação
+    } catch (_) {
+      // 2. Tentar gerar slug do nome para comparação (fallback para empresas sem slug definido)
       try {
         final encontrada = _empresas.firstWhere(
           (e) => Empresa.gerarSlug(e.nomeExibicao) == slugLower && e.ativo,
         );
-        debugPrint('>>> [AuthService] ✅ Empresa encontrada por slug GERADO: ${encontrada.nomeExibicao} (ID: ${encontrada.id})');
+        debugPrint('>>> [AuthService] ✅ Encontrada por Nome Gerado: ${encontrada.nomeExibicao}');
         return encontrada;
       } catch (_) {
-        debugPrint('>>> [AuthService] ❌ Nenhuma empresa encontrada locamente para: "$slugLower"');
+        // Log para ajudar no debug (sem expor muitos dados)
+        if (_empresas.isNotEmpty) {
+           debugPrint('>>> [AuthService] ❌ Falha na busca. Slugs disponíveis: ${_empresas.map((e) => e.slug).where((s) => s.isNotEmpty).join(", ")}');
+        }
         return null;
       }
     }
   }
+  
 
   /// Busca uma empresa pelo slug, tentando Firebase se não encontrar localmente
   Future<Empresa?> buscarEmpresaPorSlugAsync(String slug) async {
