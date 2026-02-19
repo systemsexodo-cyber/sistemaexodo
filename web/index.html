@@ -21,6 +21,11 @@
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
   <meta name="description" content="Sistema Êxodo - Sistema de gestão empresarial completo">
 
+  <!-- Meta tags para prevenir cache agressivo do index.html -->
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
@@ -40,33 +45,34 @@
 
 <body>
   <script>
-    // SOLUÇÃO DEFINITIVA PARA CACHE PRESO (Problema da aba anônima)
-    // Este script limpa tudo que pode estar forçando uma versão antiga
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.getRegistrations().then(function (registrations) {
-        for (let registration of registrations) {
-          registration.unregister();
-          console.log('>>> [SISTEMA] Service Worker removido');
-        }
-      });
-    }
-
-    // Limpar todos os caches do navegador
-    if (window.caches) {
-      caches.keys().then(function (names) {
-        for (let name of names) {
-          caches.delete(name);
-          console.log('>>> [SISTEMA] Cache deletado: ' + name);
-        }
-      });
-    }
-
-    // Remover qualquer service worker que possa estar travando a carga
-    window.addEventListener('load', function () {
-      if (typeof window.flutter_web_auth != 'undefined') {
-        // Se houver algum objeto de auth travado, podemos limpar aqui
+    // SOLUÇÃO PARA LIMPEZA DE CACHE E SERVICE WORKERS OBSOLETOS
+    // Versão: 1.0.1 - Força limpeza em cada carregamento
+    (function() {
+      // 1. Desregistrar todos os Service Workers
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then(function (registrations) {
+          for (let registration of registrations) {
+            registration.unregister().then(function(success) {
+              if(success) console.log('>>> [CACHE] Service Worker removido com sucesso');
+            });
+          }
+        });
       }
-    });
+
+      // 2. Limpar Caches da API de Cache (comum em PWAs Flutter)
+      if (window.caches) {
+        caches.keys().then(function (names) {
+          for (let name of names) {
+            caches.delete(name).then(function() {
+               console.log('>>> [CACHE] Cache deletado: ' + name);
+            });
+          }
+        });
+      }
+
+      // 3. Limpeza de LocalStorage antigo se necessário (opcional)
+      // localStorage.removeItem('flutter.some_old_key');
+    })();
   </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>

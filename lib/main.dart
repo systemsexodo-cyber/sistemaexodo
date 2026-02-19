@@ -137,26 +137,30 @@ class AppRouter {
     if (!kIsWeb) return {'publico': false, 'slug': null, 'agenda': false, 'loja': false, 'interna': null};
     
     try {
-      final String href = html.window.location.href.toLowerCase();
-      final String path = (html.window.location.pathname ?? '').toLowerCase();
-      final String hash = html.window.location.hash.toLowerCase();
+      final String href = html.window.location.href;
+      final String pathOrig = (html.window.location.pathname ?? '');
+      final String path = pathOrig.toLowerCase();
+      final String hashOrig = html.window.location.hash;
+      final String hash = hashOrig.toLowerCase();
       
       debugPrint('>>> [AppRouter] ANÁLISE URL:');
       debugPrint('    href: $href');
-      debugPrint('    path: $path');
-      debugPrint('    hash: $hash');
+      debugPrint('    path: $pathOrig');
+      debugPrint('    hash: $hashOrig');
       
-      final List<String> segments = [];
-      segments.addAll(path.split('/').where((s) => s.isNotEmpty));
+      final List<String> segmentsOrig = [];
+      segmentsOrig.addAll(pathOrig.split('/').where((s) => s.isNotEmpty));
       
-      String cleanHash = hash.replaceAll(RegExp(r'^[#!/? ]+'), '');
-      if (cleanHash.isNotEmpty) {
-        segments.addAll(cleanHash.split('/').where((s) => s.isNotEmpty));
+      String cleanHashOrig = hashOrig.replaceAll(RegExp(r'^[#!/? ]+'), '');
+      if (cleanHashOrig.isNotEmpty) {
+        segmentsOrig.addAll(cleanHashOrig.split('/').where((s) => s.isNotEmpty));
       }
 
-      debugPrint('    segments: $segments');
+      final List<String> segmentsLower = segmentsOrig.map((s) => s.toLowerCase()).toList();
 
-      if (segments.isEmpty) {
+      debugPrint('    segments: $segmentsOrig');
+
+      if (segmentsOrig.isEmpty) {
         debugPrint('    RESULTADO: Home (sem segmentos)');
         return {
           'publico': false, 'slug': null, 'agenda': false, 'loja': false, 'interna': 'home', 'href': href
@@ -164,9 +168,9 @@ class AppRouter {
       }
 
       // Detecção de Agendamento
-      if (segments.contains('agendamento')) {
-        int idx = segments.indexOf('agendamento');
-        String? slug = (idx != -1 && idx + 1 < segments.length) ? segments[idx + 1] : null;
+      if (segmentsLower.contains('agendamento')) {
+        int idx = segmentsLower.indexOf('agendamento');
+        String? slug = (idx != -1 && idx + 1 < segmentsOrig.length) ? segmentsOrig[idx + 1] : null;
         debugPrint('    RESULTADO: Agendamento Público | Slug: $slug');
         return {
           'publico': true, 'slug': slug, 'agenda': true, 'loja': false, 'interna': null, 'href': href
@@ -174,10 +178,10 @@ class AppRouter {
       }
 
       // Detecção de Loja
-      if (segments.contains('loja') || segments.contains('shop')) {
-        int idx = segments.indexOf('loja');
-        if (idx == -1) idx = segments.indexOf('shop');
-        String? slug = (idx != -1 && idx + 1 < segments.length) ? segments[idx + 1] : null;
+      if (segmentsLower.contains('loja') || segmentsLower.contains('shop')) {
+        int idx = segmentsLower.indexOf('loja');
+        if (idx == -1) idx = segmentsLower.indexOf('shop');
+        String? slug = (idx != -1 && idx + 1 < segmentsOrig.length) ? segmentsOrig[idx + 1] : null;
         debugPrint('    RESULTADO: Loja Pública | Slug: $slug');
         return {
           'publico': true, 'slug': slug, 'agenda': false, 'loja': true, 'interna': null, 'href': href
@@ -185,18 +189,19 @@ class AppRouter {
       }
 
       // Rota Interna
-      final first = segments[0];
-      if (internos.contains(first)) {
-        debugPrint('    RESULTADO: Rota Interna | Rota: $first');
+      final firstLower = segmentsLower[0];
+      if (internos.contains(firstLower)) {
+        debugPrint('    RESULTADO: Rota Interna | Rota: $firstLower');
         return {
-          'publico': false, 'slug': null, 'agenda': false, 'loja': false, 'interna': first, 'href': href
+          'publico': false, 'slug': null, 'agenda': false, 'loja': false, 'interna': firstLower, 'href': href
         };
       }
 
       // Fallback para Loja por Slug Direto (ex: /petshop)
-      debugPrint('    RESULTADO: Loja Pública por Slug Direto | Slug: $first');
+      final firstOrig = segmentsOrig[0];
+      debugPrint('    RESULTADO: Loja Pública por Slug Direto | Slug: $firstOrig');
       return {
-        'publico': true, 'slug': first, 'agenda': false, 'loja': true, 'interna': null, 'href': href
+        'publico': true, 'slug': firstOrig, 'agenda': false, 'loja': true, 'interna': null, 'href': href
       };
     } catch (e) {
       debugPrint('>>> [AppRouter] Erro ao analisar URL: $e');

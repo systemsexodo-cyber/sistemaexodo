@@ -700,10 +700,11 @@ class FirebaseService {
   /// Busca uma empresa específica pelo slug no Firebase (otimizado)
   Future<Empresa?> buscarEmpresaPorSlug(String slug) async {
     try {
-      final slugLower = slug.toLowerCase().trim();
+      final slugTrim = slug.trim();
+      final slugLower = slugTrim.toLowerCase();
       debugPrint('>>> [Firebase] 🔍 Buscando empresa por slug: $slugLower');
       
-      // Tentar buscar por slug
+      // 1. Tentar buscar pelo campo 'slug' (sempre lowercase no banco por padrão)
       final snapshotSlug = await _firestore.collection(_collectionEmpresas)
           .where('slug', isEqualTo: slugLower)
           .get();
@@ -712,13 +713,21 @@ class FirebaseService {
         return Empresa.fromMap(snapshotSlug.docs.first.data());
       }
       
-      // Tentar buscar por ID (caso o slug passado seja o ID)
-      final docId = await _firestore.collection(_collectionEmpresas).doc(slugLower).get();
-      if (docId.exists) {
-        return Empresa.fromMap(docId.data()!);
+      // 2. Tentar buscar por ID (Case Original - IDs do Firebase são case-sensitive)
+      final docIdOrig = await _firestore.collection(_collectionEmpresas).doc(slugTrim).get();
+      if (docIdOrig.exists) {
+        return Empresa.fromMap(docIdOrig.data()!);
+      }
+
+      // 3. Tentar buscar por ID (Lowercase - Fallback para links digitados manualmente)
+      if (slugLower != slugTrim) {
+        final docIdLower = await _firestore.collection(_collectionEmpresas).doc(slugLower).get();
+        if (docIdLower.exists) {
+          return Empresa.fromMap(docIdLower.data()!);
+        }
       }
       
-      debugPrint('>>> [Firebase] ❌ Empresa não encontrada para slug/ID: $slugLower');
+      debugPrint('>>> [Firebase] ❌ Empresa não encontrada para slug/ID: $slugTrim');
       return null;
     } catch (e) {
       debugPrint('>>> [Firebase] ERRO ao buscar empresa por slug: $e');
