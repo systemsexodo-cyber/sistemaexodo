@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:html' as html if (dart.library.html) 'dart:html';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -135,6 +136,11 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         // Mostrar diálogo para solicitar valor de abertura
         _solicitarAberturaCaixa(context, dataService);
       }
+      
+      // Iniciar em tela cheia por padrão (no web)
+      if (kIsWeb) {
+        _entrarTelaCheia();
+      }
     });
 
     // Se veio um pedido para editar, carregar os itens
@@ -191,6 +197,41 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           ),
         );
       }
+    }
+  }
+
+  void _entrarTelaCheia() {
+    try {
+      if (kIsWeb) {
+        final doc = html.window.document;
+        if (doc.fullscreenElement == null) {
+          doc.documentElement?.requestFullscreen();
+        }
+      } else {
+        // Para mobile/desktop nativo, usar SystemUiMode
+        SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+      }
+    } catch (e) {
+      debugPrint('Erro ao entrar em tela cheia: $e');
+    }
+  }
+
+  void _toggleTelaCheia() {
+    try {
+      if (kIsWeb) {
+        final doc = html.window.document;
+        if (doc.fullscreenElement == null) {
+          doc.documentElement?.requestFullscreen();
+        } else {
+          doc.exitFullscreen();
+        }
+      } else {
+        // Toggle básico para mobile nativo (sem usar dart:html)
+        SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+      }
+      setState(() {});
+    } catch (e) {
+      debugPrint('Erro ao alternar tela cheia: $e');
     }
   }
 
@@ -362,6 +403,26 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     }
   }
 
+  /// Reseta completamente o estado da venda na interface (limpa carrinho, cliente, seleções e focos)
+  void _resetarTodaVenda() {
+    setState(() {
+      _carrinho.clear();
+      _clienteSelecionado = null;
+      _descontoTotal = 0.0;
+      _observacoesVenda = null;
+      _pagamentosSalvos = [];
+      _gridSelectedIndex = -1;
+      _cartSelectedIndex = -1;
+      _categoriaSelectedIndex = -1;
+      _focoNoCarrinho = false;
+      _focoNasCategorias = false;
+      _quantidadeDigitada = 1;
+      _termoBusca = '';
+      _pedidoOriginal = null;
+    });
+    _buscaController.clear();
+  }
+
   double get _totalCarrinho {
     final subtotalItens = _carrinho.fold(
       0.0,
@@ -464,10 +525,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           if (event is! KeyDownEvent) return KeyEventResult.ignored;
           if (event.logicalKey == LogicalKeyboardKey.enter ||
               event.logicalKey == LogicalKeyboardKey.numpadEnter) {
-            setState(() {
-              _carrinho.clear();
-              _descontoTotal = 0.0;
-            });
+            _resetarTodaVenda();
             _salvarCarrinho();
             Navigator.pop(context);
             return KeyEventResult.handled;
@@ -514,10 +572,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                 ),
               ),
               onPressed: () {
-                setState(() {
-                  _carrinho.clear();
-                  _descontoTotal = 0.0;
-                });
+                _resetarTodaVenda();
                 _salvarCarrinho();
                 Navigator.pop(context);
               },
@@ -3045,11 +3100,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           info: 'Troco: R\$ ${troco.toStringAsFixed(2)}',
           duracao: const Duration(seconds: 3),
         );
-        setState(() {
-          _carrinho.clear();
-          _clienteSelecionado = null;
-          _pagamentosSalvos = [];
-        });
+        _resetarTodaVenda();
         // Limpar carrinho salvo após finalizar venda
         _limparCarrinhoSalvo();
       } else {
@@ -3057,10 +3108,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       }
     }
 
-    // Limpar pagamentos salvos da memória
-    setState(() {
-      _pagamentosSalvos = [];
-    });
+    // Resetar estado da venda
+    _resetarTodaVenda();
   }
 
   Future<void> _perguntarEmissaoNfce(
@@ -3335,12 +3384,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       info: 'Disponível em "Receber"',
     );
 
-    // Limpar carrinho
-    setState(() {
-      _carrinho.clear();
-      _clienteSelecionado = null;
-      _pagamentosSalvos = [];
-    });
+    // Limpar estado completo da venda
+    _resetarTodaVenda();
     // Limpar carrinho salvo após finalizar venda
     _limparCarrinhoSalvo();
   }
@@ -3441,12 +3486,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       duracao: const Duration(seconds: 4),
     );
 
-    // Limpar carrinho e resetar estados
-    setState(() {
-      _carrinho.clear();
-      _clienteSelecionado = null;
-      _pagamentosSalvos = [];
-    });
+    // Limpar estado completo da venda
+    _resetarTodaVenda();
     // Limpar carrinho salvo após finalizar venda
     _limparCarrinhoSalvo();
   }
@@ -3469,10 +3510,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     );
 
     // Limpar carrinho
-    setState(() {
-      _carrinho.clear();
-      _clienteSelecionado = null;
-    });
+    // Limpar estado completo da venda
+    _resetarTodaVenda();
     // Limpar carrinho salvo após finalizar venda
     _limparCarrinhoSalvo();
   }
@@ -3493,7 +3532,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       info: 'Faltando: ${formatoMoeda.format(valorRestante)}',
     );
 
-    _limparCarrinho();
+    _resetarTodaVenda();
     // Limpar carrinho e cliente salvos após finalizar
     _limparCarrinhoSalvo();
   }
@@ -3512,10 +3551,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       onDismiss: () {
         // Limpar carrinho e cliente após fechar
         if (mounted) {
-          setState(() {
-            _carrinho.clear();
-            _clienteSelecionado = null;
-          });
+          _resetarTodaVenda();
           _limparCarrinhoSalvo();
         }
       },
@@ -4799,24 +4835,27 @@ o padrão padrão (sem opções avançadas).
     final authService = Provider.of<AuthService>(context, listen: false);
     final empresa = authService.empresaAtual;
 
+    final screenHeight = MediaQuery.of(context).size.height;
+    final isSmallHeight = screenHeight < 750;
+
     // Se a empresa tem logoUrl, mostrar a logo da empresa
     if (empresa?.logoUrl != null && empresa!.logoUrl!.isNotEmpty) {
       return Container(
-        height: 40,
+        height: isSmallHeight ? 32 : 40,
         constraints: const BoxConstraints(maxWidth: 200),
         child: Image.network(
           empresa.logoUrl!,
           fit: BoxFit.contain,
           errorBuilder: (context, error, stackTrace) {
             // Se der erro ao carregar, mostrar logo padrão
-            return const ExodoLogoCompact(fontSize: 28);
+            return ExodoLogoCompact(fontSize: isSmallHeight ? 22 : 28);
           },
           loadingBuilder: (context, child, loadingProgress) {
             if (loadingProgress == null) return child;
-            return const SizedBox(
-              width: 40,
-              height: 40,
-              child: Center(
+            return SizedBox(
+              width: isSmallHeight ? 32 : 40,
+              height: isSmallHeight ? 32 : 40,
+              child: const Center(
                 child: CircularProgressIndicator(
                   strokeWidth: 2,
                   valueColor: AlwaysStoppedAnimation<Color>(Colors.orange),
@@ -4829,7 +4868,10 @@ o padrão padrão (sem opções avançadas).
     }
 
     // Caso contrário, mostrar logo padrão "êxodo systems"
-    return const ExodoLogo(fontSize: 24, showSubtitle: true);
+    return ExodoLogo(
+      fontSize: isSmallHeight ? 20 : 24,
+      showSubtitle: !isSmallHeight,
+    );
   }
 
   @override
@@ -4837,6 +4879,8 @@ o padrão padrão (sem opções avançadas).
     final dataService = Provider.of<DataService>(context);
     final screenWidth = MediaQuery.of(context).size.width;
     final screenHeight = MediaQuery.of(context).size.height;
+    final isVerySmallHeight = screenHeight < 650;
+    final isSmallHeight = screenHeight < 750;
 
     // Se digitar 9999, garantir que o produto Diversos existe
     if (_termoBusca == '9999') {
@@ -4865,6 +4909,12 @@ o padrão padrão (sem opções avançadas).
           return KeyEventResult.handled;
         }
 
+        // Tecla F6 - Selecionar Cliente
+        if (key == LogicalKeyboardKey.f6) {
+          _selecionarCliente(dataService);
+          return KeyEventResult.handled;
+        }
+
         // Tecla F2 - Focar Campo de Busca
         if (key == LogicalKeyboardKey.f2) {
           _buscaFocusNode.requestFocus();
@@ -4875,6 +4925,27 @@ o padrão padrão (sem opções avançadas).
             _cartSelectedIndex = -1;
             _categoriaSelectedIndex = -1;
           });
+          return KeyEventResult.handled;
+        }
+
+        // Tecla F4 - Focar Categorias
+        if (key == LogicalKeyboardKey.f4) {
+          setState(() {
+            _focoNasCategorias = true;
+            _categoriaSelectedIndex = 0;
+            _focoNoCarrinho = false;
+            _gridSelectedIndex = -1;
+            _cartSelectedIndex = -1;
+            _atalhosFocusNode.requestFocus();
+          });
+          return KeyEventResult.handled;
+        }
+
+        // Tecla F9 - Finalizar/Receber
+        if (key == LogicalKeyboardKey.f9) {
+          if (_carrinho.isNotEmpty) {
+            _finalizarVenda(dataService);
+          }
           return KeyEventResult.handled;
         }
 
@@ -5167,6 +5238,8 @@ o padrão padrão (sem opções avançadas).
               ],
             ),
           ),
+          // Barra inferior de atalhos (Legenda)
+          _buildBarraAtalhosLegenda(),
         ],
       ),
     );
@@ -5181,6 +5254,19 @@ o padrão padrão (sem opções avançadas).
             backgroundColor: Colors.transparent,
             elevation: 0,
             centerTitle: true,
+            actions: [
+              if (kIsWeb)
+                IconButton(
+                  onPressed: () => _toggleTelaCheia(),
+                  icon: Icon(
+                    html.document.fullscreenElement == null
+                        ? Icons.fullscreen
+                        : Icons.fullscreen_exit,
+                    color: Colors.white70,
+                  ),
+                  tooltip: 'Tela Cheia',
+                ),
+            ],
           ),
           body: Column(
             children: [
@@ -5247,9 +5333,35 @@ o padrão padrão (sem opções avançadas).
             backgroundColor: Colors.transparent,
             elevation: 0,
             centerTitle: true,
+            toolbarHeight: isSmallHeight ? 48 : 56,
             actions: [
+              // Botão Tela Cheia
+              if (kIsWeb)
+                IconButton(
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                  onPressed: () => _toggleTelaCheia(),
+                  icon: Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.white.withOpacity(0.2)),
+                    ),
+                    child: Icon(
+                      html.document.fullscreenElement == null
+                          ? Icons.fullscreen
+                          : Icons.fullscreen_exit,
+                      color: Colors.white70,
+                      size: isSmallHeight ? 18 : 20,
+                    ),
+                  ),
+                  tooltip: 'Tela Cheia',
+                ),
               // Botão Sangria (menor, apenas ícone)
               IconButton(
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
                 onPressed: () => _abrirDialogSangria(),
                 icon: Container(
                   padding: const EdgeInsets.all(6),
@@ -5261,13 +5373,15 @@ o padrão padrão (sem opções avançadas).
                   child: Icon(
                     Icons.remove_circle_outline,
                     color: Colors.red.withOpacity(0.9),
-                    size: 20,
+                    size: isSmallHeight ? 18 : 20,
                   ),
                 ),
                 tooltip: 'Sangria',
               ),
               // Botão Suprimento (menor, apenas ícone)
               IconButton(
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
                 onPressed: () => _abrirDialogSuprimento(),
                 icon: Container(
                   padding: const EdgeInsets.all(6),
@@ -5279,13 +5393,15 @@ o padrão padrão (sem opções avançadas).
                   child: Icon(
                     Icons.add_circle_outline,
                     color: Colors.green.withOpacity(0.9),
-                    size: 20,
+                    size: isSmallHeight ? 18 : 20,
                   ),
                 ),
                 tooltip: 'Suprimento',
               ),
               // Botão Observações
               IconButton(
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
                 onPressed: () => _abrirDialogObservacoes(),
                 icon: Container(
                   padding: const EdgeInsets.all(6),
@@ -5316,11 +5432,12 @@ o padrão padrão (sem opções avançadas).
                             _observacoesVenda!.isNotEmpty
                         ? Colors.blueAccent
                         : Colors.blue.withOpacity(0.9),
-                    size: 20,
+                    size: isSmallHeight ? 18 : 20,
                   ),
                 ),
                 tooltip: 'Observações da Venda',
               ),
+              const SizedBox(width: 8),
             ],
           ),
           body: content,
@@ -5823,61 +5940,82 @@ o padrão padrão (sem opções avançadas).
         // Conteúdo central
         Expanded(
           child: Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                // Logo êxodo systems
-                const ExodoLogo(fontSize: 48, showSubtitle: true),
-                const SizedBox(height: 32),
-                Container(
-                  padding: const EdgeInsets.all(24),
-                  decoration: BoxDecoration(
-                    color: Colors.blue.withOpacity(0.1),
-                    shape: BoxShape.circle,
+            child: TweenAnimationBuilder<double>(
+              duration: const Duration(seconds: 1),
+              tween: Tween(begin: 0.0, end: 1.0),
+              builder: (context, value, child) {
+                return Opacity(
+                  opacity: value,
+                  child: Transform.translate(
+                    offset: Offset(0, 20 * (1 - value)),
+                    child: child,
                   ),
-                  child: Icon(
-                    Icons.point_of_sale,
-                    size: 80,
-                    color: Colors.blue.withOpacity(0.5),
-                  ),
-                ),
-                const SizedBox(height: 24),
-                Text(
-                  'PDV Venda Direta',
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.7),
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  'Busque um produto ou selecione uma categoria',
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.4),
-                    fontSize: 16,
-                  ),
-                ),
-                const SizedBox(height: 32),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    _buildDicaRapida(
-                      Icons.search,
-                      'Buscar',
-                      'Digite nome ou código',
+                );
+              },
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  // Logo êxodo systems com glow sutil
+                  Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.blue.withOpacity(0.05),
+                          blurRadius: 50,
+                          spreadRadius: 10,
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 24),
-                    _buildDicaRapida(
-                      Icons.category,
-                      'Categorias',
-                      'Clique acima',
+                    child: const ExodoLogo(fontSize: 48, showSubtitle: true),
+                  ),
+                  const SizedBox(height: 32),
+                  // Dicas de uso visual
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      _buildDicaInicial(Icons.search, 'Busque Produtos'),
+                      const SizedBox(width: 24),
+                      _buildDicaInicial(
+                        Icons.touch_app,
+                        'Use o Touch ou Mouse',
+                      ),
+                      const SizedBox(width: 24),
+                      _buildDicaInicial(Icons.keyboard, 'Atalhos Rápidos'),
+                    ],
+                  ),
+                  const SizedBox(height: 48),
+                  Text(
+                    'SISTEMA PRONTO PARA VENDER',
+                    style: TextStyle(
+                      color: Colors.blueAccent.withOpacity(0.5),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 4,
                     ),
-                    const SizedBox(width: 24),
-                    _buildDicaRapida(Icons.person_add, 'Cliente', 'Opcional'),
-                  ],
-                ),
-              ],
+                  ),
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 12,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.03),
+                      borderRadius: BorderRadius.circular(30),
+                      border: Border.all(color: Colors.white.withOpacity(0.05)),
+                    ),
+                    child: Text(
+                      'Clique no campo de busca ou pressione F2',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.4),
+                        fontSize: 14,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -5885,7 +6023,7 @@ o padrão padrão (sem opções avançadas).
     );
   }
 
-  Widget _buildDicaRapida(IconData icon, String titulo, String subtitulo) {
+  Widget _buildDicaInicial(IconData icon, String text) {
     return Column(
       children: [
         Container(
@@ -5894,18 +6032,85 @@ o padrão padrão (sem opções avançadas).
             color: Colors.white.withOpacity(0.05),
             borderRadius: BorderRadius.circular(12),
           ),
-          child: Icon(icon, color: Colors.white38, size: 28),
+          child: Icon(
+            icon,
+            color: Colors.blueAccent.withOpacity(0.6),
+            size: 24,
+          ),
         ),
         const SizedBox(height: 8),
         Text(
-          titulo,
-          style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 12),
-        ),
-        Text(
-          subtitulo,
-          style: TextStyle(color: Colors.white.withOpacity(0.3), fontSize: 10),
+          text,
+          style: TextStyle(
+            color: Colors.white.withOpacity(0.3),
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+          ),
         ),
       ],
+    );
+  }
+
+  Widget _buildBarraAtalhosLegenda() {
+    final screenWidth = MediaQuery.of(context).size.width;
+    if (screenWidth < 900) return const SizedBox.shrink();
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0D0D15),
+        border: Border(top: BorderSide(color: Colors.white.withOpacity(0.05))),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          _buildItemLegenda('F2', 'BUSCA'),
+          _buildItemLegenda('F6', 'CLIENTE'),
+          _buildItemLegenda('F4', 'CATEGORIAS'),
+          _buildItemLegenda('ENTER', 'ADICIONAR'),
+          _buildItemLegenda('+', 'QUANTIDADE'),
+          _buildItemLegenda('DEL', 'REMOVER'),
+          _buildItemLegenda('F9', 'RECEBER', isPrimary: true),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildItemLegenda(String key, String label, {bool isPrimary = false}) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 8),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: isPrimary
+                  ? Colors.greenAccent
+                  : Colors.white.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(
+              key,
+              style: TextStyle(
+                color: isPrimary ? Colors.black : Colors.white70,
+                fontSize: 10,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(
+              color: isPrimary ? Colors.greenAccent : Colors.white38,
+              fontSize: 10,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 0.5,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -6282,13 +6487,24 @@ o padrão padrão (sem opções avançadas).
   }
 
   Widget _buildGridItens(List<dynamic> itens) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final screenHeight = MediaQuery.of(context).size.height;
+    final isVerySmallHeight = screenHeight < 650;
+    final isSmallHeight = screenHeight < 750;
+
+    // Mais colunas se a tela for muito larga, menos se for estreita
+    final crossAxisCount = screenWidth < 900 ? 2 : (screenWidth < 1500 ? 3 : 4);
+
+    // Aspect ratio mais "deitado" em telas baixas para economizar espaço vertical
+    final aspectRatio = isVerySmallHeight ? 1.7 : (isSmallHeight ? 1.5 : 1.3);
+
     return GridView.builder(
-      padding: const EdgeInsets.all(16),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
-        childAspectRatio: 1.3,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 12,
+      padding: EdgeInsets.all(isSmallHeight ? 8 : 16),
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: crossAxisCount,
+        childAspectRatio: aspectRatio,
+        crossAxisSpacing: isSmallHeight ? 8 : 12,
+        mainAxisSpacing: isSmallHeight ? 8 : 12,
       ),
       itemCount: itens.length,
       itemBuilder: (context, index) {
@@ -6300,13 +6516,21 @@ o padrão padrão (sem opções avançadas).
   }
 
   Widget _buildGridProdutos(List<Produto> produtos) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final screenHeight = MediaQuery.of(context).size.height;
+    final isVerySmallHeight = screenHeight < 650;
+    final isSmallHeight = screenHeight < 750;
+
+    final crossAxisCount = screenWidth < 900 ? 2 : (screenWidth < 1500 ? 3 : 4);
+    final aspectRatio = isVerySmallHeight ? 1.7 : (isSmallHeight ? 1.5 : 1.3);
+
     return GridView.builder(
-      padding: const EdgeInsets.all(16),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
-        childAspectRatio: 1.3,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 12,
+      padding: EdgeInsets.all(isSmallHeight ? 8 : 16),
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: crossAxisCount,
+        childAspectRatio: aspectRatio,
+        crossAxisSpacing: isSmallHeight ? 8 : 12,
+        mainAxisSpacing: isSmallHeight ? 8 : 12,
       ),
       itemCount: produtos.length,
       itemBuilder: (context, index) {
@@ -6327,6 +6551,8 @@ o padrão padrão (sem opções avançadas).
     // Se for o produto Diversos (código 9999), abrir diálogo para descrição
     final isDiversos = isProduto && codigo == '9999';
 
+    final screenHeight = MediaQuery.of(context).size.height;
+    final isSmallHeight = screenHeight < 750;
     final isSelected =
         !_focoNoCarrinho && _gridSelectedIndex == index && index != -1;
 
@@ -6355,7 +6581,7 @@ o padrão padrão (sem opções avançadas).
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(isSmallHeight ? 12 : 16),
           border: Border.all(
             color: isSelected
                 ? Colors.cyanAccent
@@ -6377,7 +6603,7 @@ o padrão padrão (sem opções avançadas).
         child: Stack(
           children: [
             Padding(
-              padding: const EdgeInsets.all(12),
+              padding: EdgeInsets.all(isSmallHeight ? 8 : 12),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -6385,7 +6611,7 @@ o padrão padrão (sem opções avançadas).
                   Row(
                     children: [
                       Container(
-                        padding: const EdgeInsets.all(6),
+                        padding: EdgeInsets.all(isSmallHeight ? 4 : 6),
                         decoration: BoxDecoration(
                           color: isProduto
                               ? Colors.blue.withOpacity(0.3)
@@ -6397,10 +6623,10 @@ o padrão padrão (sem opções avançadas).
                           color: isProduto
                               ? Colors.lightBlueAccent
                               : Colors.purpleAccent,
-                          size: 18,
+                          size: isSmallHeight ? 14 : 18,
                         ),
                       ),
-                      const SizedBox(width: 6),
+                      SizedBox(width: isSmallHeight ? 4 : 6),
                       // Código do produto
                       if (codigo != null && codigo.isNotEmpty)
                         Expanded(
@@ -6415,9 +6641,9 @@ o padrão padrão (sem opções avançadas).
                             ),
                             child: Text(
                               codigo,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 color: Colors.white70,
-                                fontSize: 10,
+                                fontSize: isSmallHeight ? 9 : 10,
                                 fontWeight: FontWeight.bold,
                               ),
                               overflow: TextOverflow.ellipsis,
@@ -6435,11 +6661,11 @@ o padrão padrão (sem opções avançadas).
                             color: Colors.orange,
                             borderRadius: BorderRadius.circular(6),
                           ),
-                          child: const Text(
+                          child: Text(
                             'PROMO',
                             style: TextStyle(
                               color: Colors.white,
-                              fontSize: 9,
+                              fontSize: isSmallHeight ? 8 : 9,
                               fontWeight: FontWeight.bold,
                             ),
                           ),
@@ -6451,22 +6677,22 @@ o padrão padrão (sem opções avançadas).
                   // Nome
                   Text(
                     nome,
-                    style: const TextStyle(
+                    style: TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.bold,
-                      fontSize: 16, // Aumentado de 14
+                      fontSize: isSmallHeight ? 13 : 16,
                     ),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
-                  const SizedBox(height: 8),
+                  SizedBox(height: isSmallHeight ? 2 : 8),
                   // Preço
                   Text(
                     'R\$ ${preco.toStringAsFixed(2)}',
                     style: TextStyle(
                       color: promocao ? Colors.orange : Colors.greenAccent,
                       fontWeight: FontWeight.w900,
-                      fontSize: 22, // Aumentado de 18
+                      fontSize: isSmallHeight ? 18 : 22,
                     ),
                   ),
                   // Estoque (apenas para produtos)
@@ -8271,11 +8497,19 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
   late List<PagamentoPedido> _pagamentos;
   final _formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
   final _formatoData = DateFormat('dd/MM/yyyy');
+  final FocusNode _focusNode = FocusNode();
 
   @override
   void initState() {
     super.initState();
     _pagamentos = List.from(widget.pagamentosIniciais);
+    _focusNode.requestFocus();
+  }
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
   }
 
   double get _totalLancado => _pagamentos.fold(0.0, (sum, p) => sum + p.valor);
@@ -9578,14 +9812,74 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
     final screenHeight = MediaQuery.of(context).size.height;
     final isSmallHeight = screenHeight < 750;
 
-    return Container(
-      height: screenHeight * 0.9,
-      decoration: const BoxDecoration(
-        color: Color(0xFF1E1E2E),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      child: Column(
-        children: [
+    return Focus(
+      focusNode: _focusNode,
+      autofocus: true,
+      onKeyEvent: (node, event) {
+        if (event is KeyRepeatEvent) return KeyEventResult.ignored;
+        if (event is! KeyDownEvent) return KeyEventResult.ignored;
+
+        final key = event.logicalKey;
+
+        // Teclas 1 a 8 para formas de pagamento
+        final types = TipoPagamento.values;
+        if (key == LogicalKeyboardKey.digit1 || key == LogicalKeyboardKey.numpad1) {
+          _adicionarPagamento(types[0]);
+          return KeyEventResult.handled;
+        }
+        if (key == LogicalKeyboardKey.digit2 || key == LogicalKeyboardKey.numpad2) {
+          _adicionarPagamento(types[1]);
+          return KeyEventResult.handled;
+        }
+        if (key == LogicalKeyboardKey.digit3 || key == LogicalKeyboardKey.numpad3) {
+          _adicionarPagamento(types[2]);
+          return KeyEventResult.handled;
+        }
+        if (key == LogicalKeyboardKey.digit4 || key == LogicalKeyboardKey.numpad4) {
+          _adicionarPagamento(types[3]);
+          return KeyEventResult.handled;
+        }
+        if (key == LogicalKeyboardKey.digit5 || key == LogicalKeyboardKey.numpad5) {
+          _adicionarPagamento(types[4]);
+          return KeyEventResult.handled;
+        }
+        if (key == LogicalKeyboardKey.digit6 || key == LogicalKeyboardKey.numpad6) {
+          _adicionarPagamento(types[5]);
+          return KeyEventResult.handled;
+        }
+        if (key == LogicalKeyboardKey.digit7 || key == LogicalKeyboardKey.numpad7) {
+          _adicionarPagamento(types[6]);
+          return KeyEventResult.handled;
+        }
+        if (key == LogicalKeyboardKey.digit8 || key == LogicalKeyboardKey.numpad8) {
+          _adicionarPagamento(types[7]);
+          return KeyEventResult.handled;
+        }
+
+        // ENTER para finalizar se houver pagamentos
+        if (key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.numpadEnter) {
+          if (_pagamentos.isNotEmpty) {
+            widget.onConfirmar(_pagamentos);
+          }
+          return KeyEventResult.handled;
+        }
+
+        // ESC para fechar o resumo
+        if (key == LogicalKeyboardKey.escape) {
+          Navigator.pop(context);
+          return KeyEventResult.handled;
+        }
+
+        return KeyEventResult.ignored;
+      },
+      child: Container(
+        height: screenHeight * 0.9,
+        decoration: const BoxDecoration(
+          color: Color(0xFF1E1E2E),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Column(
+          children: [
           // Handle
           Container(
             margin: const EdgeInsets.only(top: 12),
@@ -9652,12 +9946,16 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
                   Wrap(
                     spacing: 8,
                     runSpacing: 8,
-                    children: TipoPagamento.values.map((tipo) {
+                    children: TipoPagamento.values.asMap().entries.map((entry) {
+                      final index = entry.key;
+                      final tipo = entry.value;
+                      final shortcut = index + 1;
+
                       return GestureDetector(
                         onTap: () => _adicionarPagamento(tipo),
                         child: Container(
                           padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
+                            horizontal: 10,
                             vertical: 8,
                           ),
                           decoration: BoxDecoration(
@@ -9670,18 +9968,39 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
+                              // Atalho numérico
+                              if (shortcut <= 8)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 4,
+                                    vertical: 1,
+                                  ),
+                                  margin: const EdgeInsets.only(right: 6),
+                                  decoration: BoxDecoration(
+                                    color: _getCorTipo(tipo).withOpacity(0.3),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    '$shortcut',
+                                    style: TextStyle(
+                                      color: _getCorTipo(tipo),
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
                               Icon(
                                 _getIconeTipo(tipo),
                                 color: _getCorTipo(tipo),
-                                size: 16,
+                                size: 14,
                               ),
-                              const SizedBox(width: 6),
+                              const SizedBox(width: 4),
                               Text(
                                 tipo.nome,
                                 style: TextStyle(
                                   color: _getCorTipo(tipo),
                                   fontWeight: FontWeight.w500,
-                                  fontSize: 12,
+                                  fontSize: 11,
                                 ),
                               ),
                             ],
@@ -9854,8 +10173,9 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
           ),
         ],
       ),
-    );
-  }
+    ),
+  );
+}
 }
 
 /// Popup animado de sucesso com dinheiro caindo - centralizado na tela

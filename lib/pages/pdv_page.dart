@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import 'dart:html' as html if (dart.library.html) 'dart:html';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../services/data_service.dart';
@@ -54,6 +57,46 @@ class _PdvPageState extends State<PdvPage> {
       _pedidoSelecionado = widget.pedidoInicial;
       _termoBusca = widget.pedidoInicial!.numero;
       _buscaController.text = widget.pedidoInicial!.numero;
+    }
+
+    // Tentar entrar em tela cheia por padrão no PDV
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (kIsWeb) {
+        _entrarTelaCheia();
+      }
+    });
+  }
+
+  void _entrarTelaCheia() {
+    try {
+      if (kIsWeb) {
+        final doc = html.window.document;
+        if (doc.fullscreenElement == null) {
+          doc.documentElement?.requestFullscreen();
+        }
+      } else {
+        SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+      }
+    } catch (e) {
+      debugPrint('Erro ao entrar em tela cheia: $e');
+    }
+  }
+
+  void _toggleTelaCheia() {
+    try {
+      if (kIsWeb) {
+        final doc = html.window.document;
+        if (doc.fullscreenElement == null) {
+          doc.documentElement?.requestFullscreen();
+        } else {
+          doc.exitFullscreen();
+        }
+      } else {
+        SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+      }
+      setState(() {});
+    } catch (e) {
+      debugPrint('Erro ao alternar tela cheia: $e');
     }
   }
 
@@ -425,7 +468,19 @@ class _PdvPageState extends State<PdvPage> {
           centerTitle: true,
           backgroundColor: Colors.transparent,
           elevation: 0,
-          actions: [],
+          actions: [
+            if (kIsWeb)
+              IconButton(
+                onPressed: () => _toggleTelaCheia(),
+                icon: Icon(
+                  html.document.fullscreenElement == null
+                      ? Icons.fullscreen
+                      : Icons.fullscreen_exit,
+                  color: Colors.white70,
+                ),
+                tooltip: 'Tela Cheia',
+              ),
+          ],
         ),
         body: _buildAbaReceberPedidos(dataService, pedidosEncontrados),
       ),
