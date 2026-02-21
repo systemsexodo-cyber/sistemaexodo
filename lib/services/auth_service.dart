@@ -577,22 +577,26 @@ class AuthService extends ChangeNotifier {
 
   /// Busca uma empresa pelo slug, tentando Firebase se não encontrar localmente
   Future<Empresa?> buscarEmpresaPorSlugAsync(String slug) async {
-    // 1. Tentar local
-    final local = obterEmpresaPorSlug(slug);
-    if (local != null) return local;
-
-    // 2. Tentar Firebase
-    debugPrint('>>> [AuthService] 🔍 Empresa não em memória, buscando no Firebase: $slug');
-    final remota = await _firebaseService.buscarEmpresaPorSlug(slug);
-    if (remota != null) {
-      if (!_empresas.any((e) => e.id == remota.id)) {
-        _empresas.add(remota);
+    // 1. Tentar Firebase primeiro para ter os dados mais frescos (importante para agendamento público)
+    try {
+      debugPrint('>>> [AuthService] 🔍 Buscando versão fresca da empresa no Firebase: $slug');
+      final remota = await _firebaseService.buscarEmpresaPorSlug(slug).timeout(const Duration(seconds: 5));
+      if (remota != null) {
+        final index = _empresas.indexWhere((e) => e.id == remota.id);
+        if (index != -1) {
+          _empresas[index] = remota;
+        } else {
+          _empresas.add(remota);
+        }
         notifyListeners();
+        return remota;
       }
-      return remota;
+    } catch (e) {
+      debugPrint('>>> [AuthService] ⚠️ Erro ao buscar empresa no Firebase: $e');
     }
 
-    return null;
+    // 2. Fallback para cache local se Firebase falhar ou não encontrar
+    return obterEmpresaPorSlug(slug);
   }
 
 

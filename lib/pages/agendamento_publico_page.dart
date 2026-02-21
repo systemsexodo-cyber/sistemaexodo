@@ -122,12 +122,23 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
 
   Future<void> _inicializarEmpresa() async {
     final dataService = Provider.of<DataService>(context, listen: false);
-    if (dataService.empresaIdAtual == null && widget.slugEmpresa != null) {
-      final authService = Provider.of<AuthService>(context, listen: false);
-      final emp = authService.obterEmpresaPorSlug(widget.slugEmpresa!);
+    final authService = Provider.of<AuthService>(context, listen: false);
+    
+    if (widget.slugEmpresa != null) {
+      // Sempre tentar buscar a versão mais recente da empresa ao entrar na página
+      final emp = await authService.buscarEmpresaPorSlugAsync(widget.slugEmpresa!);
       if (emp != null) {
-        debugPrint('>>> [Agendamento] Inicializando empresa: ${emp.nomeExibicao} (${emp.id})');
-        await dataService.definirEmpresaAtual(emp.id, modoLeve: true);
+        debugPrint('>>> [Agendamento] Configurando empresa: ${emp.nomeExibicao} (${emp.id})');
+        
+        // Garantir que o DataService saiba qual a empresa atual
+        if (dataService.empresaIdAtual != emp.id) {
+          await dataService.definirEmpresaAtual(emp.id, modoLeve: true);
+        }
+        
+        // Atualizar o objeto empresa no DataService para ter as configurações de agendamento frescas
+        dataService.setEmpresaAtual(emp);
+        
+        if (mounted) setState(() {});
       }
     }
   }
@@ -1774,36 +1785,33 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     final hAberturaStr = agendamentoConfig?['horarioAbertura']?.toString() ?? '08:00';
     final hFechamentoStr = agendamentoConfig?['horarioFechamento']?.toString() ?? '18:00';
 
-    int startHour = 8;
-    int startMinute = 0;
-    int endHour = 18;
-    int endMinute = 0;
-
-    try {
-      final partsA = hAberturaStr.split(':');
-      startHour = int.parse(partsA[0]);
-      startMinute = int.parse(partsA[1]);
-
-      final partsF = hFechamentoStr.split(':');
-      endHour = int.parse(partsF[0]);
-      endMinute = int.parse(partsF[1]);
-    } catch (_) {}
+    double hAbertura = _timeToDouble(hAberturaStr);
+    double hFechamento = _timeToDouble(hFechamentoStr);
 
     // Gerar lista de horários respeitando limites da empresa
     final List<TimeOfDay> slots = [];
     
-    DateTime current = DateTime(2000, 1, 1, startHour, startMinute);
-    final DateTime limit = DateTime(2000, 1, 1, endHour, endMinute);
-
-    while (current.isBefore(limit) || current.isAtSameMomentAs(limit)) {
-      slots.add(TimeOfDay(hour: current.hour, minute: current.minute));
-      current = current.add(const Duration(minutes: 30));
-    }
+    // Inicia no horário de abertura
+    final partsA = hAberturaStr.split(':');
+    DateTime current = DateTime(2000, 1, 1, int.parse(partsA[0]), int.parse(partsA[1]));
+    
+    // Limite é o fechamento
+    final partsF = hFechamentoStr.split(':');
+    final DateTime limit = DateTime(2000, 1, 1, int.parse(partsF[0]), int.parse(partsF[1]));
 
     final duracao = dataService.servicos.firstWhere(
       (s) => s.id == _servicoIdSelecionado, 
       orElse: () => dataService.servicos.first
     ).duracaoPadraoMinutos ?? 60;
+
+    while (current.isBefore(limit)) {
+      // Só adicionar se o serviço couber dentro do horário de funcionamento
+      if (current.add(Duration(minutes: duracao)).isBefore(limit) || 
+          current.add(Duration(minutes: duracao)).isAtSameMomentAs(limit)) {
+        slots.add(TimeOfDay(hour: current.hour, minute: current.minute));
+      }
+      current = current.add(const Duration(minutes: 30));
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1934,11 +1942,37 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     );
   }
 
+  double _timeToDouble(String timeStr) {
+    try {
+      final parts = timeStr.split(':');
+      if (parts.length != 2) return 0.0;
+      return int.parse(parts[0]) + (int.parse(parts[1]) / 60.0);
+    } catch (_) {
+      return 0.0;
+    }
+  }
+
   /// Verifica se um horário está bloqueado administrativamente
   /// Suporta tipos: todos, dia, periodo, diaSemana (e bloqueios antigos sem tipo)
   bool _isHorarioBloqueadoAdmin(DataService dataService, DateTime inicio, int duracaoMinutos) {
     try {
       final config = dataService.empresaAtual?.configuracoes?['agendamento'] as Map<String, dynamic>?;
+      
+      // -- VERIFICAR HORÁRIO DE FUNCIONAMENTO --
+      final hAberturaStr = config?['horarioAbertura']?.toString() ?? '08:00';
+      final hFechamentoStr = config?['horarioFechamento']?.toString() ?? '18:00';
+      
+      final hAbertura = _timeToDouble(hAberturaStr);
+      final hFechamento = _timeToDouble(hFechamentoStr);
+      
+      final double hInicio = inicio.hour + (inicio.minute / 60.0);
+      final double hFim = hInicio + (duracaoMinutos / 60.0);
+      
+      // Se começar antes de abrir ou terminar depois de fechar, está bloqueado
+      if (hInicio < hAbertura || hFim > hFechamento) {
+        return true;
+      }
+
       final bloqueados = config?['horariosIndisponiveis'] as List<dynamic>?;
       if (bloqueados == null || bloqueados.isEmpty) return false;
 
