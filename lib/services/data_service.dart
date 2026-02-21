@@ -3004,8 +3004,9 @@ class DataService extends ChangeNotifier {
   }
 
   /// Verifica disponibilidade de horário
-  bool checkDisponibilidade(DateTime inicio, int duracaoMinutos, {bool ignorarPendentes = false}) {
-    final fim = inicio.add(Duration(minutes: duracaoMinutos));
+  bool checkDisponibilidade(DateTime inicio, int duracaoMinutos, {int intervaloMinutos = 0, bool ignorarPendentes = false}) {
+    final duracaoTotal = duracaoMinutos + intervaloMinutos;
+    final fim = inicio.add(Duration(minutes: duracaoTotal));
     
     // Verificar conflitos com agendamentos existentes
     for (final a in _agendamentosServico) {
@@ -3015,7 +3016,7 @@ class DataService extends ChangeNotifier {
       if (ignorarPendentes && a.status == 'Aguardando Confirmação') continue;
       
       final aInicio = a.dataAgendamento;
-      final aFim = aInicio.add(Duration(minutes: a.duracaoMinutos));
+      final aFim = a.dataTermino; // Já inclui o intervalo do agendamento existente
       
       // Lógica de sobreposição: (InicioA < FimB) && (FimA > InicioB)
       if (aInicio.isBefore(fim) && aFim.isAfter(inicio)) {

@@ -555,6 +555,8 @@ class _EditarServicoDialogState extends State<_EditarServicoDialog> {
   late TextEditingController _precoController;
   late TextEditingController _valorAdicionalController;
   late TextEditingController _descricaoAdicionalController;
+  late TextEditingController _duracaoController;
+  late TextEditingController _intervaloController;
 
   @override
   void initState() {
@@ -574,6 +576,12 @@ class _EditarServicoDialogState extends State<_EditarServicoDialog> {
     _descricaoAdicionalController = TextEditingController(
       text: widget.servico.descricaoAdicional ?? '',
     );
+    _duracaoController = TextEditingController(
+      text: widget.servico.duracaoPadraoMinutos?.toString() ?? '60',
+    );
+    _intervaloController = TextEditingController(
+      text: widget.servico.intervaloMinutos?.toString() ?? '0',
+    );
   }
 
   @override
@@ -583,6 +591,8 @@ class _EditarServicoDialogState extends State<_EditarServicoDialog> {
     _precoController.dispose();
     _valorAdicionalController.dispose();
     _descricaoAdicionalController.dispose();
+    _duracaoController.dispose();
+    _intervaloController.dispose();
     super.dispose();
   }
 
@@ -613,6 +623,9 @@ class _EditarServicoDialogState extends State<_EditarServicoDialog> {
     final valorAdicionalTexto = _valorAdicionalController.text.trim().replaceAll(',', '.');
     final valorAdicional = double.tryParse(valorAdicionalTexto) ?? 0.0;
     
+    final duracao = int.tryParse(_duracaoController.text) ?? 60;
+    final intervalo = int.tryParse(_intervaloController.text) ?? 0;
+    
     // Debug para verificar valores antes de salvar
     debugPrint('>>> SALVANDO SERVIÇO:');
     debugPrint('>>> Nome: ${_nomeController.text}');
@@ -628,6 +641,8 @@ class _EditarServicoDialogState extends State<_EditarServicoDialog> {
       preco: preco,
       valorAdicional: valorAdicional,
       descricaoAdicional: _descricaoAdicionalController.text.isEmpty ? null : _descricaoAdicionalController.text,
+      duracaoPadraoMinutos: duracao,
+      intervaloMinutos: intervalo,
       createdAt: widget.servico.createdAt,
       updatedAt: DateTime.now(),
     );
@@ -808,6 +823,57 @@ class _EditarServicoDialogState extends State<_EditarServicoDialog> {
                   ),
                 ),
               ),
+              const SizedBox(height: 12),
+              // Linha: Duração e Intervalo
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _duracaoController,
+                      keyboardType: TextInputType.number,
+                      style: TextStyle(color: colorScheme.onSurface),
+                      decoration: InputDecoration(
+                        labelText: 'Duração (min) *',
+                        hintText: 'Ex: 40',
+                        labelStyle: TextStyle(color: colorScheme.onSurfaceVariant),
+                        filled: true,
+                        fillColor: theme.inputDecorationTheme.fillColor,
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(color: colorScheme.outline),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(color: colorScheme.primary),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TextField(
+                      controller: _intervaloController,
+                      keyboardType: TextInputType.number,
+                      style: TextStyle(color: colorScheme.onSurface),
+                      decoration: InputDecoration(
+                        labelText: 'Intervalo (min)',
+                        hintText: 'Ex: 10',
+                        labelStyle: TextStyle(color: colorScheme.onSurfaceVariant),
+                        filled: true,
+                        fillColor: theme.inputDecorationTheme.fillColor,
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(color: colorScheme.outline),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(color: colorScheme.primary),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
               const SizedBox(height: 24),
               Row(
                 children: [
@@ -858,6 +924,7 @@ class _CriarServicoDialogState extends State<_CriarServicoDialog> {
   final _valorAdicionalController = TextEditingController();
   final _descricaoAdicionalController = TextEditingController();
   final _duracaoController = TextEditingController(text: '60');
+  final _intervaloController = TextEditingController(text: '0');
 
   @override
   void dispose() {
@@ -867,6 +934,7 @@ class _CriarServicoDialogState extends State<_CriarServicoDialog> {
     _valorAdicionalController.dispose();
     _descricaoAdicionalController.dispose();
     _duracaoController.dispose();
+    _intervaloController.dispose();
     super.dispose();
   }
 
@@ -875,6 +943,7 @@ class _CriarServicoDialogState extends State<_CriarServicoDialog> {
     final preco = double.tryParse(_precoController.text.replaceAll(',', '.')) ?? 0.0;
     final valorAdicional = double.tryParse(_valorAdicionalController.text.replaceAll(',', '.')) ?? 0.0;
     final duracao = int.tryParse(_duracaoController.text) ?? 60;
+    final intervalo = int.tryParse(_intervaloController.text) ?? 0;
 
     if (_nomeController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -898,6 +967,7 @@ class _CriarServicoDialogState extends State<_CriarServicoDialog> {
       valorAdicional: valorAdicional,
       descricaoAdicional: _descricaoAdicionalController.text.isEmpty ? null : _descricaoAdicionalController.text,
       duracaoPadraoMinutos: duracao,
+      intervaloMinutos: intervalo,
       createdAt: DateTime.now(),
       updatedAt: DateTime.now(),
     );
@@ -998,6 +1068,28 @@ class _CriarServicoDialogState extends State<_CriarServicoDialog> {
                     _buildField(
                       controller: _descricaoAdicionalController,
                       label: 'Descrição do Valor Adicional',
+                    ),
+                    const SizedBox(height: 12),
+                    
+                    // Linha: Duração e Intervalo
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _buildField(
+                            controller: _duracaoController,
+                            label: 'Duração (min) *',
+                            keyboardType: TextInputType.number,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: _buildField(
+                            controller: _intervaloController,
+                            label: 'Intervalo (min)',
+                            keyboardType: TextInputType.number,
+                          ),
+                        ),
+                      ],
                     ),
                     
                     const SizedBox(height: 24),

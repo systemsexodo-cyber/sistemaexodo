@@ -13,6 +13,7 @@ class Servico {
   final DateTime updatedAt;
   final List<ItemMaterial> materiais; // Lista de materiais padrão do serviço
   final int? duracaoPadraoMinutos; // Duração estimada em minutos
+  final int? intervaloMinutos; // Intervalo/Pausa após o serviço
 
   Servico({
     required this.id,
@@ -25,6 +26,7 @@ class Servico {
     required this.updatedAt,
     List<ItemMaterial>? materiais,
     this.duracaoPadraoMinutos,
+    this.intervaloMinutos,
   }) : materiais = materiais ?? [];
 
   // Getter para o preço total (base + adicional)
@@ -48,6 +50,7 @@ class Servico {
       'updatedAt': updatedAt.toIso8601String(),
       'materiais': materiais.map((m) => m.toMap()).toList(),
       'duracaoPadraoMinutos': duracaoPadraoMinutos,
+      'intervaloMinutos': intervaloMinutos,
     };
   }
 
@@ -67,6 +70,7 @@ class Servico {
           ? (map['materiais'] as List).map((m) => ItemMaterial.fromMap(m as Map<String, dynamic>)).toList()
           : [],
       duracaoPadraoMinutos: map['duracaoPadraoMinutos'] as int?,
+      intervaloMinutos: map['intervaloMinutos'] as int?,
     );
   }
 
@@ -82,6 +86,7 @@ class Servico {
     DateTime? updatedAt,
     List<ItemMaterial>? materiais,
     int? duracaoPadraoMinutos,
+    int? intervaloMinutos,
   }) {
     return Servico(
       id: id ?? this.id,
@@ -94,6 +99,7 @@ class Servico {
       updatedAt: updatedAt ?? this.updatedAt,
       materiais: materiais ?? this.materiais,
       duracaoPadraoMinutos: duracaoPadraoMinutos ?? this.duracaoPadraoMinutos,
+      intervaloMinutos: intervaloMinutos ?? this.intervaloMinutos,
     );
   }
 }

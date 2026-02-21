@@ -17,6 +17,7 @@ class AgendamentoServico {
   final Pet? pet; // Referência ao pet
   final DateTime dataAgendamento; // Data e hora do agendamento
   final int duracaoMinutos; // Duração estimada do serviço em minutos
+  final int intervaloMinutos; // Intervalo/Pausa após o serviço
   final String? observacoes;
   final String status; // 'Agendado', 'Em Andamento', 'Concluído', 'Cancelado', 'Aguardando Confirmação'
   // Controle de entrega do animal
@@ -49,6 +50,7 @@ class AgendamentoServico {
     this.pet,
     required this.dataAgendamento,
     this.duracaoMinutos = 60, // Padrão: 1 hora
+    this.intervaloMinutos = 0,
     this.observacoes,
     this.status = 'Agendado',
     this.tipoEntrega,
@@ -72,8 +74,14 @@ class AgendamentoServico {
         createdAt = createdAt ?? DateTime.now(),
         updatedAt = updatedAt ?? DateTime.now();
 
-  /// Data/hora de término estimado
-  DateTime get dataTermino => dataAgendamento.add(Duration(minutes: duracaoMinutos));
+  /// Data/hora de término estimado (incluindo o intervalo de descanso)
+  DateTime get dataTerminoEfetiva => dataAgendamento.add(Duration(minutes: duracaoMinutos + intervaloMinutos));
+
+  /// Data/hora de término do serviço (sem o intervalo)
+  DateTime get dataTerminoServico => dataAgendamento.add(Duration(minutes: duracaoMinutos));
+
+  /// Aliás para manter compatibilidade, mas agora usa a efetiva para conflitos
+  DateTime get dataTermino => dataTerminoEfetiva;
 
   /// Obtém o nome do serviço (do objeto servico ou nome direto se disponível)
   String? get servicoNome => servico?.nome;
@@ -128,6 +136,7 @@ class AgendamentoServico {
     Pet? pet,
     DateTime? dataAgendamento,
     int? duracaoMinutos,
+    int? intervaloMinutos,
     String? observacoes,
     String? status,
     String? tipoEntrega,
@@ -159,6 +168,7 @@ class AgendamentoServico {
       pet: pet ?? this.pet,
       dataAgendamento: dataAgendamento ?? this.dataAgendamento,
       duracaoMinutos: duracaoMinutos ?? this.duracaoMinutos,
+      intervaloMinutos: intervaloMinutos ?? this.intervaloMinutos,
       observacoes: observacoes ?? this.observacoes,
       status: status ?? this.status,
       tipoEntrega: tipoEntrega ?? this.tipoEntrega,
@@ -190,6 +200,7 @@ class AgendamentoServico {
       'petId': petId,
       'dataAgendamento': dataAgendamento.toIso8601String(),
       'duracaoMinutos': duracaoMinutos,
+      'intervaloMinutos': intervaloMinutos,
       'observacoes': observacoes,
       'status': status,
       'tipoEntrega': tipoEntrega,
@@ -206,14 +217,12 @@ class AgendamentoServico {
       'numeroEndereco': numeroEndereco,
       'complemento': complemento,
       'pontoReferencia': pontoReferencia,
-      'pet': pet?.toMap(), // Incluir objeto pet para evitar perda de dados online
+      'pet': pet?.toMap(),
       'materiais': materiais.map((m) => m.toMap()).toList(),
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
     };
   }
-
-
 
   factory AgendamentoServico.fromMap(Map<String, dynamic> map) {
     return AgendamentoServico(
@@ -224,6 +233,7 @@ class AgendamentoServico {
       petId: map['petId']?.toString(),
       dataAgendamento: DateParser.parse(map['dataAgendamento']),
       duracaoMinutos: map['duracaoMinutos'] ?? 60,
+      intervaloMinutos: map['intervaloMinutos'] ?? 0,
       observacoes: map['observacoes']?.toString(),
       status: map['status']?.toString() ?? 'Agendado',
       tipoEntrega: map['tipoEntrega']?.toString(),
@@ -251,4 +261,3 @@ class AgendamentoServico {
     );
   }
 }
-

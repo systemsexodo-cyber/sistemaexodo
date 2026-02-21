@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/data_service.dart';
+import '../services/auth_service.dart';
 import '../models/empresa.dart';
 import '../theme.dart';
 
@@ -18,12 +19,14 @@ class _ConfiguracoesAgendaPageState extends State<ConfiguracoesAgendaPage> {
   final _taxaBuscaController = TextEditingController();
   final _taxaSolevaController = TextEditingController();
   bool _esconderValores = false;
+  bool _modoSolicitacao = false;
   List<Map<String, dynamic>> _bairrosConfig = [];
   List<Map<String, dynamic>> _horariosIndisponiveis = [];
   bool _isLoading = false;
 
   TimeOfDay _horarioAbertura = const TimeOfDay(hour: 8, minute: 0);
   TimeOfDay _horarioFechamento = const TimeOfDay(hour: 18, minute: 0);
+  int _intervaloSlots = 30;
 
   @override
   void initState() {
@@ -42,14 +45,19 @@ class _ConfiguracoesAgendaPageState extends State<ConfiguracoesAgendaPage> {
   }
 
   void _carregarConfiguracoes() {
+    final authService = Provider.of<AuthService>(context, listen: false);
     final dataService = Provider.of<DataService>(context, listen: false);
-    final empresa = dataService.empresaAtual;
+    
+    // Priorizar empresa do AuthService (sessão) ou DataService (dados)
+    final empresa = authService.empresaAtual ?? dataService.empresaAtual;
+    
     if (empresa != null && empresa.configuracoes != null) {
       final config = empresa.configuracoes!;
       final agendamentoConfig = config['agendamento'] as Map<String, dynamic>? ?? {};
       
       _whatsappContatoController.text = agendamentoConfig['whatsappContato']?.toString() ?? '';
       _esconderValores = agendamentoConfig['esconderValores'] as bool? ?? false;
+      _modoSolicitacao = agendamentoConfig['modoSolicitacao'] as bool? ?? false;
       
       final bairrosData = (config['bairrosTaxiDogV2'] ?? agendamentoConfig['bairrosTaxiDogV2']) as List<dynamic>?;
       
@@ -75,6 +83,9 @@ class _ConfiguracoesAgendaPageState extends State<ConfiguracoesAgendaPage> {
       // Horário de Atendimento
       final hAbertura = agendamentoConfig['horarioAbertura']?.toString() ?? '08:00';
       final hFechamento = agendamentoConfig['horarioFechamento']?.toString() ?? '18:00';
+      _intervaloSlots = agendamentoConfig['intervaloSlots'] != null 
+          ? int.tryParse(agendamentoConfig['intervaloSlots'].toString()) ?? 30 
+          : 30;
 
       try {
         final partsA = hAbertura.split(':');
@@ -100,8 +111,10 @@ class _ConfiguracoesAgendaPageState extends State<ConfiguracoesAgendaPage> {
       agendamentoConfig['horariosIndisponiveis'] = _horariosIndisponiveis;
       agendamentoConfig['whatsappContato'] = _whatsappContatoController.text.trim();
       agendamentoConfig['esconderValores'] = _esconderValores;
+      agendamentoConfig['modoSolicitacao'] = _modoSolicitacao;
       agendamentoConfig['horarioAbertura'] = '${_horarioAbertura.hour.toString().padLeft(2, '0')}:${_horarioAbertura.minute.toString().padLeft(2, '0')}';
       agendamentoConfig['horarioFechamento'] = '${_horarioFechamento.hour.toString().padLeft(2, '0')}:${_horarioFechamento.minute.toString().padLeft(2, '0')}';
+      agendamentoConfig['intervaloSlots'] = _intervaloSlots;
       
       novasConfigs['agendamento'] = agendamentoConfig;
       novasConfigs['bairrosTaxiDogV2'] = _bairrosConfig;
@@ -110,7 +123,14 @@ class _ConfiguracoesAgendaPageState extends State<ConfiguracoesAgendaPage> {
       final novaEmpresa = empresa.copyWith(configuracoes: novasConfigs);
       
       try {
-        await dataService.atualizarDadosEmpresa(novaEmpresa);
+        final authService = Provider.of<AuthService>(context, listen: false);
+        
+        // 1. Atualizar no AuthService (IMPORTANTE: Garante localStorage + Firebase)
+        await authService.atualizarEmpresa(novaEmpresa);
+        
+        // 2. Sincronizar com DataService para manter UI consistente
+        dataService.setEmpresaAtual(novaEmpresa);
+
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Configurações salvas com sucesso!'), backgroundColor: Colors.green),
@@ -883,6 +903,48 @@ class _ConfiguracoesAgendaPageState extends State<ConfiguracoesAgendaPage> {
           ),
         ),
         const SizedBox(height: 16),
+        // Modo Solicitação
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: _modoSolicitacao ? Colors.amber.withOpacity(0.08) : Colors.white.withOpacity(0.05),
+            borderRadius: BorderRadius.circular(20),
+            border: _modoSolicitacao ? Border.all(color: Colors.amber.withOpacity(0.3)) : null,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(_modoSolicitacao ? Icons.mail_outline_rounded : Icons.calendar_view_day_rounded, color: Colors.amber, size: 24),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Text(
+                      'Modo Solicitação (Sem Agenda Visível)',
+                      style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  Switch(
+                    value: _modoSolicitacao,
+                    onChanged: (v) => setState(() => _modoSolicitacao = v),
+                    activeColor: Colors.amber,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                _modoSolicitacao
+                    ? '✅ ATIVO — O cliente escolhe data e hora livremente, sem ver a disponibilidade. Você confirma cada solicitação manualmente.'
+                    : '❌ DESATIVADO — O cliente vê os horários disponíveis na agenda inteligente e agenda diretamente.',
+                style: TextStyle(
+                  color: _modoSolicitacao ? Colors.amber[200] : Colors.white60,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
         // Horário de Atendimento
         Container(
           padding: const EdgeInsets.all(20),
@@ -933,6 +995,62 @@ class _ConfiguracoesAgendaPageState extends State<ConfiguracoesAgendaPage> {
                     ),
                   ),
                 ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        // Intervalo entre Slots
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.05),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                   Icon(Icons.grid_view_rounded, color: Colors.purpleAccent, size: 24),
+                  const SizedBox(width: 12),
+                  const Text(
+                    'Intervalo de Horários na Agenda',
+                    style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Define de quanto em quanto tempo os horários aparecem para o cliente.',
+                style: TextStyle(color: Colors.white60, fontSize: 12),
+              ),
+              const SizedBox(height: 16),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.03),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.white.withOpacity(0.08)),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<int>(
+                    value: _intervaloSlots,
+                    dropdownColor: const Color(0xFF1E293B),
+                    style: const TextStyle(color: Colors.white, fontSize: 14),
+                    isExpanded: true,
+                    items: [10, 15, 20, 30, 45, 60]
+                      .map((val) => DropdownMenuItem(
+                        value: val,
+                        child: Text('$val Minutos'),
+                      ))
+                      .toList(),
+                    onChanged: (val) {
+                      if (val != null) setState(() => _intervaloSlots = val);
+                    },
+                  ),
+                ),
               ),
             ],
           ),

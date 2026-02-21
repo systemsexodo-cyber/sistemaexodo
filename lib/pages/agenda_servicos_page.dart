@@ -139,6 +139,11 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                   tooltip: 'Sincronizar Agora',
                 ),
                 IconButton(
+                  icon: const Icon(Icons.map_outlined, color: Colors.lightGreenAccent),
+                  onPressed: () => _mostrarMapaDisponibilidade(context, dataService),
+                  tooltip: 'Mapa de Disponibilidade',
+                ),
+                IconButton(
                   icon: const Icon(Icons.settings),
                   onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ConfiguracoesAgendaPage())),
                   tooltip: 'Configurações de Agendamento',
@@ -4210,6 +4215,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                       pet: pet,
                       dataAgendamento: dataHoraCompleta,
                       duracaoMinutos: duracaoMinutos,
+                      intervaloMinutos: servicoSelecionado?.intervaloMinutos ?? 0,
                       observacoes: observacoesController.text.trim().isEmpty
                           ? null
                           : observacoesController.text.trim(),
@@ -4881,6 +4887,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                       pet: primeiroPet,
                       dataAgendamento: dataHoraCompleta,
                       duracaoMinutos: duracaoMinutos,
+                      intervaloMinutos: servicoSelecionado?.intervaloMinutos ?? 0,
                       observacoes: observacoesController.text.trim().isEmpty
                           ? null
                           : observacoesController.text.trim(),
@@ -4911,6 +4918,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                         pet: petExtra,
                         dataAgendamento: dataHoraCompleta,
                         duracaoMinutos: duracaoMinutos,
+                        intervaloMinutos: servicoSelecionado?.intervaloMinutos ?? 0,
                         observacoes: observacoesController.text.trim().isEmpty
                             ? null
                             : observacoesController.text.trim(),
@@ -6180,6 +6188,445 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
     }
     
     return null;
+  }
+
+  /// Mapa Visual de Disponibilidade do Dia
+  void _mostrarMapaDisponibilidade(BuildContext context, DataService dataService) {
+    final config = dataService.empresaAtual?.configuracoes?['agendamento'] as Map<String, dynamic>?;
+    final hAberturaStr = config?['horarioAbertura']?.toString() ?? '08:00';
+    final hFechamentoStr = config?['horarioFechamento']?.toString() ?? '18:00';
+    final intervaloSlots = config?['intervaloSlots'] != null 
+        ? int.tryParse(config!['intervaloSlots'].toString()) ?? 30 
+        : 30;
+    
+    final partsA = hAberturaStr.split(':');
+    final partsF = hFechamentoStr.split(':');
+    final horaAbertura = int.tryParse(partsA[0]) ?? 8;
+    final minAbertura = int.tryParse(partsA.length > 1 ? partsA[1] : '0') ?? 0;
+    final horaFechamento = int.tryParse(partsF[0]) ?? 18;
+    final minFechamento = int.tryParse(partsF.length > 1 ? partsF[1] : '0') ?? 0;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            DateTime dataMapa = _dataSelecionada;
+
+            // Agendamentos do dia (excluindo cancelados)
+            final inicioDia = DateTime(dataMapa.year, dataMapa.month, dataMapa.day);
+            final fimDia = inicioDia.add(const Duration(days: 1));
+            final agendamentosDoDia = dataService.getAgendamentosPorPeriodo(inicioDia, fimDia)
+                .where((a) => a.status != 'Cancelado')
+                .toList()
+              ..sort((a, b) => a.dataAgendamento.compareTo(b.dataAgendamento));
+
+            // Calcular minutos totais do dia de trabalho
+            final minutoInicio = horaAbertura * 60 + minAbertura;
+            final minutoFim = horaFechamento * 60 + minFechamento;
+            final totalMinutosDia = minutoFim - minutoInicio;
+            if (totalMinutosDia <= 0) return const SizedBox();
+
+            // Construir os blocos ocupados (ranges de minutos)
+            List<Map<String, dynamic>> blocosOcupados = [];
+            
+            for (final ag in agendamentosDoDia) {
+              final agMin = ag.dataAgendamento.hour * 60 + ag.dataAgendamento.minute;
+              final duracao = ag.duracaoMinutos;
+              final intervalo = ag.intervaloMinutos;
+              final fimReal = agMin + duracao;
+              final fimComIntervalo = fimReal + intervalo;
+              
+              final nomeCliente = ag.cliente?.nome ?? ag.clienteNome ?? 'Sem cliente';
+              final nomePet = ag.pet?.nome ?? ag.petNome;
+              final servico = ag.servico?.nome ?? 'Serviço';
+              
+              Color corBloco;
+              switch (ag.status) {
+                case 'Em Andamento':
+                  corBloco = Colors.amber;
+                  break;
+                case 'Concluído':
+                  corBloco = Colors.green[700]!;
+                  break;
+                case 'Aguardando Confirmação':
+                  corBloco = Colors.orange;
+                  break;
+                default:
+                  corBloco = Colors.blueAccent;
+              }
+
+              blocosOcupados.add({
+                'inicio': agMin,
+                'fim': fimReal,
+                'fimComIntervalo': fimComIntervalo,
+                'cor': corBloco,
+                'titulo': nomeCliente,
+                'subtitulo': nomePet != null ? '$servico • $nomePet' : servico,
+                'status': ag.status,
+                'duracao': duracao,
+                'intervalo': intervalo,
+              });
+            }
+
+            blocosOcupados.sort((a, b) => (a['inicio'] as int).compareTo(b['inicio'] as int));
+
+            // Construir timeline mista: blocos ocupados + grades de slots livres
+            List<Map<String, dynamic>> timeline = [];
+            int cursor = minutoInicio;
+
+            for (final bloco in blocosOcupados) {
+              final blocoInicio = bloco['inicio'] as int;
+              final blocoFimComIntervalo = bloco['fimComIntervalo'] as int;
+
+              if (blocoInicio > cursor) {
+                // Lacuna livre — gerar slots individuais
+                timeline.add({
+                  'tipo': 'slots_livres',
+                  'inicio': cursor,
+                  'fim': blocoInicio,
+                });
+              }
+              // Bloco de agendamento
+              timeline.add({
+                'tipo': 'agendamento',
+                ...bloco,
+              });
+              // Bloco de pausa (se houver intervalo)
+              if ((bloco['intervalo'] as int) > 0) {
+                timeline.add({
+                  'tipo': 'pausa',
+                  'inicio': bloco['fim'] as int,
+                  'fim': blocoFimComIntervalo,
+                  'duracao': bloco['intervalo'] as int,
+                });
+              }
+              if (blocoFimComIntervalo > cursor) cursor = blocoFimComIntervalo;
+            }
+
+            // Lacuna final
+            if (cursor < minutoFim) {
+              timeline.add({
+                'tipo': 'slots_livres',
+                'inicio': cursor,
+                'fim': minutoFim,
+              });
+            }
+
+            String minToTime(int min) {
+              final h = (min ~/ 60).toString().padLeft(2, '0');
+              final m = (min % 60).toString().padLeft(2, '0');
+              return '$h:$m';
+            }
+
+            final diaFormatado = '${dataMapa.day.toString().padLeft(2, '0')}/${dataMapa.month.toString().padLeft(2, '0')}/${dataMapa.year}';
+            final diasSemana = ['', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
+            final diaSemanaStr = diasSemana[dataMapa.weekday];
+            
+            // Contagens
+            int slotsLivres = 0;
+            for (final item in timeline) {
+              if (item['tipo'] == 'slots_livres') {
+                final ini = item['inicio'] as int;
+                final fi = item['fim'] as int;
+                for (int m = ini; m < fi; m += intervaloSlots) {
+                  slotsLivres++;
+                }
+              }
+            }
+
+            return Container(
+              height: MediaQuery.of(context).size.height * 0.85,
+              decoration: const BoxDecoration(
+                color: Color(0xFF0F172A),
+                borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+              ),
+              child: Column(
+                children: [
+                  // Handle
+                  Container(
+                    width: 40,
+                    height: 4,
+                    margin: const EdgeInsets.only(top: 12, bottom: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.white24,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  // Título + Navegação
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [Colors.green.withOpacity(0.3), Colors.teal.withOpacity(0.1)],
+                            ),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Icon(Icons.map_rounded, color: Colors.greenAccent, size: 24),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Mapa de Disponibilidade',
+                                style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                              ),
+                              Text(
+                                '$diaSemanaStr, $diaFormatado',
+                                style: const TextStyle(color: Colors.white60, fontSize: 13),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.chevron_left, color: Colors.white70),
+                          onPressed: () {
+                            setModalState(() {
+                              dataMapa = dataMapa.subtract(const Duration(days: 1));
+                              setState(() => _dataSelecionada = dataMapa);
+                            });
+                          },
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.chevron_right, color: Colors.white70),
+                          onPressed: () {
+                            setModalState(() {
+                              dataMapa = dataMapa.add(const Duration(days: 1));
+                              setState(() => _dataSelecionada = dataMapa);
+                            });
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                  // Resumo compacto
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+                    child: Row(
+                      children: [
+                        _buildMapaResumoChip(Icons.check_circle_outline, '$slotsLivres livres', Colors.greenAccent),
+                        const SizedBox(width: 8),
+                        _buildMapaResumoChip(Icons.event_busy, '${agendamentosDoDia.length} agendados', Colors.blueAccent),
+                        const SizedBox(width: 8),
+                        _buildMapaResumoChip(Icons.access_time, '${minToTime(minutoInicio)} - ${minToTime(minutoFim)}', Colors.white54),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  const Divider(color: Colors.white12, height: 1),
+                  // Timeline com slots
+                  Expanded(
+                    child: ListView.builder(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      itemCount: timeline.length,
+                      itemBuilder: (context, index) {
+                        final item = timeline[index];
+                        final tipo = item['tipo'] as String;
+
+                        if (tipo == 'agendamento') {
+                          // Card do agendamento
+                          final inicio = item['inicio'] as int;
+                          final fim = item['fim'] as int;
+                          final cor = item['cor'] as Color;
+                          final titulo = item['titulo'] as String;
+                          final subtitulo = item['subtitulo'] as String;
+                          final status = item['status'] as String;
+                          final dur = item['duracao'] as int;
+
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 6),
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                            decoration: BoxDecoration(
+                              color: cor.withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: cor.withOpacity(0.4)),
+                            ),
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 4,
+                                  height: 36,
+                                  decoration: BoxDecoration(
+                                    color: cor,
+                                    borderRadius: BorderRadius.circular(2),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Icon(Icons.person, color: cor, size: 18),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        titulo,
+                                        style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                      Text(
+                                        subtitulo,
+                                        style: const TextStyle(color: Colors.white54, fontSize: 11),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    Text(
+                                      '${minToTime(inicio)} - ${minToTime(fim)}',
+                                      style: TextStyle(color: cor, fontSize: 12, fontWeight: FontWeight.bold),
+                                    ),
+                                    Text(
+                                      '${dur}min • $status',
+                                      style: const TextStyle(color: Colors.white38, fontSize: 10),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          );
+                        } else if (tipo == 'pausa') {
+                          // Linha de pausa compacta
+                          final inicio = item['inicio'] as int;
+                          final dur = item['duracao'] as int;
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 6),
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.03),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: Colors.white.withOpacity(0.06)),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.coffee, color: Colors.white30, size: 14),
+                                const SizedBox(width: 8),
+                                Text(
+                                  'Pausa (${dur}min) • a partir de ${minToTime(inicio)}',
+                                  style: const TextStyle(color: Colors.white30, fontSize: 11),
+                                ),
+                              ],
+                            ),
+                          );
+                        } else {
+                          // === SLOTS LIVRES: Grade igual a do cliente ===
+                          final ini = item['inicio'] as int;
+                          final fi = item['fim'] as int;
+                          final slotsNesta = <int>[];
+                          for (int m = ini; m < fi; m += intervaloSlots) {
+                            slotsNesta.add(m);
+                          }
+
+                          if (slotsNesta.isEmpty) return const SizedBox();
+
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 8),
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.green.withOpacity(0.06),
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(color: Colors.green.withOpacity(0.15)),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    const Icon(Icons.event_available, color: Colors.greenAccent, size: 16),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      'Horários Disponíveis (${minToTime(ini)} - ${minToTime(fi)})',
+                                      style: const TextStyle(color: Colors.greenAccent, fontSize: 12, fontWeight: FontWeight.w600),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 10),
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  children: slotsNesta.map((slotMin) {
+                                    return InkWell(
+                                      onTap: () {
+                                        Navigator.pop(ctx);
+                                        final h = slotMin ~/ 60;
+                                        final m = slotMin % 60;
+                                        _mostrarDialogNovoAgendamento(
+                                          context,
+                                          dataService,
+                                          dataHoraPreSelecionada: DateTime(dataMapa.year, dataMapa.month, dataMapa.day, h, m),
+                                        );
+                                      },
+                                      borderRadius: BorderRadius.circular(10),
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                                        decoration: BoxDecoration(
+                                          color: Colors.green.withOpacity(0.12),
+                                          borderRadius: BorderRadius.circular(10),
+                                          border: Border.all(color: Colors.greenAccent.withOpacity(0.35)),
+                                        ),
+                                        child: Text(
+                                          minToTime(slotMin),
+                                          style: const TextStyle(
+                                            color: Colors.greenAccent,
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  }).toList(),
+                                ),
+                              ],
+                            ),
+                          );
+                        }
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildMapaResumoChip(IconData icon, String text, Color color) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 6),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: color.withOpacity(0.2)),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, color: color, size: 14),
+            const SizedBox(width: 4),
+            Flexible(
+              child: Text(
+                text,
+                style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w600),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   /// Gera e exibe o link de agendamento online para a empresa atual

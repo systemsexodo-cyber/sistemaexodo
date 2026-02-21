@@ -380,33 +380,66 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
           const SizedBox(width: 8),
         ],
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          children: [
-            _buildStepper(primary, moduloPet),
-            const SizedBox(height: 32),
-            Container(
+      body: Column(
+        children: [
+          Expanded(
+            child: SingleChildScrollView(
               padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                color: _isDark ? _LojaPublicaStyle.cardColor : Colors.white,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.grey.withOpacity(0.2)),
+              child: Column(
+                children: [
+                  _buildWelcomeBanner(primary),
+                  _buildStepper(primary, moduloPet),
+                  const SizedBox(height: 32),
+                  Container(
+                    padding: const EdgeInsets.all(24),
+                    decoration: BoxDecoration(
+                      color: _isDark ? _LojaPublicaStyle.cardColor : Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.grey.withOpacity(0.2)),
+                    ),
+                    child: Form(
+                      key: _formKey,
+                      child: Column(
+                        children: [
+                          if (_agendamentosCarrinho.isNotEmpty) _buildResumoCarrinho(primary, esconderValores),
+                          _buildCurrentStepView(moduloPet, esconderValores),
+                        ],
+                      ),
+                    ),
+                  ),
+                  // Espaço extra no final para não ficar colado no rodapé se rolar tudo
+                  const SizedBox(height: 24),
+                ],
               ),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  children: [
-                    if (_agendamentosCarrinho.isNotEmpty) _buildResumoCarrinho(primary, esconderValores),
-                    _buildCurrentStepView(moduloPet, esconderValores),
-                  ],
+            ),
+          ),
+          // Rodapé Fixo com botões de navegação
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+            decoration: BoxDecoration(
+              color: _isDark ? _LojaPublicaStyle.cardColor : Colors.white,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.2),
+                  blurRadius: 15,
+                  offset: const Offset(0, -5),
+                ),
+              ],
+              border: Border(
+                top: BorderSide(
+                  color: _isDark ? Colors.white12 : Colors.black.withOpacity(0.05),
                 ),
               ),
             ),
-            const SizedBox(height: 32),
-            _buildNavigationButtons(primary, moduloPet),
-          ],
-        ),
+            child: SafeArea(
+              top: false,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 800), // Manter alinhado em telas largas
+                child: _buildNavigationButtons(primary, moduloPet),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -421,6 +454,59 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
           onPressed: () => setState(() => _isDark = !_isDark),
         ),
       ],
+    );
+  }
+
+  Widget _buildWelcomeBanner(Color primary) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(24),
+      margin: const EdgeInsets.only(bottom: 32),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [primary, primary.withOpacity(0.8)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: primary.withOpacity(0.3),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.auto_awesome_rounded, color: Colors.white, size: 28),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'É um prazer te ver por aqui!',
+                  style: GoogleFonts.outfit(
+                    color: Colors.white,
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'Escolha o serviço e o melhor horário para você. Nossa equipe está pronta para te atender com toda dedicação!',
+            style: GoogleFonts.inter(
+              color: Colors.white.withOpacity(0.9),
+              fontSize: 14,
+              height: 1.5,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -723,89 +809,110 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       else if (servicos.isEmpty)
         _buildEmptyState('Nenhum serviço disponível no momento.')
       else
-          ListView.separated(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: servicos.length,
-            separatorBuilder: (context, index) => const SizedBox(height: 16),
-            itemBuilder: (context, index) {
-              final servico = servicos[index];
-              bool isSelected = _servicoIdSelecionado == servico.id;
+          LayoutBuilder(
+            builder: (context, constraints) {
+              // Em telas maiores que 900px, exibimos 2 colunas para aproveitar o espaço horizontal
+              final crossAxisCount = constraints.maxWidth > 900 ? 2 : 1;
+              
+              return GridView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: servicos.length,
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: crossAxisCount,
+                  crossAxisSpacing: 16,
+                  mainAxisSpacing: 16,
+                  // Mantemos uma altura fixa para os cards para garantir o alinhamento no grid
+                  mainAxisExtent: 110, 
+                ),
+                itemBuilder: (context, index) {
+                  final servico = servicos[index];
+                  bool isSelected = _servicoIdSelecionado == servico.id;
 
-              return InkWell(
-                onTap: () => setState(() => _servicoIdSelecionado = servico.id),
-                borderRadius: BorderRadius.circular(20),
-                child: Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: isSelected ? _primaryColor.withOpacity(0.15) : (_isDark ? Colors.white.withOpacity(0.03) : Colors.grey[50]),
+                  return InkWell(
+                    onTap: () => setState(() => _servicoIdSelecionado = servico.id),
                     borderRadius: BorderRadius.circular(20),
-                    border: Border.all(
-                      color: isSelected ? _primaryColor : (_isDark ? Colors.white.withOpacity(0.1) : Colors.grey[200]!),
-                      width: 2,
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: isSelected ? _primaryColor : Colors.white.withOpacity(0.05),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Icon(
-                          _getIconForServico(servico.nome),
-                          color: isSelected ? Colors.white : (_isDark ? _LojaPublicaStyle.textSecondaryColor : Colors.grey[500]),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12), // Reduzi um pouco o padding interno para caber melhor em 2 colunas
+                      decoration: BoxDecoration(
+                        color: isSelected ? _primaryColor.withOpacity(0.15) : (_isDark ? Colors.white.withOpacity(0.03) : Colors.grey[50]),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                          color: isSelected ? _primaryColor : (_isDark ? Colors.white.withOpacity(0.1) : Colors.grey[200]!),
+                          width: 2,
                         ),
                       ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            // Nome do Serviço (Nome limpo conforme solicitado)
-                            Text(
-                              servico.nome,
-                              style: TextStyle(
-                                color: _isDark ? Colors.white : Colors.black87, 
-                                fontWeight: FontWeight.bold, 
-                                fontSize: 18
-                              ),
-                            ),
-                            if (servico.descricao?.isNotEmpty ?? false) ...[
-                              const SizedBox(height: 4),
-                              Text(
-                                servico.descricao!,
-                                style: TextStyle(color: _isDark ? _LojaPublicaStyle.textSecondaryColor : Colors.grey[600], fontSize: 13),
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.end,
+                      child: Row(
                         children: [
-                           // Removido breakdown detalhado para evitar duplicidade visual
-                          if (!esconderValores)
-                            Text(
-                              'R\$ ${servico.precoTotal.toStringAsFixed(2)}',
-                              style: GoogleFonts.outfit(
-                                color: isSelected ? Colors.white : _primaryColor,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 18,
-                              ),
+                          Container(
+                            padding: const EdgeInsets.all(10), // Ajuste leve no ícone
+                            decoration: BoxDecoration(
+                              color: isSelected ? _primaryColor : Colors.white.withOpacity(0.05),
+                              borderRadius: BorderRadius.circular(12),
                             ),
-                          if (servico.duracaoPadraoMinutos != null)
-                            Text(
-                              '${servico.duracaoPadraoMinutos} min',
-                              style: TextStyle(color: _isDark ? _LojaPublicaStyle.textSecondaryColor : Colors.grey[500], fontSize: 11),
+                            child: Icon(
+                              _getIconForServico(servico.nome),
+                              color: isSelected ? Colors.white : (_isDark ? _LojaPublicaStyle.textSecondaryColor : Colors.grey[500]),
+                              size: 20, // Ajuste leve no tamanho do ícone
                             ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisAlignment: MainAxisAlignment.center, // Centralizar verticalmente
+                              children: [
+                                Text(
+                                  servico.nome,
+                                  maxLines: 1, // Limitar a 1 linha para manter o grid alinhado
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: _isDark ? Colors.white : Colors.black87, 
+                                    fontWeight: FontWeight.bold, 
+                                    fontSize: 16 // Reduzi ligeiramente para comportar em 2 colunas
+                                  ),
+                                ),
+                                if (servico.descricao?.isNotEmpty ?? false) ...[
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    servico.descricao!,
+                                    maxLines: 2, // Até 2 linhas de descrição
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: _isDark ? _LojaPublicaStyle.textSecondaryColor : Colors.grey[600], 
+                                      fontSize: 12
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              if (!esconderValores)
+                                Text(
+                                  'R\$ ${servico.precoTotal.toStringAsFixed(2)}',
+                                  style: GoogleFonts.outfit(
+                                    color: isSelected ? (_isDark ? Colors.white : _primaryColor) : _primaryColor,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 16,
+                                  ),
+                                ),
+                              if (servico.duracaoPadraoMinutos != null)
+                                Text(
+                                  '${servico.duracaoPadraoMinutos} min',
+                                  style: TextStyle(color: _isDark ? _LojaPublicaStyle.textSecondaryColor : Colors.grey[500], fontSize: 10),
+                                ),
+                            ],
+                          ),
                         ],
                       ),
-                    ],
-                  ),
-                ),
+                    ),
+                  );
+                },
               );
             },
           ),
@@ -1791,153 +1898,286 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     // Gerar lista de horários respeitando limites da empresa
     final List<TimeOfDay> slots = [];
     
-    // Inicia no horário de abertura
+    // 1. Gerar slots base (conforme o intervalo configurado: 30m, 15m, etc)
     final partsA = hAberturaStr.split(':');
-    DateTime current = DateTime(2000, 1, 1, int.parse(partsA[0]), int.parse(partsA[1]));
+    DateTime current = DateTime((_dataSelecionada ?? DateTime.now()).year, (_dataSelecionada ?? DateTime.now()).month, (_dataSelecionada ?? DateTime.now()).day, int.parse(partsA[0]), int.parse(partsA[1]));
     
-    // Limite é o fechamento
     final partsF = hFechamentoStr.split(':');
-    final DateTime limit = DateTime(2000, 1, 1, int.parse(partsF[0]), int.parse(partsF[1]));
+    final DateTime limit = DateTime((_dataSelecionada ?? DateTime.now()).year, (_dataSelecionada ?? DateTime.now()).month, (_dataSelecionada ?? DateTime.now()).day, int.parse(partsF[0]), int.parse(partsF[1]));
 
-    final duracao = dataService.servicos.firstWhere(
+    final intervaloSlots = agendamentoConfig?['intervaloSlots'] != null 
+        ? int.tryParse(agendamentoConfig!['intervaloSlots'].toString()) ?? 30 
+        : 30;
+
+    while (current.isBefore(limit) || current.isAtSameMomentAs(limit)) {
+      slots.add(TimeOfDay(hour: current.hour, minute: current.minute));
+      current = current.add(Duration(minutes: intervaloSlots));
+    }
+
+    // 2. ENCAIXE INTELIGENTE: Adicionar horários baseados no fim dos agendamentos existentes
+    // Isso permite que se um serviço termina 18:10, o sistema ofereça 18:10 como opção.
+    final selDate = _dataSelecionada ?? DateTime.now();
+    final dataFilter = DateTime(selDate.year, selDate.month, selDate.day);
+    final agendamentosDoDia = dataService.agendamentosServico.where((a) {
+      final dataA = DateTime(a.dataAgendamento.year, a.dataAgendamento.month, a.dataAgendamento.day);
+      return dataA.isAtSameMomentAs(dataFilter) && a.status != 'Cancelado';
+    }).toList();
+
+    for (final agd in agendamentosDoDia) {
+      final fimEfetivo = agd.dataTerminoEfetiva; // Já inclui a pausa
+      final timeFim = TimeOfDay(hour: fimEfetivo.hour, minute: fimEfetivo.minute);
+      
+      // Se o horário de término está dentro do expediente, é um potencial horário de início
+      double hFimDouble = _timeToDouble('${fimEfetivo.hour}:${fimEfetivo.minute}');
+      if (hFimDouble >= hAbertura && hFimDouble <= hFechamento) {
+        // Evitar duplicatas próximas (se já tem 18:15, não precisa de 18:13)
+        bool jaExiste = slots.any((s) {
+          final diff = (s.hour * 60 + s.minute) - (timeFim.hour * 60 + timeFim.minute);
+          return diff.abs() < 5; // Tolerância de 5 minutos
+        });
+        
+        if (!jaExiste) {
+          slots.add(timeFim);
+        }
+      }
+    }
+
+    // Ordenar os slots cronologicamente
+    slots.sort((a, b) => (a.hour * 60 + a.minute).compareTo(b.hour * 60 + b.minute));
+
+    final servicoSelecionado = dataService.servicos.firstWhere(
       (s) => s.id == _servicoIdSelecionado, 
       orElse: () => dataService.servicos.first
-    ).duracaoPadraoMinutos ?? 60;
+    );
+    final duracao = servicoSelecionado.duracaoPadraoMinutos ?? 60;
+    final intervalo = servicoSelecionado.intervaloMinutos ?? 0;
 
-    while (current.isBefore(limit)) {
-      // Só adicionar se o serviço couber dentro do horário de funcionamento
-      if (current.add(Duration(minutes: duracao)).isBefore(limit) || 
-          current.add(Duration(minutes: duracao)).isAtSameMomentAs(limit)) {
-        slots.add(TimeOfDay(hour: current.hour, minute: current.minute));
+    // 3. FILTRAR: Manter apenas os que estão realmente disponíveis para agendar
+    final List<Map<String, dynamic>> slotsDisponiveis = [];
+    
+    for (final time in slots) {
+      final checkTime = DateTime(
+        selDate.year,
+        selDate.month,
+        selDate.day,
+        time.hour,
+        time.minute,
+      );
+
+      bool isBloqueadoAdmin = _isHorarioBloqueadoAdmin(dataService, checkTime, duracao);
+      bool isDisponivel = dataService.checkDisponibilidade(
+        checkTime, 
+        duracao, 
+        intervaloMinutos: intervalo,
+        ignorarPendentes: false
+      );
+
+      if (isDisponivel && !isBloqueadoAdmin) {
+        slotsDisponiveis.add({
+          'time': time,
+          'dateTime': checkTime,
+        });
       }
-      current = current.add(const Duration(minutes: 30));
+    }
+
+    if (slotsDisponiveis.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            children: [
+              Icon(Icons.event_busy_rounded, color: Colors.white24, size: 48),
+              const SizedBox(height: 16),
+              const Text(
+                'Nenhum horário disponível para esta data.\nTente outro dia ou verifique o expediente.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.white54, fontSize: 13),
+              ),
+            ],
+          ),
+        ),
+      );
     }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        Row(
+          children: [
+            const Icon(Icons.auto_awesome_rounded, color: Colors.amberAccent, size: 16),
+            const SizedBox(width: 8),
+            const Expanded(
+              child: Text(
+                'Horários Disponíveis (Já adaptados às pausas)',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
         const Text(
-          'Horários Disponíveis para esta Data',
-          style: TextStyle(
-            color: Colors.white70,
-            fontSize: 14,
-            fontWeight: FontWeight.bold,
-          ),
+          'Os horários abaixo são calculados para que você seja atendido sem esperas.',
+          style: TextStyle(color: Colors.white38, fontSize: 11),
         ),
         const SizedBox(height: 16),
-        Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          children: slots.map((time) {
+        GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: slotsDisponiveis.length,
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 4,
+            mainAxisExtent: 50,
+            crossAxisSpacing: 12,
+            mainAxisSpacing: 12,
+          ),
+          itemBuilder: (context, index) {
+            final item = slotsDisponiveis[index];
+            final TimeOfDay time = item['time'];
             final isSelected = _horaSelecionada?.hour == time.hour && _horaSelecionada?.minute == time.minute;
-            
-            final checkTime = DateTime(
-              _dataSelecionada!.year,
-              _dataSelecionada!.month,
-              _dataSelecionada!.day,
-              time.hour,
-              time.minute,
-            );
-
-            // Verificar disponibilidade
-            bool isBloqueadoAdmin = _isHorarioBloqueadoAdmin(dataService, checkTime, duracao);
-            bool isDisponivel = dataService.checkDisponibilidade(checkTime, duracao, ignorarPendentes: false);
-            bool disponivelReal = isDisponivel && !isBloqueadoAdmin;
 
             return InkWell(
-              onTap: disponivelReal ? () {
+              onTap: () {
                 setState(() {
                   _horaSelecionada = time;
                   _verificandoDisponibilidade = true;
                 });
-                // Simular verificação rápida para feedback visual
                 Future.delayed(const Duration(milliseconds: 600), () {
                   if (mounted) setState(() => _verificandoDisponibilidade = false);
                 });
-              } : null,
+              },
               borderRadius: BorderRadius.circular(12),
               child: Container(
-                width: (MediaQuery.of(context).size.width - 64) / 4,
-                padding: const EdgeInsets.symmetric(vertical: 12),
                 decoration: BoxDecoration(
-                  color: isSelected 
-                      ? _primaryColor 
-                      : (disponivelReal ? Colors.white.withOpacity(0.05) : Colors.transparent),
+                  color: isSelected ? _primaryColor : Colors.white.withOpacity(0.05),
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(
-                    color: isSelected 
-                        ? _primaryColor 
-                        : (disponivelReal ? Colors.white.withOpacity(0.1) : Colors.white.withOpacity(0.03)),
+                    color: isSelected ? _primaryColor : Colors.white.withOpacity(0.1),
                   ),
                 ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}',
-                      style: TextStyle(
-                        color: isSelected 
-                            ? Colors.white 
-                            : (disponivelReal ? Colors.white : Colors.white24),
-                        fontWeight: isSelected || disponivelReal ? FontWeight.bold : FontWeight.normal,
-                        decoration: disponivelReal ? null : TextDecoration.lineThrough,
-                      ),
-                    ),
-                    if (!disponivelReal)
-                      const Text(
-                        'Ocupado',
-                        style: TextStyle(color: Colors.white10, fontSize: 9),
-                      ),
-                  ],
+                alignment: Alignment.center,
+                child: Text(
+                  '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                    fontSize: 15,
+                  ),
                 ),
               ),
             );
-          }).toList(),
+          },
         ),
       ],
     );
   }
 
   Widget _buildStepHorario() {
+    final dataService = Provider.of<DataService>(context);
+    final agendamentoConfig = dataService.empresaAtual?.configuracoes?['agendamento'] as Map<String, dynamic>?;
+    final bool modoSolicitacao = agendamentoConfig?['modoSolicitacao'] as bool? ?? false;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _buildStepTitle('Quando podemos receber vocês?', 'Escolha a data e veja os horários disponíveis.'),
-        const SizedBox(height: 32),
-        Row(
-          children: [
-            Expanded(
-              child: _buildPickerTile(
-                label: 'Data',
-                value: _dataSelecionada == null 
-                    ? 'Selecionar' 
-                    : DateFormat('dd/MM/yyyy').format(_dataSelecionada!),
-                icon: Icons.calendar_today_rounded,
-                onTap: _pickDate,
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: _buildPickerTile(
-                label: 'Horário Escolhido',
-                value: _horaSelecionada == null 
-                    ? '--:--' 
-                    : '${_horaSelecionada!.hour.toString().padLeft(2, '0')}:${_horaSelecionada!.minute.toString().padLeft(2, '0')}',
-                icon: Icons.access_time_rounded,
-                onTap: _pickTime, // Mantém opção de picker manual se quiser
-              ),
-            ),
-          ],
+        _buildStepTitle(
+          modoSolicitacao 
+              ? 'Quando você gostaria de ser atendido?' 
+              : 'Quando podemos receber vocês?',
+          modoSolicitacao 
+              ? 'Escolha a data e o horário de sua preferência. Confirmaremos sua solicitação em breve!' 
+              : 'Escolha a data e veja os horários disponíveis.',
         ),
-        
-        if (_dataSelecionada != null) ...[
-          const SizedBox(height: 32),
-          _buildHorariosGrid(),
-        ],
-
         const SizedBox(height: 32),
-        if (_dataSelecionada != null && _horaSelecionada != null)
-          _buildDisponibilidadeCheck(),
+
+        if (modoSolicitacao) ...[
+          // === MODO SOLICITAÇÃO: Só date picker + time picker livre ===
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.amber.withOpacity(0.08),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: Colors.amber.withOpacity(0.2)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.info_outline_rounded, color: Colors.amberAccent, size: 20),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Sua solicitação será analisada e confirmada pela nossa equipe.',
+                    style: TextStyle(color: Colors.amber[200], fontSize: 12, height: 1.4),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+          Row(
+            children: [
+              Expanded(
+                child: _buildPickerTile(
+                  label: 'Data Desejada',
+                  value: _dataSelecionada == null 
+                      ? 'Selecionar' 
+                      : DateFormat('dd/MM/yyyy').format(_dataSelecionada!),
+                  icon: Icons.calendar_today_rounded,
+                  onTap: _pickDate,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: _buildPickerTile(
+                  label: 'Horário Desejado',
+                  value: _horaSelecionada == null 
+                      ? 'Selecionar' 
+                      : '${_horaSelecionada!.hour.toString().padLeft(2, '0')}:${_horaSelecionada!.minute.toString().padLeft(2, '0')}',
+                  icon: Icons.access_time_rounded,
+                  onTap: _pickTime,
+                ),
+              ),
+            ],
+          ),
+        ] else ...[
+          // === MODO AGENDA INTELIGENTE: Grade de disponibilidade ===
+          Row(
+            children: [
+              Expanded(
+                child: _buildPickerTile(
+                  label: 'Data',
+                  value: _dataSelecionada == null 
+                      ? 'Selecionar' 
+                      : DateFormat('dd/MM/yyyy').format(_dataSelecionada!),
+                  icon: Icons.calendar_today_rounded,
+                  onTap: _pickDate,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: _buildPickerTile(
+                  label: 'Horário Escolhido',
+                  value: _horaSelecionada == null 
+                      ? '--:--' 
+                      : '${_horaSelecionada!.hour.toString().padLeft(2, '0')}:${_horaSelecionada!.minute.toString().padLeft(2, '0')}',
+                  icon: Icons.access_time_rounded,
+                  onTap: _pickTime,
+                ),
+              ),
+            ],
+          ),
+          
+          if (_dataSelecionada != null) ...[
+            const SizedBox(height: 32),
+            _buildHorariosGrid(),
+          ],
+
+          const SizedBox(height: 32),
+          if (_dataSelecionada != null && _horaSelecionada != null)
+            _buildDisponibilidadeCheck(),
+        ],
       ],
     );
   }
@@ -1966,10 +2206,10 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       final hFechamento = _timeToDouble(hFechamentoStr);
       
       final double hInicio = inicio.hour + (inicio.minute / 60.0);
-      final double hFim = hInicio + (duracaoMinutos / 60.0);
       
-      // Se começar antes de abrir ou terminar depois de fechar, está bloqueado
-      if (hInicio < hAbertura || hFim > hFechamento) {
+      // Se começar DEPOIS de fechar ou ANTES de abrir, está bloqueado.
+      // Permitimos iniciar EXATAMENTE no horário de fechamento.
+      if (hInicio < hAbertura || hInicio > hFechamento) {
         return true;
       }
 
@@ -2068,12 +2308,22 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       _horaSelecionada!.minute,
     );
     
-    final duracao = dataService.servicos.firstWhere((s) => s.id == _servicoIdSelecionado, orElse: () => dataService.servicos.first).duracaoPadraoMinutos ?? 60;
+    final servicoSelecionado = dataService.servicos.firstWhere(
+      (s) => s.id == _servicoIdSelecionado, 
+      orElse: () => dataService.servicos.first
+    );
+    final duracao = servicoSelecionado.duracaoPadraoMinutos ?? 60;
+    final intervalo = servicoSelecionado.intervaloMinutos ?? 0;
     
     // Verificar se é um horário bloqueado administrativamente (para mensagem específica)
     bool isBloqueadoAdmin = _isHorarioBloqueadoAdmin(dataService, inicio, duracao);
 
-    bool disponivel = dataService.checkDisponibilidade(inicio, duracao, ignorarPendentes: false);
+    bool disponivel = dataService.checkDisponibilidade(
+      inicio, 
+      duracao, 
+      intervaloMinutos: intervalo,
+      ignorarPendentes: false
+    );
 
     return Container(
       padding: const EdgeInsets.all(20),
@@ -2420,22 +2670,27 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
 
     final dataService = Provider.of<DataService>(context, listen: false);
 
-    // Verificação extra de horário bloqueado administrativamente
-    try {
-      final inicio = DateTime(
-        _dataSelecionada!.year,
-        _dataSelecionada!.month,
-        _dataSelecionada!.day,
-        _horaSelecionada!.hour,
-        _horaSelecionada!.minute,
-      );
-      final duracao = dataService.servicos.firstWhere((s) => s.id == _servicoIdSelecionado, orElse: () => dataService.servicos.first).duracaoPadraoMinutos ?? 60;
-      
-      if (_isHorarioBloqueadoAdmin(dataService, inicio, duracao)) {
-        _showError('Este horário não está disponível para agendamentos. Por favor, escolha outro.');
-        return;
-      }
-    } catch (_) {}
+    // Verificação extra de horário bloqueado administrativamente (apenas no modo agenda inteligente)
+    final agendamentoConfig = dataService.empresaAtual?.configuracoes?['agendamento'] as Map<String, dynamic>?;
+    final bool modoSolicitacao = agendamentoConfig?['modoSolicitacao'] as bool? ?? false;
+
+    if (!modoSolicitacao) {
+      try {
+        final inicio = DateTime(
+          _dataSelecionada!.year,
+          _dataSelecionada!.month,
+          _dataSelecionada!.day,
+          _horaSelecionada!.hour,
+          _horaSelecionada!.minute,
+        );
+        final duracao = dataService.servicos.firstWhere((s) => s.id == _servicoIdSelecionado, orElse: () => dataService.servicos.first).duracaoPadraoMinutos ?? 60;
+        
+        if (_isHorarioBloqueadoAdmin(dataService, inicio, duracao)) {
+          _showError('Este horário não está disponível para agendamentos. Por favor, escolha outro.');
+          return;
+        }
+      } catch (_) {}
+    }
 
     setState(() => _enviando = true);
 
@@ -2537,6 +2792,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
             petNome: pet.nome,
             dataAgendamento: dataAgendamentoAtual,
             duracaoMinutos: servicoAtual.duracaoPadraoMinutos ?? 60,
+            intervaloMinutos: servicoAtual.intervaloMinutos ?? 0,
             status: 'Aguardando Confirmação',
             tipoEntrega: moduloPet ? _tipoEntrega : null,
             bairroEntrega: moduloPet ? (_bairroEntrega ?? _bairroController.text) : null,
@@ -2577,6 +2833,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
           petNome: moduloPet ? _petNomeController.text : null,
           dataAgendamento: dataAgendamentoAtual,
           duracaoMinutos: servicoAtual.duracaoPadraoMinutos ?? 60,
+          intervaloMinutos: servicoAtual.intervaloMinutos ?? 0,
           status: 'Aguardando Confirmação',
           tipoEntrega: moduloPet ? _tipoEntrega : null,
           bairroEntrega: moduloPet ? (_bairroEntrega ?? _bairroController.text) : null,
@@ -2785,23 +3042,27 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
 
     final dataService = Provider.of<DataService>(context, listen: false);
 
-    // Verificação de horário bloqueado administrativamente
-    try {
-      final inicio = DateTime(
-        _dataSelecionada!.year,
-        _dataSelecionada!.month,
-        _dataSelecionada!.day,
-        _horaSelecionada!.hour,
-        _horaSelecionada!.minute,
-      );
-      final duracao = dataService.servicos.firstWhere((s) => s.id == _servicoIdSelecionado, orElse: () => dataService.servicos.first).duracaoPadraoMinutos ?? 60;
-      
-      final config = dataService.empresaAtual?.configuracoes?['agendamento'] as Map<String, dynamic>?;
-      if (_isHorarioBloqueadoAdmin(dataService, inicio, duracao)) {
-        _showError('Este horário não está disponível para agendamentos.');
-        return;
-      }
-    } catch (_) {}
+    // Verificação de horário bloqueado administrativamente (apenas no modo agenda inteligente)
+    final agendConfig = dataService.empresaAtual?.configuracoes?['agendamento'] as Map<String, dynamic>?;
+    final bool modoSolicitacaoCarrinho = agendConfig?['modoSolicitacao'] as bool? ?? false;
+
+    if (!modoSolicitacaoCarrinho) {
+      try {
+        final inicio = DateTime(
+          _dataSelecionada!.year,
+          _dataSelecionada!.month,
+          _dataSelecionada!.day,
+          _horaSelecionada!.hour,
+          _horaSelecionada!.minute,
+        );
+        final duracao = dataService.servicos.firstWhere((s) => s.id == _servicoIdSelecionado, orElse: () => dataService.servicos.first).duracaoPadraoMinutos ?? 60;
+        
+        if (_isHorarioBloqueadoAdmin(dataService, inicio, duracao)) {
+          _showError('Este horário não está disponível para agendamentos.');
+          return;
+        }
+      } catch (_) {}
+    }
     final dataAgendamento = DateTime(
       _dataSelecionada!.year,
       _dataSelecionada!.month,
@@ -2845,6 +3106,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
           petNome: pet.nome,
           dataAgendamento: dataAgendamento,
           duracaoMinutos: servico.duracaoPadraoMinutos ?? 60,
+          intervaloMinutos: servico.intervaloMinutos ?? 0,
           status: 'Aguardando Confirmação',
           tipoEntrega: moduloPet ? _tipoEntrega : null,
           bairroEntrega: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _bairroEntrega : null,
@@ -2886,6 +3148,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
         petNome: moduloPet ? _petNomeController.text : null,
         dataAgendamento: dataAgendamento,
         duracaoMinutos: servico.duracaoPadraoMinutos ?? 60,
+        intervaloMinutos: servico.intervaloMinutos ?? 0,
         status: 'Aguardando Confirmação',
         tipoEntrega: moduloPet ? _tipoEntrega : null,
         bairroEntrega: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _bairroEntrega : null,
