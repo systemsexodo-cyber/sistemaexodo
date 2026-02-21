@@ -22,6 +22,9 @@ class _ConfiguracoesAgendaPageState extends State<ConfiguracoesAgendaPage> {
   List<Map<String, dynamic>> _horariosIndisponiveis = [];
   bool _isLoading = false;
 
+  TimeOfDay _horarioAbertura = const TimeOfDay(hour: 8, minute: 0);
+  TimeOfDay _horarioFechamento = const TimeOfDay(hour: 18, minute: 0);
+
   @override
   void initState() {
     super.initState();
@@ -68,6 +71,18 @@ class _ConfiguracoesAgendaPageState extends State<ConfiguracoesAgendaPage> {
       if (horariosData != null) {
         _horariosIndisponiveis = horariosData.map((e) => Map<String, dynamic>.from(e)).toList();
       }
+
+      // Horário de Atendimento
+      final hAbertura = agendamentoConfig['horarioAbertura']?.toString() ?? '08:00';
+      final hFechamento = agendamentoConfig['horarioFechamento']?.toString() ?? '18:00';
+
+      try {
+        final partsA = hAbertura.split(':');
+        _horarioAbertura = TimeOfDay(hour: int.parse(partsA[0]), minute: int.parse(partsA[1]));
+        
+        final partsF = hFechamento.split(':');
+        _horarioFechamento = TimeOfDay(hour: int.parse(partsF[0]), minute: int.parse(partsF[1]));
+      } catch (_) {}
     }
   }
 
@@ -85,6 +100,8 @@ class _ConfiguracoesAgendaPageState extends State<ConfiguracoesAgendaPage> {
       agendamentoConfig['horariosIndisponiveis'] = _horariosIndisponiveis;
       agendamentoConfig['whatsappContato'] = _whatsappContatoController.text.trim();
       agendamentoConfig['esconderValores'] = _esconderValores;
+      agendamentoConfig['horarioAbertura'] = '${_horarioAbertura.hour.toString().padLeft(2, '0')}:${_horarioAbertura.minute.toString().padLeft(2, '0')}';
+      agendamentoConfig['horarioFechamento'] = '${_horarioFechamento.hour.toString().padLeft(2, '0')}:${_horarioFechamento.minute.toString().padLeft(2, '0')}';
       
       novasConfigs['agendamento'] = agendamentoConfig;
       novasConfigs['bairrosTaxiDogV2'] = _bairrosConfig;
@@ -865,7 +882,88 @@ class _ConfiguracoesAgendaPageState extends State<ConfiguracoesAgendaPage> {
             ],
           ),
         ),
+        const SizedBox(height: 16),
+        // Horário de Atendimento
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.05),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.access_time_filled, color: Colors.blueAccent, size: 24),
+                  const SizedBox(width: 12),
+                  const Text(
+                    'Horário de Atendimento',
+                    style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Defina o intervalo em que a loja aceita agendamentos online.',
+                style: TextStyle(color: Colors.white60, fontSize: 12),
+              ),
+              const SizedBox(height: 24),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildTimePickerTile(
+                      label: 'Abertura',
+                      time: _horarioAbertura,
+                      onTap: () async {
+                        final picked = await showTimePicker(context: context, initialTime: _horarioAbertura);
+                        if (picked != null) setState(() => _horarioAbertura = picked);
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: _buildTimePickerTile(
+                      label: 'Fechamento',
+                      time: _horarioFechamento,
+                      onTap: () async {
+                        final picked = await showTimePicker(context: context, initialTime: _horarioFechamento);
+                        if (picked != null) setState(() => _horarioFechamento = picked);
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
       ],
+    );
+  }
+
+  Widget _buildTimePickerTile({required String label, required TimeOfDay time, required VoidCallback onTap}) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.03),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white.withOpacity(0.08)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label, style: const TextStyle(color: Colors.white60, fontSize: 11)),
+            const SizedBox(height: 4),
+            Text(
+              '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}',
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

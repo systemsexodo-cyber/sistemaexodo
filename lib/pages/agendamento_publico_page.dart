@@ -1767,11 +1767,134 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     );
   }
 
+  Widget _buildHorariosGrid() {
+    final dataService = Provider.of<DataService>(context);
+    
+    final agendamentoConfig = dataService.empresaAtual?.configuracoes?['agendamento'] as Map<String, dynamic>?;
+    final hAberturaStr = agendamentoConfig?['horarioAbertura']?.toString() ?? '08:00';
+    final hFechamentoStr = agendamentoConfig?['horarioFechamento']?.toString() ?? '18:00';
+
+    int startHour = 8;
+    int startMinute = 0;
+    int endHour = 18;
+    int endMinute = 0;
+
+    try {
+      final partsA = hAberturaStr.split(':');
+      startHour = int.parse(partsA[0]);
+      startMinute = int.parse(partsA[1]);
+
+      final partsF = hFechamentoStr.split(':');
+      endHour = int.parse(partsF[0]);
+      endMinute = int.parse(partsF[1]);
+    } catch (_) {}
+
+    // Gerar lista de horários respeitando limites da empresa
+    final List<TimeOfDay> slots = [];
+    
+    DateTime current = DateTime(2000, 1, 1, startHour, startMinute);
+    final DateTime limit = DateTime(2000, 1, 1, endHour, endMinute);
+
+    while (current.isBefore(limit) || current.isAtSameMomentAs(limit)) {
+      slots.add(TimeOfDay(hour: current.hour, minute: current.minute));
+      current = current.add(const Duration(minutes: 30));
+    }
+
+    final duracao = dataService.servicos.firstWhere(
+      (s) => s.id == _servicoIdSelecionado, 
+      orElse: () => dataService.servicos.first
+    ).duracaoPadraoMinutos ?? 60;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Horários Disponíveis para esta Data',
+          style: TextStyle(
+            color: Colors.white70,
+            fontSize: 14,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 16),
+        Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: slots.map((time) {
+            final isSelected = _horaSelecionada?.hour == time.hour && _horaSelecionada?.minute == time.minute;
+            
+            final checkTime = DateTime(
+              _dataSelecionada!.year,
+              _dataSelecionada!.month,
+              _dataSelecionada!.day,
+              time.hour,
+              time.minute,
+            );
+
+            // Verificar disponibilidade
+            bool isBloqueadoAdmin = _isHorarioBloqueadoAdmin(dataService, checkTime, duracao);
+            bool isDisponivel = dataService.checkDisponibilidade(checkTime, duracao, ignorarPendentes: false);
+            bool disponivelReal = isDisponivel && !isBloqueadoAdmin;
+
+            return InkWell(
+              onTap: disponivelReal ? () {
+                setState(() {
+                  _horaSelecionada = time;
+                  _verificandoDisponibilidade = true;
+                });
+                // Simular verificação rápida para feedback visual
+                Future.delayed(const Duration(milliseconds: 600), () {
+                  if (mounted) setState(() => _verificandoDisponibilidade = false);
+                });
+              } : null,
+              borderRadius: BorderRadius.circular(12),
+              child: Container(
+                width: (MediaQuery.of(context).size.width - 64) / 4,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                decoration: BoxDecoration(
+                  color: isSelected 
+                      ? _primaryColor 
+                      : (disponivelReal ? Colors.white.withOpacity(0.05) : Colors.transparent),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: isSelected 
+                        ? _primaryColor 
+                        : (disponivelReal ? Colors.white.withOpacity(0.1) : Colors.white.withOpacity(0.03)),
+                  ),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}',
+                      style: TextStyle(
+                        color: isSelected 
+                            ? Colors.white 
+                            : (disponivelReal ? Colors.white : Colors.white24),
+                        fontWeight: isSelected || disponivelReal ? FontWeight.bold : FontWeight.normal,
+                        decoration: disponivelReal ? null : TextDecoration.lineThrough,
+                      ),
+                    ),
+                    if (!disponivelReal)
+                      const Text(
+                        'Ocupado',
+                        style: TextStyle(color: Colors.white10, fontSize: 9),
+                      ),
+                  ],
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+      ],
+    );
+  }
+
   Widget _buildStepHorario() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _buildStepTitle('Quando podemos receber vocês?', 'Escolha a data e o melhor horário disponível.'),
+        _buildStepTitle('Quando podemos receber vocês?', 'Escolha a data e veja os horários disponíveis.'),
         const SizedBox(height: 32),
         Row(
           children: [
@@ -1788,16 +1911,22 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
             const SizedBox(width: 16),
             Expanded(
               child: _buildPickerTile(
-                label: 'Horário',
+                label: 'Horário Escolhido',
                 value: _horaSelecionada == null 
-                    ? 'Selecionar' 
+                    ? '--:--' 
                     : '${_horaSelecionada!.hour.toString().padLeft(2, '0')}:${_horaSelecionada!.minute.toString().padLeft(2, '0')}',
                 icon: Icons.access_time_rounded,
-                onTap: _pickTime,
+                onTap: _pickTime, // Mantém opção de picker manual se quiser
               ),
             ),
           ],
         ),
+        
+        if (_dataSelecionada != null) ...[
+          const SizedBox(height: 32),
+          _buildHorariosGrid(),
+        ],
+
         const SizedBox(height: 32),
         if (_dataSelecionada != null && _horaSelecionada != null)
           _buildDisponibilidadeCheck(),
