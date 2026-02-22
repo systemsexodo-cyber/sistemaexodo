@@ -3895,137 +3895,184 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                   ),
                   const SizedBox(height: 16),
                 ],
-                // Tipo de Entrega
-                const Text('Tipo de Entrega:', style: TextStyle(color: Colors.white70, fontSize: 14)),
-                const SizedBox(height: 8),
-                DropdownButtonFormField<String?>(
-                  value: tipoEntrega,
-                  decoration: InputDecoration(
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                    filled: true,
-                    fillColor: Colors.white.withOpacity(0.05),
-                  ),
-                  dropdownColor: const Color(0xFF2C2C3E),
-                  style: const TextStyle(color: Colors.white),
-                  items: [
-                    const DropdownMenuItem<String?>(
-                      value: null,
-                      child: Text('Não especificado'),
-                    ),
-                    const DropdownMenuItem<String>(
-                      value: 'Taxi Dog',
-                      child: Text('Taxi Dog'),
-                    ),
-                    const DropdownMenuItem<String>(
-                      value: 'Cliente busca',
-                      child: Text('Cliente busca'),
-                    ),
-                  ],
-                  onChanged: (value) {
-                    setState(() {
-                      tipoEntrega = value;
-                      if (value != 'Taxi Dog') {
-                        valorTaxiDogController.clear();
-                        bairroEntregaController.clear();
-                      }
-                    });
-                  },
-                ),
-                // Campos de Taxi Dog
-                if (tipoEntrega == 'Taxi Dog' || tipoEntrega == 'Apenas Busca' || tipoEntrega == 'Apenas Entrega' || tipoEntrega == 'Cliente busca') ...[
+                // Tipo de Entrega — só aparece se o cliente tiver habilitaTaxiDog ativado
+                if (clienteSelecionado?.habilitaTaxiDog == true) ...[
                   const SizedBox(height: 16),
-                  const Text('Rua / Logradouro:', style: TextStyle(color: Colors.white70, fontSize: 14)),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: enderecoController,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: InputDecoration(
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                      filled: true,
-                      fillColor: Colors.white.withOpacity(0.05),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.withOpacity(0.05),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.amber.withOpacity(0.2)),
                     ),
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    children: [
-                      Expanded(
-                        flex: 2,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
                           children: [
-                            const Text('Número:', style: TextStyle(color: Colors.white70, fontSize: 14)),
-                            const SizedBox(height: 8),
-                            TextField(
-                              controller: numeroEnderecoController,
-                              style: const TextStyle(color: Colors.white),
-                              decoration: InputDecoration(
-                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                                filled: true,
-                                fillColor: Colors.white.withOpacity(0.05),
-                              ),
+                            Icon(Icons.local_shipping, color: Colors.amber[300], size: 18),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Entrega / Taxi Dog',
+                              style: TextStyle(color: Colors.amber[300], fontSize: 14, fontWeight: FontWeight.bold),
                             ),
                           ],
                         ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        flex: 3,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text('Bairro:', style: TextStyle(color: Colors.white70, fontSize: 14)),
-                            const SizedBox(height: 8),
-                            TextField(
-                              controller: bairroEntregaController,
-                              style: const TextStyle(color: Colors.white),
-                              decoration: InputDecoration(
-                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                                filled: true,
-                                fillColor: Colors.white.withOpacity(0.05),
-                              ),
+                        const SizedBox(height: 12),
+                        const Text('Tipo de Entrega:', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                        const SizedBox(height: 8),
+                        DropdownButtonFormField<String?>(
+                          value: tipoEntrega,
+                          decoration: InputDecoration(
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                            filled: true,
+                            fillColor: Colors.white.withOpacity(0.05),
+                          ),
+                          dropdownColor: const Color(0xFF2C2C3E),
+                          style: const TextStyle(color: Colors.white),
+                          items: const [
+                            DropdownMenuItem<String?>(
+                              value: null,
+                              child: Text('Retirada na Loja'),
+                            ),
+                            DropdownMenuItem<String>(
+                              value: 'Taxi Dog',
+                              child: Text('🚗 Taxi Dog (Busca + Entrega)'),
+                            ),
+                            DropdownMenuItem<String>(
+                              value: 'Apenas Busca',
+                              child: Text('🔵 Apenas Busca'),
+                            ),
+                            DropdownMenuItem<String>(
+                              value: 'Apenas Entrega',
+                              child: Text('🟢 Apenas Entrega'),
+                            ),
+                            DropdownMenuItem<String>(
+                              value: 'Cliente busca',
+                              child: Text('🏠 Cliente busca / retira'),
                             ),
                           ],
+                          onChanged: (value) {
+                            setState(() {
+                              tipoEntrega = value;
+                              if (value == null) {
+                                valorTaxiDogController.clear();
+                                bairroEntregaController.clear();
+                                enderecoController.clear();
+                                numeroEnderecoController.clear();
+                                complementoEnderecoController.clear();
+                                pontoReferenciaController.clear();
+                              }
+                              // Preencher endereço do cliente automaticamente se estiver vazio
+                              if (value != null && enderecoController.text.isEmpty && clienteSelecionado != null) {
+                                enderecoController.text = clienteSelecionado!.endereco ?? '';
+                                numeroEnderecoController.text = clienteSelecionado!.numero ?? '';
+                                bairroEntregaController.text = clienteSelecionado!.bairro ?? '';
+                                complementoEnderecoController.text = clienteSelecionado!.complemento ?? '';
+                                pontoReferenciaController.text = clienteSelecionado!.pontoReferencia ?? '';
+                              }
+                            });
+                          },
                         ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  const Text('Complemento:', style: TextStyle(color: Colors.white70, fontSize: 14)),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: complementoEnderecoController,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: InputDecoration(
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                      filled: true,
-                      fillColor: Colors.white.withOpacity(0.05),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  const Text('Ponto de Referência:', style: TextStyle(color: Colors.white70, fontSize: 14)),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: pontoReferenciaController,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: InputDecoration(
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                      filled: true,
-                      fillColor: Colors.white.withOpacity(0.05),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  const Text('Valor da Taxa (R\$):', style: TextStyle(color: Colors.white70, fontSize: 14)),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: valorTaxiDogController,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    style: const TextStyle(color: Colors.white),
-                    decoration: InputDecoration(
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                      filled: true,
-                      fillColor: Colors.white.withOpacity(0.05),
-                      hintText: '0.00',
-                      hintStyle: TextStyle(color: Colors.white.withOpacity(0.5)),
+                        // Campos de endereço de entrega
+                        if (tipoEntrega == 'Taxi Dog' || tipoEntrega == 'Apenas Busca' || tipoEntrega == 'Apenas Entrega' || tipoEntrega == 'Cliente busca') ...[
+                          const SizedBox(height: 16),
+                          const Text('Rua / Logradouro:', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                          const SizedBox(height: 8),
+                          TextField(
+                            controller: enderecoController,
+                            style: const TextStyle(color: Colors.white),
+                            decoration: InputDecoration(
+                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                              filled: true,
+                              fillColor: Colors.white.withOpacity(0.05),
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          Row(
+                            children: [
+                              Expanded(
+                                flex: 2,
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text('Número:', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                                    const SizedBox(height: 8),
+                                    TextField(
+                                      controller: numeroEnderecoController,
+                                      style: const TextStyle(color: Colors.white),
+                                      decoration: InputDecoration(
+                                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                                        filled: true,
+                                        fillColor: Colors.white.withOpacity(0.05),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                flex: 3,
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text('Bairro:', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                                    const SizedBox(height: 8),
+                                    TextField(
+                                      controller: bairroEntregaController,
+                                      style: const TextStyle(color: Colors.white),
+                                      decoration: InputDecoration(
+                                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                                        filled: true,
+                                        fillColor: Colors.white.withOpacity(0.05),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          const Text('Complemento:', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                          const SizedBox(height: 8),
+                          TextField(
+                            controller: complementoEnderecoController,
+                            style: const TextStyle(color: Colors.white),
+                            decoration: InputDecoration(
+                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                              filled: true,
+                              fillColor: Colors.white.withOpacity(0.05),
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          const Text('Ponto de Referência:', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                          const SizedBox(height: 8),
+                          TextField(
+                            controller: pontoReferenciaController,
+                            style: const TextStyle(color: Colors.white),
+                            decoration: InputDecoration(
+                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                              filled: true,
+                              fillColor: Colors.white.withOpacity(0.05),
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          const Text('Valor da Taxa (R\$):', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                          const SizedBox(height: 8),
+                          TextField(
+                            controller: valorTaxiDogController,
+                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                            style: const TextStyle(color: Colors.white),
+                            decoration: InputDecoration(
+                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                              filled: true,
+                              fillColor: Colors.white.withOpacity(0.05),
+                              hintText: '0.00',
+                              hintStyle: TextStyle(color: Colors.white.withOpacity(0.5)),
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                   ),
                 ],

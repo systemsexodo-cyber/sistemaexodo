@@ -595,19 +595,23 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     );
   }
 
+  // Helper: se o passo de Entrega deve ser exibido
+  bool get _mostrarPassoEntrega => _clienteEncontrado?.habilitaTaxiDog ?? false;
+
   Widget _buildStepper(Color primaryColor, bool moduloPet) {
+    final bool mostrarEntrega = moduloPet && _mostrarPassoEntrega;
     final List<String> stepLabels = [
       'Serviço', 
       'Seus Dados', 
       if (moduloPet) 'O Pet', 
-      if (moduloPet) 'Entrega',
+      if (mostrarEntrega) 'Entrega',
       'Horário'
     ];
     final List<IconData> stepIcons = [
       Icons.style_rounded,
       Icons.person_rounded,
       if (moduloPet) Icons.pets_rounded,
-      if (moduloPet) Icons.local_shipping_rounded,
+      if (mostrarEntrega) Icons.local_shipping_rounded,
       Icons.access_time_filled_rounded
     ];
 
@@ -694,10 +698,16 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
 
   Widget _buildCurrentStepView(bool moduloPet, bool esconderValores) {
     // Mapear o índice atual para o passo real
+    // Passos reais: 0=Serviço, 1=Dados, 2=Pet, 3=Entrega, 4=Horário
     int passoReal = _currentStep;
     if (!moduloPet) {
        if (_currentStep >= 2) {
           passoReal = _currentStep + 2; // Pula Pet e Entrega
+       }
+    } else if (!_mostrarPassoEntrega) {
+       // moduloPet mas sem TaxiDog: pula Entrega (step 3 -> passoReal 4)
+       if (_currentStep >= 3) {
+          passoReal = _currentStep + 1; // Pula Entrega
        }
     }
 
@@ -2158,12 +2168,12 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
               const SizedBox(width: 16),
               Expanded(
                 child: _buildPickerTile(
-                  label: 'Horário Escolhido',
+                  label: _horaSelecionada == null ? 'Selecione abaixo ↓' : 'Horário Escolhido',
                   value: _horaSelecionada == null 
                       ? '--:--' 
                       : '${_horaSelecionada!.hour.toString().padLeft(2, '0')}:${_horaSelecionada!.minute.toString().padLeft(2, '0')}',
                   icon: Icons.access_time_rounded,
-                  onTap: _pickTime,
+                  onTap: null, // Não permite seleção manual — apenas pelos slots abaixo
                 ),
               ),
             ],
@@ -2510,8 +2520,9 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     required String label,
     required String value,
     required IconData icon,
-    required VoidCallback onTap,
+    VoidCallback? onTap,
   }) {
+    final bool desabilitado = onTap == null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -2526,18 +2537,28 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
             decoration: BoxDecoration(
-              color: _isDark ? Colors.white.withOpacity(0.05) : Colors.grey[100],
+              color: desabilitado
+                  ? (_isDark ? Colors.white.withOpacity(0.02) : Colors.grey[50])
+                  : (_isDark ? Colors.white.withOpacity(0.05) : Colors.grey[100]),
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: _isDark ? Colors.white.withOpacity(0.1) : Colors.grey[300]!),
+              border: Border.all(
+                color: desabilitado
+                    ? (_isDark ? Colors.white.withOpacity(0.05) : Colors.grey[200]!)
+                    : (_isDark ? Colors.white.withOpacity(0.1) : Colors.grey[300]!),
+              ),
             ),
             child: Row(
               children: [
-                Icon(icon, color: _primaryColor, size: 20),
+                Icon(icon, color: desabilitado ? (_isDark ? Colors.white24 : Colors.grey[400]) : _primaryColor, size: 20),
                 const SizedBox(width: 12),
                 Text(
                   value,
                   style: TextStyle(
-                    color: value == 'Selecionar' ? (_isDark ? Colors.white24 : Colors.grey[400]) : (_isDark ? Colors.white : Colors.black87),
+                    color: (value == 'Selecionar' || value == '--:--')
+                        ? (_isDark ? Colors.white24 : Colors.grey[400])
+                        : desabilitado
+                            ? (_isDark ? Colors.white54 : Colors.grey[600])
+                            : (_isDark ? Colors.white : Colors.black87),
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -2550,7 +2571,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
   }
 
   Widget _buildNavigationButtons(Color primaryColor, bool moduloPet) {
-    final int maxIndex = moduloPet ? 4 : 2;
+    final int maxIndex = moduloPet ? (_mostrarPassoEntrega ? 4 : 3) : 2;
     final bool noUltimoPasso = _currentStep == maxIndex;
 
     return Column(
@@ -2651,7 +2672,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       return;
     }
 
-    final int maxIndex = moduloPet ? 4 : 2;
+    final int maxIndex = moduloPet ? (_mostrarPassoEntrega ? 4 : 3) : 2;
 
     if (_formKey.currentState!.validate()) {
       if (_currentStep < maxIndex) {
