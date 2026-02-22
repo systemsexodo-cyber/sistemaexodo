@@ -437,7 +437,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   int get _totalItens =>
       _carrinho.fold(0, (sum, item) => sum + item.quantidade);
 
-  void _adicionarAoCarrinho(dynamic item) {
+  void _adicionarAoCarrinho(dynamic item, {bool manterFoco = false}) {
     final isServico = item is Servico;
     final id = item.id;
     final nome = item.nome;
@@ -483,13 +483,18 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       totalCarrinho: _totalCarrinho,
     );
 
-    // Resetar quantidade e limpar busca
+    // Resetar quantidade
     setState(() {
       _quantidadeDigitada = 1;
-      _termoBusca = '';
     });
-    _buscaController.clear();
-    _buscaFocusNode.requestFocus();
+
+    if (!manterFoco) {
+      setState(() {
+        _termoBusca = '';
+      });
+      _buscaController.clear();
+      _buscaFocusNode.requestFocus();
+    }
 
     // Salvar carrinho automaticamente
     _salvarCarrinho();
@@ -1177,6 +1182,11 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
 
     // Buscar produtos com busca avançada
     for (final produto in dataService.produtos) {
+      // Filtro por categoria (se houver categoria ativa)
+      if (_categoriaAtiva != null && produto.grupo != _categoriaAtiva) {
+        continue;
+      }
+
       final nome = produto.nome.toLowerCase();
       final codigo = (produto.codigo ?? '').trim();
       final codigoLower = codigo.toLowerCase();
@@ -1321,8 +1331,10 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       }
     }
 
-    // Buscar serviços (só por nome)
+    // Buscar serviços (só por nome e se não houver categoria de produto ativa)
     for (final servico in dataService.servicos) {
+      if (_categoriaAtiva != null) break; // Serviços não têm categoria ou têm categoria diferente
+
       final nome = servico.nome.toLowerCase();
 
       // Match exato
@@ -4891,13 +4903,33 @@ o padrão padrão (sem opções avançadas).
     final categorias = _getCategorias(dataService);
     final produtosCategoria = _getProdutosPorCategoria(dataService);
 
-    // Verificar se já existe um Scaffold no contexto (ex: quando está dentro do TabBarView do PdvPage)
+    // Calcular colunas dinamicamente para navegação por teclado
+    int crossAxisCount = 2;
+    if (screenWidth >= 1600) {
+      crossAxisCount = 5;
+    } else if (screenWidth >= 1100) {
+      crossAxisCount = 4;
+    } else if (screenWidth >= 800) {
+      crossAxisCount = 3;
+    }
+
+    // Verificar se já existe um Scaffold no contexto
     final hasScaffold = Scaffold.maybeOf(context) != null;
 
-    final content = Focus(
-      focusNode: _atalhosFocusNode,
-      autofocus: true,
-      onKeyEvent: (node, event) {
+    final content = GestureDetector(
+      onTap: () {
+        if (!_atalhosFocusNode.hasFocus &&
+            !_buscaFocusNode.hasFocus) {
+          _atalhosFocusNode.requestFocus();
+        }
+      },
+      child: Focus(
+        focusNode: _atalhosFocusNode,
+        autofocus: true,
+        onFocusChange: (hasFocus) {
+          // Garante que o estado de foco visual seja atualizado se necessário
+        },
+        onKeyEvent: (node, event) {
         if (event is KeyRepeatEvent) return KeyEventResult.ignored;
         if (event is! KeyDownEvent) return KeyEventResult.ignored;
 
@@ -4962,21 +4994,41 @@ o padrão padrão (sem opções avançadas).
                 _focoNoCarrinho = true;
                 _cartSelectedIndex = 0;
                 _categoriaSelectedIndex = -1;
-                _gridSelectedIndex = -1; // Reset grid
+                _gridSelectedIndex = -1;
               });
               return KeyEventResult.handled;
             }
           }
-          // Se estiver nos produtos, seta direita pula para o carrinho
-          if (!_focoNoCarrinho && !_focoNasCategorias && _carrinho.isNotEmpty) {
-            setState(() {
-              _focoNoCarrinho = true;
-              _cartSelectedIndex = 0;
-              _gridSelectedIndex = -1;
-              _focoNasCategorias = false;
-              _categoriaSelectedIndex = -1;
-            });
-            return KeyEventResult.handled;
+          
+          // Navegação dentro do grid
+          if (!_focoNoCarrinho && !_focoNasCategorias) {
+            final maxItems = _termoBusca.isNotEmpty
+                ? _buscarItens(dataService).length
+                : (_categoriaAtiva != null
+                    ? _getProdutosPorCategoria(dataService).length
+                    : 0);
+
+            if (maxItems > 0) {
+              if (_gridSelectedIndex < 0) {
+                // Se nada selecionado, foca no primeiro item em vez de ir pro carrinho
+                setState(() => _gridSelectedIndex = 0);
+                return KeyEventResult.handled;
+              } else if (_gridSelectedIndex < maxItems - 1) {
+                // Move para o próximo item
+                setState(() => _gridSelectedIndex++);
+                return KeyEventResult.handled;
+              }
+            }
+
+            // Se chegou no último item (ou não há itens) e há itens no carrinho, vai pro carrinho
+            if (_carrinho.isNotEmpty) {
+              setState(() {
+                _focoNoCarrinho = true;
+                _cartSelectedIndex = 0;
+                _gridSelectedIndex = -1;
+              });
+              return KeyEventResult.handled;
+            }
           }
         }
 
@@ -4985,11 +5037,32 @@ o padrão padrão (sem opções avançadas).
             if (_categoriaSelectedIndex > 0) {
               setState(() => _categoriaSelectedIndex--);
               return KeyEventResult.handled;
+            } else {
+              // Se estiver na primeira categoria, foca na busca
+              _buscaFocusNode.requestFocus();
+              setState(() {
+                _focoNasCategorias = false;
+                _categoriaSelectedIndex = -1;
+              });
+              return KeyEventResult.handled;
             }
           }
-          // Se estiver nos produtos ou no carrinho, seta esquerda volta para a busca
-          if (_focoNoCarrinho ||
-              (!_focoNasCategorias && _gridSelectedIndex >= 0)) {
+          // Navegação lateral esquerda no grid
+          if (!_focoNoCarrinho && !_focoNasCategorias && _gridSelectedIndex > 0) {
+            setState(() => _gridSelectedIndex--);
+            return KeyEventResult.handled;
+          } else if (!_focoNoCarrinho && !_focoNasCategorias && _gridSelectedIndex == 0) {
+            // Se estiver no primeiro item, volta para categorias
+            setState(() {
+              _gridSelectedIndex = -1;
+              _focoNasCategorias = true;
+              _categoriaSelectedIndex = 0;
+            });
+            return KeyEventResult.handled;
+          }
+
+          // Se estiver no carrinho ou no grid (index 0), seta esquerda volta para a busca/categorias
+          if (_focoNoCarrinho || (!_focoNasCategorias && _gridSelectedIndex < 0)) {
             _buscaFocusNode.requestFocus();
             setState(() {
               _focoNoCarrinho = false;
@@ -4997,7 +5070,6 @@ o padrão padrão (sem opções avançadas).
               _cartSelectedIndex = -1;
               _gridSelectedIndex = -1;
               _categoriaSelectedIndex = -1;
-              _termoBusca = _buscaController.text; // Mantém o texto mas foca
             });
             return KeyEventResult.handled;
           }
@@ -5011,7 +5083,7 @@ o padrão padrão (sem opções avançadas).
               }
             } else if (_focoNasCategorias) {
               _focoNasCategorias = false;
-              _categoriaSelectedIndex = -1; // Reset category selection
+              _categoriaSelectedIndex = -1;
               _gridSelectedIndex = 0;
             } else if (_buscaFocusNode.hasFocus) {
               _focoNasCategorias = true;
@@ -5026,17 +5098,15 @@ o padrão padrão (sem opções avançadas).
                         ? _getProdutosPorCategoria(dataService).length
                         : 0);
 
-              if (_gridSelectedIndex < 0 &&
-                  (maxItems > 0 || categorias.isNotEmpty)) {
-                _focoNasCategorias = true;
-                _categoriaSelectedIndex = 0;
-                _gridSelectedIndex = -1;
-                _cartSelectedIndex = -1;
-                _atalhosFocusNode.requestFocus();
-              } else if (_gridSelectedIndex + 3 < maxItems) {
-                _gridSelectedIndex += 3;
-              } else if (_gridSelectedIndex < 0 && maxItems > 0) {
+              if (_gridSelectedIndex < 0 && maxItems > 0) {
                 _gridSelectedIndex = 0;
+              } else if (_gridSelectedIndex + crossAxisCount < maxItems) {
+                _gridSelectedIndex += crossAxisCount;
+              } else if (_gridSelectedIndex >= 0 && _gridSelectedIndex + crossAxisCount >= maxItems) {
+                // Se não tem próxima linha, talvez pular para o carrinho? Por enquanto vamos só manter no último
+                if (_gridSelectedIndex < maxItems - 1) {
+                   _gridSelectedIndex = maxItems - 1;
+                }
               }
             }
           });
@@ -5053,10 +5123,10 @@ o padrão padrão (sem opções avançadas).
               _focoNasCategorias = false;
               _buscaFocusNode.requestFocus();
             } else {
-              if (_gridSelectedIndex >= 3) {
-                _gridSelectedIndex -= 3;
+              if (_gridSelectedIndex >= crossAxisCount) {
+                _gridSelectedIndex -= crossAxisCount;
               } else {
-                // Se estiver na primeira linha ou nada selecionado, sobe para categorias
+                // Se estiver na primeira linha, sobe para categorias
                 _gridSelectedIndex = -1;
                 _focoNasCategorias = true;
                 _categoriaSelectedIndex = 0;
@@ -5081,7 +5151,7 @@ o padrão padrão (sem opções avançadas).
             } else if (index > 0 && index <= categorias.length) {
               final cat = categorias[index - 1];
               setState(() {
-                _categoriaAtiva = _categoriaAtiva == cat ? null : cat;
+                _categoriaAtiva = cat; // Remove toggle (não deseleciona)
                 _termoBusca = '';
                 _buscaController.clear();
               });
@@ -5095,7 +5165,7 @@ o padrão padrão (sem opções avançadas).
                       ? _getProdutosPorCategoria(dataService)
                       : []);
             if (_gridSelectedIndex < itens.length) {
-              _adicionarAoCarrinho(itens[_gridSelectedIndex]);
+              _adicionarAoCarrinho(itens[_gridSelectedIndex], manterFoco: true);
               return KeyEventResult.handled;
             }
           }
@@ -5242,7 +5312,8 @@ o padrão padrão (sem opções avançadas).
           _buildBarraAtalhosLegenda(),
         ],
       ),
-    );
+    ),
+   );
 
     // Na versão mobile (muito estreita), mudar Row para Column
     if (screenWidth < 750) {
@@ -5478,7 +5549,9 @@ o padrão padrão (sem opções avançadas).
                   fontSize: isSmallHeight ? 16 : 18,
                 ),
                 decoration: InputDecoration(
-                  hintText: '🔍 Buscar produto...',
+                  hintText: _categoriaAtiva != null
+                      ? '🔍 Buscar em $_categoriaAtiva...'
+                      : '🔍 Buscar produto...',
                   hintStyle: TextStyle(
                     color: Colors.white.withOpacity(0.4),
                     fontSize: isSmallHeight ? 14 : 16,
@@ -5513,7 +5586,6 @@ o padrão padrão (sem opções avançadas).
                 ),
                 onChanged: (value) => setState(() {
                   _termoBusca = value;
-                  _categoriaAtiva = null;
                 }),
                 onSubmitted: (value) {
                   if (value.trim().isNotEmpty) {
@@ -5563,8 +5635,7 @@ o padrão padrão (sem opções avançadas).
                   setState(() {
                     _focoNasCategorias = false;
                     _focoNoCarrinho = false;
-                    _gridSelectedIndex = -1;
-                    _categoriaSelectedIndex = -1;
+                    // Mantém _gridSelectedIndex e _categoriaSelectedIndex para não perder a seleção visual
                   });
                 },
               ),
@@ -5774,13 +5845,16 @@ o padrão padrão (sem opções avançadas).
                     final isSelected =
                         _focoNasCategorias && _categoriaSelectedIndex == 0;
                     return GestureDetector(
-                      onTap: () => setState(() {
-                        _categoriaAtiva = null;
-                        _termoBusca = '';
-                        _buscaController.clear();
-                        _focoNasCategorias = true;
-                        _categoriaSelectedIndex = 0;
-                      }),
+                      onTap: () {
+                        setState(() {
+                          _categoriaAtiva = null;
+                          _termoBusca = '';
+                          _buscaController.clear();
+                          _focoNasCategorias = true;
+                          _categoriaSelectedIndex = 0;
+                        });
+                        _buscaFocusNode.requestFocus();
+                      },
                       child: Container(
                         margin: const EdgeInsets.only(right: 8),
                         padding: EdgeInsets.symmetric(
@@ -5854,13 +5928,26 @@ o padrão padrão (sem opções avançadas).
                   final isSelected =
                       _focoNasCategorias && _categoriaSelectedIndex == index;
                   return GestureDetector(
-                    onTap: () => setState(() {
-                      _categoriaAtiva = isActive ? null : categoria;
-                      _termoBusca = '';
-                      _buscaController.clear();
-                      _focoNasCategorias = true;
-                      _categoriaSelectedIndex = index;
-                    }),
+                    onTap: () {
+                      if (_categoriaAtiva == categoria) {
+                        // Se já está selecionada, apenas foca mas não limpa busca nem reseta grid
+                        setState(() {
+                          _focoNasCategorias = true;
+                          _categoriaSelectedIndex = index;
+                        });
+                      } else {
+                        setState(() {
+                          _categoriaAtiva = categoria; // Remove toggle
+                          _termoBusca = '';
+                          _buscaController.clear();
+                          _focoNasCategorias = true;
+                          _categoriaSelectedIndex = index;
+                          _gridSelectedIndex = -1;
+                          _focoNoCarrinho = false;
+                        });
+                      }
+                      _buscaFocusNode.requestFocus();
+                    },
                     child: Container(
                       margin: const EdgeInsets.only(right: 8),
                       padding: EdgeInsets.symmetric(
@@ -6493,10 +6580,18 @@ o padrão padrão (sem opções avançadas).
     final isSmallHeight = screenHeight < 750;
 
     // Mais colunas se a tela for muito larga, menos se for estreita
-    final crossAxisCount = screenWidth < 900 ? 2 : (screenWidth < 1500 ? 3 : 4);
+    // Aumentado para cards menores no modo touch
+    int crossAxisCount = 2;
+    if (screenWidth >= 1600) {
+      crossAxisCount = 5;
+    } else if (screenWidth >= 1100) {
+      crossAxisCount = 4;
+    } else if (screenWidth >= 800) {
+      crossAxisCount = 3;
+    }
 
-    // Aspect ratio mais "deitado" em telas baixas para economizar espaço vertical
-    final aspectRatio = isVerySmallHeight ? 1.7 : (isSmallHeight ? 1.5 : 1.3);
+    // Aspect ratio mais compacto para economizar espaço
+    final aspectRatio = isVerySmallHeight ? 1.5 : (isSmallHeight ? 1.3 : 1.1);
 
     return GridView.builder(
       padding: EdgeInsets.all(isSmallHeight ? 8 : 16),
@@ -6521,8 +6616,17 @@ o padrão padrão (sem opções avançadas).
     final isVerySmallHeight = screenHeight < 650;
     final isSmallHeight = screenHeight < 750;
 
-    final crossAxisCount = screenWidth < 900 ? 2 : (screenWidth < 1500 ? 3 : 4);
-    final aspectRatio = isVerySmallHeight ? 1.7 : (isSmallHeight ? 1.5 : 1.3);
+    // Aumentado para cards menores
+    int crossAxisCount = 2;
+    if (screenWidth >= 1600) {
+      crossAxisCount = 5;
+    } else if (screenWidth >= 1100) {
+      crossAxisCount = 4;
+    } else if (screenWidth >= 800) {
+      crossAxisCount = 3;
+    }
+    
+    final aspectRatio = isVerySmallHeight ? 1.5 : (isSmallHeight ? 1.3 : 1.1);
 
     return GridView.builder(
       padding: EdgeInsets.all(isSmallHeight ? 8 : 16),
@@ -6569,7 +6673,7 @@ o padrão padrão (sem opções avançadas).
           );
           _lancarDiversosRapido(precoInicial: valorDigitado);
         } else {
-          _adicionarAoCarrinho(item);
+          _adicionarAoCarrinho(item, manterFoco: true);
         }
       },
       child: Container(
@@ -6603,7 +6707,7 @@ o padrão padrão (sem opções avançadas).
         child: Stack(
           children: [
             Padding(
-              padding: EdgeInsets.all(isSmallHeight ? 8 : 12),
+              padding: EdgeInsets.all(isSmallHeight ? 6 : 8),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -6680,19 +6784,19 @@ o padrão padrão (sem opções avançadas).
                     style: TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.bold,
-                      fontSize: isSmallHeight ? 13 : 16,
+                      fontSize: isSmallHeight ? 11 : 13,
                     ),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
-                  SizedBox(height: isSmallHeight ? 2 : 8),
+                  SizedBox(height: isSmallHeight ? 1 : 4),
                   // Preço
                   Text(
                     'R\$ ${preco.toStringAsFixed(2)}',
                     style: TextStyle(
                       color: promocao ? Colors.orange : Colors.greenAccent,
                       fontWeight: FontWeight.w900,
-                      fontSize: isSmallHeight ? 18 : 22,
+                      fontSize: isSmallHeight ? 14 : 16,
                     ),
                   ),
                   // Estoque (apenas para produtos)
@@ -7633,7 +7737,7 @@ class _NotificacaoItemAdicionado extends StatefulWidget {
 class _NotificacaoItemAdicionadoState extends State<_NotificacaoItemAdicionado>
     with SingleTickerProviderStateMixin {
   late AnimationController _controller;
-  late Animation<Offset> _slideAnimation;
+  late Animation<double> _scaleAnimation;
   late Animation<double> _fadeAnimation;
   final NumberFormat _formatoMoeda = NumberFormat.currency(
     locale: 'pt_BR',
@@ -7648,10 +7752,10 @@ class _NotificacaoItemAdicionadoState extends State<_NotificacaoItemAdicionado>
       vsync: this,
     );
 
-    _slideAnimation = Tween<Offset>(
-      begin: const Offset(0.0, -1.0), // Vem de cima
-      end: Offset.zero,
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic));
+    _scaleAnimation = Tween<double>(
+      begin: 0.8,
+      end: 1.0,
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutBack));
 
     _fadeAnimation = Tween<double>(
       begin: 0.0,
@@ -7660,7 +7764,7 @@ class _NotificacaoItemAdicionadoState extends State<_NotificacaoItemAdicionado>
 
     _controller.forward();
 
-    // Auto-dismiss mais rápido (1.5 segundos)
+    // Auto-dismiss em 1.5 segundos (equilíbrio ideal)
     Future.delayed(const Duration(milliseconds: 1500), () {
       if (mounted) {
         _dismiss();
@@ -7682,12 +7786,10 @@ class _NotificacaoItemAdicionadoState extends State<_NotificacaoItemAdicionado>
 
   @override
   Widget build(BuildContext context) {
-    return Positioned(
-      top:
-          80, // Posição diferente das notificações de venda (que ficam em top: 20)
-      right: 20,
-      child: SlideTransition(
-        position: _slideAnimation,
+    return Align(
+      alignment: const Alignment(0.0, -0.3), // Quase centro, um pouco acima para não cobrir tudo
+      child: ScaleTransition(
+        scale: _scaleAnimation,
         child: FadeTransition(
           opacity: _fadeAnimation,
           child: Material(
@@ -7695,132 +7797,144 @@ class _NotificacaoItemAdicionadoState extends State<_NotificacaoItemAdicionado>
             child: GestureDetector(
               onTap: _dismiss,
               child: Container(
-                constraints: const BoxConstraints(maxWidth: 280),
+                constraints: const BoxConstraints(maxWidth: 350),
                 padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 10,
+                  horizontal: 24,
+                  vertical: 20,
                 ),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF1A1A2E).withOpacity(0.95),
-                  borderRadius: BorderRadius.circular(12),
+                  gradient: LinearGradient(
+                    colors: [
+                      const Color(0xFF1A1A2E).withOpacity(0.98),
+                      const Color(0xFF16213E).withOpacity(0.98),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(24),
                   border: Border.all(
-                    color: widget.cor.withOpacity(0.3),
-                    width: 1,
+                    color: widget.cor.withOpacity(0.5),
+                    width: 2,
                   ),
                   boxShadow: [
                     BoxShadow(
-                      color: widget.cor.withOpacity(0.15),
-                      blurRadius: 12,
-                      offset: const Offset(0, 4),
+                      color: widget.cor.withOpacity(0.3),
+                      blurRadius: 30,
+                      spreadRadius: 2,
                     ),
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.2),
-                      blurRadius: 8,
-                      offset: const Offset(0, 2),
+                      color: Colors.black.withOpacity(0.5),
+                      blurRadius: 20,
+                      offset: const Offset(0, 10),
                     ),
                   ],
                 ),
-                child: Row(
+                child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // Ícone compacto
+                    // Ícone grande e visual
                     Container(
-                      padding: const EdgeInsets.all(6),
+                      padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
                         color: widget.cor.withOpacity(0.15),
-                        borderRadius: BorderRadius.circular(8),
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: widget.cor.withOpacity(0.3),
+                          width: 2,
+                        ),
                       ),
-                      child: Icon(widget.icone, color: widget.cor, size: 18),
+                      child: Icon(widget.icone, color: widget.cor, size: 40),
                     ),
-                    const SizedBox(width: 10),
-                    // Conteúdo compacto
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
+                    const SizedBox(height: 16),
+                    // Título centralizado
+                    Text(
+                      widget.titulo.toUpperCase(),
+                      style: TextStyle(
+                        color: widget.cor,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 2,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    // Nome do item principal
+                    Text(
+                      widget.nomeItem,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 12),
+                    // Detalhes da quantidade e preço
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.05),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          // Título e nome do item
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  widget.nomeItem,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 2),
-                          // Informações contextuais
-                          Row(
-                            children: [
-                              Text(
-                                widget.jaExistia
-                                    ? 'Qtd: ${widget.quantidadeTotal} (+${widget.quantidade})'
-                                    : 'Qtd: ${widget.quantidade}',
-                                style: TextStyle(
-                                  color: Colors.white.withOpacity(0.7),
-                                  fontSize: 11,
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                '•',
-                                style: TextStyle(
-                                  color: Colors.white.withOpacity(0.3),
-                                  fontSize: 11,
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                _formatoMoeda.format(widget.valorItem),
-                                style: TextStyle(
-                                  color: widget.cor,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 4),
-                          // Total do carrinho
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 2,
+                          Text(
+                            widget.jaExistia
+                                ? 'Qtd Total: ${widget.quantidadeTotal}'
+                                : 'Quantidade: ${widget.quantidade}',
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w500,
                             ),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.05),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  Icons.shopping_cart,
-                                  size: 10,
-                                  color: Colors.white.withOpacity(0.5),
-                                ),
-                                const SizedBox(width: 4),
-                                Text(
-                                  'Total: ${_formatoMoeda.format(widget.totalCarrinho)}',
-                                  style: TextStyle(
-                                    color: Colors.white.withOpacity(0.6),
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                              ],
+                          ),
+                          const SizedBox(width: 12),
+                          Text(
+                            '•',
+                            style: TextStyle(color: Colors.white.withOpacity(0.3)),
+                          ),
+                          const SizedBox(width: 12),
+                          Text(
+                            _formatoMoeda.format(widget.valorItem),
+                            style: TextStyle(
+                              color: widget.cor,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w900,
                             ),
                           ),
                         ],
                       ),
+                    ),
+                    const SizedBox(height: 16),
+                    // Total do carrinho (o que mais importa)
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.shopping_cart_checkout,
+                          size: 16,
+                          color: Colors.white.withOpacity(0.5),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          'TOTAL CARRINHO: ',
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.5),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        Text(
+                          _formatoMoeda.format(widget.totalCarrinho),
+                          style: const TextStyle(
+                            color: Colors.cyanAccent,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
