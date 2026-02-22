@@ -904,7 +904,8 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
       final agendamentosCliente = entry.value;
 
       // Se houver 3 ou mais agendamentos do mesmo cliente, mostrar indicador de grupo
-      if (agendamentosCliente.length >= 3 && clienteId != null) {
+      // REGRA: Apenas se o módulo Pet Shop estiver ativo
+      if (agendamentosCliente.length >= 3 && clienteId != null && (dataService.empresaAtual?.moduloPet ?? false)) {
         // Adicionar indicador de grupo antes dos agendamentos
         widgets.add(
           Container(

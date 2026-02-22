@@ -92,436 +92,95 @@ class FirebaseService {
         .collection(subCollection);
   }
 
-  /// Salvar todos os dados no Firebase
-  Future<void> salvarTudoNoFirebase({
-    required String empresaId,
-    required List<Cliente> clientes,
-    required List<Produto> produtos,
-    required List<Servico> servicos,
-    required List<Pedido> pedidos,
-    required List<OrdemServico> ordensServico,
-    required List<Entrega> entregas,
-    required List<VendaBalcao> vendasBalcao,
-    required List<TrocaDevolucao> trocasDevolucoes,
-    required List<EstoqueHistorico> estoqueHistorico,
-    required List<AberturaCaixa> aberturasCaixa,
-    required List<FechamentoCaixa> fechamentosCaixa,
-    required List<Motorista> motoristas,
-    required List<AgendamentoServico> agendamentosServico,
-    required List<NotaEntrada> notasEntrada,
-    required List<Funcionario> funcionarios,
-    required List<TaxaEntrega> taxasEntrega,
-    required List<ContaPagar> contasPagar,
-    required List<NFCe> nfces,
-    required List<SangriaCaixa> sangrias,
-    required List<SuprimentoCaixa> suprimentos,
-    List<LinkVendedor>? linksVendedores,
-    List<ComissaoVendedor>? comissoesVendedores,
-  }) async {
-    try {
-      debugPrint('>>> [Firebase] Iniciando salvamento completo no Firebase...');
-      
-      // Salvar em batch para melhor performance
-      final batch = _firestore.batch();
-      int totalOperacoes = 0;
 
-      // Salvar Clientes
-      for (final cliente in clientes) {
-        final docRef = _getSubCollection(empresaId, _subCollectionClientes).doc(cliente.id);
-        batch.set(docRef, cliente.toMap());
-        totalOperacoes++;
-      }
 
-      // Salvar Produtos
-      for (final produto in produtos) {
-        final docRef = _getSubCollection(empresaId, _subCollectionProdutos).doc(produto.id);
-        batch.set(docRef, produto.toMap());
-        totalOperacoes++;
-      }
-
-      // Salvar Serviços
-      for (final servico in servicos) {
-        final docRef = _getSubCollection(empresaId, _subCollectionServicos).doc(servico.id);
-        batch.set(docRef, servico.toMap());
-        totalOperacoes++;
-      }
-
-      // Salvar Pedidos
-      for (final pedido in pedidos) {
-        final docRef = _getSubCollection(empresaId, _subCollectionPedidos).doc(pedido.id);
-        batch.set(docRef, pedido.toMap());
-        totalOperacoes++;
-      }
-
-      // Salvar Ordens de Serviço
-      for (final ordem in ordensServico) {
-        final docRef = _getSubCollection(empresaId, _subCollectionOrdensServico).doc(ordem.id);
-        batch.set(docRef, ordem.toMap());
-        totalOperacoes++;
-      }
-
-      // Salvar Entregas
-      for (final entrega in entregas) {
-        final docRef = _getSubCollection(empresaId, _subCollectionEntregas).doc(entrega.id);
-        batch.set(docRef, entrega.toMap());
-        totalOperacoes++;
-      }
-
-      // Salvar Vendas Balcão
-      for (final venda in vendasBalcao) {
-        final docRef = _getSubCollection(empresaId, _subCollectionVendasBalcao).doc(venda.id);
-        batch.set(docRef, venda.toMap());
-        totalOperacoes++;
-      }
-
-      // Salvar Trocas e Devoluções
-      for (final troca in trocasDevolucoes) {
-        final docRef = _getSubCollection(empresaId, _subCollectionTrocasDevolucoes).doc(troca.id);
-        batch.set(docRef, troca.toMap());
-        totalOperacoes++;
-      }
-
-      // Salvar Histórico de Estoque
-      for (final historico in estoqueHistorico) {
-        final docRef = _getSubCollection(empresaId, _subCollectionEstoqueHistorico).doc(historico.id);
-        batch.set(docRef, historico.toMap());
-        totalOperacoes++;
-      }
-
-      // Salvar Aberturas de Caixa
-      for (final abertura in aberturasCaixa) {
-        final docRef = _getSubCollection(empresaId, _subCollectionAberturasCaixa).doc(abertura.id);
-        batch.set(docRef, abertura.toMap());
-        totalOperacoes++;
-      }
-
-      // Salvar Fechamentos de Caixa
-      for (final fechamento in fechamentosCaixa) {
-        final docRef = _getSubCollection(empresaId, _subCollectionFechamentosCaixa).doc(fechamento.id);
-        batch.set(docRef, fechamento.toMap());
-        totalOperacoes++;
-      }
-
-      // Salvar Motoristas
-      for (final motorista in motoristas) {
-        final docRef = _getSubCollection(empresaId, _subCollectionMotoristas).doc(motorista.id);
-        batch.set(docRef, motorista.toMap());
-        totalOperacoes++;
-      }
-
-      // Salvar Agendamentos de Serviço
-      for (final agendamento in agendamentosServico) {
-        final docRef = _getSubCollection(empresaId, _subCollectionAgendamentosServico).doc(agendamento.id);
-        batch.set(docRef, agendamento.toMap());
-        totalOperacoes++;
-      }
-
-      // Salvar Notas de Entrada
-      for (final nota in notasEntrada) {
-        final docRef = _getSubCollection(empresaId, _subCollectionNotasEntrada).doc(nota.id);
-        batch.set(docRef, nota.toMap());
-        totalOperacoes++;
-      }
-
-      // Salvar Funcionários
-      for (final funcionario in funcionarios) {
-        final docRef = _getSubCollection(empresaId, _subCollectionFuncionarios).doc(funcionario.id);
-        batch.set(docRef, funcionario.toMap());
-        totalOperacoes++;
-      }
-
-      // Salvar Taxas de Entrega
-      for (final taxa in taxasEntrega) {
-        final docRef = _getSubCollection(empresaId, _subCollectionTaxasEntrega).doc(taxa.id);
-        batch.set(docRef, taxa.toMap());
-        totalOperacoes++;
-      }
-
-      // Salvar Contas a Pagar
-      for (final conta in contasPagar) {
-        final docRef = _getSubCollection(empresaId, _subCollectionContasPagar).doc(conta.id);
-        batch.set(docRef, conta.toMap());
-        totalOperacoes++;
-      }
-
-      // Salvar NFC-es
-      for (final nfce in nfces) {
-        final docRef = _getSubCollection(empresaId, _subCollectionNFCes).doc(nfce.id);
-        batch.set(docRef, nfce.toMap());
-        totalOperacoes++;
-      }
-
-      // Salvar Sangrias de Caixa
-      for (final sangria in sangrias) {
-        final docRef = _getSubCollection(empresaId, _subCollectionSangrias).doc(sangria.id);
-        batch.set(docRef, sangria.toMap());
-        totalOperacoes++;
-      }
-
-      // Salvar Suprimentos de Caixa
-      for (final suprimento in suprimentos) {
-        final docRef = _getSubCollection(empresaId, _subCollectionSuprimentos).doc(suprimento.id);
-        batch.set(docRef, suprimento.toMap());
-        totalOperacoes++;
-      }
-
-      // NOTA: Mesas/Comandas são salvas individualmente via salvarMesaComanda()
-      // quando são criadas/atualizadas, não precisam estar aqui no batch completo
-      // pois são operações frequentes e devem ser salvas imediatamente
-
-      // Salvar Links de Vendedores
-      if (linksVendedores != null) {
-        for (final link in linksVendedores) {
-          final docRef = _getSubCollection(empresaId, _subCollectionLinksVendedores).doc(link.id);
-          batch.set(docRef, link.toMap());
-          totalOperacoes++;
-        }
-      }
-
-      // Salvar Comissões de Vendedores
-      if (comissoesVendedores != null) {
-        for (final comissao in comissoesVendedores) {
-          final docRef = _getSubCollection(empresaId, _subCollectionComissoesVendedores).doc(comissao.id);
-          batch.set(docRef, comissao.toMap());
-          totalOperacoes++;
-        }
-      }
-
-      // Executar batch (limite do Firestore é 500 operações por batch)
-      if (totalOperacoes > 0) {
-        if (totalOperacoes <= 500) {
-          // Aumentado para 45 segundos para lidar com conexões lentas ou batches grandes
-          await batch.commit().timeout(
-            const Duration(seconds: 45),
-            onTimeout: () {
-              debugPrint('>>> [Firebase] ⚠️ Timeout ao salvar batch (45s)');
-              throw TimeoutException('Timeout ao salvar batch no Firebase');
-            },
-          );
-          debugPrint('>>> [Firebase] $totalOperacoes documentos salvos com sucesso!');
-        } else {
-          // Se exceder 500, dividir em múltiplos batches
-          debugPrint('>>> [Firebase] Muitos documentos ($totalOperacoes). Salvando em múltiplos batches...');
-          // Por enquanto, vamos salvar em batches menores
-          await _salvarEmBatches(
-            empresaId: empresaId,
-            clientes: clientes,
-            produtos: produtos,
-            servicos: servicos,
-            pedidos: pedidos,
-            ordensServico: ordensServico,
-            entregas: entregas,
-            vendasBalcao: vendasBalcao,
-            trocasDevolucoes: trocasDevolucoes,
-            estoqueHistorico: estoqueHistorico,
-            aberturasCaixa: aberturasCaixa,
-            fechamentosCaixa: fechamentosCaixa,
-            motoristas: motoristas,
-            agendamentosServico: agendamentosServico,
-            notasEntrada: notasEntrada,
-            funcionarios: funcionarios,
-            taxasEntrega: taxasEntrega,
-            contasPagar: contasPagar,
-            nfces: nfces,
-            sangrias: sangrias,
-            suprimentos: suprimentos,
-            linksVendedores: linksVendedores ?? [],
-            comissoesVendedores: comissoesVendedores ?? [],
-          );
-        }
-      } else {
-        debugPrint('>>> [Firebase] Nenhum dado para salvar');
-      }
-
-      debugPrint('>>> [Firebase] Salvamento completo finalizado!');
-    } catch (e, stackTrace) {
-      debugPrint('>>> [Firebase] ERRO ao salvar no Firebase: $e');
-      debugPrint('>>> [Firebase] StackTrace: $stackTrace');
-      rethrow;
-    }
-  }
-
-  /// Salvar em múltiplos batches se necessário
-  Future<void> _salvarEmBatches({
-    required String empresaId,
-    required List<Cliente> clientes,
-    required List<Produto> produtos,
-    required List<Servico> servicos,
-    required List<Pedido> pedidos,
-    required List<OrdemServico> ordensServico,
-    required List<Entrega> entregas,
-    required List<VendaBalcao> vendasBalcao,
-    required List<TrocaDevolucao> trocasDevolucoes,
-    required List<EstoqueHistorico> estoqueHistorico,
-    required List<AberturaCaixa> aberturasCaixa,
-    required List<FechamentoCaixa> fechamentosCaixa,
-    required List<Motorista> motoristas,
-    required List<AgendamentoServico> agendamentosServico,
-    required List<NotaEntrada> notasEntrada,
-    required List<Funcionario> funcionarios,
-    required List<TaxaEntrega> taxasEntrega,
-    required List<ContaPagar> contasPagar,
-    required List<NFCe> nfces,
-    required List<SangriaCaixa> sangrias,
-    required List<SuprimentoCaixa> suprimentos,
-    List<LinkVendedor>? linksVendedores,
-    List<ComissaoVendedor>? comissoesVendedores,
-  }) async {
-    // Salvar cada coleção separadamente
-    await _salvarLista(empresaId, clientes, _subCollectionClientes, (c) => c.id, (c) => c.toMap());
-    await _salvarLista(empresaId, produtos, _subCollectionProdutos, (p) => p.id, (p) => p.toMap());
-    await _salvarLista(empresaId, servicos, _subCollectionServicos, (s) => s.id, (s) => s.toMap());
-    await _salvarLista(empresaId, pedidos, _subCollectionPedidos, (p) => p.id, (p) => p.toMap());
-    await _salvarLista(empresaId, ordensServico, _subCollectionOrdensServico, (o) => o.id, (o) => o.toMap());
-    await _salvarLista(empresaId, entregas, _subCollectionEntregas, (e) => e.id, (e) => e.toMap());
-    await _salvarLista(empresaId, vendasBalcao, _subCollectionVendasBalcao, (v) => v.id, (v) => v.toMap());
-    await _salvarLista(empresaId, trocasDevolucoes, _subCollectionTrocasDevolucoes, (t) => t.id, (t) => t.toMap());
-    await _salvarLista(empresaId, estoqueHistorico, _subCollectionEstoqueHistorico, (e) => e.id, (e) => e.toMap());
-    await _salvarLista(empresaId, aberturasCaixa, _subCollectionAberturasCaixa, (a) => a.id, (a) => a.toMap());
-    await _salvarLista(empresaId, fechamentosCaixa, _subCollectionFechamentosCaixa, (f) => f.id, (f) => f.toMap());
-    await _salvarLista(empresaId, motoristas, _subCollectionMotoristas, (m) => m.id, (m) => m.toMap());
-    await _salvarLista(empresaId, agendamentosServico, _subCollectionAgendamentosServico, (a) => a.id, (a) => a.toMap());
-    await _salvarLista(empresaId, notasEntrada, _subCollectionNotasEntrada, (n) => n.id, (n) => n.toMap());
-    await _salvarLista(empresaId, funcionarios, _subCollectionFuncionarios, (f) => f.id, (f) => f.toMap());
-    await _salvarLista(empresaId, taxasEntrega, _subCollectionTaxasEntrega, (t) => t.id, (t) => t.toMap());
-    await _salvarLista(empresaId, contasPagar, _subCollectionContasPagar, (c) => c.id, (c) => c.toMap());
-    await _salvarLista(empresaId, nfces, _subCollectionNFCes, (n) => n.id, (n) => n.toMap());
-    await _salvarLista(empresaId, sangrias, _subCollectionSangrias, (s) => s.id, (s) => s.toMap());
-    await _salvarLista(empresaId, suprimentos, _subCollectionSuprimentos, (s) => s.id, (s) => s.toMap());
-    if (linksVendedores != null) {
-      await _salvarLista(empresaId, linksVendedores, _subCollectionLinksVendedores, (l) => l.id, (l) => l.toMap());
-    }
-    if (comissoesVendedores != null) {
-      await _salvarLista(empresaId, comissoesVendedores, _subCollectionComissoesVendedores, (c) => c.id, (c) => c.toMap());
-    }
-  }
-
-  Future<void> _salvarLista<T>(
-    String empresaId,
-    List<T> items,
-    String subCollection,
-    String Function(T) getId,
-    Map<String, dynamic> Function(T) toMap,
-  ) async {
-    if (items.isEmpty) return;
-
-    debugPrint('>>> [Firebase] Sincronizando $subCollection (${items.length} itens)...');
-    
-    // Salvar item por item em vez de batch para maior granularidade e evitar timeouts de lotes grandes
-    int sucessos = 0;
-    int falhas = 0;
-
-    for (var item in items) {
-      try {
-        final id = getId(item);
-        final docRef = _getSubCollection(empresaId, subCollection).doc(id);
-        
-        // Timeout individual de 15s por item
-        await docRef.set(toMap(item)).timeout(
-          const Duration(seconds: 15),
-          onTimeout: () => throw TimeoutException('Timeout no item $id'),
-        );
-        sucessos++;
-      } catch (e) {
-        falhas++;
-        // Se for erro de cota, interrompemos a lista para não piorar
-        if (e.toString().toLowerCase().contains('quota')) {
-          debugPrint('>>> [Firebase] ⚠️ Cota excedida durante sync de $subCollection. Interrompendo...');
-          break;
-        }
-      }
-      
-      // Pequeno delay para não "metralhar" o Firestore
-      await Future.delayed(const Duration(milliseconds: 10));
-    }
-    
-    debugPrint('>>> [Firebase] Finalizado $subCollection: $sucessos sucessos, $falhas falhas.');
-  }
 
   /// Carrega todos os dados do Firebase para uma empresa específica
   /// [lastSync]: Se fornecido, busca apenas documentos atualizados após esta data
-  Future<Map<String, dynamic>> carregarTudoDoFirebase(String empresaId, {DateTime? lastSync}) async {
+  Future<Map<String, dynamic>> carregarTudoDoFirebase(String empresaId, {
+    DateTime? lastSync,
+    int mesesRetroativos = 3, // Padrão: 3 meses para evitar OOM
+  }) async {
     try {
       if (!isAvailable) throw Exception('Firebase não está disponível');
       if (empresaId.isEmpty) throw ArgumentError('empresaId não pode ser vazio');
       
-      debugPrint('>>> [Firebase] 🔥 CARREGANDO TUDO DO FIREBASE - LastSync: $lastSync');
+      debugPrint('>>> [Firebase] 🔥 CARREGANDO TUDO DO FIREBASE (Paginação: $mesesRetroativos meses)');
       
       final dados = <String, dynamic>{};
+      final dataLimite = DateTime.now().subtract(Duration(days: 30 * mesesRetroativos));
+      final dataLimiteIso = dataLimite.toIso8601String();
 
-      Query _applyFilter(Query query) {
+      // Funções de filtro
+      Query _applySyncFilter(Query query) {
         if (lastSync == null) return query;
         return query.where('updatedAt', isGreaterThan: lastSync.toIso8601String());
       }
+
+      Query _applySmartPagination(Query query) {
+        // Se lastSync for fornecido, confiamos na sincronização incremental
+        if (lastSync != null) return _applySyncFilter(query);
+        // Senão, limitamos por data de criação para não puxar "o mundo"
+        return query.where('createdAt', isGreaterThan: dataLimiteIso);
+      }
       
       // Carregar todas as subcoleções em paralelo
+      // Nota: Coleções mestras (Clientes, Produtos, Serviços) carregamos todas
+      // Coleções transacionais (Pedidos, Vendas, Agendamentos) paginamos
       final results = await Future.wait([
-        _applyFilter(_getSubCollection(empresaId, _subCollectionClientes)).get(),
-        _applyFilter(_getSubCollection(empresaId, _subCollectionProdutos)).get(),
-        _applyFilter(_getSubCollection(empresaId, _subCollectionServicos)).get(),
-        _applyFilter(_getSubCollection(empresaId, _subCollectionPedidos)).get(),
-        _applyFilter(_getSubCollection(empresaId, _subCollectionOrdensServico)).get(),
-        _applyFilter(_getSubCollection(empresaId, _subCollectionEntregas)).get(),
-        _applyFilter(_getSubCollection(empresaId, _subCollectionVendasBalcao)).get(),
-        _applyFilter(_getSubCollection(empresaId, _subCollectionTrocasDevolucoes)).get(),
-        _applyFilter(_getSubCollection(empresaId, _subCollectionEstoqueHistorico)).get(),
-        _applyFilter(_getSubCollection(empresaId, _subCollectionAberturasCaixa)).get(),
-        _applyFilter(_getSubCollection(empresaId, _subCollectionFechamentosCaixa)).get(),
-        _applyFilter(_getSubCollection(empresaId, _subCollectionMotoristas)).get(),
-        _applyFilter(_getSubCollection(empresaId, _subCollectionAgendamentosServico)).get(),
-        _applyFilter(_getSubCollection(empresaId, _subCollectionNotasEntrada)).get(),
-        _applyFilter(_getSubCollection(empresaId, _subCollectionFuncionarios)).get(),
-        _applyFilter(_getSubCollection(empresaId, _subCollectionTaxasEntrega)).get(),
-        _applyFilter(_getSubCollection(empresaId, _subCollectionContasPagar)).get(),
-        _applyFilter(_getSubCollection(empresaId, _subCollectionNFCes)).get(),
-        _applyFilter(_getSubCollection(empresaId, _subCollectionSangrias)).get(),
-        _applyFilter(_getSubCollection(empresaId, _subCollectionSuprimentos)).get(),
-        _applyFilter(_getSubCollection(empresaId, _subCollectionMesasComandas)).get(),
-        _applyFilter(_getSubCollection(empresaId, _subCollectionLinksVendedores)).get(),
-        _applyFilter(_getSubCollection(empresaId, _subCollectionComissoesVendedores)).get(),
+        _applySyncFilter(_getSubCollection(empresaId, _subCollectionClientes)).get(),
+        _applySyncFilter(_getSubCollection(empresaId, _subCollectionProdutos)).get(),
+        _applySyncFilter(_getSubCollection(empresaId, _subCollectionServicos)).get(),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionPedidos)).get(),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionOrdensServico)).get(),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionEntregas)).get(),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionVendasBalcao)).get(),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionTrocasDevolucoes)).get(),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionEstoqueHistorico)).get(),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionAberturasCaixa)).get(),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionFechamentosCaixa)).get(),
+        _applySyncFilter(_getSubCollection(empresaId, _subCollectionMotoristas)).get(),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionAgendamentosServico)).get(),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionNotasEntrada)).get(),
+        _applySyncFilter(_getSubCollection(empresaId, _subCollectionFuncionarios)).get(),
+        _applySyncFilter(_getSubCollection(empresaId, _subCollectionTaxasEntrega)).get(),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionContasPagar)).get(),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionNFCes)).get(),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionSangrias)).get(),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionSuprimentos)).get(),
+        _applySyncFilter(_getSubCollection(empresaId, _subCollectionMesasComandas)).get(),
+        _applySyncFilter(_getSubCollection(empresaId, _subCollectionLinksVendedores)).get(),
+        _applySyncFilter(_getSubCollection(empresaId, _subCollectionComissoesVendedores)).get(),
       ]).timeout(
         const Duration(seconds: 90),
-        onTimeout: () {
-          debugPrint('>>> [Firebase] ⚠ Timeout ao carregar dados (90s)');
-          throw TimeoutException('Timeout ao carregar dados do Firebase');
-        },
+        onTimeout: () => throw TimeoutException('Timeout ao carregar dados do Firebase'),
       );
 
-      dados['clientes'] = results[0].docs.map((doc) => doc.data()).toList();
-      dados['produtos'] = results[1].docs.map((doc) => doc.data()).toList();
-      dados['servicos'] = results[2].docs.map((doc) => doc.data()).toList();
-      dados['pedidos'] = results[3].docs.map((doc) => doc.data()).toList();
-      dados['ordens_servico'] = results[4].docs.map((doc) => doc.data()).toList();
-      dados['entregas'] = results[5].docs.map((doc) => doc.data()).toList();
-      dados['vendas_balcao'] = results[6].docs.map((doc) => doc.data()).toList();
-      dados['trocas_devolucoes'] = results[7].docs.map((doc) => doc.data()).toList();
-      dados['estoque_historico'] = results[8].docs.map((doc) => doc.data()).toList();
-      dados['aberturas_caixa'] = results[9].docs.map((doc) => doc.data()).toList();
-      dados['fechamentos_caixa'] = results[10].docs.map((doc) => doc.data()).toList();
-      dados['motoristas'] = results[11].docs.map((doc) => doc.data()).toList();
-      dados['agendamentos_servico'] = results[12].docs.map((doc) => doc.data()).toList();
-      dados['notas_entrada'] = results[13].docs.map((doc) => doc.data()).toList();
-      dados['funcionarios'] = results[14].docs.map((doc) => doc.data()).toList();
-      dados['taxas_entrega'] = results[15].docs.map((doc) => doc.data()).toList();
-      dados['contas_pagar'] = results[16].docs.map((doc) => doc.data()).toList();
-      dados['nfces'] = results[17].docs.map((doc) => doc.data()).toList();
-      dados['sangrias'] = results[18].docs.map((doc) => doc.data()).toList();
-      dados['suprimentos'] = results[19].docs.map((doc) => doc.data()).toList();
-      dados['mesas_comandas'] = results[20].docs.map((doc) => doc.data()).toList();
-      dados['links_vendedores'] = results[21].docs.map((doc) => doc.data()).toList();
-      dados['comissoes_vendedores'] = results[22].docs.map((doc) => doc.data()).toList();
+      final chaves = [
+        'clientes', 'produtos', 'servicos', 'pedidos', 'ordens_servico',
+        'entregas', 'vendas_balcao', 'trocas_devolucoes', 'estoque_historico',
+        'aberturas_caixa', 'fechamentos_caixa', 'motoristas', 'agendamentos_servico',
+        'notas_entrada', 'funcionarios', 'taxas_entrega', 'contas_pagar',
+        'nfces', 'sangrias', 'suprimentos', 'mesas_comandas', 'links_vendedores',
+        'comissoes_vendedores'
+      ];
 
-      debugPrint('>>> [Firebase] Carga concluída:');
-      debugPrint('  - Clientes: ${dados['clientes'].length}');
-      debugPrint('  - Produtos: ${dados['produtos'].length}');
-      debugPrint('  - Pedidos: ${dados['pedidos'].length}');
-      debugPrint('  - Agendamentos: ${dados['agendamentos_servico'].length}');
-      debugPrint('  - Comissões Vendedores: ${dados['comissoes_vendedores'].length}');
+      for (int i = 0; i < chaves.length; i++) {
+        // PROTEÇÃO ADICIONAL: Se houverem muitos documentos (ex: > 2000), 
+        // pegamos apenas os 2000 mais recentes para este dispositivo.
+        final docs = results[i].docs;
+        if (docs.length > 2000) {
+          debugPrint('>>> [Firebase] 🛡️ Limite de segurança atingido para ${chaves[i]} (${docs.length} > 2000)');
+          dados[chaves[i]] = docs.take(2000).map((doc) => doc.data()).toList();
+        } else {
+          dados[chaves[i]] = docs.map((doc) => doc.data()).toList();
+        }
+      }
 
+      debugPrint('>>> [Firebase] Carga inteligente concluída com sucesso.');
       return dados;
     } catch (e, stackTrace) {
       debugPrint('>>> [Firebase] ERRO ao carregar do Firebase: $e');
-      debugPrint('>>> [Firebase] StackTrace: $stackTrace');
       rethrow;
     }
   }
@@ -659,6 +318,101 @@ class FirebaseService {
       );
     } catch (e, stackTrace) {
       debugPrint('>>> [Firebase] ❌ Erro ao sincronizar tudo: $e');
+      debugPrint('>>> [Firebase] StackTrace: $stackTrace');
+      rethrow;
+    }
+  }
+
+  /// Sincronizar dados (salvar tudo)
+  /// Executa com timeout para evitar travamentos
+  Future<void> salvarTudoNoFirebase({
+    required String empresaId,
+    required List<Cliente> clientes,
+    required List<Produto> produtos,
+    required List<Servico> servicos,
+    required List<Pedido> pedidos,
+    required List<OrdemServico> ordensServico,
+    required List<Entrega> entregas,
+    required List<VendaBalcao> vendasBalcao,
+    required List<TrocaDevolucao> trocasDevolucoes,
+    required List<EstoqueHistorico> estoqueHistorico,
+    required List<AberturaCaixa> aberturasCaixa,
+    required List<FechamentoCaixa> fechamentosCaixa,
+    required List<Motorista> motoristas,
+    required List<AgendamentoServico> agendamentosServico,
+    required List<NotaEntrada> notasEntrada,
+    required List<Funcionario> funcionarios,
+    required List<TaxaEntrega> taxasEntrega,
+    required List<ContaPagar> contasPagar,
+    required List<NFCe> nfces,
+    required List<SangriaCaixa> sangrias,
+    required List<SuprimentoCaixa> suprimentos,
+    List<LinkVendedor>? linksVendedores,
+    List<ComissaoVendedor>? comissoesVendedores,
+  }) async {
+    try {
+      debugPrint('>>> [Firebase] 🚀 INICIANDO SALVAMENTO EM LOTES (Otimizado para Web)...');
+      
+      final Map<String, List<dynamic>> colecoes = {
+        _subCollectionClientes: clientes,
+        _subCollectionProdutos: produtos,
+        _subCollectionServicos: servicos,
+        _subCollectionPedidos: pedidos,
+        _subCollectionOrdensServico: ordensServico,
+        _subCollectionEntregas: entregas,
+        _subCollectionVendasBalcao: vendasBalcao,
+        _subCollectionTrocasDevolucoes: trocasDevolucoes,
+        _subCollectionEstoqueHistorico: estoqueHistorico,
+        _subCollectionAberturasCaixa: aberturasCaixa,
+        _subCollectionFechamentosCaixa: fechamentosCaixa,
+        _subCollectionMotoristas: motoristas,
+        _subCollectionAgendamentosServico: agendamentosServico,
+        _subCollectionNotasEntrada: notasEntrada,
+        _subCollectionFuncionarios: funcionarios,
+        _subCollectionTaxasEntrega: taxasEntrega,
+        _subCollectionContasPagar: contasPagar,
+        _subCollectionNFCes: nfces,
+        _subCollectionSangrias: sangrias,
+        _subCollectionSuprimentos: suprimentos,
+        _subCollectionLinksVendedores: linksVendedores ?? [],
+        _subCollectionComissoesVendedores: comissoesVendedores ?? [],
+      };
+
+      int totalProcessado = 0;
+
+      for (var entry in colecoes.entries) {
+        final nomeColecao = entry.key;
+        final lista = entry.value;
+
+        if (lista.isEmpty) continue;
+        debugPrint('>>> [Firebase] 📦 Salvando $nomeColecao: ${lista.length} itens...');
+
+        // Processar em chunks de 450 (segurança para o limite de 500 do Firestore)
+        for (var i = 0; i < lista.length; i += 450) {
+          final chunk = lista.sublist(i, i + 450 > lista.length ? lista.length : i + 450);
+          final batch = _firestore.batch();
+
+          for (var item in chunk) {
+            final docId = (item as dynamic).id;
+            final docRef = _getSubCollection(empresaId, nomeColecao).doc(docId);
+            batch.set(docRef, item.toMap());
+          }
+
+          // Commit do lote atual
+          await batch.commit().timeout(
+            const Duration(seconds: 45),
+            onTimeout: () => throw TimeoutException('Lote de $nomeColecao travou'),
+          );
+
+          totalProcessado += chunk.length;
+          // Pausa obrigatória para o garbage collector do navegador respirar
+          await Future.delayed(const Duration(milliseconds: 100));
+        }
+      }
+
+      debugPrint('>>> [Firebase] ✅ SUCESSO! $totalProcessado documentos sincronizados.');
+    } catch (e, stackTrace) {
+      debugPrint('>>> [Firebase] ❌ FALHA CRÍTICA na sincronização: $e');
       debugPrint('>>> [Firebase] StackTrace: $stackTrace');
       rethrow;
     }
@@ -1225,6 +979,20 @@ class FirebaseService {
           return null;
         }
       }).where((s) => s != null).cast<Servico>().toList();
+    });
+  }
+
+  /// Obtém um stream do documento da empresa para tempo real
+  Stream<Empresa?> getEmpresaStream(String empresaId) {
+    debugPrint('>>> [Firebase] 📣 Criando novo Stream em: empresas/$empresaId');
+    return _firestore.collection(_collectionEmpresas).doc(empresaId).snapshots().map((doc) {
+      if (!doc.exists) return null;
+      try {
+        return Empresa.fromMap(doc.data() as Map<String, dynamic>);
+      } catch (e) {
+        debugPrint('>>> [Firebase] Erro ao converter empresa do stream: $e');
+        return null;
+      }
     });
   }
 

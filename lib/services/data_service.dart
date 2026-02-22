@@ -108,21 +108,36 @@ class DataService extends ChangeNotifier {
   StreamSubscription? _agendamentosSubscription;
   StreamSubscription? _produtosSubscription;
   StreamSubscription? _servicosSubscription;
+  StreamSubscription? _empresaSubscription;
   
   // Status de Sincronização
   DateTime? _ultimaSincronizacaoSucesso;
   bool _syncEmAndamento = false;
   bool _isModoLeve = false;
+  bool _primeiraCargaAgendamentosRealizada = false;
 
   @override
   void dispose() {
+    _cancelarTodasSubscriptions();
+    _debounceSalvamento?.cancel();
+    _syncQueue.dispose();
+    super.dispose();
+  }
+
+  /// Cancela todas as conexões ativas com o Firebase para evitar vazamentos de memória
+  void _cancelarTodasSubscriptions() {
+    debugPrint('>>> [Memória] 🧹 Cancelando todas as conexões e timers...');
     _syncTimer?.cancel();
     _agendamentosSubscription?.cancel();
     _produtosSubscription?.cancel();
     _servicosSubscription?.cancel();
-    _debounceSalvamento?.cancel();
-    _syncQueue.dispose();
-    super.dispose();
+    _empresaSubscription?.cancel();
+    
+    _syncTimer = null;
+    _agendamentosSubscription = null;
+    _produtosSubscription = null;
+    _servicosSubscription = null;
+    _empresaSubscription = null;
   }
   String get instanceId => _instanceId;
   bool get firebaseHabilitado => _firebaseHabilitado;
@@ -147,20 +162,39 @@ class DataService extends ChangeNotifier {
 
   /// Toca o som de notificação quando chega um agendamento novo
   Future<void> _tocarSomNotificacao() async {
-    // Som desativado a pedido do usuário (som de grito/incômodo)
-    debugPrint('>>> [Audio] 🔇 Som de notificação desativado a pedido do usuário');
-    /* 
+    debugPrint('>>> [Audio] 🔊 Tentando tocar som de notificação...');
+    
+    // NO WEB: Muitos navegadores bloqueiam som sem interação prévia.
+    // O usuário DEVE ter clicado pelo menos uma vez no app.
+    
     try {
+      await _audioPlayer.stop();
+      await _audioPlayer.setVolume(0.8); // 80% do volume para garantir audibilidade
+      
       if (kIsWeb) {
-        html_helper.playAudio('assets/sounds/notification.mp3', volume: 0.1);
+        // No Web, tentamos descobrir o caminho correto dos assets
+        final origin = html_helper.getWindowOrigin();
+        final url = '$origin/assets/sounds/notification.mp3';
+        debugPrint('>>> [Audio] 🌐 Web: Tentando carregar via URL: $url');
+        await _audioPlayer.play(UrlSource(url));
       } else {
-        await _audioPlayer.setVolume(0.1); 
         await _audioPlayer.play(AssetSource('sounds/notification.mp3'));
       }
+      
+      debugPrint('>>> [Audio] ✅ Comando de reprodução enviado');
     } catch (e) {
-      debugPrint('>>> [Audio] ⚠️ Erro ao tocar som: $e');
+      debugPrint('>>> [Audio] ❌ Erro detalhado ao tocar som: $e');
+      
+      // Fallback para o helper nativo do browser se o audioplayers falhar no web
+      if (kIsWeb) {
+        try {
+          debugPrint('>>> [Audio] 🔄 Tentando fallback via HTML AudioElement...');
+          html_helper.playAudio('assets/sounds/notification.mp3', volume: 0.8);
+        } catch (e2) {
+          debugPrint('>>> [Audio] ❌ Falha no fallback: $e2');
+        }
+      }
     }
-    */
   }
   
   /// Define a empresa completa (chamado pelo AuthService após selecionar empresa)
@@ -239,6 +273,7 @@ class DataService extends ChangeNotifier {
     // Isso garante que cada empresa carregue apenas seus próprios dados
     print('>>> DataService: 🧹 Limpando dados da empresa anterior da memória...');
     print('>>> DataService: ⚠️ Os dados permanecem salvos no localStorage/Firebase');
+    _primeiraCargaAgendamentosRealizada = false; // Resetar para a nova empresa
     _clientes.clear();
     _produtos.clear();
     _tiposServico.clear();
@@ -310,13 +345,15 @@ class DataService extends ChangeNotifier {
 
     debugPrint('>>> [Sync] 📡 Ativando Streams de Tempo Real (Modo Leve: $_isModoLeve)');
     
-    // 1. Agendamentos (Sempre em tempo real)
-    _iniciarStreamAgendamentos();
+    // 1. Empresa (Configurações em tempo real)
+  _iniciarStreamEmpresa();
+  
+  // 2. Agendamentos (Sempre em tempo real)
+  _iniciarStreamAgendamentos();
 
-    // 2. Produtos e Serviços (Tempo real apenas se houver necessidade de atualização instantânea na UI)
-    // Para loja pública, isso é essencial para refletir mudanças de preço/estoque sem refresh
-    _iniciarStreamProdutos();
-    _iniciarStreamServicos();
+  // 3. Produtos e Serviços (Tempo real apenas se houver necessidade de atualização instantânea na UI)
+  _iniciarStreamProdutos();
+  _iniciarStreamServicos();
   }
 
   void _iniciarStreamProdutos() {
@@ -393,6 +430,36 @@ class DataService extends ChangeNotifier {
     }
   }
 
+  void _iniciarStreamEmpresa() {
+    _empresaSubscription?.cancel();
+    if (_empresaIdAtual == null || !_firebaseHabilitado) return;
+
+    debugPrint('>>> [Sync] 📡 Iniciando Stream do Documento da Empresa: $_empresaIdAtual');
+    
+    _empresaSubscription = _firebaseService.getEmpresaStream(_empresaIdAtual!).listen((empresa) {
+      if (empresa != null) {
+        // Verificar se houve mudança real (especialmente em configurações de agendamento)
+        final configAntes = _empresaAtual?.configuracoes?['agendamento'];
+        final configDepois = empresa.configuracoes?['agendamento'];
+        
+        bool mudou = _empresaAtual == null || 
+                    _empresaAtual!.updatedAt.isBefore(empresa.updatedAt) ||
+                    configAntes.toString() != configDepois.toString();
+        
+        if (mudou) {
+          debugPrint('>>> [Sync] 🏢 Atualização da Empresa detectada via Stream: ${empresa.id}');
+          _empresaAtual = empresa;
+          notifyListeners();
+          
+          // Salvar localmente
+          _storage.salvar('empresa_atual', empresa.toMap());
+        }
+      }
+    }, onError: (e) {
+      debugPrint('>>> [Sync] ❌ ERRO no Stream da Empresa: $e');
+    });
+  }
+
   void _iniciarStreamAgendamentos() {
     _agendamentosSubscription?.cancel();
     if (_empresaIdAtual == null || !_firebaseHabilitado) return;
@@ -430,15 +497,20 @@ class DataService extends ChangeNotifier {
         if (_upsertAgendamentoLocal(agendamentoCompleto)) {
           houveMudanca = true;
           
-          // Se for novo para a lista local E não for a primeira carga (idsLocaisAntes não vazio ou check de flag)
-          // Tocar som apenas para agendamentos com status pendente ou recém-criados
-          if (isNovoParaLocal && idsLocaisAntes.isNotEmpty) {
+          // Tocar som apenas para agendamentos novos que chegam APÓS a primeira carga completa
+          if (_primeiraCargaAgendamentosRealizada && isNovoParaLocal) {
             temNovoAgendamento = true;
             debugPrint('>>> [Sync] ✨ NOVO agendamento detectado: ${agendamento.id}');
           }
           
           debugPrint('>>> [Sync] ✅ ATUALIZAÇÃO detectada via Stream: ${agendamento.id} (${agendamentoCompleto.status})');
         }
+      }
+
+      // Após processar o primeiro snapshot, marcamos que as próximas novidades devem tocar som
+      if (!_primeiraCargaAgendamentosRealizada) {
+        _primeiraCargaAgendamentosRealizada = true;
+        debugPrint('>>> [Sync] 🏁 Primeira carga de agendamentos concluída. Notificações sonoras ATIVADAS.');
       }
 
       if (temNovoAgendamento) {
@@ -3028,11 +3100,25 @@ class DataService extends ChangeNotifier {
     // Verificar conflitos com horários bloqueados (Configuração da Empresa)
     try {
       final config = _empresaAtual?.configuracoes?['agendamento'] as Map<String, dynamic>?;
-      final bloqueados = config?['horariosIndisponiveis'] as List<dynamic>?;
       
+      // -- VERIFICAR HORÁRIO DE FUNCIONAMENTO --
+      final hAberturaStr = config?['horarioAbertura']?.toString() ?? '08:00';
+      final hFechamentoStr = config?['horarioFechamento']?.toString() ?? '18:00';
+      
+      final hAbertura = _timeToDouble(hAberturaStr);
+      final hFechamento = _timeToDouble(hFechamentoStr);
+      
+      final double horaInicio = inicio.hour + (inicio.minute / 60.0);
+      final double horaFim = horaInicio + (duracaoMinutos / 60.0);
+
+      // Se começar antes de abrir ou terminar depois de fechar, está bloqueado.
+      if (horaInicio < hAbertura || horaFim > hFechamento) {
+        debugPrint('>>> [DataService] Fora do horário de funcionamento: $horaInicio - $horaFim (Expediente: $hAberturaStr - $hFechamentoStr)');
+        return false;
+      }
+
+      final bloqueados = config?['horariosIndisponiveis'] as List<dynamic>?;
       if (bloqueados != null && bloqueados.isNotEmpty) {
-        final double horaInicio = inicio.hour + inicio.minute / 60.0;
-        final double horaFim = horaInicio + (duracaoMinutos / 60.0);
         final String dataStr = '${inicio.year}-${inicio.month.toString().padLeft(2, '0')}-${inicio.day.toString().padLeft(2, '0')}';
         final int diaSemana = inicio.weekday; // 1=Mon ... 7=Sun
         
@@ -3101,6 +3187,16 @@ class DataService extends ChangeNotifier {
     }
     
     return true;
+  }
+
+  double _timeToDouble(String timeStr) {
+    try {
+      final parts = timeStr.split(':');
+      if (parts.length != 2) return 0.0;
+      return int.parse(parts[0]) + (int.parse(parts[1]) / 60.0);
+    } catch (_) {
+      return 0.0;
+    }
   }
 
   /// Vincula as referências (Serviço, Cliente, Pet) a um agendamento com base nos IDs
@@ -4247,7 +4343,10 @@ class DataService extends ChangeNotifier {
       
       final dados = (finalModoLeve || isSilentSync)
           ? await _firebaseService.carregarDadosLevesDoFirebase(_empresaIdAtual!)
-          : await _firebaseService.carregarTudoDoFirebase(_empresaIdAtual!);
+          : await _firebaseService.carregarTudoDoFirebase(
+              _empresaIdAtual!,
+              mesesRetroativos: 3, // Carrega apenas últimos 90 dias por padrão
+            );
       
       // Verificar se há dados no Firebase (incluindo agendamentos)
       final temDados = dados['clientes']?.isNotEmpty == true ||
@@ -4267,7 +4366,6 @@ class DataService extends ChangeNotifier {
         final novos = (dados['clientes'] as List).map((map) => Cliente.fromMap(map as Map<String, dynamic>)).toList();
         _atualizarListaInPlace(_clientes, novos);
         print('>>> ✓ ${novos.length} clientes carregados do Firebase');
-        notifyListeners(); // Notificar progresso
       }
 
       // Carregar produtos - Otimizado: Pular se em sync silencioso e stream ativo
@@ -4275,7 +4373,6 @@ class DataService extends ChangeNotifier {
         final novos = (dados['produtos'] as List).map((map) => Produto.fromMap(map as Map<String, dynamic>)).toList();
         _atualizarListaInPlace(_produtos, novos);
         print('>>> ✓ ${novos.length} produtos carregados do Firebase');
-        notifyListeners(); // Notificar progresso
       }
 
       // Carregar serviços - Otimizado: Pular se em sync silencioso e stream ativo
@@ -4283,7 +4380,6 @@ class DataService extends ChangeNotifier {
         final novos = (dados['servicos'] as List).map((map) => Servico.fromMap(map as Map<String, dynamic>)).toList();
         _atualizarListaInPlace(_tiposServico, novos);
         print('>>> ✓ ${novos.length} serviços carregados do Firebase');
-        notifyListeners(); // Notificar progresso
       }
 
       // Carregar pedidos - ISOLAMENTO: Apenas dados da empresa atual do Firebase
@@ -4460,7 +4556,8 @@ class DataService extends ChangeNotifier {
           
           print('>>> [Agendamentos] ✅✅✅ CARREGAMENTO CONCLUÍDO! ✅✅✅');
           print('>>> [Agendamentos]   - Total na lista: ${_agendamentosServico.length}');
-          notifyListeners(); // Notificar progresso CRÍTICO
+          // notifyListeners() removido daqui, já existe um no finalmente do método
+
           
           // Migrar agendamentos sem número válido
           migrarAgendamentosSemNumero();
@@ -4955,16 +5052,22 @@ class DataService extends ChangeNotifier {
 
   /// Método auxiliar para atualizar listas in-place, garantindo unicidade por ID
   void _atualizarListaInPlace<T>(List<T> listaAtual, List<T> novosItens) {
-    for (final item in novosItens) {
-      // Obter ID do item (usando reflection-like approach via dynamic)
-      final String itemId = (item as dynamic).id;
-      
-      // Remover TODAS as instâncias com o mesmo ID para garantir limpeza total
-      listaAtual.removeWhere((x) => (x as dynamic).id == itemId);
-      
-      // Adicionar o item atualizado
-      listaAtual.add(item);
+    if (novosItens.isEmpty) {
+      listaAtual.clear();
+      return;
     }
+
+    // BARREIRA DE SEGURANÇA: Limite de 5.000 itens para proteger RAM
+    final List<T> itensSeguros = novosItens.length > 5000 
+        ? novosItens.take(5000).toList() 
+        : novosItens;
+
+    if (novosItens.length > 5000) {
+      debugPrint('>>> [Memória] 🛡️ Alerta: Lista com ${novosItens.length} itens reduzida para 5.000 para estabilidade.');
+    }
+
+    listaAtual.clear();
+    listaAtual.addAll(itensSeguros);
   }
 
   /// Salva todos os dados no localStorage e Firebase
@@ -4973,55 +5076,60 @@ class DataService extends ChangeNotifier {
     if (!_persistenciaHabilitada) return;
 
     try {
-      // Salvar no localStorage PRIMEIRO (sempre funciona, mesmo offline)
-      // Dividir em grupos menores para evitar travamentos
+      // OTIMIZAÇÃO CRÍTICA: Se a memória estiver pesada, limitar histórico
+      if (_estoqueHistorico.length > 500) {
+        debugPrint('>>> [Memória] 🧹 Limpando histórico de estoque antigo (mantendo últimos 500)');
+        _estoqueHistorico.removeRange(0, _estoqueHistorico.length - 500);
+      }
+      if (_agendamentosServico.length > 1000) {
+        debugPrint('>>> [Memória] 🧹 Limpando agendamentos muito antigos (mantendo últimos 1000)');
+        // Mantém os mais recentes/atualizados
+        _agendamentosServico.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+        _agendamentosServico.removeRange(1000, _agendamentosServico.length);
+      }
+
+      // Salvar no localStorage SEQUENCIALMENTE (evita picos de RAM no jsonEncode)
       try {
-        // Grupo 1: Dados principais (mais críticos)
-        await Future.wait([
-          _storage.salvarLista(_getChaveComEmpresa(LocalStorageService.keyClientes), _clientes),
-          _storage.salvarLista(_getChaveComEmpresa(LocalStorageService.keyProdutos), _produtos),
-          _storage.salvarLista(_getChaveComEmpresa(LocalStorageService.keyServicos), _tiposServico),
-          _storage.salvarLista(_getChaveComEmpresa(LocalStorageService.keyVendasBalcao), _vendasBalcao),
-        ], eagerError: false);
+        final chaves = [
+          LocalStorageService.keyClientes,
+          LocalStorageService.keyProdutos,
+          LocalStorageService.keyServicos,
+          LocalStorageService.keyVendasBalcao,
+          LocalStorageService.keyPedidos,
+          LocalStorageService.keyOrdensServico,
+          LocalStorageService.keyEntregas,
+          LocalStorageService.keyMotoristas,
+          LocalStorageService.keyTrocasDevolucoes,
+          LocalStorageService.keyEstoqueHistorico,
+          LocalStorageService.keyAberturasCaixa,
+          LocalStorageService.keyFechamentosCaixa,
+          LocalStorageService.keyNotasEntrada,
+          LocalStorageService.keyAgendamentosServico,
+          LocalStorageService.keyFuncionarios,
+          LocalStorageService.keyTaxasEntrega,
+          LocalStorageService.keyContasPagar,
+          LocalStorageService.keyNFCes,
+          LocalStorageService.keyMesasComandas,
+          LocalStorageService.keyLinksVendedores,
+          LocalStorageService.keyComissoesVendedores,
+        ];
+
+        final listas = [
+          _clientes, _produtos, _tiposServico, _vendasBalcao, _pedidos,
+          _ordensServico, _entregas, _motoristas, _trocasDevolucoes,
+          _estoqueHistorico, _aberturasCaixa, _fechamentosCaixa, _notasEntrada,
+          _agendamentosServico, _funcionarios, _taxasEntrega, _contasPagar,
+          _nfces, _mesasComandas, _linksVendedores, _comissoesVendedores,
+        ];
+
+        for (int i = 0; i < chaves.length; i++) {
+          await _storage.salvarLista(_getChaveComEmpresa(chaves[i]), listas[i]);
+          // Pequena pausa a cada 5 itens para o navegador "respirar"
+          if (i % 5 == 0) await Future.delayed(const Duration(milliseconds: 50));
+        }
         
-        // Grupo 2: Dados secundários
-        await Future.wait([
-          _storage.salvarLista(_getChaveComEmpresa(LocalStorageService.keyPedidos), _pedidos),
-          _storage.salvarLista(_getChaveComEmpresa(LocalStorageService.keyOrdensServico), _ordensServico),
-          _storage.salvarLista(_getChaveComEmpresa(LocalStorageService.keyEntregas), _entregas),
-          _storage.salvarLista(_getChaveComEmpresa(LocalStorageService.keyMotoristas), _motoristas),
-        ], eagerError: false);
-        
-        // Grupo 3: Dados de caixa e histórico
-        await Future.wait([
-          _storage.salvarLista(_getChaveComEmpresa(LocalStorageService.keyTrocasDevolucoes), _trocasDevolucoes),
-          _storage.salvarLista(_getChaveComEmpresa(LocalStorageService.keyEstoqueHistorico), _estoqueHistorico),
-          _storage.salvarLista(_getChaveComEmpresa(LocalStorageService.keyAberturasCaixa), _aberturasCaixa),
-          _storage.salvarLista(_getChaveComEmpresa(LocalStorageService.keyFechamentosCaixa), _fechamentosCaixa),
-        ], eagerError: false);
-        
-        // Grupo 4: Dados adicionais
-        await Future.wait([
-          _storage.salvarLista(_getChaveComEmpresa(LocalStorageService.keyNotasEntrada), _notasEntrada),
-          _storage.salvarLista(_getChaveComEmpresa(LocalStorageService.keyAgendamentosServico), _agendamentosServico),
-          _storage.salvarLista(_getChaveComEmpresa(LocalStorageService.keyFuncionarios), _funcionarios),
-          _storage.salvarLista(_getChaveComEmpresa(LocalStorageService.keyTaxasEntrega), _taxasEntrega),
-        ], eagerError: false);
-        
-        // Grupo 5: Dados finais
-        await Future.wait([
-          _storage.salvarLista(_getChaveComEmpresa(LocalStorageService.keyContasPagar), _contasPagar),
-          _storage.salvarLista(_getChaveComEmpresa(LocalStorageService.keyNFCes), _nfces),
-          _storage.salvarLista(_getChaveComEmpresa(LocalStorageService.keyMesasComandas), _mesasComandas),
-          _storage.salvarLista(_getChaveComEmpresa(LocalStorageService.keyLinksVendedores), _linksVendedores),
-          _storage.salvarLista(_getChaveComEmpresa(LocalStorageService.keyComissoesVendedores), _comissoesVendedores),
-        ], eagerError: false);
-        
-        // Grupo 6: Dados de caixa (sangrias e suprimentos são salvos junto com aberturas/fechamentos)
-        // Nota: Sangrias e suprimentos são salvos automaticamente quando salvos com aberturas/fechamentos
       } catch (e) {
-        debugPrint('>>> Erro ao salvar alguns dados: $e');
-        // Continua mesmo se alguns falharem
+        debugPrint('>>> [Memória] ❌ Erro no salvamento sequencial: $e');
       }
       
       print('>>> ✓ Todos os dados foram salvos no localStorage');

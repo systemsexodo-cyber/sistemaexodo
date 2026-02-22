@@ -2216,10 +2216,10 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       final hFechamento = _timeToDouble(hFechamentoStr);
       
       final double hInicio = inicio.hour + (inicio.minute / 60.0);
+      final double hFim = hInicio + (duracaoMinutos / 60.0);
       
-      // Se começar DEPOIS de fechar ou ANTES de abrir, está bloqueado.
-      // Permitimos iniciar EXATAMENTE no horário de fechamento.
-      if (hInicio < hAbertura || hInicio > hFechamento) {
+      // Se começar antes de abrir ou TERMINAR depois de fechar, está bloqueado.
+      if (hInicio < hAbertura || hFim > hFechamento) {
         return true;
       }
 
@@ -3229,116 +3229,234 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     }
   }
 
-  void _mostrarSucesso({bool horarioOcupado = false, List<AgendamentoServico>? agendamentosEnviados, String? whatsappLoja}) {
-    final cardColor = _isDark ? _LojaPublicaStyle.cardColor : Colors.white;
-    final textColor = _isDark ? Colors.white : const Color(0xFF1E293B);
-    final textSecondary = _isDark ? _LojaPublicaStyle.textSecondaryColor : Colors.black54;
-
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
-        child: AlertDialog(
-          backgroundColor: cardColor,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
-          content: Container(
-            padding: const EdgeInsets.symmetric(vertical: 10),
+  Widget _buildAgendamentoCardPublico(AgendamentoServico agd, Color primaryColor) {
+    final statusColor = _getStatusColor(agd.status);
+    final isDark = _isDark;
+    
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: isDark ? _LojaPublicaStyle.cardColor : Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: isDark ? Colors.white.withOpacity(0.05) : Colors.black.withOpacity(0.05)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: statusColor.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(15),
+            ),
+            child: Icon(
+              agd.pet != null ? Icons.pets_rounded : Icons.event_available_rounded,
+              color: statusColor,
+              size: 24,
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
             child: Column(
-              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: Colors.green.withOpacity(0.1),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.check_circle_rounded, 
-                    color: Colors.green, 
-                    size: 80
+                Text(
+                  agd.servico?.nome ?? 'Serviço',
+                  style: GoogleFonts.outfit(
+                    color: isDark ? Colors.white : Colors.black87,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 15,
                   ),
                 ),
-                const SizedBox(height: 24),
-                Text(
-                  'Solicitação Recebida!',
-                  style: GoogleFonts.outfit(color: textColor, fontSize: 24, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  'Sua solicitação de agendamento foi recebida e será ANALISADA pela nossa equipe.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: textSecondary, fontWeight: FontWeight.w600),
-                ),
-                const SizedBox(height: 12),
-                if (whatsappLoja != null && whatsappLoja.isNotEmpty) ...[
-                  ElevatedButton.icon(
-                    onPressed: () => _abrirWhatsAppNotificacao(whatsappLoja, agendamentosEnviados ?? []),
-                    icon: const Icon(Icons.chat, color: Colors.white),
-                    label: const Text('Notificar Loja via WhatsApp', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.green,
-                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                const SizedBox(height: 4),
+                if (agd.petNome != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Row(
+                      children: [
+                        Icon(Icons.pets, size: 12, color: isDark ? Colors.white54 : Colors.grey),
+                        const SizedBox(width: 4),
+                        Text(agd.petNome!, style: TextStyle(color: isDark ? Colors.white70 : Colors.black54, fontSize: 13)),
+                      ],
                     ),
                   ),
-                  const SizedBox(height: 16),
-                ],
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.orange.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.orange.withOpacity(0.3)),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.info_outline, color: Colors.orange, size: 20),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'ATENÇÃO: O agendamento NÃO está confirmado. Aguarde nossa aprovação para garantir o horário solicitado.',
-                          style: TextStyle(color: textColor, fontSize: 12, fontWeight: FontWeight.w500),
-                        ),
-                      ),
-                    ],
+                Row(
+                  children: [
+                    Icon(Icons.access_time_filled_rounded, size: 12, color: primaryColor),
+                    const SizedBox(width: 4),
+                    Text(
+                      '${DateFormat('dd/MM').format(agd.dataAgendamento)} às ${DateFormat('HH:mm').format(agd.dataAgendamento)}',
+                      style: TextStyle(color: isDark ? Colors.white54 : Colors.black54, fontSize: 12),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: statusColor.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: statusColor.withOpacity(0.2)),
+                ),
+                child: Text(
+                  agd.status,
+                  style: TextStyle(
+                    color: statusColor,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 0.5,
                   ),
                 ),
-                const SizedBox(height: 12),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.blue.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.blue.withOpacity(0.3)),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.search_rounded, color: Colors.blue, size: 20),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          '💡 Você pode consultar o status do seu agendamento a qualquer momento pelo ícone 🔍 "Meus Agendamentos" na página de agendamento.',
-                          style: TextStyle(color: textColor, fontSize: 12, fontWeight: FontWeight.w500),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 16),
-                ..._agendamentosCarrinho.map((a) => Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
+              ),
+              if (agd.numero.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
                   child: Text(
-                    '• ${a.petNome ?? 'Serviço'} - ${DateFormat('dd/MM HH:mm').format(a.dataAgendamento)}',
-                    style: TextStyle(color: textColor.withOpacity(0.7), fontSize: 13),
+                    '#${agd.numero}',
+                    style: TextStyle(color: isDark ? Colors.white24 : Colors.black12, fontSize: 10, fontWeight: FontWeight.bold),
                   ),
-                )).toList(),
-                const SizedBox(height: 32),
-                SizedBox(
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _mostrarSucesso({bool horarioOcupado = false, List<AgendamentoServico>? agendamentosEnviados, String? whatsappLoja}) {
+    final cardColor = _isDark ? _LojaPublicaStyle.backgroundColor : Colors.grey[100];
+    final textColor = _isDark ? Colors.white : const Color(0xFF1E293B);
+    final primary = _primaryColor;
+    final telCliente = _whatsappController.text;
+
+    // Se temos agendamentos enviados, vamos mostrá-los de forma mais visual
+    final List<AgendamentoServico> listaMostrar = agendamentosEnviados ?? [];
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      isDismissible: false,
+      enableDrag: false,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        height: MediaQuery.of(context).size.height * 0.9,
+        decoration: BoxDecoration(
+          color: cardColor,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(40)),
+        ),
+        child: Column(
+          children: [
+            const SizedBox(height: 12),
+            Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2))),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(24, 24, 24, 100),
+                child: Column(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(24),
+                      decoration: BoxDecoration(
+                        color: Colors.green.withOpacity(0.1),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.check_circle_rounded, color: Colors.green, size: 80),
+                    ),
+                    const SizedBox(height: 24),
+                    Text(
+                      'Solicitação Recebida!',
+                      style: GoogleFonts.outfit(color: textColor, fontSize: 28, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Agendamentos realizados com sucesso. Aguarde nossa equipe analisar e confirmar.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: textColor.withOpacity(0.6), fontSize: 16),
+                    ),
+                    const SizedBox(height: 32),
+                    
+                    if (listaMostrar.isNotEmpty) ...[
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Resumo do seu pedido:',
+                          style: GoogleFonts.outfit(color: textColor, fontSize: 18, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      ...listaMostrar.map((agd) => _buildAgendamentoCardPublico(agd, primary)).toList(),
+                    ],
+
+                    const SizedBox(height: 24),
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.withOpacity(0.05),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: Colors.orange.withOpacity(0.2)),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.info_outline_rounded, color: Colors.orange),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              'O agendamento ainda NÃO está confirmado. Enviaremos uma atualização em breve.',
+                              style: TextStyle(color: textColor.withOpacity(0.8), fontSize: 12, fontWeight: FontWeight.w500),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    
+                    const SizedBox(height: 32),
+                    if (whatsappLoja != null && whatsappLoja.isNotEmpty) ...[
+                      const Text('Deseja agilizar?', style: TextStyle(color: Colors.white54, fontSize: 14)),
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: () => _abrirWhatsAppNotificacao(whatsappLoja, listaMostrar),
+                          icon: const Icon(Icons.chat_bubble_rounded, color: Colors.white),
+                          label: const Text('Notificar via WhatsApp', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF25D366),
+                            padding: const EdgeInsets.symmetric(vertical: 18),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                            elevation: 0,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: _isDark ? _LojaPublicaStyle.cardColor : Colors.white,
+                border: Border(top: BorderSide(color: Colors.white.withOpacity(0.05))),
+              ),
+              child: SafeArea(
+                top: false,
+                child: SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
                     onPressed: () {
-                      Navigator.of(context).pop();
+                      Navigator.pop(context);
+                      // Resetar estado global
                       setState(() {
                         _currentStep = 0;
                         _agendamentosCarrinho.clear();
@@ -3357,18 +3475,157 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                         _dataSelecionada = null;
                         _horaSelecionada = null;
                       });
+                      // Opcional: Abrir a lista de agendamentos automaticamente se tiver telefone
+                      if (telCliente.isNotEmpty) {
+                         Future.delayed(const Duration(milliseconds: 500), () => _exibirListaAgendamentos(telCliente, primary));
+                      }
                     },
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: _primaryColor,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      backgroundColor: primary,
+                      padding: const EdgeInsets.symmetric(vertical: 18),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                      elevation: 8,
+                      shadowColor: primary.withOpacity(0.4),
                     ),
-                    child: const Text('Entendido', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+                    child: const Text('Continuar Navegando', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 16)),
                   ),
                 ),
-              ],
+              ),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _mostrarConsultaAgendamentos(Color primaryColor) {
+    final TextEditingController phoneController = TextEditingController();
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: _isDark ? _LojaPublicaStyle.cardColor : Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: Row(
+          children: [
+            Icon(Icons.history_rounded, color: primaryColor),
+            const SizedBox(width: 12),
+            Text('Meus Agendamentos', style: GoogleFonts.outfit(color: _isDark ? Colors.white : Colors.black87, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Informe seu WhatsApp para consultar seus agendamentos realizados nesta empresa:', style: TextStyle(color: Colors.white70, fontSize: 14)),
+            const SizedBox(height: 20),
+            _buildTextField(
+              controller: phoneController,
+              label: 'WhatsApp',
+              icon: Icons.phone_rounded,
+              placeholder: '(00) 00000-0000',
+              keyboardType: TextInputType.phone,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: Text('Cancelar', style: TextStyle(color: _isDark ? Colors.white54 : Colors.grey))),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _exibirListaAgendamentos(phoneController.text, primaryColor);
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: primaryColor, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+            child: const Text('Consultar', style: TextStyle(color: Colors.white)),
           ),
+        ],
+      ),
+    );
+  }
+
+  void _exibirListaAgendamentos(String telefone, Color primaryColor) {
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final String rawInput = telefone.replaceAll(RegExp(r'[^\d]'), '');
+    
+    if (rawInput.length < 8) {
+      _showWarning('Por favor, informe um WhatsApp válido.');
+      return;
+    }
+
+    final meusAgendamentos = dataService.agendamentosServico.where((a) {
+      final String inputFlexivel = rawInput.substring(rawInput.length - 8);
+
+      bool comparar(String? valor) {
+        if (valor == null || valor.isEmpty) return false;
+        final String v = valor.replaceAll(RegExp(r'[^\d]'), '');
+        if (v.length < 8) return false;
+        return v.contains(rawInput) || rawInput.contains(v) || v.contains(inputFlexivel);
+      }
+
+      if (comparar(a.clienteTelefone)) return true;
+      if (comparar(a.cliente?.telefone)) return true;
+      if (comparar(a.observacoes)) return true;
+      
+      return false;
+    }).toList();
+
+    // Ordenar por data (mais recente primeiro)
+    meusAgendamentos.sort((a, b) => b.dataAgendamento.compareTo(a.dataAgendamento));
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        height: MediaQuery.of(context).size.height * 0.85,
+        decoration: BoxDecoration(
+          color: _isDark ? _LojaPublicaStyle.backgroundColor : Colors.grey[100],
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(40)),
+        ),
+        child: Column(
+          children: [
+            const SizedBox(height: 12),
+            Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2))),
+            const SizedBox(height: 24),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('Seu Histórico', style: GoogleFonts.outfit(color: _isDark ? Colors.white : Colors.black87, fontSize: 26, fontWeight: FontWeight.bold)),
+                      IconButton(onPressed: () => Navigator.pop(context), icon: Icon(Icons.close_rounded, color: _isDark ? Colors.white54 : Colors.black54)),
+                    ],
+                  ),
+                  Text('Localizamos ${meusAgendamentos.length} agendamentos vinculados ao WhatsApp $telefone', style: TextStyle(color: _isDark ? Colors.white54 : Colors.black54, fontSize: 14)),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+            Expanded(
+              child: meusAgendamentos.isEmpty 
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.event_note_rounded, size: 80, color: _isDark ? Colors.white.withOpacity(0.05) : Colors.black.withOpacity(0.05)),
+                        const SizedBox(height: 16),
+                        Text('Nenhum agendamento encontrado.', style: TextStyle(color: _isDark ? Colors.white30 : Colors.black26, fontSize: 16)),
+                        const SizedBox(height: 8),
+                        Text('Verifique se o número está correto.', style: TextStyle(color: _isDark ? Colors.white10 : Colors.black12, fontSize: 12)),
+                      ],
+                    ),
+                  )
+                : ListView.builder(
+                    padding: const EdgeInsets.fromLTRB(24, 0, 24, 40),
+                    itemCount: meusAgendamentos.length,
+                    itemBuilder: (context, index) {
+                      return _buildAgendamentoCardPublico(meusAgendamentos[index], primaryColor);
+                    },
+                  ),
+            ),
+          ],
         ),
       ),
     );
@@ -3512,163 +3769,13 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     }
   }
 
-  void _mostrarConsultaAgendamentos(Color primaryColor) {
-    final TextEditingController phoneController = TextEditingController();
-    
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: _isDark ? _LojaPublicaStyle.cardColor : Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        title: Row(
-          children: [
-            Icon(Icons.history_rounded, color: primaryColor),
-            const SizedBox(width: 12),
-            Text('Meus Agendamentos', style: GoogleFonts.outfit(color: _isDark ? Colors.white : Colors.black87, fontWeight: FontWeight.bold)),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('Informe seu WhatsApp para consultar seus agendamentos realizados nesta empresa:', style: TextStyle(color: Colors.white70, fontSize: 14)),
-            const SizedBox(height: 20),
-            _buildTextField(
-              controller: phoneController,
-              label: 'WhatsApp',
-              icon: Icons.phone_rounded,
-              placeholder: '(00) 00000-0000',
-              keyboardType: TextInputType.phone,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: Text('Cancelar', style: TextStyle(color: _isDark ? Colors.white54 : Colors.grey))),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              _exibirListaAgendamentos(phoneController.text, primaryColor);
-            },
-            style: ElevatedButton.styleFrom(backgroundColor: primaryColor, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-            child: const Text('Consultar', style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _exibirListaAgendamentos(String telefone, Color primaryColor) {
-    final dataService = Provider.of<DataService>(context, listen: false);
-    final meusAgendamentos = dataService.agendamentosServico.where((a) {
-      final String rawInput = telefone.replaceAll(RegExp(r'[^\d]'), '');
-      if (rawInput.length < 8) return false;
-
-      // Pegar os últimos 8 dígitos para uma busca mais flexível (ignora DDD/0/55)
-      final String inputFlexivel = rawInput.substring(rawInput.length - 8);
-
-      bool comparar(String? valor) {
-        if (valor == null || valor.isEmpty) return false;
-        final String v = valor.replaceAll(RegExp(r'[^\d]'), '');
-        if (v.length < 8) return false;
-        return v.contains(rawInput) || rawInput.contains(v) || v.contains(inputFlexivel);
-      }
-
-      if (comparar(a.clienteTelefone)) return true;
-      if (comparar(a.cliente?.telefone)) return true;
-      if (comparar(a.observacoes)) return true;
-      if (comparar(a.clienteNome)) return true;
-
-      return false;
-    }).toList();
-
-    // Ordenar por data (mais recente primeiro)
-    meusAgendamentos.sort((a, b) => b.dataAgendamento.compareTo(a.dataAgendamento));
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        height: MediaQuery.of(context).size.height * 0.8,
-        decoration: BoxDecoration(
-          color: _isDark ? _LojaPublicaStyle.backgroundColor : Colors.grey[100],
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
-        ),
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(child: Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)))),
-            const SizedBox(height: 24),
-            Text('Seu Histórico', style: GoogleFonts.outfit(color: _isDark ? Colors.white : Colors.black87, fontSize: 24, fontWeight: FontWeight.bold)),
-            Text('Agendamentos vinculados ao WhatsApp $telefone', style: const TextStyle(color: Colors.white54, fontSize: 14)),
-            const SizedBox(height: 24),
-            Expanded(
-              child: meusAgendamentos.isEmpty 
-                ? Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.event_busy_rounded, size: 64, color: Colors.white10),
-                        const SizedBox(height: 16),
-                        const Text('Nenhum agendamento encontrado.', style: TextStyle(color: Colors.white30)),
-                      ],
-                    ),
-                  )
-                : ListView.separated(
-                    itemCount: meusAgendamentos.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 12),
-                    itemBuilder: (context, index) {
-                      final agd = meusAgendamentos[index];
-                      return Container(
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          color: _isDark ? _LojaPublicaStyle.cardColor : Colors.white,
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: Colors.white.withOpacity(0.05)),
-                        ),
-                        child: Row(
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(color: primaryColor.withOpacity(0.1), shape: BoxShape.circle),
-                              child: Icon(Icons.calendar_today_rounded, color: primaryColor, size: 20),
-                            ),
-                            const SizedBox(width: 16),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(agd.servico?.nome ?? 'Serviço', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                                  Text(DateFormat('dd/MM/yyyy HH:mm').format(agd.dataAgendamento), style: const TextStyle(color: Colors.white54, fontSize: 13)),
-                                ],
-                              ),
-                            ),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                              decoration: BoxDecoration(
-                                color: _getStatusColor(agd.status).withOpacity(0.1),
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: Text(agd.status, style: TextStyle(color: _getStatusColor(agd.status), fontSize: 11, fontWeight: FontWeight.bold)),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Color _getStatusColor(String status) {
     switch (status) {
-      case 'Concluído': return Colors.greenAccent;
-      case 'Cancelado': return Colors.redAccent;
-      case 'Aguardando Confirmação': return Colors.orangeAccent;
-      case 'Em Andamento': return Colors.blueAccent;
+      case 'Concluído': return const Color(0xFF00C853);
+      case 'Cancelado': return const Color(0xFFFF5252);
+      case 'Aguardando Confirmação': return const Color(0xFFFFAB40);
+      case 'Em Andamento': return const Color(0xFF448AFF);
+      case 'Agendado': return const Color(0xFF64B5F6);
       default: return Colors.white54;
     }
   }
