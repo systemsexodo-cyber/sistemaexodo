@@ -110,6 +110,7 @@ class ContaPagar {
   final DateTime? dataPagamento;
   final DateTime dataCriacao;
   final DateTime updatedAt;
+  final DateTime createdAt;
   
   // Relacionamentos
   final String? notaEntradaId; // ID da nota de entrada (se tipo = notaEntrada)
@@ -149,6 +150,7 @@ class ContaPagar {
     this.dataPagamento,
     DateTime? dataCriacao,
     DateTime? updatedAt,
+    DateTime? createdAt,
     this.notaEntradaId,
     this.notaEntradaNumero,
     this.fornecedorId,
@@ -165,6 +167,7 @@ class ContaPagar {
   }) : status = status ?? StatusContaPagar.pendente,
        dataCriacao = dataCriacao ?? DateTime.now(),
        updatedAt = updatedAt ?? DateTime.now(),
+       createdAt = createdAt ?? DateTime.now(),
        historicoPagamentos = historicoPagamentos ?? [];
 
   /// Verifica se a conta está vencida
@@ -241,7 +244,8 @@ class ContaPagar {
       dataVencimento: dataVencimento ?? this.dataVencimento,
       dataPagamento: dataPagamento ?? this.dataPagamento,
       dataCriacao: dataCriacao ?? this.dataCriacao,
-      updatedAt: updatedAt ?? DateTime.now(),
+      updatedAt: updatedAt ?? this.updatedAt,
+      createdAt: createdAt ?? this.createdAt,
       notaEntradaId: notaEntradaId ?? this.notaEntradaId,
       notaEntradaNumero: notaEntradaNumero ?? this.notaEntradaNumero,
       fornecedorId: fornecedorId ?? this.fornecedorId,
@@ -286,6 +290,7 @@ class ContaPagar {
       'ativo': ativo,
       'usuarioCriacao': usuarioCriacao,
       'usuarioPagamento': usuarioPagamento,
+      'createdAt': createdAt.toIso8601String(),
     };
   }
 
@@ -337,6 +342,7 @@ class ContaPagar {
       ativo: map['ativo'] ?? true,
       usuarioCriacao: map['usuarioCriacao'],
       usuarioPagamento: map['usuarioPagamento'],
+      createdAt: map['createdAt'] != null ? DateTime.parse(map['createdAt']) : DateTime.now(),
     );
   }
 }

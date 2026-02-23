@@ -6,6 +6,8 @@ class AberturaCaixa {
   final double valorInicial;
   final String? observacao;
   final String? responsavel;
+  final DateTime createdAt;
+  final DateTime updatedAt;
 
   AberturaCaixa({
     required this.id,
@@ -14,7 +16,10 @@ class AberturaCaixa {
     required this.valorInicial,
     this.observacao,
     this.responsavel,
-  });
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  })  : createdAt = createdAt ?? DateTime.now(),
+        updatedAt = updatedAt ?? DateTime.now();
 
   factory AberturaCaixa.fromMap(Map<String, dynamic> map) {
     return AberturaCaixa(
@@ -26,6 +31,8 @@ class AberturaCaixa {
       valorInicial: (map['valorInicial'] ?? 0).toDouble(),
       observacao: map['observacao'],
       responsavel: map['responsavel'],
+      createdAt: map['createdAt'] != null ? DateTime.parse(map['createdAt']) : DateTime.now(),
+      updatedAt: map['updatedAt'] != null ? DateTime.parse(map['updatedAt']) : DateTime.now(),
     );
   }
 
@@ -37,6 +44,8 @@ class AberturaCaixa {
       'valorInicial': valorInicial,
       'observacao': observacao,
       'responsavel': responsavel,
+      'createdAt': createdAt.toIso8601String(),
+      'updatedAt': updatedAt.toIso8601String(),
     };
   }
 }
@@ -49,6 +58,8 @@ class SangriaCaixa {
   final String motivo;
   final String? observacao;
   final String? responsavel;
+  final DateTime createdAt;
+  final DateTime updatedAt;
 
   SangriaCaixa({
     required this.id,
@@ -57,7 +68,10 @@ class SangriaCaixa {
     required this.motivo,
     this.observacao,
     this.responsavel,
-  });
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  })  : createdAt = createdAt ?? DateTime.now(),
+        updatedAt = updatedAt ?? DateTime.now();
 
   factory SangriaCaixa.fromMap(Map<String, dynamic> map) {
     return SangriaCaixa(
@@ -69,6 +83,8 @@ class SangriaCaixa {
       motivo: map['motivo'] ?? '',
       observacao: map['observacao'],
       responsavel: map['responsavel'],
+      createdAt: map['createdAt'] != null ? DateTime.parse(map['createdAt']) : DateTime.now(),
+      updatedAt: map['updatedAt'] != null ? DateTime.parse(map['updatedAt']) : DateTime.now(),
     );
   }
 
@@ -80,6 +96,8 @@ class SangriaCaixa {
       'motivo': motivo,
       'observacao': observacao,
       'responsavel': responsavel,
+      'createdAt': createdAt.toIso8601String(),
+      'updatedAt': updatedAt.toIso8601String(),
     };
   }
 }
@@ -92,6 +110,8 @@ class SuprimentoCaixa {
   final String motivo;
   final String? observacao;
   final String? responsavel;
+  final DateTime createdAt;
+  final DateTime updatedAt;
 
   SuprimentoCaixa({
     required this.id,
@@ -100,7 +120,10 @@ class SuprimentoCaixa {
     required this.motivo,
     this.observacao,
     this.responsavel,
-  });
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  })  : createdAt = createdAt ?? DateTime.now(),
+        updatedAt = updatedAt ?? DateTime.now();
 
   factory SuprimentoCaixa.fromMap(Map<String, dynamic> map) {
     return SuprimentoCaixa(
@@ -112,6 +135,8 @@ class SuprimentoCaixa {
       motivo: map['motivo'] ?? '',
       observacao: map['observacao'],
       responsavel: map['responsavel'],
+      createdAt: map['createdAt'] != null ? DateTime.parse(map['createdAt']) : DateTime.now(),
+      updatedAt: map['updatedAt'] != null ? DateTime.parse(map['updatedAt']) : DateTime.now(),
     );
   }
 
@@ -123,6 +148,8 @@ class SuprimentoCaixa {
       'motivo': motivo,
       'observacao': observacao,
       'responsavel': responsavel,
+      'createdAt': createdAt.toIso8601String(),
+      'updatedAt': updatedAt.toIso8601String(),
     };
   }
 }
@@ -139,6 +166,8 @@ class FechamentoCaixa {
   final List<SuprimentoCaixa> suprimentos;
   final String? observacao;
   final String? responsavel;
+  final DateTime createdAt;
+  final DateTime updatedAt;
 
   FechamentoCaixa({
     required this.id,
@@ -151,7 +180,11 @@ class FechamentoCaixa {
     List<SuprimentoCaixa>? suprimentos,
     this.observacao,
     this.responsavel,
-  }) : suprimentos = suprimentos ?? [];
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  })  : suprimentos = suprimentos ?? [],
+        createdAt = createdAt ?? DateTime.now(),
+        updatedAt = updatedAt ?? DateTime.now();
 
   double get totalSangrias =>
       sangrias.fold(0.0, (sum, s) => sum + s.valor);
@@ -177,6 +210,8 @@ class FechamentoCaixa {
           .toList(),
       observacao: map['observacao'],
       responsavel: map['responsavel'],
+      createdAt: map['createdAt'] != null ? DateTime.parse(map['createdAt']) : DateTime.now(),
+      updatedAt: map['updatedAt'] != null ? DateTime.parse(map['updatedAt']) : DateTime.now(),
     );
   }
 
@@ -192,6 +227,8 @@ class FechamentoCaixa {
       'suprimentos': suprimentos.map((s) => s.toMap()).toList(),
       'observacao': observacao,
       'responsavel': responsavel,
+      'createdAt': createdAt.toIso8601String(),
+      'updatedAt': updatedAt.toIso8601String(),
     };
   }
 }

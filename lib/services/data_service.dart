@@ -858,10 +858,9 @@ class DataService extends ChangeNotifier {
       }
       
       try {
-        _salvarAutomaticamente();
+        await _salvarTodosDados(aguardarFirebase: false);
       } catch (e) {
-        print('>>> Erro ao salvar automaticamente: $e');
-        // Continua mesmo se falhar ao salvar automaticamente
+        print('>>> Erro ao salvar dados do caixa: $e');
       }
       
       // Salvar imediatamente no Firebase
@@ -998,7 +997,7 @@ class DataService extends ChangeNotifier {
     _sangrias.add(sangria);
     
     try {
-      _salvarAutomaticamente();
+      await _salvarTodosDados(aguardarFirebase: false);
     } catch (e) {
       print('>>> Erro ao salvar sangria: $e');
     }
@@ -1040,7 +1039,7 @@ class DataService extends ChangeNotifier {
     _suprimentos.add(suprimento);
     
     try {
-      _salvarAutomaticamente();
+      await _salvarTodosDados(aguardarFirebase: false);
     } catch (e) {
       print('>>> Erro ao salvar suprimento: $e');
     }
@@ -4859,6 +4858,36 @@ class DataService extends ChangeNotifier {
         print('>>> ✓ ${novosFechamentos.length} fechamentos de caixa carregados (total: ${_fechamentosCaixa.length})');
       }
 
+      // Carregar sangrias - NÃO LIMPAR, apenas adicionar/atualizar
+      final sangriasMap = await _storage.carregarLista(_getChaveComEmpresa(LocalStorageService.keySangrias));
+      if (sangriasMap.isNotEmpty) {
+        final novasSangrias = sangriasMap.map((map) => SangriaCaixa.fromMap(map)).toList();
+        for (final sangria in novasSangrias) {
+          final index = _sangrias.indexWhere((s) => s.id == sangria.id);
+          if (index >= 0) {
+            _sangrias[index] = sangria;
+          } else {
+            _sangrias.add(sangria);
+          }
+        }
+        print('>>> ✓ ${novasSangrias.length} sangrias carregadas (total: ${_sangrias.length})');
+      }
+
+      // Carregar suprimentos - NÃO LIMPAR, apenas adicionar/atualizar
+      final suprimentosMap = await _storage.carregarLista(_getChaveComEmpresa(LocalStorageService.keySuprimentos));
+      if (suprimentosMap.isNotEmpty) {
+        final novosSuprimentos = suprimentosMap.map((map) => SuprimentoCaixa.fromMap(map)).toList();
+        for (final suprimento in novosSuprimentos) {
+          final index = _suprimentos.indexWhere((s) => s.id == suprimento.id);
+          if (index >= 0) {
+            _suprimentos[index] = suprimento;
+          } else {
+            _suprimentos.add(suprimento);
+          }
+        }
+        print('>>> ✓ ${novosSuprimentos.length} suprimentos carregadas (total: ${_suprimentos.length})');
+      }
+
       // Carregar mesas/comandas - NÃO LIMPAR, apenas adicionar/atualizar
       final mesasComandasMap =
           await _storage.carregarLista(_getChaveComEmpresa(LocalStorageService.keyMesasComandas));
@@ -5112,6 +5141,8 @@ class DataService extends ChangeNotifier {
           LocalStorageService.keyMesasComandas,
           LocalStorageService.keyLinksVendedores,
           LocalStorageService.keyComissoesVendedores,
+          LocalStorageService.keySangrias,
+          LocalStorageService.keySuprimentos,
         ];
 
         final listas = [
@@ -5120,6 +5151,7 @@ class DataService extends ChangeNotifier {
           _estoqueHistorico, _aberturasCaixa, _fechamentosCaixa, _notasEntrada,
           _agendamentosServico, _funcionarios, _taxasEntrega, _contasPagar,
           _nfces, _mesasComandas, _linksVendedores, _comissoesVendedores,
+          _sangrias, _suprimentos,
         ];
 
         for (int i = 0; i < chaves.length; i++) {

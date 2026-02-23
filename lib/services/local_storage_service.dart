@@ -29,12 +29,16 @@ class LocalStorageService {
   static const String _keyMesasComandas = 'exodo_mesas_comandas';
   static const String _keyLinksVendedores = 'exodo_links_vendedores';
   static const String _keyComissoesVendedores = 'exodo_comissoes_vendedores';
+  static const String _keySangrias = 'exodo_sangrias';
+  static const String _keySuprimentos = 'exodo_suprimentos';
   
   static String get keyNotasEntrada => _keyNotasEntrada;
   static String get keyLinksVendedores => _keyLinksVendedores;
   static String get keyComissoesVendedores => _keyComissoesVendedores;
   static String get keyAgendamentosServico => _keyAgendamentosServico;
   static String get keyMesasComandas => _keyMesasComandas;
+  static String get keySangrias => _keySangrias;
+  static String get keySuprimentos => _keySuprimentos;
 
   /// Salva uma lista de objetos como JSON no localStorage
   Future<void> salvarLista<T>(String key, List<T> lista) async {
@@ -202,6 +206,8 @@ class LocalStorageService {
       _keyCaixaAberto,
       _keyAberturasCaixa,
       _keyFechamentosCaixa,
+      _keySangrias,
+      _keySuprimentos,
     ];
 
     for (final key in keys) {
@@ -307,5 +313,7 @@ class LocalStorageService {
   static String get keyTaxasEntrega => _keyTaxasEntrega;
   static String get keyContasPagar => _keyContasPagar;
   static String get keyNFCes => _keyNFCes;
+  static String get keySangriasField => _keySangrias;
+  static String get keySuprimentosField => _keySuprimentos;
 }
 

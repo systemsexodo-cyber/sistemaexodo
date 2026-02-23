@@ -88,6 +88,8 @@ class NotaEntrada {
   final double? valorTotal; // Valor total da nota
   final String? serie; // Série da nota
   final String? modelo; // Modelo da nota (55 = NFe)
+  final DateTime createdAt;
+  final DateTime updatedAt;
 
   NotaEntrada({
     required this.id,
@@ -105,7 +107,10 @@ class NotaEntrada {
     this.valorTotal,
     this.serie,
     this.modelo,
-  });
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  })  : createdAt = createdAt ?? DateTime.now(),
+        updatedAt = updatedAt ?? DateTime.now();
 
   factory NotaEntrada.fromMap(Map<String, dynamic> map) {
     return NotaEntrada(
@@ -133,6 +138,8 @@ class NotaEntrada {
       valorTotal: map['valorTotal'] != null ? (map['valorTotal'] as num).toDouble() : null,
       serie: map['serie'],
       modelo: map['modelo'],
+      createdAt: map['createdAt'] != null ? DateTime.parse(map['createdAt']) : DateTime.now(),
+      updatedAt: map['updatedAt'] != null ? DateTime.parse(map['updatedAt']) : DateTime.now(),
     );
   }
 
@@ -153,6 +160,8 @@ class NotaEntrada {
       'valorTotal': valorTotal,
       'serie': serie,
       'modelo': modelo,
+      'createdAt': createdAt.toIso8601String(),
+      'updatedAt': updatedAt.toIso8601String(),
     };
   }
 
