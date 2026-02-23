@@ -2798,6 +2798,13 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       if (_modoMultiPets && _petsMultiSelecionados.isNotEmpty) {
         final timestamp = DateTime.now().microsecondsSinceEpoch;
         int counter = 0;
+
+        // Dividir o valor do Taxi Dog entre os pets agendados se houver mais de um
+        double? valorTaxiDogPorPet = (moduloPet && _tipoEntrega != 'Retirada na Loja') ? _valorTaxiDog : null;
+        if (valorTaxiDogPorPet != null && valorTaxiDogPorPet > 0 && _petsMultiSelecionados.length > 1) {
+          valorTaxiDogPorPet = double.parse((valorTaxiDogPorPet / _petsMultiSelecionados.length).toStringAsFixed(2));
+        }
+
         for (var pet in _petsMultiSelecionados) {
           agendamentosAtuais.add(AgendamentoServico(
             id: '${timestamp}_${pet.id}_$counter',
@@ -2817,13 +2824,14 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
             status: 'Aguardando Confirmação',
             tipoEntrega: moduloPet ? _tipoEntrega : null,
             bairroEntrega: moduloPet ? (_bairroEntrega ?? _bairroController.text) : null,
-            valorTaxiDog: moduloPet && _tipoEntrega != 'Retirada na Loja' ? _valorTaxiDog : null,
+            valorTaxiDog: valorTaxiDogPorPet,
             endereco: _enderecoRuaController.text.isNotEmpty ? _enderecoRuaController.text : null,
             numeroEndereco: _enderecoNumeroController.text.isNotEmpty ? _enderecoNumeroController.text : null,
             complemento: _enderecoComplementoController.text.isNotEmpty ? _enderecoComplementoController.text : null,
             pontoReferencia: _pontoReferenciaController.text.isNotEmpty ? _pontoReferenciaController.text : null,
             observacoes: 'SOLICITAÇÃO ONLINE MÚLTIPLA',
           ));
+          counter++;
         }
       } else {
         Pet? petInfoAtual = moduloPet ? Pet(

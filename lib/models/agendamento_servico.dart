@@ -36,6 +36,8 @@ class AgendamentoServico {
   final String? numeroEndereco; // Número para Taxi Dog
   final String? complemento; // Complemento para Taxi Dog
   final String? pontoReferencia; // Ponto de referência para Taxi Dog
+  final bool excluido; // Flag para exclusão lógica
+  final bool travado; // Novo campo para travar o horário e impedir outros agendamentos
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -67,6 +69,8 @@ class AgendamentoServico {
     this.numeroEndereco,
     this.complemento,
     this.pontoReferencia,
+    this.excluido = false,
+    this.travado = false,
     List<ItemMaterial>? materiais,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -87,7 +91,7 @@ class AgendamentoServico {
   String? get servicoNome => servico?.nome;
 
   /// Verifica se o agendamento está ativo (não cancelado ou aguardando confirmação)
-  bool get isAtivo => status != 'Cancelado' && status != 'Aguardando Confirmação';
+  bool get isAtivo => status != 'Cancelado' && status != 'Aguardando Confirmação' && !excluido;
 
   /// Verifica se o agendamento está aguardando confirmação
   bool get isAguardandoConfirmacao => status == 'Aguardando Confirmação';
@@ -104,7 +108,7 @@ class AgendamentoServico {
   /// Verifica se há conflito de horário com outro agendamento
   bool temConflito(AgendamentoServico outro) {
     if (id == outro.id) return false; // Mesmo agendamento
-    if (!isAtivo || !outro.isAtivo) return false; // Um deles está cancelado
+    if (!isAtivo || !outro.isAtivo) return false; // Um deles está cancelado ou excluído
     
     // Verificar se os horários se sobrepõem (incluindo casos de borda)
     final outroTermino = outro.dataTermino;
@@ -156,6 +160,8 @@ class AgendamentoServico {
     String? numeroEndereco,
     String? complemento,
     String? pontoReferencia,
+    bool? excluido,
+    bool? travado,
   }) {
     return AgendamentoServico(
       id: id ?? this.id,
@@ -188,6 +194,8 @@ class AgendamentoServico {
       numeroEndereco: numeroEndereco ?? this.numeroEndereco,
       complemento: complemento ?? this.complemento,
       pontoReferencia: pontoReferencia ?? this.pontoReferencia,
+      excluido: excluido ?? this.excluido,
+      travado: travado ?? this.travado,
     );
   }
 
@@ -217,6 +225,8 @@ class AgendamentoServico {
       'numeroEndereco': numeroEndereco,
       'complemento': complemento,
       'pontoReferencia': pontoReferencia,
+      'excluido': excluido,
+      'travado': travado,
       'pet': pet?.toMap(),
       'materiais': materiais.map((m) => m.toMap()).toList(),
       'createdAt': createdAt.toIso8601String(),
@@ -257,6 +267,8 @@ class AgendamentoServico {
       numeroEndereco: map['numeroEndereco']?.toString(),
       complemento: map['complemento']?.toString(),
       pontoReferencia: map['pontoReferencia']?.toString(),
+      excluido: (map['excluido'] as bool?) ?? false,
+      travado: (map['travado'] as bool?) ?? false,
       pet: map['pet'] != null ? Pet.fromMap(Map<String, dynamic>.from(map['pet'])) : null,
     );
   }

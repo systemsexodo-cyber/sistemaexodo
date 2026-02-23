@@ -500,7 +500,14 @@ class AuthService extends ChangeNotifier {
   Future<void> atualizarUsuario(Usuario usuario) async {
     final index = _usuarios.indexWhere((u) => u.id == usuario.id);
     if (index != -1) {
-      _usuarios[index] = usuario.copyWith(updatedAt: DateTime.now());
+      final usuarioAtualizado = usuario.copyWith(updatedAt: DateTime.now());
+      _usuarios[index] = usuarioAtualizado;
+      
+      // Se o usuário atualizado for o logado, atualizar em memória
+      if (_usuarioAtual?.id == usuarioAtualizado.id) {
+        _usuarioAtual = usuarioAtualizado;
+      }
+      
       notifyListeners();
       await _salvarUsuarios();
     }

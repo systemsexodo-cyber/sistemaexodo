@@ -3079,9 +3079,11 @@ class DataService extends ChangeNotifier {
     final duracaoTotal = duracaoMinutos + intervaloMinutos;
     final fim = inicio.add(Duration(minutes: duracaoTotal));
     
+    final isModuloPet = _empresaAtual?.moduloPet ?? false;
+    
     // Verificar conflitos com agendamentos existentes
     for (final a in _agendamentosServico) {
-      if (a.status == 'Cancelado') continue;
+      if (a.status == 'Cancelado' && (!a.travado || !isModuloPet)) continue;
       
       // Se ignorarPendentes for true, não bloqueamos por solicitações ainda não confirmadas
       if (ignorarPendentes && a.status == 'Aguardando Confirmação') continue;
@@ -3111,7 +3113,7 @@ class DataService extends ChangeNotifier {
       final double horaFim = horaInicio + (duracaoMinutos / 60.0);
 
       // Se começar antes de abrir ou terminar depois de fechar, está bloqueado.
-      if (horaInicio < hAbertura || horaFim > hFechamento) {
+      if (isModuloPet && (horaInicio < hAbertura || horaFim > hFechamento)) {
         debugPrint('>>> [DataService] Fora do horário de funcionamento: $horaInicio - $horaFim (Expediente: $hAberturaStr - $hFechamentoStr)');
         return false;
       }
