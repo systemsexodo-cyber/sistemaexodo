@@ -4121,10 +4121,10 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                               if (tel.contains(termoNumeros) || zap.contains(termoNumeros)) return true;
                             }
                             return false;
-                          }).take(10).toList();
+                          }).take(30).toList();
 
                     return Container(
-                      constraints: BoxConstraints(maxHeight: clientesFiltrados.isEmpty ? 60 : 150),
+                      constraints: BoxConstraints(maxHeight: clientesFiltrados.isEmpty ? 60 : 250),
                       decoration: BoxDecoration(
                         border: Border.all(color: Colors.white.withOpacity(0.1)),
                         borderRadius: BorderRadius.circular(12),
@@ -4134,7 +4134,8 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                         ? const Center(child: Text('Nenhum cliente encontrado', style: TextStyle(color: Colors.white38, fontSize: 11)))
                         : ListView.builder(
                             shrinkWrap: true,
-                            physics: const NeverScrollableScrollPhysics(),
+                            // Permitir rolagem na lista de clientes
+                            physics: const AlwaysScrollableScrollPhysics(),
                             padding: EdgeInsets.zero,
                             itemCount: clientesFiltrados.length,
                             itemBuilder: (context, index) {

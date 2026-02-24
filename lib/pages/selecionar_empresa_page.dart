@@ -30,6 +30,25 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
   final TextEditingController _searchController = TextEditingController();
 
   @override
+  void initState() {
+    super.initState();
+    // Iniciar verificação de backup automático (Google Drive)
+    _verificarBackupAutomatico();
+  }
+
+  Future<void> _verificarBackupAutomatico() async {
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final usuario = authService.usuarioAtual;
+    
+    // Apenas tenta backup se for admin/master
+    if (usuario != null && (usuario.email.toLowerCase() == 'user' || usuario.isMaster)) {
+      // Pequeno delay para não sobrecarregar o início da tela
+      await Future.delayed(const Duration(seconds: 3));
+      await GoogleDriveService.instance.verificarERealizarBackupAutomatico();
+    }
+  }
+
+  @override
   void dispose() {
     _searchController.dispose();
     super.dispose();

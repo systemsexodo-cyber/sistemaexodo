@@ -10,9 +10,13 @@ import 'firebase_service.dart';
 import '../models/empresa.dart';
 import 'data_service.dart';
 
+import 'package:shared_preferences/shared_preferences.dart';
+
 class GoogleDriveService {
   static final GoogleDriveService instance = GoogleDriveService._();
   GoogleDriveService._();
+
+  static const String _keyUltimoBackup = 'google_drive_ultimo_backup';
 
   final GoogleSignIn _googleSignIn = GoogleSignIn(
     clientId: '767835275358-ar47lvn9uboh1b12s2tvqli7epq8ttu0.apps.googleusercontent.com',
@@ -25,9 +29,14 @@ class GoogleDriveService {
   GoogleSignInAccount? _currentUser;
   drive.DriveApi? _driveApi;
 
-  Future<bool> login() async {
+  Future<bool> login({bool silencioso = false}) async {
     try {
-      _currentUser = await _googleSignIn.signIn();
+      if (silencioso) {
+        _currentUser = await _googleSignIn.signInSilently();
+      } else {
+        _currentUser = await _googleSignIn.signIn();
+      }
+      
       if (_currentUser == null) return false;
 
       final authHeaders = await _currentUser!.authHeaders;
@@ -36,7 +45,7 @@ class GoogleDriveService {
       
       return true;
     } catch (e) {
-      debugPrint('>>> [GoogleDrive] Erro no login: $e');
+      debugPrint('>>> [GoogleDrive] Erro no login (${silencioso ? 'silencioso' : 'manual'}): $e');
       return false;
     }
   }
@@ -49,6 +58,42 @@ class GoogleDriveService {
 
   bool get isLoggedIn => _currentUser != null;
   String? get userEmail => _currentUser?.email;
+
+  /// Verifica se é necessário realizar um backup automático (intervalo de 24h)
+  Future<void> verificarERealizarBackupAutomatico() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final ultimoBackupStr = prefs.getString(_keyUltimoBackup);
+      
+      if (ultimoBackupStr != null) {
+        final ultimoBackup = DateTime.parse(ultimoBackupStr);
+        final agora = DateTime.now();
+        final diferenca = agora.difference(ultimoBackup);
+        
+        // Se o último backup foi há menos de 24 horas, não faz nada
+        if (diferenca.inHours < 24) {
+          debugPrint('>>> [GoogleDrive] Backup automático ignorado (Último backup há ${diferenca.inHours}h)');
+          return;
+        }
+      }
+
+      debugPrint('>>> [GoogleDrive] Iniciando backup automático (24h passadas)...');
+      
+      // Tenta login silencioso primeiro
+      bool logado = await login(silencioso: true);
+      
+      if (logado) {
+        final resultado = await realizarBackupTodasEmpresas();
+        if (resultado['sucesso'] == true) {
+          debugPrint('>>> [GoogleDrive] Backup automático concluído com sucesso!');
+        }
+      } else {
+        debugPrint('>>> [GoogleDrive] Backup automático cancelado: Necessário login manual.');
+      }
+    } catch (e) {
+      debugPrint('>>> [GoogleDrive] Erro no backup automático: $e');
+    }
+  }
 
   /// Cria ou recupera a pasta de backup no Google Drive
   Future<String?> _getOrCreateBackupFolder() async {
@@ -139,6 +184,10 @@ class GoogleDriveService {
           empresasFalha++;
         }
       }
+
+      // Salvar timestamp do backup bem-sucedido
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_keyUltimoBackup, DateTime.now().toIso8601String());
 
       return {
         'sucesso': true,
