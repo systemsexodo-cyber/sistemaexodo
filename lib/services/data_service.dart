@@ -63,9 +63,37 @@ class DataService extends ChangeNotifier {
   final List<ComissaoVendedor> _comissoesVendedores = [];
   
   // Getters públicos
+  List<AgendamentoServico> get agendamentos => agendamentosServico;
+
   List<MesaComanda> get mesasComandas => _mesasComandas;
   List<MesaComanda> get mesasComandasAbertas => 
       _mesasComandas.where((m) => m.status == 'Aberta').toList();
+
+  /// Exporta todos os dados operacionais da empresa em formato JSON
+  Map<String, dynamic> exportarBackupCompleto() {
+    return {
+      'versao_schema': '1.0.0',
+      'software': 'Sistema Êxodo',
+      'data_exportacao': DateTime.now().toIso8601String(),
+      'empresa_id': _empresaIdAtual,
+      'empresa_nome': _empresaAtual?.nomeExibicao,
+      'colecoes': {
+        'clientes': _clientes.map((e) => e.toMap()).toList(),
+        'produtos': _produtos.map((e) => e.toMap()).toList(),
+        'servicos': _tiposServico.map((e) => e.toMap()).toList(),
+        'pedidos': _pedidos.map((e) => e.toMap()).toList(),
+        'vendas_balcao': _vendasBalcao.map((e) => e.toMap()).toList(),
+        'agendamentos': _agendamentosServico.map((e) => e.toMap()).toList(),
+        'contas_pagar': _contasPagar.map((e) => e.toMap()).toList(),
+        'notas_entrada': _notasEntrada.map((e) => e.toMap()).toList(),
+        'funcionarios': _funcionarios.map((e) => e.toMap()).toList(),
+        'ordens_servico': _ordensServico.map((e) => e.toMap()).toList(),
+        'trocas_devolucoes': _trocasDevolucoes.map((e) => e.toMap()).toList(),
+        'comissoes': _comissoesVendedores.map((e) => e.toMap()).toList(),
+        'nfces': _nfces.map((e) => e.toMap()).toList(),
+      }
+    };
+  }
   
   // Controle de caixa
   bool _caixaAberto = false; // Flag rápida para verificações de UI
@@ -2797,6 +2825,87 @@ class DataService extends ChangeNotifier {
   }
 
   /// Adiciona um novo agendamento de serviço com validação de conflitos
+  /// Adiciona múltiplos agendamentos em lote (otimizado)
+  Future<void> addAgendamentosBatch(List<AgendamentoServico> agendamentos) async {
+    if (agendamentos.isEmpty) return;
+
+    final novosCompletos = <AgendamentoServico>[];
+
+    for (var agendamento in agendamentos) {
+      AgendamentoServico agendamentoComNumero = agendamento;
+      if (agendamento.numero.isEmpty || agendamento.numero == 'AGD-0000') {
+        final numero = getProximoNumeroAgendamento();
+        agendamentoComNumero = agendamento.copyWith(numero: numero);
+      }
+
+      final completo = _vincularReferenciasAgendamento(agendamentoComNumero);
+      
+      // Evitar duplicatas em memória
+      _agendamentosServico.removeWhere((a) => a.id == completo.id);
+      _agendamentosServico.add(completo);
+      novosCompletos.add(completo);
+    }
+
+    notifyListeners();
+
+    // Salvar localmente (UMA SÓ VEZ)
+    try {
+      await _storage.salvarLista(
+        _getChaveComEmpresa(LocalStorageService.keyAgendamentosServico), 
+        _agendamentosServico
+      );
+    } catch (e) {
+      debugPrint('>>> [Batch] Erro LocalStorage: $e');
+    }
+
+    _salvarAutomaticamente();
+
+    // Salvar no Firebase
+    if (_firebaseHabilitado && _empresaIdAtual != null) {
+      for (final completo in novosCompletos) {
+        _firebaseService.salvarAgendamentoServico(_empresaIdAtual!, completo).catchError((e) {
+          debugPrint('>>> [Batch] Erro Firebase: $e');
+          _adicionarSincronizacaoPendente();
+        });
+      }
+    }
+
+    // Notificações (opcional: pode ser pesado se forem muitos, mas geralmente são poucos pets)
+    for (final completo in novosCompletos) {
+      _enviarNotificacaoWhatsAppAgendamento(completo, isNovo: true);
+    }
+  }
+
+  /// Helper para vincular referências de serviço, cliente e pet
+  AgendamentoServico _vincularReferenciasAgendamento(AgendamentoServico agendamento) {
+    Servico? servico;
+    if (agendamento.servicoId != null && !agendamento.servicoId!.startsWith('vacina_')) {
+      try {
+        servico = _tiposServico.firstWhere((s) => s.id == agendamento.servicoId);
+      } catch (_) {}
+    }
+
+    Cliente? cliente = agendamento.cliente;
+    if (cliente == null && agendamento.clienteId != null) {
+      try {
+        cliente = _clientes.firstWhere((c) => c.id == agendamento.clienteId);
+      } catch (_) {}
+    }
+
+    Pet? pet = agendamento.pet;
+    if (pet == null && agendamento.petId != null && cliente != null) {
+      try {
+        pet = cliente.pets.firstWhere((p) => p.id == agendamento.petId);
+      } catch (_) {}
+    }
+
+    return agendamento.copyWith(
+      servico: servico,
+      cliente: cliente,
+      pet: pet,
+    );
+  }
+
   Future<AgendamentoServico> addAgendamentoServico(
     AgendamentoServico agendamento,
   ) async {
@@ -2807,56 +2916,7 @@ class DataService extends ChangeNotifier {
       agendamentoComNumero = agendamento.copyWith(numero: numero);
     }
     
-    // Validação de conflito de horário REMOVIDA - permitir múltiplos agendamentos no mesmo horário
-    // A duração do serviço é mantida apenas para informação, sem bloquear outros agendamentos
-
-    // Carregar referências de serviço e cliente
-    // Para vacinas, não há serviço cadastrado (servicoId começa com "vacina_")
-    Servico? servico;
-    if (agendamentoComNumero.servicoId != null && !agendamentoComNumero.servicoId!.startsWith('vacina_')) {
-      try {
-        servico = _tiposServico.firstWhere(
-          (s) => s.id == agendamentoComNumero.servicoId,
-        );
-      } catch (e) {
-        debugPrint('>>> ⚠ Serviço ${agendamentoComNumero.servicoId ?? "null"} não encontrado ao adicionar agendamento');
-        servico = null;
-      }
-    } else {
-      // É uma vacina, não precisa de serviço cadastrado
-      servico = null;
-    }
-    // Preservar cliente se já estiver presente, caso contrário buscar pelo ID
-    Cliente? cliente = agendamentoComNumero.cliente;
-    if (cliente == null && agendamentoComNumero.clienteId != null) {
-      try {
-        cliente = _clientes.firstWhere(
-          (c) => c.id == agendamentoComNumero.clienteId,
-        );
-      } catch (e) {
-        debugPrint('>>> ⚠ Cliente ${agendamentoComNumero.clienteId} não encontrado ao adicionar agendamento');
-        cliente = null;
-      }
-    }
-
-    // Preservar pet se já estiver presente, caso contrário buscar pelo ID no cliente
-    Pet? pet = agendamentoComNumero.pet;
-    if (pet == null && agendamentoComNumero.petId != null && cliente != null) {
-      try {
-        pet = cliente.pets.firstWhere(
-          (p) => p.id == agendamentoComNumero.petId,
-        );
-      } catch (e) {
-        debugPrint('>>> ⚠ Pet ${agendamentoComNumero.petId} não encontrado ao adicionar agendamento');
-        pet = null;
-      }
-    }
-
-    final agendamentoCompleto = agendamentoComNumero.copyWith(
-      servico: servico,
-      cliente: cliente,
-      pet: pet,
-    );
+    final agendamentoCompleto = _vincularReferenciasAgendamento(agendamentoComNumero);
 
     // Evitar duplicatas em memória antes de adicionar
     _agendamentosServico.removeWhere((a) => a.id == agendamentoCompleto.id);
@@ -2869,51 +2929,20 @@ class DataService extends ChangeNotifier {
         _getChaveComEmpresa(LocalStorageService.keyAgendamentosServico), 
         _agendamentosServico
       );
-      debugPrint('>>> [Agendamento] ✅ Salvo localmente: ${agendamentoCompleto.numero} (ID: ${agendamentoCompleto.id})');
     } catch (e) {
       debugPrint('>>> [Agendamento] ❌ Erro ao salvar localmente: $e');
     }
     
-    // Também chamar salvamento automático (para sincronizar outros dados)
     _salvarAutomaticamente();
     
-    // Salvar imediatamente no Firebase
-    debugPrint('>>> [Agendamento] 🔍 Verificando condições para salvar no Firebase...');
-    debugPrint('>>> [Agendamento] Firebase habilitado: $_firebaseHabilitado');
-    debugPrint('>>> [Agendamento] Empresa ID atual: $_empresaIdAtual');
-    
     if (_firebaseHabilitado && _empresaIdAtual != null) {
-      debugPrint('>>> [Agendamento] ✅ Condições OK, tentando salvar no Firebase...');
-      debugPrint('>>> [Agendamento] Empresa ID Destino: $_empresaIdAtual');
-      debugPrint('>>> [Agendamento] Nome da Empresa: ${_empresaAtual?.nomeExibicao}');
-      debugPrint('>>> [Agendamento] Agendamento ID: ${agendamentoCompleto.id}');
-      debugPrint('>>> [Agendamento] Status: ${agendamentoCompleto.status}');
-      
       try {
         await _firebaseService.salvarAgendamentoServico(_empresaIdAtual!, agendamentoCompleto);
-        debugPrint('>>> [Agendamento] ✅✅✅ SALVO NO FIREBASE COM SUCESSO! ✅✅✅');
-        debugPrint('>>> [Agendamento] Número: ${agendamentoCompleto.numero}');
-        debugPrint('>>> [Agendamento] ID: ${agendamentoCompleto.id}');
-        debugPrint('>>> [Agendamento] Empresa: $_empresaIdAtual');
-      } catch (e, stackTrace) {
-        debugPrint('>>> [Agendamento] ❌❌❌ ERRO AO SALVAR NO FIREBASE! ❌❌❌');
-        debugPrint('>>> [Agendamento] Erro: $e');
-        debugPrint('>>> [Agendamento] StackTrace: $stackTrace');
-        debugPrint('>>> [Agendamento] ⚠️ DADOS SALVOS LOCALMENTE - serão sincronizados quando possível');
+      } catch (e) {
         _adicionarSincronizacaoPendente();
-        // NÃO re-throw - dados já estão salvos localmente, não precisa bloquear
-      }
-    } else {
-      debugPrint('>>> [Agendamento] ⚠️⚠️⚠️ NÃO SALVOU NO FIREBASE! ⚠️⚠️⚠️');
-      if (!_firebaseHabilitado) {
-        debugPrint('>>> [Agendamento] Motivo: Firebase NÃO está habilitado');
-      }
-      if (_empresaIdAtual == null) {
-        debugPrint('>>> [Agendamento] Motivo: Empresa NÃO está selecionada (empresaIdAtual é null)');
       }
     }
     
-    // Enviar notificação WhatsApp (se ativo)
     _enviarNotificacaoWhatsAppAgendamento(agendamentoCompleto, isNovo: true);
     
     return agendamentoCompleto;
@@ -3200,35 +3229,7 @@ class DataService extends ChangeNotifier {
     }
   }
 
-  /// Vincula as referências (Serviço, Cliente, Pet) a um agendamento com base nos IDs
-  AgendamentoServico _vincularReferenciasAgendamento(AgendamentoServico agendamento) {
-    Servico? servico;
-    if (agendamento.servicoId != null && !agendamento.servicoId!.startsWith('vacina_')) {
-      try {
-        servico = _tiposServico.firstWhere((s) => s.id == agendamento.servicoId);
-      } catch (_) {}
-    }
 
-    Cliente? cliente;
-    if (agendamento.clienteId != null) {
-      try {
-        cliente = _clientes.firstWhere((c) => c.id == agendamento.clienteId);
-      } catch (_) {}
-    }
-
-    Pet? pet;
-    if (agendamento.petId != null && cliente != null) {
-      try {
-        pet = cliente.pets.firstWhere((p) => p.id == agendamento.petId);
-      } catch (_) {}
-    }
-
-    return agendamento.copyWith(
-      servico: servico,
-      cliente: cliente,
-      pet: pet,
-    );
-  }
 
   /// Aprova um agendamento (muda status de 'Aguardando Confirmação' para 'Agendado')
   Future<void> aprovarAgendamento(String agendamentoId) async {
@@ -4362,11 +4363,16 @@ class DataService extends ChangeNotifier {
         return; // Retorna sem erro, mas sem dados
       }
 
-      // Carregar clientes
+      // Carregar clientes - PROTEÇÃO: Não limpar se for sync silencioso/leve e a lista vier vazia
       if (dados['clientes'] != null) {
-        final novos = (dados['clientes'] as List).map((map) => Cliente.fromMap(map as Map<String, dynamic>)).toList();
-        _atualizarListaInPlace(_clientes, novos);
-        print('>>> ✓ ${novos.length} clientes carregados do Firebase');
+        final novosRaw = dados['clientes'] as List;
+        if (novosRaw.isNotEmpty || !isSilentSync) {
+          final novos = novosRaw.map((map) => Cliente.fromMap(map as Map<String, dynamic>)).toList();
+          _atualizarListaInPlace(_clientes, novos);
+          print('>>> ✓ ${novos.length} clientes carregados do Firebase');
+        } else {
+          debugPrint('>>> [Sync] Preservando lista de clientes local durante sync silencioso/leve');
+        }
       }
 
       // Carregar produtos - Otimizado: Pular se em sync silencioso e stream ativo

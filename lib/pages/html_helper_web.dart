@@ -65,3 +65,18 @@ void playAudio(String assetPath, {double volume = 1.0}) {
   }
 }
 
+/// Faz o download de um arquivo no navegador
+void downloadFile(String content, String fileName, String mimeType) {
+  try {
+    final blob = html.Blob([content], mimeType);
+    final url = html.Url.createObjectUrlFromBlob(blob);
+    final anchor = html.AnchorElement(href: url)
+      ..setAttribute("download", fileName)
+      ..click();
+    html.Url.revokeObjectUrl(url);
+  } catch (e) {
+    print('Erro ao baixar arquivo: $e');
+  }
+}
+
+

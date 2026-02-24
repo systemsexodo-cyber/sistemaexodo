@@ -9,6 +9,7 @@ import '../models/empresa.dart';
 import '../theme.dart';
 import 'adicionar_empresa_page.dart';
 import 'login_page.dart';
+import '../services/google_drive_service.dart';
 
 /// Página de gerenciamento de empresas
 class EmpresasPage extends StatefulWidget {
@@ -189,6 +190,8 @@ class _EmpresasPageState extends State<EmpresasPage> {
                 children: [
                   // Card de importação SEMPRE no topo (sempre visível)
                   _buildCardImportacao(context),
+                  // Card do Google Drive (Apenas Admin)
+                  _buildCardGoogleDrive(context),
                   // Cards das empresas
                       if (empresasPermitidas.isEmpty)
                     _buildEmptyState()
@@ -208,6 +211,178 @@ class _EmpresasPageState extends State<EmpresasPage> {
           label: const Text(
             'IMPORTAR EXCEL',
             style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Realiza o backup de todas as empresas para o Google Drive
+  Future<void> _realizarBackupGoogleDrive(BuildContext context) async {
+    final driveService = GoogleDriveService.instance;
+    
+    // Mostrar diálogo de progresso
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        title: const Text('Backup Google Drive', style: TextStyle(color: Colors.white)),
+        content: const Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(color: Colors.orange),
+            SizedBox(height: 24),
+            Text(
+              'Realizando exportação e upload de todas as empresas...\nIsso pode levar alguns minutos.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.white70),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    try {
+      final resultado = await driveService.realizarBackupTodasEmpresas();
+      
+      if (mounted) {
+        Navigator.pop(context); // Fechar loading
+
+        if (resultado['sucesso'] == true) {
+          final detalhes = resultado['detalhes'];
+          showDialog(
+            context: context,
+            builder: (context) => AlertDialog(
+              backgroundColor: const Color(0xFF1E1E2E),
+              title: const Row(
+                children: [
+                  Icon(Icons.check_circle, color: Colors.green),
+                  SizedBox(width: 12),
+                  Text('Backup Concluído', style: TextStyle(color: Colors.white)),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                   Text('Total de empresas: ${detalhes['total']}', style: const TextStyle(color: Colors.white70)),
+                   Text('Sucesso: ${detalhes['sucesso']}', style: const TextStyle(color: Colors.white)),
+                   if (detalhes['falha'] > 0)
+                    Text('Falhas: ${detalhes['falha']}', style: const TextStyle(color: Colors.redAccent)),
+                   const SizedBox(height: 16),
+                   Text('Pasta no Drive: ${detalhes['pasta']}', style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold)),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('OK'),
+                ),
+              ],
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Erro no backup: ${resultado['mensagem']}'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erro inesperado: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Widget _buildCardGoogleDrive(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Colors.blue.withOpacity(0.3), Colors.blue.withOpacity(0.1)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: Colors.blue,
+          width: 2,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.blue.withOpacity(0.3),
+            blurRadius: 10,
+            spreadRadius: 2,
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () => _realizarBackupGoogleDrive(context),
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: Colors.blue,
+                    borderRadius: BorderRadius.circular(14),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.blue.withOpacity(0.5),
+                        blurRadius: 8,
+                        spreadRadius: 1,
+                      ),
+                    ],
+                  ),
+                  child: const Icon(
+                    Icons.cloud_upload,
+                    color: Colors.white,
+                    size: 36,
+                  ),
+                ),
+                const SizedBox(width: 20),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '☁️ BACKUP GOOGLE DRIVE',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                      SizedBox(height: 6),
+                      Text(
+                        'Exportar todos os dados de TODAS as empresas para o seu Google Drive (2TB).',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Colors.white70,
+                          height: 1.4,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(
+                  Icons.arrow_forward_ios,
+                  color: Colors.white,
+                  size: 24,
+                ),
+              ],
+            ),
           ),
         ),
       ),

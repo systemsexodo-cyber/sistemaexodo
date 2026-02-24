@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../services/data_service.dart';
@@ -8,6 +10,8 @@ import '../models/permissao.dart';
 import '../models/usuario.dart';
 import '../theme.dart';
 import '../models/conta_pagar.dart';
+import 'html_helper_stub.dart' if (dart.library.html) 'html_helper_web.dart' as html_helper;
+
 
 class DashboardPage extends StatefulWidget {
   final bool showAppBar;
@@ -225,6 +229,10 @@ class _DashboardPageState extends State<DashboardPage> {
 
                   // Top Serviços
                   _buildCardTopServicos(topServicos, _periodoSelecionado),
+                  const SizedBox(height: 16),
+
+                  // Backup
+                  _buildCardBackup(dataService),
                   const SizedBox(height: 80),
                 ],
               ),
@@ -1582,6 +1590,94 @@ class _DashboardPageState extends State<DashboardPage> {
                     ],
                   ),
                 ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _gerarBackupTotal(DataService dataService) {
+    try {
+      final now = DateTime.now();
+      final timestamp = DateFormat('yyyyMMdd_HHmm').format(now);
+      
+      final Map<String, dynamic> backup = dataService.exportarBackupCompleto();
+      final jsonContent = jsonEncode(backup);
+      final fileName = 'backup_exodo_${timestamp}.json';
+      
+      html_helper.downloadFile(jsonContent, fileName, 'application/json');
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('✅ Backup gerado com sucesso! Download iniciado.'),
+          backgroundColor: Colors.green,
+          duration: Duration(seconds: 4),
+        ),
+      );
+    } catch (e) {
+      debugPrint('Erro ao gerar backup: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('❌ Erro ao gerar backup: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  Widget _buildCardBackup(DataService dataService) {
+    return Card(
+      color: const Color(0xFF1E1E2E).withOpacity(0.8),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.security, color: Colors.orange, size: 28),
+                ),
+                const SizedBox(width: 16),
+                const Expanded(
+                  child: Text(
+                    'Segurança e Backup',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'O sistema já realiza cópias automáticas em tempo real na nuvem. Use esta função para baixar uma cópia de segurança manual de todos os seus dados para conferência ou migração.',
+              style: TextStyle(color: Colors.white70, fontSize: 14),
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: () => _gerarBackupTotal(dataService),
+                icon: const Icon(Icons.download),
+                label: const Text('GERAR BACKUP TOTAL (JSON)'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.orange.shade800,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  elevation: 4,
+                ),
               ),
             ),
           ],

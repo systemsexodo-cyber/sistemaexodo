@@ -38,3 +38,9 @@ void playAudio(String assetPath, {double volume = 1.0}) {
   // Não faz nada fora da Web
 }
 
+/// Download de arquivo (stub)
+void downloadFile(String content, String fileName, String mimeType) {
+  // Não faz nada fora da Web
+}
+
+
