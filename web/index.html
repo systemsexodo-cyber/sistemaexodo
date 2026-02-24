@@ -20,6 +20,8 @@
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
   <meta name="description" content="Sistema Êxodo - Sistema de gestão empresarial completo">
+  <meta name="google-signin-client_id"
+    content="767835275358-ar47lvn9uboh1b12s2tvqli7epq8ttu0.apps.googleusercontent.com">
 
   <!-- Meta tags para prevenir cache agressivo do index.html -->
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
@@ -47,13 +49,13 @@
   <script>
     // SOLUÇÃO PARA LIMPEZA DE CACHE E SERVICE WORKERS OBSOLETOS
     // Versão: 1.0.1 - Força limpeza em cada carregamento
-    (function() {
+    (function () {
       // 1. Desregistrar todos os Service Workers
       if ('serviceWorker' in navigator) {
         navigator.serviceWorker.getRegistrations().then(function (registrations) {
           for (let registration of registrations) {
-            registration.unregister().then(function(success) {
-              if(success) console.log('>>> [CACHE] Service Worker removido com sucesso');
+            registration.unregister().then(function (success) {
+              if (success) console.log('>>> [CACHE] Service Worker removido com sucesso');
             });
           }
         });
@@ -63,8 +65,8 @@
       if (window.caches) {
         caches.keys().then(function (names) {
           for (let name of names) {
-            caches.delete(name).then(function() {
-               console.log('>>> [CACHE] Cache deletado: ' + name);
+            caches.delete(name).then(function () {
+              console.log('>>> [CACHE] Cache deletado: ' + name);
             });
           }
         });
