@@ -117,14 +117,14 @@ echo !!! ATENCAO: Isso vai atualizar o SITE OFICIAL !!!
 set /p conf="Tem certeza que deseja publicar? (s/n): "
 if /i "!conf!" NEQ "s" goto menu
 
-echo >>> Entrando na branch de Producao...
-git checkout Produção
+echo >>> Entrando na branch Principal (Producao)...
+git checkout main
 echo >>> Unindo seu trabalho novo...
-git merge modo-dev
-echo >>> Enviando para o site...
-git push origin Produção
+git merge !current_branch!
+echo >>> Enviando para o GitHub...
+git push origin main
 echo >>> Voltando para o modo de trabalho...
-git checkout modo-dev
+git checkout !current_branch!
 echo.
 echo vv PUBLICADO COM SUCESSO! O site esta atualizado. vv
 pause

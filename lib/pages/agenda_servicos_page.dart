@@ -4970,7 +4970,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                       pet: pet,
                       dataAgendamento: dataHoraCompleta,
                       duracaoMinutos: duracaoMinutos,
-                      intervaloMinutos: servicosSelecionados.isNotEmpty ? (servicosSelecionados.first.intervaloMinutos ?? 0) : 0,
+                      intervaloMinutos: servicosSelecionados.fold<int>(0, (int max, s) => (s.intervaloMinutos ?? 0) > max ? (s.intervaloMinutos ?? 0) : max),
                       observacoes: observacoesController.text.trim().isEmpty
                           ? null
                           : observacoesController.text.trim(),
@@ -5829,7 +5829,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                       pet: primeiroPet,
                       dataAgendamento: dataHoraCompleta,
                       duracaoMinutos: duracaoMinutos,
-                      intervaloMinutos: servicosSelecionados.isNotEmpty ? (servicosSelecionados.first.intervaloMinutos ?? 0) : 0,
+                      intervaloMinutos: servicosSelecionados.fold<int>(0, (int max, s) => (s.intervaloMinutos ?? 0) > max ? (s.intervaloMinutos ?? 0) : max),
                       observacoes: observacoesController.text.trim().isEmpty
                           ? null
                           : observacoesController.text.trim(),

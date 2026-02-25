@@ -22,7 +22,8 @@ Set-Location $projectPath
 $gitCheck = git rev-parse --show-toplevel 2>$null
 if ($gitCheck) {
     $projectPath = $gitCheck
-} else {
+}
+else {
     Write-Host "ERRO: Este diretório não é um repositório Git válido!" -ForegroundColor Red
     Write-Host "Diretório: $projectPath" -ForegroundColor Yellow
     exit 1
@@ -31,7 +32,7 @@ if ($gitCheck) {
 Write-Host "Diretório do projeto: $projectPath" -ForegroundColor Gray
 
 $tempPath = Join-Path (Split-Path $projectPath) "sistema_exodo_push_temp"
-$remoteUrl = "git@github.com:systemsexodo-cyber/sistemaexodo.git"
+$remoteUrl = "https://github.com/systemsexodo-cyber/sistemaexodo.git"
 
 Write-Host "[1/5] Preparando ambiente..." -ForegroundColor Yellow
 
@@ -103,7 +104,8 @@ if ($LASTEXITCODE -eq 0) {
     
     Write-Host ""
     Write-Host "Tudo pronto! Seu código está no GitHub." -ForegroundColor Green
-} else {
+}
+else {
     Write-Host ""
     Write-Host "========================================" -ForegroundColor Red
     Write-Host "  ERRO NO PUSH" -ForegroundColor Red

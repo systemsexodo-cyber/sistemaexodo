@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:sistema_exodo_novo/models/servico.dart';
 import 'package:sistema_exodo_novo/models/agendamento_servico.dart';
 import 'package:sistema_exodo_novo/models/cliente.dart';
 import 'package:sistema_exodo_novo/models/pet.dart';
@@ -366,7 +367,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
         bottom: isSyncingData ? PreferredSize(
           preferredSize: const Size.fromHeight(2),
           child: LinearProgressIndicator(
-            backgroundColor: Colors.white.withOpacity(0.1),
+            backgroundColor: Colors.white.withAlpha(25),
             valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
             minHeight: 2,
           ),
@@ -395,7 +396,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                     decoration: BoxDecoration(
                       color: _isDark ? _LojaPublicaStyle.cardColor : Colors.white,
                       borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: Colors.grey.withOpacity(0.2)),
+                      border: Border.all(color: Colors.grey.withAlpha(51)),
                     ),
                     child: Form(
                       key: _formKey,
@@ -420,14 +421,14 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
               color: _isDark ? _LojaPublicaStyle.cardColor : Colors.white,
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.2),
+                  color: Colors.black.withAlpha(51),
                   blurRadius: 15,
                   offset: const Offset(0, -5),
                 ),
               ],
               border: Border(
                 top: BorderSide(
-                  color: _isDark ? Colors.white12 : Colors.black.withOpacity(0.05),
+                  color: _isDark ? Colors.white12 : Colors.black.withAlpha(12),
                 ),
               ),
             ),
@@ -633,7 +634,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                         height: 2,
                         color: isCompleted || isActive 
                             ? primaryColor 
-                            : (_isDark ? Colors.white.withOpacity(0.1) : Colors.black.withOpacity(0.05)),
+                            : (_isDark ? Colors.white.withAlpha(25) : Colors.black.withAlpha(12)),
                       ),
                     ),
                   Container(
@@ -655,7 +656,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                         )
                       ] : null,
                       border: Border.all(
-                        color: isActive ? (_isDark ? Colors.white : primaryColor) : (_isDark ? Colors.white.withOpacity(0.1) : Colors.black.withOpacity(0.1)),
+                        color: isActive ? (_isDark ? Colors.white : primaryColor) : (_isDark ? Colors.white.withAlpha(25) : Colors.black.withAlpha(25)),
                         width: 2,
                       ),
                     ),
@@ -675,7 +676,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                         height: 2,
                         color: isCompleted 
                             ? primaryColor 
-                            : (_isDark ? Colors.white.withOpacity(0.1) : Colors.black.withOpacity(0.05)),
+                            : (_isDark ? Colors.white.withAlpha(25) : Colors.black.withAlpha(12)),
                       ),
                     ),
                 ],
@@ -824,119 +825,123 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
               // Em telas maiores que 900px, exibimos 2 colunas para aproveitar o espaço horizontal
               final crossAxisCount = constraints.maxWidth > 900 ? 2 : 1;
               
-              return GridView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: servicos.length,
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: crossAxisCount,
-                  crossAxisSpacing: 16,
-                  mainAxisSpacing: 16,
-                  // Mantemos uma altura fixa para os cards para garantir o alinhamento no grid
-                  mainAxisExtent: 110, 
-                ),
-                itemBuilder: (context, index) {
-                  final servico = servicos[index];
-                  bool isSelected = _servicosSelecionadosIds.contains(servico.id);
+              return Column(
+                children: [
+                  GridView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: servicos.length,
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: crossAxisCount,
+                      crossAxisSpacing: 16,
+                      mainAxisSpacing: 16,
+                      // Mantemos uma altura fixa para os cards para garantir o alinhamento no grid
+                      mainAxisExtent: 110, 
+                    ),
+                    itemBuilder: (context, index) {
+                      final servico = servicos[index];
+                      bool isSelected = _servicosSelecionadosIds.contains(servico.id);
 
-                  return InkWell(
-                    onTap: () {
-                      setState(() {
-                        if (isSelected) {
-                          _servicosSelecionadosIds.remove(servico.id);
-                        } else {
-                          _servicosSelecionadosIds.add(servico.id);
-                        }
-                      });
-                    },
-                    borderRadius: BorderRadius.circular(20),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12), // Reduzi um pouco o padding interno para caber melhor em 2 colunas
-                      decoration: BoxDecoration(
-                        color: isSelected ? _primaryColor.withOpacity(0.15) : (_isDark ? Colors.white.withOpacity(0.03) : Colors.grey[50]),
+                      return InkWell(
+                        onTap: () {
+                          setState(() {
+                            if (isSelected) {
+                              _servicosSelecionadosIds.remove(servico.id);
+                            } else {
+                              _servicosSelecionadosIds.add(servico.id);
+                            }
+                          });
+                        },
                         borderRadius: BorderRadius.circular(20),
-                        border: Border.all(
-                          color: isSelected ? _primaryColor : (_isDark ? Colors.white.withOpacity(0.1) : Colors.grey[200]!),
-                          width: 2,
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(10), // Ajuste leve no ícone
-                            decoration: BoxDecoration(
-                              color: isSelected ? _primaryColor : Colors.white.withOpacity(0.05),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Icon(
-                              _getIconForServico(servico.nome),
-                              color: isSelected ? Colors.white : (_isDark ? _LojaPublicaStyle.textSecondaryColor : Colors.grey[500]),
-                              size: 20, // Ajuste leve no tamanho do ícone
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                          decoration: BoxDecoration(
+                            color: isSelected ? _primaryColor.withAlpha(38) : (_isDark ? Colors.white.withAlpha(8) : Colors.grey[50]),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: isSelected ? _primaryColor : (_isDark ? Colors.white.withAlpha(25) : Colors.grey[200]!),
+                              width: 2,
                             ),
                           ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisAlignment: MainAxisAlignment.center, // Centralizar verticalmente
-                              children: [
-                                Text(
-                                  servico.nome,
-                                  maxLines: 1, // Limitar a 1 linha para manter o grid alinhado
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: _isDark ? Colors.white : Colors.black87, 
-                                    fontWeight: FontWeight.bold, 
-                                    fontSize: 16 // Reduzi ligeiramente para comportar em 2 colunas
-                                  ),
-                                ),
-                                if (servico.descricao?.isNotEmpty ?? false) ...[
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    servico.descricao!,
-                                    maxLines: 2, // Até 2 linhas de descrição
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      color: _isDark ? _LojaPublicaStyle.textSecondaryColor : Colors.grey[600], 
-                                      fontSize: 12
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            mainAxisAlignment: MainAxisAlignment.center,
+                          child: Row(
                             children: [
-                              if (!esconderValores)
-                                Text(
-                                  'R\$ ${servico.precoTotal.toStringAsFixed(2)}',
-                                  style: GoogleFonts.outfit(
-                                    color: isSelected ? (_isDark ? Colors.white : _primaryColor) : _primaryColor,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 16,
-                                  ),
+                              Container(
+                                padding: const EdgeInsets.all(10),
+                                decoration: BoxDecoration(
+                                  color: isSelected ? _primaryColor : Colors.white.withAlpha(12),
+                                  borderRadius: BorderRadius.circular(12),
                                 ),
-                              if (servico.duracaoPadraoMinutos != null)
-                                Text(
-                                  '${servico.duracaoPadraoMinutos} min',
-                                  style: TextStyle(color: _isDark ? _LojaPublicaStyle.textSecondaryColor : Colors.grey[500], fontSize: 10),
+                                child: Icon(
+                                  _getIconForServico(servico.nome),
+                                  color: isSelected ? Colors.white : (_isDark ? _LojaPublicaStyle.textSecondaryColor : Colors.grey[500]),
+                                  size: 20,
                                 ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Text(
+                                      servico.nome,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: _isDark ? Colors.white : Colors.black87, 
+                                        fontWeight: FontWeight.bold, 
+                                        fontSize: 16
+                                      ),
+                                    ),
+                                    if (servico.descricao?.isNotEmpty ?? false) ...[
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        servico.descricao!,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          color: _isDark ? _LojaPublicaStyle.textSecondaryColor : Colors.grey[600], 
+                                          fontSize: 12
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  if (!esconderValores)
+                                    Text(
+                                      'R\$ ${servico.precoTotal.toStringAsFixed(2)}',
+                                      style: GoogleFonts.outfit(
+                                        color: isSelected ? (_isDark ? Colors.white : _primaryColor) : _primaryColor,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 16,
+                                      ),
+                                    ),
+                                  if (servico.duracaoPadraoMinutos != null)
+                                    Text(
+                                      '${servico.duracaoPadraoMinutos} min',
+                                      style: TextStyle(color: _isDark ? _LojaPublicaStyle.textSecondaryColor : Colors.grey[500], fontSize: 10),
+                                    ),
+                                ],
+                              ),
                             ],
                           ),
-                        ],
-                      ),
-                    ),
-                  );
-                },
-              ),
-              if (_servicosSelecionadosIds.isNotEmpty) ...[
-                const SizedBox(height: 32),
-                _buildServicosSelecionadosSummary(servicos, esconderValores),
-              ],
-            ],
+                        ),
+                      );
+                    },
+                  ),
+                  if (_servicosSelecionadosIds.isNotEmpty) ...[
+                    const SizedBox(height: 32),
+                    _buildServicosSelecionadosSummary(servicos, esconderValores),
+                  ],
+                ],
+              );
+            },
           ),
       ],
     );
@@ -1207,9 +1212,9 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
              Container(
                padding: const EdgeInsets.all(16),
                decoration: BoxDecoration(
-                 color: _primaryColor.withOpacity(0.05),
+                 color: _primaryColor.withAlpha(12),
                  borderRadius: BorderRadius.circular(16),
-                 border: Border.all(color: _primaryColor.withOpacity(0.2)),
+                 border: Border.all(color: _primaryColor.withAlpha(51)),
                ),
                child: Column(
                  crossAxisAlignment: CrossAxisAlignment.start,
@@ -1254,9 +1259,9 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: Colors.blue.withOpacity(0.05),
+              color: Colors.blue.withAlpha(12),
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: _primaryColor.withOpacity(0.2)),
+              border: Border.all(color: _primaryColor.withAlpha(51)),
             ),
             child: Row(
               children: [
@@ -1405,10 +1410,10 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   decoration: BoxDecoration(
-                    color: isSelected ? _primaryColor : (_isDark ? Colors.white.withOpacity(0.05) : Colors.grey[100]),
+                    color: isSelected ? _primaryColor : (_isDark ? Colors.white.withAlpha(12) : Colors.grey[100]),
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(
-                      color: isSelected ? Colors.white.withOpacity(0.2) : (_isDark ? Colors.white.withOpacity(0.1) : Colors.grey[300]!),
+                      color: isSelected ? Colors.white.withAlpha(51) : (_isDark ? Colors.white.withAlpha(25) : Colors.grey[300]!),
                     ),
                   ),
                   child: Text(
@@ -1443,7 +1448,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
             min: 0.5,
             max: 80,
             activeColor: _primaryColor,
-            inactiveColor: _isDark ? Colors.white.withOpacity(0.1) : Colors.grey[200],
+            inactiveColor: _isDark ? Colors.white.withAlpha(25) : Colors.grey[200],
             onChanged: (val) {
               setState(() => _pesoAproximado = val);
               _atualizarDadosPetSendoEditadoSync();
@@ -1513,10 +1518,10 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
             height: 100,
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: isSelected ? _primaryColor.withOpacity(0.15) : (_isDark ? Colors.white.withOpacity(0.05) : Colors.grey[100]),
+              color: isSelected ? _primaryColor.withOpacity(0.15) : (_isDark ? Colors.white.withAlpha(12) : Colors.grey[100]),
               borderRadius: BorderRadius.circular(16),
               border: Border.all(
-                color: isSelected ? _primaryColor : (_isDark ? Colors.white.withOpacity(0.1) : Colors.grey[300]!),
+                color: isSelected ? _primaryColor : (_isDark ? Colors.white.withAlpha(25) : Colors.grey[300]!),
                 width: isSelected ? 2 : 1,
               ),
             ),
@@ -1633,7 +1638,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
             style: TextStyle(color: _isDark ? Colors.white : Colors.black87),
             decoration: InputDecoration(
               filled: true,
-              fillColor: _isDark ? Colors.white.withOpacity(0.05) : Colors.grey[100],
+              fillColor: _isDark ? Colors.white.withAlpha(12) : Colors.grey[100],
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
               prefixIcon: Icon(Icons.location_on_rounded, color: _primaryColor),
             ),
@@ -1778,7 +1783,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
             style: TextStyle(color: _isDark ? Colors.white : Colors.black87),
             decoration: InputDecoration(
               filled: true,
-              fillColor: _isDark ? Colors.white.withOpacity(0.05) : Colors.grey[100],
+              fillColor: _isDark ? Colors.white.withAlpha(12) : Colors.grey[100],
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
               prefixIcon: Icon(Icons.location_on_rounded, color: _primaryColor),
             ),
@@ -1875,10 +1880,10 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       child: Container(
         padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
-          color: isSelected ? _primaryColor.withOpacity(0.15) : (_isDark ? Colors.white.withOpacity(0.05) : Colors.grey[100]),
+          color: isSelected ? _primaryColor.withOpacity(0.15) : (_isDark ? Colors.white.withAlpha(12) : Colors.grey[100]),
           borderRadius: BorderRadius.circular(20),
           border: Border.all(
-            color: isSelected ? _primaryColor : (_isDark ? Colors.white.withOpacity(0.1) : Colors.grey[300]!),
+            color: isSelected ? _primaryColor : (_isDark ? Colors.white.withAlpha(25) : Colors.grey[300]!),
             width: isSelected ? 2 : 1,
           ),
         ),
@@ -1886,7 +1891,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
           children: [
             Container(
               padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(color: isSelected ? _primaryColor : (_isDark ? Colors.white.withOpacity(0.05) : Colors.grey[200]), shape: BoxShape.circle),
+              decoration: BoxDecoration(color: isSelected ? _primaryColor : (_isDark ? Colors.white.withAlpha(12) : Colors.grey[200]), shape: BoxShape.circle),
               child: Icon(icon, color: isSelected ? Colors.white : (_isDark ? Colors.white54 : Colors.grey[600])),
             ),
             const SizedBox(width: 20),
@@ -2071,10 +2076,10 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
               borderRadius: BorderRadius.circular(12),
               child: Container(
                 decoration: BoxDecoration(
-                  color: isSelected ? _primaryColor : Colors.white.withOpacity(0.05),
+                  color: isSelected ? _primaryColor : Colors.white.withAlpha(12),
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(
-                    color: isSelected ? _primaryColor : Colors.white.withOpacity(0.1),
+                    color: isSelected ? _primaryColor : Colors.white.withAlpha(25),
                   ),
                 ),
                 alignment: Alignment.center,
@@ -2119,7 +2124,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
             decoration: BoxDecoration(
               color: Colors.amber.withOpacity(0.08),
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.amber.withOpacity(0.2)),
+              border: Border.all(color: Colors.amber.withAlpha(51)),
             ),
             child: Row(
               children: [
@@ -2298,7 +2303,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       return Container(
         padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
-          color: _isDark ? Colors.white.withOpacity(0.05) : Colors.grey[200],
+          color: _isDark ? Colors.white.withAlpha(12) : Colors.grey[200],
           borderRadius: BorderRadius.circular(20),
         ),
         child: Row(
@@ -2347,8 +2352,8 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: disponivel 
-            ? Colors.green.withOpacity(0.1) 
-            : (isBloqueadoAdmin ? Colors.red.withOpacity(0.1) : _primaryColor.withOpacity(0.1)),
+            ? Colors.green.withAlpha(25) 
+            : (isBloqueadoAdmin ? Colors.red.withAlpha(25) : _primaryColor.withAlpha(25)),
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
           color: disponivel 
@@ -2458,18 +2463,18 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
           style: TextStyle(color: _isDark ? Colors.white : Colors.black87, fontSize: 16),
           decoration: InputDecoration(
             hintText: placeholder,
-            hintStyle: TextStyle(color: _isDark ? Colors.white.withOpacity(0.2) : Colors.grey[400]),
+            hintStyle: TextStyle(color: _isDark ? Colors.white.withAlpha(51) : Colors.grey[400]),
             prefixIcon: Icon(icon, color: _primaryColor, size: 20),
             suffixIcon: suffixIcon,
             filled: true,
-            fillColor: _isDark ? Colors.white.withOpacity(0.05) : Colors.grey[100],
+            fillColor: _isDark ? Colors.white.withAlpha(12) : Colors.grey[100],
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(16),
-              borderSide: BorderSide(color: _isDark ? Colors.white.withOpacity(0.1) : Colors.grey[300]!),
+              borderSide: BorderSide(color: _isDark ? Colors.white.withAlpha(25) : Colors.grey[300]!),
             ),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(16),
-              borderSide: BorderSide(color: _isDark ? Colors.white.withOpacity(0.1) : Colors.grey[300]!),
+              borderSide: BorderSide(color: _isDark ? Colors.white.withAlpha(25) : Colors.grey[300]!),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(16),
@@ -2503,9 +2508,9 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 16),
           decoration: BoxDecoration(
-            color: _isDark ? Colors.white.withOpacity(0.05) : Colors.grey[100],
+            color: _isDark ? Colors.white.withAlpha(12) : Colors.grey[100],
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: _isDark ? Colors.white.withOpacity(0.1) : Colors.grey[300]!),
+            border: Border.all(color: _isDark ? Colors.white.withAlpha(25) : Colors.grey[300]!),
           ),
           child: DropdownButtonHideUnderline(
             child: DropdownButton<T>(
@@ -2547,12 +2552,12 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
             decoration: BoxDecoration(
               color: desabilitado
                   ? (_isDark ? Colors.white.withOpacity(0.02) : Colors.grey[50])
-                  : (_isDark ? Colors.white.withOpacity(0.05) : Colors.grey[100]),
+                  : (_isDark ? Colors.white.withAlpha(12) : Colors.grey[100]),
               borderRadius: BorderRadius.circular(16),
               border: Border.all(
                 color: desabilitado
-                    ? (_isDark ? Colors.white.withOpacity(0.05) : Colors.grey[200]!)
-                    : (_isDark ? Colors.white.withOpacity(0.1) : Colors.grey[300]!),
+                    ? (_isDark ? Colors.white.withAlpha(12) : Colors.grey[200]!)
+                    : (_isDark ? Colors.white.withAlpha(25) : Colors.grey[300]!),
               ),
             ),
             child: Row(
@@ -3020,9 +3025,9 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       margin: const EdgeInsets.only(bottom: 24),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: primaryColor.withOpacity(0.05),
+        color: primaryColor.withAlpha(12),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: primaryColor.withOpacity(0.2)),
+        border: Border.all(color: primaryColor.withAlpha(51)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -3048,7 +3053,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
             child: Row(
               children: [
                 CircleAvatar(
-                  backgroundColor: primaryColor.withOpacity(0.1),
+                  backgroundColor: primaryColor.withAlpha(25),
                   radius: 18,
                   child: Icon(agd.pet != null ? Icons.pets : Icons.style, color: primaryColor, size: 16),
                 ),
@@ -3266,10 +3271,10 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       decoration: BoxDecoration(
         color: isDark ? _LojaPublicaStyle.cardColor : Colors.white,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: isDark ? Colors.white.withOpacity(0.05) : Colors.black.withOpacity(0.05)),
+        border: Border.all(color: isDark ? Colors.white.withAlpha(12) : Colors.black.withAlpha(12)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.1),
+            color: Colors.black.withAlpha(25),
             blurRadius: 10,
             offset: const Offset(0, 4),
           ),
@@ -3280,7 +3285,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: statusColor.withOpacity(0.1),
+              color: statusColor.withAlpha(25),
               borderRadius: BorderRadius.circular(15),
             ),
             child: Icon(
@@ -3335,7 +3340,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                 decoration: BoxDecoration(
                   color: statusColor.withOpacity(0.15),
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: statusColor.withOpacity(0.2)),
+                  border: Border.all(color: statusColor.withAlpha(51)),
                 ),
                 child: Text(
                   agd.status,
@@ -3395,7 +3400,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                     Container(
                       padding: const EdgeInsets.all(24),
                       decoration: BoxDecoration(
-                        color: Colors.green.withOpacity(0.1),
+                        color: Colors.green.withAlpha(25),
                         shape: BoxShape.circle,
                       ),
                       child: const Icon(Icons.check_circle_rounded, color: Colors.green, size: 80),
@@ -3429,9 +3434,9 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                     Container(
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        color: Colors.orange.withOpacity(0.05),
+                        color: Colors.orange.withAlpha(12),
                         borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: Colors.orange.withOpacity(0.2)),
+                        border: Border.all(color: Colors.orange.withAlpha(51)),
                       ),
                       child: Row(
                         children: [
@@ -3474,7 +3479,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
               padding: const EdgeInsets.all(24),
               decoration: BoxDecoration(
                 color: _isDark ? _LojaPublicaStyle.cardColor : Colors.white,
-                border: Border(top: BorderSide(color: Colors.white.withOpacity(0.05))),
+                border: Border(top: BorderSide(color: Colors.white.withAlpha(12))),
               ),
               child: SafeArea(
                 top: false,
@@ -3636,7 +3641,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.event_note_rounded, size: 80, color: _isDark ? Colors.white.withOpacity(0.05) : Colors.black.withOpacity(0.05)),
+                        Icon(Icons.event_note_rounded, size: 80, color: _isDark ? Colors.white.withAlpha(12) : Colors.black.withAlpha(12)),
                         const SizedBox(height: 16),
                         Text('Nenhum agendamento encontrado.', style: TextStyle(color: _isDark ? Colors.white30 : Colors.black26, fontSize: 16)),
                         const SizedBox(height: 8),
@@ -3662,7 +3667,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     return Center(
       child: Column(
         children: [
-          Icon(Icons.search_off_rounded, color: _isDark ? Colors.white.withOpacity(0.1) : Colors.black.withOpacity(0.1), size: 64),
+          Icon(Icons.search_off_rounded, color: _isDark ? Colors.white.withAlpha(25) : Colors.black.withAlpha(25), size: 64),
           const SizedBox(height: 16),
           Text(message, style: TextStyle(color: _isDark ? _LojaPublicaStyle.textSecondaryColor : Colors.grey[600])),
         ],

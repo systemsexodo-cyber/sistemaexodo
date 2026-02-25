@@ -228,6 +228,8 @@ class AgendamentoServico {
       'excluido': excluido,
       'travado': travado,
       'pet': pet?.toMap(),
+      'servico': servico?.toMap(),
+      'servicos': servicos.map((s) => s.toMap()).toList(),
       'materiais': materiais.map((m) => m.toMap()).toList(),
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
@@ -279,6 +281,10 @@ class AgendamentoServico {
       excluido: (map['excluido'] as bool?) ?? false,
       travado: (map['travado'] as bool?) ?? false,
       pet: map['pet'] != null ? Pet.fromMap(Map<String, dynamic>.from(map['pet'])) : null,
+      servico: map['servico'] != null ? Servico.fromMap(Map<String, dynamic>.from(map['servico'])) : null,
+      servicos: map['servicos'] != null 
+          ? (map['servicos'] as List).map((s) => Servico.fromMap(Map<String, dynamic>.from(s))).toList()
+          : [],
     );
   }
 }
