@@ -4,6 +4,7 @@ import 'package:uuid/uuid.dart';
 import '../models/taxa_entrega.dart';
 import '../services/data_service.dart';
 import '../theme.dart';
+import '../widgets/sync_status_widget.dart';
 
 /// Página para gerenciar taxas de entrega por bairro
 class TaxasEntregaPage extends StatefulWidget {
@@ -39,6 +40,7 @@ class _TaxasEntregaPageState extends State<TaxasEntregaPage> {
               tooltip: 'Buscar',
               onPressed: () => _mostrarBusca(context),
             ),
+            const SyncStatusWidget(),
           ],
         ),
         body: Column(

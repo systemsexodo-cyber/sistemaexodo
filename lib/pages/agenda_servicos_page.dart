@@ -18,6 +18,7 @@ import '../models/empresa.dart';
 import '../services/codigo_service.dart';
 import '../services/auth_service.dart';
 
+import '../widgets/sync_status_widget.dart';
 import '../theme.dart';
 import 'cliente_detalhes_page.dart';
 import 'configuracoes_agenda_page.dart';
@@ -96,6 +97,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
               elevation: 0,
               foregroundColor: Colors.white,
               actions: [
+                const SyncStatusWidget(),
                 IconButton(
                   icon: const Icon(Icons.link),
                   onPressed: () => _gerarLinkAgendamento(dataService),
@@ -131,14 +133,6 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                         ),
                       ),
                   ],
-                ),
-                IconButton(
-                  icon: Icon(
-                    Icons.sync,
-                    color: dataService.firebaseHabilitado ? Colors.green[300] : Colors.red[300],
-                  ),
-                  onPressed: () => dataService.forceSync(),
-                  tooltip: 'Sincronizar Agora',
                 ),
                 IconButton(
                   icon: const Icon(Icons.map_outlined, color: Colors.lightGreenAccent),
@@ -192,7 +186,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
     final agendamentosBase = agendamentosNoPeriodo.where((a) {
       // Filtrar excluídos e cancelados da base de contagem se os filtros estiverem ativos
       if (!_mostrarExcluidos && a.excluido) return false;
-      if (!_mostrarCancelados && a.status == 'Cancelado') return false;
+      if (!_mostrarCancelados && a.status == 'Cancelado' && !a.travado) return false;
 
       if (_termoBusca.isEmpty) return true;
       final nome = (a.cliente?.nome ?? a.clienteNome ?? '').toLowerCase();
@@ -847,7 +841,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
 
     // Filtro para Cancelados
     if (!_mostrarCancelados) {
-      agendamentos = agendamentos.where((a) => a.status != 'Cancelado').toList();
+      agendamentos = agendamentos.where((a) => a.status != 'Cancelado' || a.travado).toList();
     }
 
     // Filtro para Excluídos
@@ -881,41 +875,77 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
   Widget _buildVisualizacaoDia(List<AgendamentoServico> agendamentos, DataService dataService) {
     final isModuloPet = dataService.empresaAtual?.moduloPet ?? false;
     
-    int horaMin = 0;
-    int horaMax = 23;
+    // 1. Obter configurações (de forma robusta contra tipos dinâmicos/nulos)
+    final configuracoes = dataService.empresaAtual?.configuracoes;
+    final dynamic agConfig = configuracoes?['agendamento'];
+    
+    final hAberturaStr = agConfig?['horarioAbertura']?.toString() ?? '08:00';
+    final hFechamentoStr = agConfig?['horarioFechamento']?.toString() ?? '18:00';
+    
+    // Fallback para 30 minutos se não configurado (antes era 60)
+    final slotVal = agConfig?['intervaloSlots'];
+    final int intervaloSlots = (slotVal is int) 
+        ? slotVal 
+        : (int.tryParse(slotVal?.toString() ?? '30') ?? 30);
 
-    if (isModuloPet) {
-      // 1. Obter horário de funcionamento das configurações
-      final config = dataService.empresaAtual?.configuracoes?['agendamento'] as Map<String, dynamic>?;
-      final hAberturaStr = config?['horarioAbertura']?.toString() ?? '08:00';
-      final hFechamentoStr = config?['horarioFechamento']?.toString() ?? '18:00';
+    int horaMin = int.tryParse(hAberturaStr.split(':')[0]) ?? 8;
+    int horaMax = int.tryParse(hFechamentoStr.split(':')[0]) ?? 18;
+
+    // 2. Expandir limites se houver agendamentos fora do horário padrão
+    for (final a in agendamentos) {
+      final h = a.dataAgendamento.hour;
+      if (h < horaMin) horaMin = h;
+      if (h > horaMax) horaMax = h;
+    }
+
+    // 3. Gerar slots de horários
+    final slots = <DateTime>[];
+    DateTime current = DateTime(_dataSelecionada.year, _dataSelecionada.month, _dataSelecionada.day, horaMin);
+    
+    // O fim deve ser o último horário possível no dia selecionado
+    final end = DateTime(_dataSelecionada.year, _dataSelecionada.month, _dataSelecionada.day, horaMax, 59);
+
+    while (current.isBefore(end) || current.isAtSameMomentAs(end)) {
+      slots.add(current);
+      current = current.add(Duration(minutes: intervaloSlots));
       
-      horaMin = int.tryParse(hAberturaStr.split(':')[0]) ?? 8;
-      horaMax = int.tryParse(hFechamentoStr.split(':')[0]) ?? 18;
+      // Proteção: não deixar criar slots infinitos ou de outro dia
+      if (current.day != _dataSelecionada.day && current.hour >= 0) {
+        // Se mudou de dia, só paramos se não for o caso de horaMax = 23 e o slot cair na meia-noite
+        if (current.isAfter(end)) break;
+      }
+      
+      // Limite de segurança para evitar loops infinitos caso intervaloSlots seja 0 (não deveria ocorrer)
+      if (slots.length > 200) break;
+    }
 
-      // 2. Expandir limites se houver agendamentos fora do horário padrão
-      for (final a in agendamentos) {
-        final h = a.dataAgendamento.hour;
-        if (h < horaMin) horaMin = h;
-        if (h > horaMax) horaMax = h;
+    // 4. Agrupar agendamentos por slot (mais próximo ou exatamente no slot)
+    final agendamentosPorSlot = <DateTime, List<AgendamentoServico>>{};
+    for (final agendamento in agendamentos) {
+      final dt = agendamento.dataAgendamento;
+      // Encontrar o slot correspondente (arredondar para baixo para o slot mais próximo)
+      // Ex: se o intervalo é 30min e o agendamento é 08:15, ele vai para o slot 08:00
+      final totalMinutosDesdeMeiaNoite = dt.hour * 60 + dt.minute;
+      final slotIndex = ((totalMinutosDesdeMeiaNoite - (horaMin * 60)) / intervaloSlots).floor();
+      
+      if (slotIndex >= 0 && slotIndex < slots.length) {
+        final slotDt = slots[slotIndex];
+        agendamentosPorSlot.putIfAbsent(slotDt, () => []).add(agendamento);
+      } else if (slotIndex < 0) {
+        // Se for antes do primeiro slot, colocar no primeiro slot
+        agendamentosPorSlot.putIfAbsent(slots.first, () => []).add(agendamento);
+      } else {
+        // Se for depois do último slot, colocar no último slot
+        agendamentosPorSlot.putIfAbsent(slots.last, () => []).add(agendamento);
       }
     }
 
-    // 3. Agrupar agendamentos por hora
-    final agendamentosPorHora = <int, List<AgendamentoServico>>{};
-    for (final agendamento in agendamentos) {
-      final hora = agendamento.dataAgendamento.hour;
-      agendamentosPorHora.putIfAbsent(hora, () => []).add(agendamento);
-    }
-
-    final totalExibicao = horaMax - horaMin + 1;
-
     return ListView.builder(
       padding: const EdgeInsets.all(16),
-      itemCount: totalExibicao,
+      itemCount: slots.length,
       itemBuilder: (context, index) {
-        final hora = horaMin + index;
-        final agendamentosHora = agendamentosPorHora[hora] ?? [];
+        final slotTime = slots[index];
+        final agendamentosSlot = agendamentosPorSlot[slotTime] ?? [];
         
         return Container(
           margin: const EdgeInsets.only(bottom: 12),
@@ -926,7 +956,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
               SizedBox(
                 width: 60,
                 child: Text(
-                  '${hora.toString().padLeft(2, '0')}:00',
+                  DateFormat('HH:mm').format(slotTime),
                   style: TextStyle(
                     color: Colors.white.withOpacity(0.6),
                     fontSize: 12,
@@ -936,18 +966,11 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
               // Agendamentos
               Expanded(
                 child: Column(
-                  children: agendamentosHora.isEmpty
+                  children: agendamentosSlot.isEmpty
                       ? [
                           GestureDetector(
                             onTap: () {
-                              final dataHora = DateTime(
-                                _dataSelecionada.year,
-                                _dataSelecionada.month,
-                                _dataSelecionada.day,
-                                hora,
-                                0,
-                              );
-                              _mostrarDialogNovoAgendamento(context, dataService, dataHoraPreSelecionada: dataHora);
+                              _mostrarDialogNovoAgendamento(context, dataService, dataHoraPreSelecionada: slotTime);
                             },
                             child: Container(
                               height: 40,
@@ -962,9 +985,9 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                child: Builder(
                                 builder: (context) {
                                   // Verificar se existe algum agendamento TRAVADO que cubra este horário
-                                  final horaAtual = DateTime(_dataSelecionada.year, _dataSelecionada.month, _dataSelecionada.day, hora);
+                                  final horaAtual = slotTime;
                                   
-                                  // Procurar agendamento que trava este horário (mas que não começa NESTA hora, pois esse já aparece como card)
+                                  // Procurar agendamento que trava este horário
                                   AgendamentoServico? agendamentoBloqueando;
                                   try {
                                     agendamentoBloqueando = dataService.agendamentosServico.firstWhere((a) {
@@ -975,13 +998,26 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                       
                                       // O card do agendamento já renderiza no seu horário de início.
                                       // Aqui queremos mostrar o bloqueio nos horários subsequentes que ele ocupa.
-                                      return horaAtual.isAfter(inicio) && horaAtual.isBefore(fim);
+                                      // No caso de slots menores, o inicio pode não ser exatamente o slotTime.
+                                      return (horaAtual.isAfter(inicio) || horaAtual.isAtSameMomentAs(inicio)) && horaAtual.isBefore(fim);
+                                      // Se o agendamento COMEÇA exatamente neste slot, ele será rendenizado pelo _buildAgendamentosAgrupados
+                                      // exceto se agendamentosSlot for vazio (que é o caso deste branch).
+                                      // Então se agendamentosSlot for vazio mas houver agendamentoBloqueando que COMEÇA agora,
+                                      // algo está errado no agrupamento.
                                     });
                                   } catch (_) {
                                     agendamentoBloqueando = null;
                                   }
 
                                   if (agendamentoBloqueando != null) {
+                                    // Se o agendamento bloqueando COMEÇA exatamente neste slot, não mostramos o ícone de bloqueio "vazio"
+                                    // pois ele deveria estar na lista de agendamentosSlot e ser renderizado como card.
+                                    // Mas se a lista está vazia, o agrupamento pode ter falhado ou o agendamento tem data/hora levemente diferente.
+                                    if (agendamentoBloqueando.dataAgendamento.isAtSameMomentAs(slotTime)) {
+                                       // Caso raro: agendamento começa aqui mas não foi agrupado (ex: segundos diferentes?)
+                                       return _buildIndicadorHorarioTravado(agendamentoBloqueando, dataService);
+                                    }
+                                    
                                     return _buildIndicadorHorarioTravado(agendamentoBloqueando, dataService);
                                   }
 
@@ -991,14 +1027,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                       if (isModuloPet) ...[
                                         GestureDetector(
                                           onTap: () {
-                                            final dataHora = DateTime(
-                                              _dataSelecionada.year,
-                                              _dataSelecionada.month,
-                                              _dataSelecionada.day,
-                                              hora,
-                                              0,
-                                            );
-                                            _travarHorarioVazio(context, dataService, dataHora);
+                                            _travarHorarioVazio(context, dataService, slotTime);
                                           },
                                           child: Icon(
                                             Icons.lock_outline,
@@ -1020,7 +1049,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                             ),
                           ),
                         ]
-                      : _buildAgendamentosAgrupados(agendamentosHora, dataService, hora),
+                      : _buildAgendamentosAgrupados(agendamentosSlot, dataService, slotTime.hour),
                 ),
               ),
             ],
@@ -1453,7 +1482,6 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisAlignment: MainAxisAlignment.center,
                             children: [
                               const Text(
                                 '🔒 BLOQUEIO DE AGENDA',
@@ -1465,10 +1493,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                 ),
                               ),
                               const SizedBox(height: 4),
-                              Wrap(
-                                spacing: 6,
-                                runSpacing: 4,
-                                crossAxisAlignment: WrapCrossAlignment.center,
+                              Row(
                                 children: [
                                   Row(
                                     mainAxisSize: MainAxisSize.min,
@@ -1613,7 +1638,9 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
     final racaPet = agendamento.pet?.raca;
     final nomeServico = isVacina 
         ? (agendamento.observacoes ?? 'Vacina')
-        : (agendamento.servico?.nome ?? 'Serviço');
+        : (agendamento.servicos.length > 1 
+            ? '${agendamento.servicos.length} Serviços: ${agendamento.servicoNome}'
+            : (agendamento.servicoNome ?? 'Serviço'));
     final isTaxiDog = agendamento.tipoEntrega == 'Taxi Dog' || 
         agendamento.tipoEntrega == 'Apenas Busca' || 
         agendamento.tipoEntrega == 'Apenas Entrega';
@@ -1768,10 +1795,10 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                           ),
                                         ),
                                       ],
-                                      if (agendamento.servico != null && agendamento.servico!.preco > 0) ...[
+                                      if (agendamento.valorTotal > 0) ...[
                                         const SizedBox(width: 6),
                                         Text(
-                                          'R\$ ${agendamento.servico!.precoTotal.toStringAsFixed(2)}',
+                                          'R\$ ${agendamento.valorTotal.toStringAsFixed(2)}',
                                           style: TextStyle(
                                             color: Colors.white.withOpacity(0.6),
                                             fontSize: 11,
@@ -2204,7 +2231,6 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
 
     return Container(
       height: 40,
-      margin: const EdgeInsets.symmetric(vertical: 2),
       decoration: BoxDecoration(
         color: Colors.orange.withOpacity(0.06),
         borderRadius: BorderRadius.circular(8),
@@ -2434,9 +2460,33 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
               _buildInfoLinha('Número', agendamento.numero),
               if (agendamento.numeroPedido != null && agendamento.numeroPedido!.isNotEmpty)
                 _buildInfoLinha('Número do Serviço', agendamento.numeroPedido!),
-              _buildInfoLinha('Serviço', agendamento.servico?.nome ?? 'N/A'),
-              if (agendamento.servico != null && agendamento.servico!.preco > 0)
-                _buildInfoLinha('Valor', 'R\$ ${agendamento.servico!.precoTotal.toStringAsFixed(2)}'),
+              // Exibição de Serviços (tratando múltiplos)
+              if (agendamento.servicos.length > 1) ...[
+                _buildInfoLinha('Serviços', '${agendamento.servicos.length} serviços'),
+                ...agendamento.servicos.map((s) => Padding(
+                  padding: const EdgeInsets.only(left: 100, bottom: 6),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '• ${s.nome}',
+                          style: const TextStyle(color: Colors.white, fontSize: 14),
+                        ),
+                      ),
+                      Text(
+                        'R\$ ${s.precoTotal.toStringAsFixed(2)}',
+                        style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 13),
+                      ),
+                    ],
+                  ),
+                )).toList(),
+                const SizedBox(height: 8),
+              ] else ...[
+                _buildInfoLinha('Serviço', agendamento.servicoNome ?? 'N/A'),
+              ],
+              
+              if (agendamento.valorTotal > 0)
+                _buildInfoLinha('Valor Total', 'R\$ ${agendamento.valorTotal.toStringAsFixed(2)}'),
               // Materiais do agendamento e do serviço
               Builder(
                 builder: (context) {
@@ -3260,8 +3310,16 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
 
   /// Trava um intervalo da agenda com escolha de horário inicial e final
   void _travarHorarioVazio(BuildContext context, DataService dataService, DateTime dataHora) async {
+    final config = dataService.empresaAtual?.configuracoes?['agendamento'] as Map<String, dynamic>?;
+    final intervaloSlots = config?['intervaloSlots'] != null 
+        ? int.tryParse(config!['intervaloSlots'].toString()) ?? 60 
+        : 60;
+
     TimeOfDay horaInicial = TimeOfDay.fromDateTime(dataHora);
-    TimeOfDay horaFinal = TimeOfDay(hour: (horaInicial.hour + 1) % 24, minute: horaInicial.minute);
+    
+    // Calcular hora final baseado no intervalo
+    final dtFinal = dataHora.add(Duration(minutes: intervaloSlots));
+    TimeOfDay horaFinal = TimeOfDay.fromDateTime(dtFinal);
     
     final TextEditingController obsController = TextEditingController(text: 'Horário bloqueado manualmente pelo administrador.');
 
@@ -3839,26 +3897,28 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
 
   void _mostrarDialogNovoAgendamento(BuildContext context, DataService dataService, {DateTime? dataHoraPreSelecionada}) async {
     // Serviço é opcional - permitir agendamento sem serviço
-    Servico? servicoSelecionado = null;
+    // Múltiplos serviços
+    List<Servico> servicosSelecionados = [];
     Cliente? clienteSelecionado;
     DateTime dataAgendamento = dataHoraPreSelecionada ?? _dataSelecionada;
     TimeOfDay horaAgendamento = dataHoraPreSelecionada != null 
         ? TimeOfDay.fromDateTime(dataHoraPreSelecionada)
         : TimeOfDay.now();
     int duracaoMinutos = 60;
+    final duracaoController = TextEditingController(text: '60');
     final observacoesController = TextEditingController();
-    List<String> petsSelecionadosIds = []; // Lista de IDs dos pets selecionados
-    String? tipoEntrega; // 'Taxi Dog' ou 'Cliente busca'
+    List<String> petsSelecionadosIds = []; 
+    String? tipoEntrega; 
     final valorTaxiDogController = TextEditingController();
     final bairroEntregaController = TextEditingController();
-    final phoneController = TextEditingController(); // Novo controlador para busca por telefone
-    final enderecoController = TextEditingController(); // Novo controlador para endereço
+    final phoneController = TextEditingController(); 
+    final enderecoController = TextEditingController(); 
     final numeroEnderecoController = TextEditingController();
     final complementoEnderecoController = TextEditingController();
     final pontoReferenciaController = TextEditingController();
-    final List<ItemMaterial> materiaisAgendamento = []; // Materiais/vacinas do agendamento
+    final List<ItemMaterial> materiaisAgendamento = []; 
     
-    // Verificar se o horário está dentro de algum bloqueio (usando intervalo de tempo)
+    // Verificar se o horário está dentro de algum bloqueio
     final novoInicio = DateTime(
       dataAgendamento.year, dataAgendamento.month, dataAgendamento.day,
       horaAgendamento.hour, horaAgendamento.minute,
@@ -3903,92 +3963,138 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
           builder: (BuildContext context, StateSetter setState) {
             return AlertDialog(
               backgroundColor: const Color(0xFF1E1E2E),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.blue.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Icon(Icons.add_circle_outline, color: Colors.blueAccent, size: 24),
-              ),
-              const SizedBox(width: 12),
-              const Expanded(
-                child: Text('Novo Agendamento', style: TextStyle(color: Colors.white)),
-              ),
-            ],
-          ),
-          content: Consumer<DataService>(
-            builder: (context, dataService, child) {
-              debugPrint('>>> [NovoAgendamento] Consumer rebuild - clientes: ${dataService.clientes.length}, servicos: ${dataService.servicos.length}');
-              // OTIMIZAÇÃO: SizedBox com largura fixa evita que AlertDialog tente calcular IntrinsicWidth,
-              // o que causa travamentos e erros de layout em Flutter Web com scrollables/listviews.
-              return SizedBox(
-                width: 500,
-                child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              title: Row(
                 children: [
-                // Seleção de Serviço
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Icon(Icons.add_circle_outline, color: Colors.blueAccent, size: 24),
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Text('Novo Agendamento', style: TextStyle(color: Colors.white)),
+                  ),
+                ],
+              ),
+              content: Consumer<DataService>(
+                builder: (context, dataService, child) {
+                  return SizedBox(
+                    width: 500,
+                    child: SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                // Seleção de Múltiplos Serviços
+                const Text('Serviços:', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                const SizedBox(height: 8),
+                if (servicosSelecionados.isEmpty)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.05),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.white.withOpacity(0.1)),
+                    ),
+                    child: const Text(
+                      'Nenhum serviço selecionado',
+                      style: TextStyle(color: Colors.white38, fontSize: 12, fontStyle: FontStyle.italic),
+                    ),
+                  )
+                else
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 4,
+                    children: servicosSelecionados.map((s) => Chip(
+                      label: Text(s.nome, style: const TextStyle(color: Colors.white, fontSize: 11)),
+                      backgroundColor: Colors.blueAccent.withOpacity(0.3),
+                      deleteIcon: const Icon(Icons.close, size: 14, color: Colors.white),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      onDeleted: () {
+                        setState(() {
+                          servicosSelecionados.remove(s);
+                          duracaoMinutos = servicosSelecionados.fold(0, (sum, item) => sum + (item.duracaoPadraoMinutos ?? 0));
+                          duracaoController.text = duracaoMinutos.toString();
+                        });
+                      },
+                    )).toList(),
+                  ),
+                const SizedBox(height: 12),
                 Row(
                   children: [
-                    const Expanded(
-                      child: Text('Serviço:', style: TextStyle(color: Colors.white70, fontSize: 14)),
-                    ),
-                    TextButton.icon(
-                      onPressed: () => _mostrarDialogCadastroRapidoServico(context, dataService, (novoServico) {
-                        setState(() {
-                          servicoSelecionado = novoServico;
-                        });
-                      }),
-                      icon: const Icon(Icons.add_circle, size: 18, color: Colors.blueAccent),
-                      label: const Text('Novo Serviço', style: TextStyle(color: Colors.blueAccent, fontSize: 12)),
-                      style: TextButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        minimumSize: Size.zero,
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: () async {
+                          final selected = await showDialog<Servico>(
+                            context: context,
+                            builder: (context) => _SeletorServicoDialog(dataService: dataService),
+                          );
+                          if (selected != null) {
+                            setState(() {
+                              if (!servicosSelecionados.any((s) => s.id == selected.id)) {
+                                servicosSelecionados.add(selected);
+                                // Recalcular duração
+                                duracaoMinutos = servicosSelecionados.fold(0, (sum, item) => sum + (item.duracaoPadraoMinutos ?? 0));
+                              }
+                              duracaoController.text = duracaoMinutos.toString();
+                            });
+                          }
+                        },
+                        icon: const Icon(Icons.add, size: 16),
+                        label: const Text('Selecionar Serviços'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.blueAccent.withOpacity(0.1),
+                          foregroundColor: Colors.blueAccent,
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
-                DropdownButtonFormField<Servico?>(
-                  key: ValueKey('servico_${servicoSelecionado?.id ?? 'none'}_${dataService.servicos.length}'),
-                  value: servicoSelecionado,
-                  decoration: InputDecoration(
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                    filled: true,
-                    fillColor: Colors.white.withOpacity(0.05),
-                    hintText: 'Nenhum serviço (opcional)',
-                    hintStyle: TextStyle(color: Colors.white.withOpacity(0.5)),
-                  ),
-                  dropdownColor: const Color(0xFF2C2C3E),
-                  style: const TextStyle(color: Colors.white),
-                  items: [
-                    const DropdownMenuItem<Servico?>(
-                      value: null,
-                      child: Text('Nenhum serviço (opcional)', style: TextStyle(color: Colors.white70, fontStyle: FontStyle.italic)),
+                
+                if (servicosSelecionados.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.withOpacity(0.05),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.blue.withOpacity(0.2)),
                     ),
-                    ...dataService.servicos.map((s) {
-                      return DropdownMenuItem<Servico?>(
-                        value: s,
-                        child: Text(s.nome),
-                      );
-                    }),
-                  ],
-                  onChanged: (value) {
-                    setState(() {
-                      servicoSelecionado = value;
-                      // Atualizar duração baseada no serviço se disponível
-                      if (value != null && (value.duracaoPadraoMinutos ?? 0) > 0) {
-                        duracaoMinutos = value.duracaoPadraoMinutos!;
-                      }
-                    });
-                  },
-                ),
+                    child: Column(
+                      children: [
+                        ...servicosSelecionados.map((s) => Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(s.nome, style: const TextStyle(color: Colors.white70, fontSize: 13)),
+                              Text('R\$ ${s.precoTotal.toStringAsFixed(2)}', style: const TextStyle(color: Colors.white, fontSize: 13)),
+                            ],
+                          ),
+                        )).toList(),
+                        const Divider(color: Colors.white12),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text('Total dos Serviços:', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                            Text(
+                              'R\$ ${servicosSelecionados.fold(0.0, (sum, item) => sum + item.precoTotal).toStringAsFixed(2)}',
+                              style: const TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.bold, fontSize: 16),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 16),
                   // --- SEÇÃO DE CLIENTE UNIFICADA ---
                 Row(
@@ -4242,11 +4348,13 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                 // Duração
                 const Text('Duração (minutos):', style: TextStyle(color: Colors.white70, fontSize: 14)),
                 const SizedBox(height: 8),
-                TextFormField(
-                  initialValue: duracaoMinutos.toString(),
+                TextField(
+                  controller: duracaoController,
                   keyboardType: TextInputType.number,
                   style: const TextStyle(color: Colors.white),
                   decoration: InputDecoration(
+                    labelText: 'Duração (minutos)',
+                    labelStyle: const TextStyle(color: Colors.white70),
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                     filled: true,
                     fillColor: Colors.white.withOpacity(0.05),
@@ -4500,24 +4608,24 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                           ),
                           dropdownColor: const Color(0xFF2C2C3E),
                           style: const TextStyle(color: Colors.white),
-                          items: const [
-                            DropdownMenuItem<String?>(
+                          items: [
+                            const DropdownMenuItem<String?>(
                               value: null,
                               child: Text('Retirada na Loja'),
                             ),
-                            DropdownMenuItem<String>(
+                            const DropdownMenuItem<String?>(
                               value: 'Taxi Dog',
                               child: Text('🚗 Taxi Dog (Busca + Entrega)'),
                             ),
-                            DropdownMenuItem<String>(
+                            const DropdownMenuItem<String?>(
                               value: 'Apenas Busca',
                               child: Text('🔵 Apenas Busca'),
                             ),
-                            DropdownMenuItem<String>(
+                            const DropdownMenuItem<String?>(
                               value: 'Apenas Entrega',
                               child: Text('🟢 Apenas Entrega'),
                             ),
-                            DropdownMenuItem<String>(
+                            const DropdownMenuItem<String?>(
                               value: 'Cliente busca',
                               child: Text('🏠 Cliente busca / retira'),
                             ),
@@ -4852,15 +4960,17 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                     final novoAgendamento = AgendamentoServico(
                       id: '${timestamp}_${pet?.id ?? 'sem_pet'}_$agendamentosCriados',
                       numero: '', 
-                      servicoId: servicoSelecionado?.id,
-                      servico: servicoSelecionado,
+                      servicoId: servicosSelecionados.isNotEmpty ? servicosSelecionados.first.id : null,
+                      servico: servicosSelecionados.isNotEmpty ? servicosSelecionados.first : null,
+                      servicosIds: servicosSelecionados.map((s) => s.id).toList(),
+                      servicos: servicosSelecionados,
                       clienteId: clienteSelecionado?.id,
-                      cliente: clienteSelecionado, // OTIMIZAÇÃO: Já passar o objeto para evitar lookup redundante
+                      cliente: clienteSelecionado, 
                       petId: pet?.id,
                       pet: pet,
                       dataAgendamento: dataHoraCompleta,
                       duracaoMinutos: duracaoMinutos,
-                      intervaloMinutos: servicoSelecionado?.intervaloMinutos ?? 0,
+                      intervaloMinutos: servicosSelecionados.isNotEmpty ? (servicosSelecionados.first.intervaloMinutos ?? 0) : 0,
                       observacoes: observacoesController.text.trim().isEmpty
                           ? null
                           : observacoesController.text.trim(),
@@ -4957,27 +5067,17 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
       }, // StatefulBuilder builder
     ); // StatefulBuilder
   }, // showDialog builder
-); // showDialog
-}
+    ); // showDialog
+  }
 
   void _editarAgendamento(BuildContext context, AgendamentoServico agendamento, DataService dataService) {
     final servicos = dataService.servicos;
     final clientes = dataService.clientes;
     
-    // Buscar por ID na lista do DataService para garantir mesma referência do dropdown
-    Servico? servicoSelecionado;
-    if (agendamento.servicoId != null) {
-      try {
-        servicoSelecionado = servicos.firstWhere((s) => s.id == agendamento.servicoId);
-      } catch (_) {
-        servicoSelecionado = null; // Não usar referência externa ao dropdown
-      }
-    } else if (agendamento.servico != null) {
-      try {
-        servicoSelecionado = servicos.firstWhere((s) => s.id == agendamento.servico!.id);
-      } catch (_) {
-        servicoSelecionado = null;
-      }
+    // Múltiplos serviços
+    List<Servico> servicosSelecionados = List.from(agendamento.servicos);
+    if (servicosSelecionados.isEmpty && agendamento.servico != null) {
+      servicosSelecionados.add(agendamento.servico!);
     }
 
     Cliente? clienteSelecionado;
@@ -4985,7 +5085,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
       try {
         clienteSelecionado = clientes.firstWhere((c) => c.id == agendamento.clienteId);
       } catch (_) {
-        clienteSelecionado = null; // Não usar referência externa ao dropdown
+        clienteSelecionado = null; 
       }
     } else if (agendamento.cliente != null) {
       try {
@@ -4997,6 +5097,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
     DateTime dataSelecionada = agendamento.dataAgendamento;
     TimeOfDay horaSelecionada = TimeOfDay.fromDateTime(agendamento.dataAgendamento);
     int duracaoMinutos = agendamento.duracaoMinutos;
+    final duracaoController = TextEditingController(text: agendamento.duracaoMinutos.toString());
     final observacoesController = TextEditingController(text: agendamento.observacoes ?? '');
     final searchController = TextEditingController(); 
     List<String> petsSelecionadosIds = agendamento.petId != null ? [agendamento.petId!] : [];
@@ -5020,53 +5121,103 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Serviço
-                DropdownButtonFormField<Servico?>(
-                  key: ValueKey('edit_servico_${servicoSelecionado?.id ?? 'none'}_${servicos.length}'),
-                  value: servicoSelecionado,
-                  decoration: const InputDecoration(
-                    labelText: 'Serviço (opcional)',
-                    labelStyle: TextStyle(color: Colors.white70),
-                    border: OutlineInputBorder(),
-                    hintText: 'Nenhum serviço',
-                  ),
-                  dropdownColor: const Color(0xFF1E1E2E),
-                  style: const TextStyle(color: Colors.white),
-                  items: [
-                    // Opção "Nenhum serviço"
-                    const DropdownMenuItem<Servico?>(
-                      value: null,
-                      child: Text('Nenhum serviço (opcional)', style: TextStyle(color: Colors.white70, fontStyle: FontStyle.italic)),
-                    ),
-                    // Lista de serviços
-                    ...servicos.map((s) => DropdownMenuItem<Servico?>(
-                      value: s,
-                      child: Text(s.nome),
-                    )),
-                  ],
-                  onChanged: (value) {
-                    setStateDialog(() {
-                      servicoSelecionado = value;
-                      // Atualizar duração baseada no serviço se disponível
-                      if (value != null && (value.duracaoPadraoMinutos ?? 0) > 0) {
-                        duracaoMinutos = value.duracaoPadraoMinutos!;
-                      }
-                    });
-                  },
-                ),
-                const SizedBox(height: 16),
-                
-                // Cliente - Busca + Lista
-                const Text('Cliente (Opcional):', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                // Seleção de Múltiplos Serviços
+                const Text('Serviços:', style: TextStyle(color: Colors.white70, fontSize: 14)),
                 const SizedBox(height: 8),
-                Builder(
-                  builder: (context) {
-                    // Usar um controller local para busca
-                    return StatefulBuilder(
-                      builder: (context, setStateBusca) {
-                        return Column(
-                          mainAxisSize: MainAxisSize.min,
+                if (servicosSelecionados.isEmpty)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.05),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.white.withOpacity(0.1)),
+                    ),
+                    child: const Text('Nenhum serviço selecionado', style: TextStyle(color: Colors.white38, fontSize: 12)),
+                  )
+                else
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 4,
+                    children: servicosSelecionados.map((s) => Chip(
+                      label: Text(s.nome, style: const TextStyle(color: Colors.white, fontSize: 11)),
+                      backgroundColor: Colors.blueAccent.withOpacity(0.3),
+                      deleteIcon: const Icon(Icons.close, size: 14, color: Colors.white),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      onDeleted: () {
+                        setStateDialog(() {
+                          servicosSelecionados.remove(s);
+                          duracaoMinutos = servicosSelecionados.fold(0, (sum, item) => sum + (item.duracaoPadraoMinutos ?? 0));
+                          duracaoController.text = duracaoMinutos.toString();
+                        });
+                      },
+                    )).toList(),
+                  ),
+                const SizedBox(height: 12),
+                ElevatedButton.icon(
+                  onPressed: () async {
+                    final selected = await showDialog<Servico>(
+                      context: context,
+                      builder: (context) => _SeletorServicoDialog(dataService: dataService),
+                    );
+                    if (selected != null) {
+                      setStateDialog(() {
+                        if (!servicosSelecionados.any((s) => s.id == selected.id)) {
+                          servicosSelecionados.add(selected);
+                          duracaoMinutos = servicosSelecionados.fold(0, (sum, item) => sum + (item.duracaoPadraoMinutos ?? 0));
+                        }
+                        duracaoController.text = duracaoMinutos.toString();
+                      });
+                    }
+                  },
+                  icon: const Icon(Icons.add, size: 16),
+                  label: const Text('Adicionar Serviço'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blueAccent.withOpacity(0.1),
+                    foregroundColor: Colors.blueAccent,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+
+                if (servicosSelecionados.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.withOpacity(0.05),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.blue.withOpacity(0.2)),
+                    ),
+                    child: Column(
+                      children: [
+                        ...servicosSelecionados.map((s) => Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(s.nome, style: const TextStyle(color: Colors.white70, fontSize: 13)),
+                              Text('R\$ ${s.precoTotal.toStringAsFixed(2)}', style: const TextStyle(color: Colors.white, fontSize: 13)),
+                            ],
+                          ),
+                        )).toList(),
+                        const Divider(color: Colors.white12),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
+                            const Text('Total dos Serviços:', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                            Text(
+                              'R\$ ${servicosSelecionados.fold(0.0, (sum, item) => sum + item.precoTotal).toStringAsFixed(2)}',
+                              style: const TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.bold, fontSize: 16),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 16),
                             // Se já tem cliente selecionado, mostrar card do cliente
                             if (clienteSelecionado != null)
                               InkWell(
@@ -5126,7 +5277,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                   ? IconButton(
                                       icon: const Icon(Icons.clear, size: 16, color: Colors.white54),
                                       onPressed: () {
-                                        setStateBusca(() {
+                                        setStateDialog(() {
                                           searchController.clear();
                                         });
                                       },
@@ -5134,7 +5285,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                   : null,
                               ),
                               onChanged: (value) {
-                                setStateBusca(() {}); 
+                                setStateDialog(() {}); 
                               },
                               controller: searchController,
                             ),
@@ -5147,7 +5298,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                 borderRadius: BorderRadius.circular(12),
                                 color: Colors.white.withOpacity(0.03),
                               ),
-                              child: (() {
+                              child: () {
                                 final query = searchController.text.toLowerCase().trim();
                                 final queryNum = query.replaceAll(RegExp(r'[^0-9]'), '');
                                 
@@ -5274,15 +5425,9 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                     }).toList(),
                                   ],
                                 );
-                              })(),
+                              }(),
                             ),
                           ],
-                        ],
-                      );
-                    },
-                  );
-                },
-              ),
                 const SizedBox(height: 16),
                 
                 // Seleção de Pets (múltipla)
@@ -5397,32 +5542,28 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                   ),
                   dropdownColor: const Color(0xFF1E1E2E),
                   style: const TextStyle(color: Colors.white),
-                  items: const [
-                    DropdownMenuItem<String?>(
+                  items: [
+                    const DropdownMenuItem<String?>(
                       value: null,
                       child: Text('Não especificado'),
                     ),
-                    DropdownMenuItem<String>(
+                    const DropdownMenuItem<String?>(
                       value: 'Retirada na Loja',
                       child: Text('Retirada na Loja'),
                     ),
-                    DropdownMenuItem<String>(
+                    const DropdownMenuItem<String?>(
                       value: 'Taxi Dog',
                       child: Text('Taxi Dog (Leva e Traz)'),
                     ),
-                    DropdownMenuItem<String>(
+                    const DropdownMenuItem<String?>(
                       value: 'Apenas Busca',
                       child: Text('Apenas Busca'),
                     ),
-                    DropdownMenuItem<String>(
+                    const DropdownMenuItem<String?>(
                       value: 'Apenas Entrega',
                       child: Text('Apenas Entrega'),
                     ),
-                    DropdownMenuItem<String>(
-                      value: 'Apenas Busca',
-                      child: Text('Apenas Busca'),
-                    ),
-                    DropdownMenuItem<String>(
+                    const DropdownMenuItem<String?>(
                       value: 'Cliente busca',
                       child: Text('Cliente traz e busca'),
                     ),
@@ -5577,7 +5718,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                 
                 // Duração
                 TextField(
-                  controller: TextEditingController(text: duracaoMinutos.toString()),
+                  controller: duracaoController,
                   decoration: const InputDecoration(
                     labelText: 'Duração (minutos)',
                     labelStyle: TextStyle(color: Colors.white70),
@@ -5679,14 +5820,16 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
 
                   await dataService.updateAgendamentoServico(
                     agendamento.copyWith(
-                      servicoId: servicoSelecionado?.id,
-                      servico: servicoSelecionado,
+                      servicoId: servicosSelecionados.isNotEmpty ? servicosSelecionados.first.id : null,
+                      servico: servicosSelecionados.isNotEmpty ? servicosSelecionados.first : null,
+                      servicosIds: servicosSelecionados.map((s) => s.id).toList(),
+                      servicos: servicosSelecionados,
                       clienteId: clienteSelecionado?.id,
                       petId: primeiroPet?.id,
                       pet: primeiroPet,
                       dataAgendamento: dataHoraCompleta,
                       duracaoMinutos: duracaoMinutos,
-                      intervaloMinutos: servicoSelecionado?.intervaloMinutos ?? 0,
+                      intervaloMinutos: servicosSelecionados.isNotEmpty ? (servicosSelecionados.first.intervaloMinutos ?? 0) : 0,
                       observacoes: observacoesController.text.trim().isEmpty
                           ? null
                           : observacoesController.text.trim(),
@@ -5710,14 +5853,16 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                       final novoAgendamento = AgendamentoServico(
                         id: '${timestamp}_${petExtra.id}_$i',
                         numero: '', // Será gerado automaticamente
-                        servicoId: servicoSelecionado?.id,
-                        servico: servicoSelecionado,
+                        servicoId: servicosSelecionados.isNotEmpty ? servicosSelecionados.first.id : null,
+                        servico: servicosSelecionados.isNotEmpty ? servicosSelecionados.first : null,
+                        servicosIds: servicosSelecionados.map((s) => s.id).toList(),
+                        servicos: servicosSelecionados,
                         clienteId: clienteSelecionado?.id,
                         petId: petExtra.id,
                         pet: petExtra,
                         dataAgendamento: dataHoraCompleta,
                         duracaoMinutos: duracaoMinutos,
-                        intervaloMinutos: servicoSelecionado?.intervaloMinutos ?? 0,
+                        intervaloMinutos: servicosSelecionados.isNotEmpty ? (servicosSelecionados.first.intervaloMinutos ?? 0) : 0,
                         observacoes: observacoesController.text.trim().isEmpty
                             ? null
                             : observacoesController.text.trim(),
@@ -5958,11 +6103,11 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
         builder: (context, setState) => AlertDialog(
           backgroundColor: const Color(0xFF1E1E2E),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: const Row(
+          title: Row(
             children: [
-              Icon(Icons.build, color: Colors.blueAccent),
-              SizedBox(width: 12),
-              Text('Cadastro Rápido - Serviço', style: TextStyle(color: Colors.white)),
+              const Icon(Icons.build, color: Colors.blueAccent),
+              const SizedBox(width: 12),
+              const Text('Cadastro Rápido - Serviço', style: TextStyle(color: Colors.white)),
             ],
           ),
           content: SingleChildScrollView(
@@ -6225,11 +6370,11 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
             return AlertDialog(
               backgroundColor: const Color(0xFF1E1E2E),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-              title: const Row(
+              title: Row(
                 children: [
-                  Icon(Icons.inventory, color: Colors.blueAccent),
-                  SizedBox(width: 12),
-                  Text('Adicionar Material', style: TextStyle(color: Colors.white)),
+                  const Icon(Icons.inventory, color: Colors.blueAccent),
+                  const SizedBox(width: 12),
+                  const Text('Adicionar Material', style: TextStyle(color: Colors.white)),
                 ],
               ),
               content: SingleChildScrollView(
@@ -7084,7 +7229,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
             final inicioDia = DateTime(dataMapa.year, dataMapa.month, dataMapa.day);
             final fimDia = inicioDia.add(const Duration(days: 1));
             final agendamentosDoDia = dataService.getAgendamentosPorPeriodo(inicioDia, fimDia)
-                .where((a) => a.status != 'Cancelado')
+                .where((a) => !a.excluido && (a.status != 'Cancelado' || a.travado))
                 .toList()
               ..sort((a, b) => a.dataAgendamento.compareTo(b.dataAgendamento));
 
@@ -7119,17 +7264,29 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                 case 'Aguardando Confirmação':
                   corBloco = Colors.orange;
                   break;
+                case 'Cancelado':
+                  corBloco = ag.travado ? Colors.orange : Colors.grey;
+                  break;
                 default:
-                  corBloco = Colors.blueAccent;
+                  corBloco = ag.travado ? Colors.orange : Colors.blueAccent;
               }
+
+              // Ajuste para exibição de bloqueios manuais
+              final tituloExibicao = ag.travado 
+                  ? (ag.clienteNome == 'BLOQUEIO DE AGENDA' ? 'BLOQUEIO DE AGENDA' : 'HORÁRIO TRAVADO') 
+                  : nomeCliente;
+              
+              final subtituloExibicao = ag.travado 
+                  ? (ag.observacoes ?? 'Horário indisponível') 
+                  : (nomePet != null ? '$servico • $nomePet' : servico);
 
               blocosOcupados.add({
                 'inicio': agMin,
                 'fim': fimReal,
                 'fimComIntervalo': fimComIntervalo,
                 'cor': corBloco,
-                'titulo': nomeCliente,
-                'subtitulo': nomePet != null ? '$servico • $nomePet' : servico,
+                'titulo': tituloExibicao,
+                'subtitulo': subtituloExibicao,
                 'status': ag.status,
                 'duracao': duracao,
                 'intervalo': intervalo,
@@ -8179,6 +8336,71 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
             Text(label, style: const TextStyle(color: Colors.white38, fontSize: 10)),
             Text(value, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
           ],
+        ),
+      ],
+    );
+  }
+}
+
+class _SeletorServicoDialog extends StatefulWidget {
+  final DataService dataService;
+
+  const _SeletorServicoDialog({Key? key, required this.dataService}) : super(key: key);
+
+  @override
+  State<_SeletorServicoDialog> createState() => _SeletorServicoDialogState();
+}
+
+class _SeletorServicoDialogState extends State<_SeletorServicoDialog> {
+  String search = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final servicos = widget.dataService.servicos.where((s) {
+      if (search.isEmpty) return true;
+      return s.nome.toLowerCase().contains(search.toLowerCase());
+    }).toList();
+
+    return AlertDialog(
+      backgroundColor: const Color(0xFF1E1E2E),
+      title: const Text('Selecionar Serviço', style: TextStyle(color: Colors.white)),
+      content: SizedBox(
+        width: 400,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                hintText: 'Buscar serviço...',
+                hintStyle: TextStyle(color: Colors.white38),
+                prefixIcon: Icon(Icons.search, color: Colors.blueAccent),
+              ),
+              onChanged: (val) => setState(() => search = val),
+            ),
+            const SizedBox(height: 16),
+            Flexible(
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: servicos.length,
+                itemBuilder: (context, index) {
+                  final s = servicos[index];
+                  return ListTile(
+                    title: Text(s.nome, style: const TextStyle(color: Colors.white)),
+                    subtitle: Text('${s.duracaoPadraoMinutos ?? 0} min', style: const TextStyle(color: Colors.white70)),
+                    trailing: const Icon(Icons.add, color: Colors.blueAccent),
+                    onTap: () => Navigator.pop(context, s),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Fechar'),
         ),
       ],
     );

@@ -108,54 +108,21 @@ class FirebaseService {
       debugPrint('>>> [Firebase] 🔥 CARREGANDO TUDO DO FIREBASE (Paginação: $mesesRetroativos meses)');
       
       final dados = <String, dynamic>{};
+      final snapshotsMap = <String, QuerySnapshot>{};
       final dataLimite = DateTime.now().subtract(Duration(days: 30 * mesesRetroativos));
       final dataLimiteIso = dataLimite.toIso8601String();
 
       // Funções de filtro
       Query _applySyncFilter(Query query) {
         if (lastSync == null) return query;
-        return query.where('updatedAt', isGreaterThan: lastSync.toIso8601String());
+        return query.where('updatedAt', isGreaterThanOrEqualTo: lastSync.toIso8601String());
       }
 
       Query _applySmartPagination(Query query) {
-        // Se lastSync for fornecido, confiamos na sincronização incremental
         if (lastSync != null) return _applySyncFilter(query);
-        // Senão, limitamos por data de criação para não puxar "o mundo"
-        return query.where('createdAt', isGreaterThan: dataLimiteIso);
+        return query.where('createdAt', isGreaterThanOrEqualTo: dataLimiteIso);
       }
       
-      // Carregar todas as subcoleções em paralelo
-      // Nota: Coleções mestras (Clientes, Produtos, Serviços) carregamos todas
-      // Coleções transacionais (Pedidos, Vendas, Agendamentos) paginamos
-      final results = await Future.wait([
-        _applySyncFilter(_getSubCollection(empresaId, _subCollectionClientes)).get(),
-        _applySyncFilter(_getSubCollection(empresaId, _subCollectionProdutos)).get(),
-        _applySyncFilter(_getSubCollection(empresaId, _subCollectionServicos)).get(),
-        _applySmartPagination(_getSubCollection(empresaId, _subCollectionPedidos)).get(),
-        _applySmartPagination(_getSubCollection(empresaId, _subCollectionOrdensServico)).get(),
-        _applySmartPagination(_getSubCollection(empresaId, _subCollectionEntregas)).get(),
-        _applySmartPagination(_getSubCollection(empresaId, _subCollectionVendasBalcao)).get(),
-        _applySmartPagination(_getSubCollection(empresaId, _subCollectionTrocasDevolucoes)).get(),
-        _applySmartPagination(_getSubCollection(empresaId, _subCollectionEstoqueHistorico)).get(),
-        _applySmartPagination(_getSubCollection(empresaId, _subCollectionAberturasCaixa)).get(),
-        _applySmartPagination(_getSubCollection(empresaId, _subCollectionFechamentosCaixa)).get(),
-        _applySyncFilter(_getSubCollection(empresaId, _subCollectionMotoristas)).get(),
-        _applySmartPagination(_getSubCollection(empresaId, _subCollectionAgendamentosServico)).get(),
-        _applySmartPagination(_getSubCollection(empresaId, _subCollectionNotasEntrada)).get(),
-        _applySyncFilter(_getSubCollection(empresaId, _subCollectionFuncionarios)).get(),
-        _applySyncFilter(_getSubCollection(empresaId, _subCollectionTaxasEntrega)).get(),
-        _applySmartPagination(_getSubCollection(empresaId, _subCollectionContasPagar)).get(),
-        _applySmartPagination(_getSubCollection(empresaId, _subCollectionNFCes)).get(),
-        _applySmartPagination(_getSubCollection(empresaId, _subCollectionSangrias)).get(),
-        _applySmartPagination(_getSubCollection(empresaId, _subCollectionSuprimentos)).get(),
-        _applySyncFilter(_getSubCollection(empresaId, _subCollectionMesasComandas)).get(),
-        _applySyncFilter(_getSubCollection(empresaId, _subCollectionLinksVendedores)).get(),
-        _applySyncFilter(_getSubCollection(empresaId, _subCollectionComissoesVendedores)).get(),
-      ]).timeout(
-        const Duration(seconds: 90),
-        onTimeout: () => throw TimeoutException('Timeout ao carregar dados do Firebase'),
-      );
-
       final chaves = [
         'clientes', 'produtos', 'servicos', 'pedidos', 'ordens_servico',
         'entregas', 'vendas_balcao', 'trocas_devolucoes', 'estoque_historico',
@@ -165,22 +132,67 @@ class FirebaseService {
         'comissoes_vendedores'
       ];
 
+      final queries = [
+        _applySyncFilter(_getSubCollection(empresaId, _subCollectionClientes)).limit(100),
+        _applySyncFilter(_getSubCollection(empresaId, _subCollectionProdutos)),
+        _applySyncFilter(_getSubCollection(empresaId, _subCollectionServicos)),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionPedidos)).limit(100),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionOrdensServico)),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionEntregas)),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionVendasBalcao)).limit(100),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionTrocasDevolucoes)),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionEstoqueHistorico)),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionAberturasCaixa)),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionFechamentosCaixa)),
+        _applySyncFilter(_getSubCollection(empresaId, _subCollectionMotoristas)),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionAgendamentosServico)),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionNotasEntrada)),
+        _applySyncFilter(_getSubCollection(empresaId, _subCollectionFuncionarios)),
+        _applySyncFilter(_getSubCollection(empresaId, _subCollectionTaxasEntrega)),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionContasPagar)),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionNFCes)),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionSangrias)),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionSuprimentos)),
+        _applySyncFilter(_getSubCollection(empresaId, _subCollectionMesasComandas)),
+        _applySyncFilter(_getSubCollection(empresaId, _subCollectionLinksVendedores)),
+        _applySyncFilter(_getSubCollection(empresaId, _subCollectionComissoesVendedores)),
+      ];
+
+      // Executar todas em paralelo
+      final List<Future<QuerySnapshot>> tasks = queries.map((q) => q.get()).toList();
+      
+      await Future.wait(tasks.map((task) async {
+        try { return await task; } catch (e) { return Future.error(e); }
+      })).catchError((e) {
+        debugPrint('>>> [Firebase] ⚠ Um ou mais carregamentos falharam: $e');
+        return [];
+      });
+
       for (int i = 0; i < chaves.length; i++) {
-        // PROTEÇÃO ADICIONAL: Se houverem muitos documentos (ex: > 2000), 
-        // pegamos apenas os 2000 mais recentes para este dispositivo.
-        final docs = results[i].docs;
-        if (docs.length > 2000) {
-          debugPrint('>>> [Firebase] 🛡️ Limite de segurança atingido para ${chaves[i]} (${docs.length} > 2000)');
-          dados[chaves[i]] = docs.take(2000).map((doc) => doc.data()).toList();
-        } else {
-          dados[chaves[i]] = docs.map((doc) => doc.data()).toList();
+        try {
+          final snapshot = await tasks[i];
+          snapshotsMap[chaves[i]] = snapshot;
+          final docs = snapshot.docs;
+          
+          if (docs.length > 2000) {
+            debugPrint('>>> [Firebase] 🛡️ Limite de segurança atingido para ${chaves[i]} (${docs.length} > 2000)');
+            dados[chaves[i]] = docs.take(2000).map((doc) => doc.data()).toList();
+          } else {
+            dados[chaves[i]] = docs.map((doc) => doc.data()).toList();
+          }
+        } catch (e) {
+          debugPrint('>>> [Firebase] ❌ FALHA ao carregar coleção "${chaves[i]}": $e');
+          dados[chaves[i]] = [];
         }
       }
 
-      debugPrint('>>> [Firebase] Carga inteligente concluída com sucesso.');
-      return dados;
+      debugPrint('>>> [Firebase] Carga inteligente concluída (incluindo snapshots para paginação).');
+      return {
+        'data': dados,
+        'snapshots': snapshotsMap,
+      };
     } catch (e, stackTrace) {
-      debugPrint('>>> [Firebase] ERRO ao carregar do Firebase: $e');
+      debugPrint('>>> [Firebase] ERRO CRÍTICO ao carregar do Firebase: $e');
       rethrow;
     }
   }
@@ -201,7 +213,7 @@ class FirebaseService {
 
       Query _applyFilter(Query query) {
         if (lastSync == null) return query;
-        return query.where('updatedAt', isGreaterThan: lastSync.toIso8601String());
+        return query.where('updatedAt', isGreaterThanOrEqualTo: lastSync.toIso8601String());
       }
 
       // Carregar apenas o necessário: Produtos, Serviços, Agendamentos and Taxas de Entrega
@@ -227,30 +239,45 @@ class FirebaseService {
       dados['funcionarios'] = results[4].docs.map((doc) => doc.data()).toList();
       dados['links_vendedores'] = results[5].docs.map((doc) => doc.data()).toList();
 
-      // Inicializar listas vazias para os dados não carregados
-      dados['clientes'] = [];
-      dados['pedidos'] = [];
-      dados['ordens_servico'] = [];
-      dados['entregas'] = [];
-      dados['vendas_balcao'] = [];
-      dados['trocas_devolucoes'] = [];
-      dados['estoque_historico'] = [];
-      dados['aberturas_caixa'] = [];
-      dados['fechamentos_caixa'] = [];
-      dados['motoristas'] = [];
-      dados['notas_entrada'] = [];
-      dados['contas_pagar'] = [];
-      dados['nfces'] = [];
-      dados['sangrias'] = [];
-      dados['suprimentos'] = [];
-      dados['mesas_comandas'] = [];
-      dados['comissoes_vendedores'] = [];
-
-      debugPrint('>>> [Firebase] ⚡ Carga leve concluída para empresa: $empresaId');
+      // NÃO inicializar listas vazias para os dados não carregados.
       return dados;
     } catch (e, stackTrace) {
       debugPrint('>>> [Firebase] ERRO na carga leve: $e');
       debugPrint('>>> [Firebase] StackTrace: $stackTrace');
+      rethrow;
+    }
+  }
+
+  /// Carrega uma coleção específica com paginação
+  /// [empresaId]: ID da empresa
+  /// [colecao]: Nome da subcoleção (ex: 'clientes', 'vendas_balcao')
+  /// [limit]: Quantidade de registros por página
+  /// [startAfter]: Documento a partir do qual será carregada a próxima página
+  /// [orderBy]: Campo para ordenação
+  /// [descending]: Direção da ordenação
+  Future<QuerySnapshot> carregarColecaoPaginada(
+    String empresaId, 
+    String colecao, {
+    int limit = 50, 
+    DocumentSnapshot? startAfter,
+    String orderBy = 'createdAt',
+    bool descending = true,
+  }) async {
+    try {
+      if (!isAvailable) throw Exception('Firebase não está disponível');
+      
+      Query query = _getSubCollection(empresaId, colecao);
+      
+      // Ordenação é obrigatória para paginação consistente
+      query = query.orderBy(orderBy, descending: descending);
+      
+      if (startAfter != null) {
+        query = query.startAfterDocument(startAfter);
+      }
+      
+      return await query.limit(limit).get();
+    } catch (e) {
+      debugPrint('>>> [Firebase] Erro ao carregar coleção paginada ($colecao): $e');
       rethrow;
     }
   }

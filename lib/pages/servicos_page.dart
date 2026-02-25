@@ -10,6 +10,8 @@ import 'pdv_page.dart';
 import 'clientes_servicos_page.dart';
 import 'comissoes_page.dart';
 import 'historico_vendas_page.dart';
+import '../widgets/sync_status_widget.dart';
+
 
 class ServicosPage extends StatelessWidget {
   const ServicosPage({super.key});
@@ -120,6 +122,8 @@ class ServicosPage extends StatelessWidget {
                 });
               },
             ),
+            const SyncStatusWidget(),
+
           ],
         ),
         body: Consumer<DataService>(

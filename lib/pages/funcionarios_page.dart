@@ -5,6 +5,7 @@ import 'package:sistema_exodo_novo/models/usuario.dart';
 import 'package:sistema_exodo_novo/services/data_service.dart';
 import 'package:sistema_exodo_novo/services/auth_service.dart';
 import 'package:sistema_exodo_novo/theme.dart';
+import 'package:sistema_exodo_novo/widgets/sync_status_widget.dart';
 
 class FuncionariosPage extends StatefulWidget {
   const FuncionariosPage({super.key});
@@ -46,6 +47,7 @@ class _FuncionariosPageState extends State<FuncionariosPage> {
                 )
               : null,
           actions: [
+            const SyncStatusWidget(),
             IconButton(
               icon: Icon(
                 _mostrarBusca ? Icons.search_off : Icons.search,

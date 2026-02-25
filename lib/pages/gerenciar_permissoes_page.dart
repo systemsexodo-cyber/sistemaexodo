@@ -6,6 +6,7 @@ import '../models/tela_sistema.dart';
 import '../services/auth_service.dart';
 import '../services/permission_service.dart';
 import '../theme.dart';
+import '../widgets/sync_status_widget.dart';
 
 /// Página para gerenciar permissões de usuários
 class GerenciarPermissoesPage extends StatefulWidget {
@@ -403,6 +404,7 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
                 ),
               ),
             ),
+            const SyncStatusWidget(),
           ],
         ),
         body: _usuarioSelecionado == null && widget.usuario == null

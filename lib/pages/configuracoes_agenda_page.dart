@@ -4,6 +4,7 @@ import '../services/data_service.dart';
 import '../services/auth_service.dart';
 import '../models/empresa.dart';
 import '../theme.dart';
+import '../widgets/sync_status_widget.dart';
 
 class ConfiguracoesAgendaPage extends StatefulWidget {
   const ConfiguracoesAgendaPage({super.key});
@@ -454,6 +455,7 @@ class _ConfiguracoesAgendaPageState extends State<ConfiguracoesAgendaPage> {
               onPressed: _salvarConfiguracoes,
               tooltip: 'Salvar Alterações',
             ),
+          const SyncStatusWidget(),
         ],
       ),
       body: SingleChildScrollView(

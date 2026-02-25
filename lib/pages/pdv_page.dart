@@ -17,6 +17,7 @@ import 'cozinha_bar_page.dart';
 import '../services/pedido_pdf_service.dart';
 import '../services/auth_service.dart';
 import '../models/empresa.dart';
+import '../widgets/sync_status_widget.dart';
 
 /// Página do PDV - Ponto de Venda com abas
 /// Receber Pedidos, Venda Direta e Consulta Cliente
@@ -480,6 +481,7 @@ class _PdvPageState extends State<PdvPage> {
                 ),
                 tooltip: 'Tela Cheia',
               ),
+            const SyncStatusWidget(),
           ],
         ),
         body: _buildAbaReceberPedidos(dataService, pedidosEncontrados),

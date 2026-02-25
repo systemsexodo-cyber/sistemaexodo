@@ -79,7 +79,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
 
 
   
-  String? _servicoIdSelecionado;
+  List<String> _servicosSelecionadosIds = [];
   String _porteAnimal = 'Pequeno'; // Pequeno, Médio, Grande, Gigante
   double _pesoAproximado = 5.0;
   DateTime? _dataSelecionada;
@@ -837,10 +837,18 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                 ),
                 itemBuilder: (context, index) {
                   final servico = servicos[index];
-                  bool isSelected = _servicoIdSelecionado == servico.id;
+                  bool isSelected = _servicosSelecionadosIds.contains(servico.id);
 
                   return InkWell(
-                    onTap: () => setState(() => _servicoIdSelecionado = servico.id),
+                    onTap: () {
+                      setState(() {
+                        if (isSelected) {
+                          _servicosSelecionadosIds.remove(servico.id);
+                        } else {
+                          _servicosSelecionadosIds.add(servico.id);
+                        }
+                      });
+                    },
                     borderRadius: BorderRadius.circular(20),
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12), // Reduzi um pouco o padding interno para caber melhor em 2 colunas
@@ -923,8 +931,12 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                     ),
                   );
                 },
-              );
-            },
+              ),
+              if (_servicosSelecionadosIds.isNotEmpty) ...[
+                const SizedBox(height: 32),
+                _buildServicosSelecionadosSummary(servicos, esconderValores),
+              ],
+            ],
           ),
       ],
     );
@@ -1955,12 +1967,9 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     // Ordenar os slots cronologicamente
     slots.sort((a, b) => (a.hour * 60 + a.minute).compareTo(b.hour * 60 + b.minute));
 
-    final servicoSelecionado = dataService.servicos.firstWhere(
-      (s) => s.id == _servicoIdSelecionado, 
-      orElse: () => dataService.servicos.first
-    );
-    final duracao = servicoSelecionado.duracaoPadraoMinutos ?? 60;
-    final intervalo = servicoSelecionado.intervaloMinutos ?? 0;
+    final selecionados = dataService.servicos.where((s) => _servicosSelecionadosIds.contains(s.id)).toList();
+    final duracaoTotal = selecionados.fold(0, (sum, s) => sum + (s.duracaoPadraoMinutos ?? 60));
+    final intervaloMaximo = selecionados.fold(0, (max, s) => (s.intervaloMinutos ?? 0) > max ? (s.intervaloMinutos ?? 0) : max);
 
     // 3. FILTRAR: Manter apenas os que estão realmente disponíveis para agendar
     final List<Map<String, dynamic>> slotsDisponiveis = [];
@@ -1974,11 +1983,11 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
         time.minute,
       );
 
-      bool isBloqueadoAdmin = _isHorarioBloqueadoAdmin(dataService, checkTime, duracao);
+      bool isBloqueadoAdmin = _isHorarioBloqueadoAdmin(dataService, checkTime, duracaoTotal);
       bool isDisponivel = dataService.checkDisponibilidade(
         checkTime, 
-        duracao, 
-        intervaloMinutos: intervalo,
+        duracaoTotal, 
+        intervaloMinutos: intervaloMaximo,
         ignorarPendentes: false
       );
 
@@ -2318,20 +2327,19 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       _horaSelecionada!.minute,
     );
     
-    final servicoSelecionado = dataService.servicos.firstWhere(
-      (s) => s.id == _servicoIdSelecionado, 
-      orElse: () => dataService.servicos.first
-    );
-    final duracao = servicoSelecionado.duracaoPadraoMinutos ?? 60;
-    final intervalo = servicoSelecionado.intervaloMinutos ?? 0;
+    final selecionados = dataService.servicos.where((s) => _servicosSelecionadosIds.contains(s.id)).toList();
+    if (selecionados.isEmpty) return const SizedBox();
+
+    final int duracaoTotal = selecionados.fold(0, (sum, s) => sum + (s.duracaoPadraoMinutos ?? 60));
+    final int intervaloMaximo = selecionados.fold(0, (max, s) => (s.intervaloMinutos ?? 0) > max ? (s.intervaloMinutos ?? 0) : max);
     
     // Verificar se é um horário bloqueado administrativamente (para mensagem específica)
-    bool isBloqueadoAdmin = _isHorarioBloqueadoAdmin(dataService, inicio, duracao);
+    bool isBloqueadoAdmin = _isHorarioBloqueadoAdmin(dataService, inicio, duracaoTotal);
 
     bool disponivel = dataService.checkDisponibilidade(
       inicio, 
-      duracao, 
-      intervaloMinutos: intervalo,
+      duracaoTotal, 
+      intervaloMinutos: intervaloMaximo,
       ignorarPendentes: false
     );
 
@@ -2667,7 +2675,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
 
   void _onNext(bool moduloPet) {
     if (_enviando) return;
-    if (_currentStep == 0 && _servicoIdSelecionado == null) {
+    if (_currentStep == 0 && _servicosSelecionadosIds.isEmpty) {
       _showWarning('Por favor, escolha um serviço primeiro.');
       return;
     }
@@ -2704,9 +2712,10 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
           _horaSelecionada!.hour,
           _horaSelecionada!.minute,
         );
-        final duracao = dataService.servicos.firstWhere((s) => s.id == _servicoIdSelecionado, orElse: () => dataService.servicos.first).duracaoPadraoMinutos ?? 60;
+        final selecionadosCheck = dataService.servicos.where((s) => _servicosSelecionadosIds.contains(s.id)).toList();
+        final duracaoCheck = selecionadosCheck.fold(0, (sum, s) => sum + (s.duracaoPadraoMinutos ?? 60));
         
-        if (_isHorarioBloqueadoAdmin(dataService, inicio, duracao)) {
+        if (_isHorarioBloqueadoAdmin(dataService, inicio, duracaoCheck)) {
           _showError('Este horário não está disponível para agendamentos. Por favor, escolha outro.');
           return;
         }
@@ -2727,7 +2736,10 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
         _horaSelecionada!.minute,
       );
 
-      final servicoAtual = dataService.servicos.firstWhere((s) => s.id == _servicoIdSelecionado);
+      final servicosSelecionados = dataService.servicos.where((s) => _servicosSelecionadosIds.contains(s.id)).toList();
+      final servicoPrincipal = servicosSelecionados.isNotEmpty ? servicosSelecionados.first : dataService.servicos.first;
+      final duracaoTotal = servicosSelecionados.fold(0, (sum, s) => sum + (s.duracaoPadraoMinutos ?? 60));
+      final intervaloMaximo = servicosSelecionados.fold(0, (max, s) => (s.intervaloMinutos ?? 0) > max ? (s.intervaloMinutos ?? 0) : max);
       
       // Identificar cliente/pet para o agendamento atual
       final telefoneBusca = _whatsappController.text.replaceAll(RegExp(r'\D'), '');
@@ -2809,8 +2821,10 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
           agendamentosAtuais.add(AgendamentoServico(
             id: '${timestamp}_${pet.id}_$counter',
             numero: '',
-            servicoId: servicoAtual.id,
-            servico: servicoAtual,
+            servicoId: servicoPrincipal.id,
+            servico: servicoPrincipal,
+            servicosIds: _servicosSelecionadosIds,
+            servicos: servicosSelecionados,
             clienteId: clienteReal!.id,
             cliente: clienteReal,
             petId: pet.id,
@@ -2819,8 +2833,8 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
             clienteTelefone: _whatsappController.text,
             petNome: pet.nome,
             dataAgendamento: dataAgendamentoAtual,
-            duracaoMinutos: servicoAtual.duracaoPadraoMinutos ?? 60,
-            intervaloMinutos: servicoAtual.intervaloMinutos ?? 0,
+            duracaoMinutos: duracaoTotal,
+            intervaloMinutos: intervaloMaximo,
             status: 'Aguardando Confirmação',
             tipoEntrega: moduloPet ? _tipoEntrega : null,
             bairroEntrega: moduloPet ? (_bairroEntrega ?? _bairroController.text) : null,
@@ -2851,8 +2865,10 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
         agendamentosAtuais.add(AgendamentoServico(
           id: '${DateTime.now().microsecondsSinceEpoch}_single',
           numero: '',
-          servicoId: servicoAtual.id,
-          servico: servicoAtual,
+          servicoId: servicoPrincipal.id,
+          servico: servicoPrincipal,
+          servicosIds: _servicosSelecionadosIds,
+          servicos: servicosSelecionados,
           clienteId: clienteReal!.id,
           cliente: clienteReal,
           petId: petInfoAtual?.id,
@@ -2861,8 +2877,8 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
           clienteTelefone: _whatsappController.text,
           petNome: moduloPet ? _petNomeController.text : null,
           dataAgendamento: dataAgendamentoAtual,
-          duracaoMinutos: servicoAtual.duracaoPadraoMinutos ?? 60,
-          intervaloMinutos: servicoAtual.intervaloMinutos ?? 0,
+          duracaoMinutos: duracaoTotal,
+          intervaloMinutos: intervaloMaximo,
           status: 'Aguardando Confirmação',
           tipoEntrega: moduloPet ? _tipoEntrega : null,
           bairroEntrega: moduloPet ? (_bairroEntrega ?? _bairroController.text) : null,
@@ -2969,7 +2985,8 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
 
         final disponivel = dataService.checkDisponibilidade(
           agdFinal.dataAgendamento, 
-          agdFinal.servico?.duracaoPadraoMinutos ?? 60, 
+          agdFinal.duracaoMinutos, 
+          intervaloMinutos: agdFinal.intervaloMinutos,
           ignorarPendentes: false
         );
         if (!disponivel) algumOcupado = true;
@@ -3084,9 +3101,10 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
           _horaSelecionada!.hour,
           _horaSelecionada!.minute,
         );
-        final duracao = dataService.servicos.firstWhere((s) => s.id == _servicoIdSelecionado, orElse: () => dataService.servicos.first).duracaoPadraoMinutos ?? 60;
+        final selecionadosCart = dataService.servicos.where((s) => _servicosSelecionadosIds.contains(s.id)).toList();
+        final duracaoCart = selecionadosCart.fold(0, (sum, s) => sum + (s.duracaoPadraoMinutos ?? 60));
         
-        if (_isHorarioBloqueadoAdmin(dataService, inicio, duracao)) {
+        if (_isHorarioBloqueadoAdmin(dataService, inicio, duracaoCart)) {
           _showError('Este horário não está disponível para agendamentos.');
           return;
         }
@@ -3100,7 +3118,8 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       _horaSelecionada!.minute,
     );
 
-    final servico = dataService.servicos.firstWhere((s) => s.id == _servicoIdSelecionado);
+    final selecionados = dataService.servicos.where((s) => _servicosSelecionadosIds.contains(s.id)).toList();
+    final servico = selecionados.isNotEmpty ? selecionados.first : dataService.servicos.first;
     
     // Identificar cliente/pet existentes se possível
     final telefoneBusca = _whatsappController.text.replaceAll(RegExp(r'\D'), '');
@@ -3193,7 +3212,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     setState(() {
       _agendamentosCarrinho.addAll(agendamentosNovos);
       // Resetar campos
-      _servicoIdSelecionado = null;
+      _servicosSelecionadosIds = [];
       _petNomeController.clear();
       _petRacaController.clear();
       _petCorController.clear();
@@ -3468,7 +3487,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                       setState(() {
                         _currentStep = 0;
                         _agendamentosCarrinho.clear();
-                        _servicoIdSelecionado = null;
+                        _servicosSelecionadosIds = [];
                         _nomeController.clear();
                         _whatsappController.clear();
                         _petNomeController.clear();
@@ -3786,5 +3805,68 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       case 'Agendado': return const Color(0xFF64B5F6);
       default: return Colors.white54;
     }
+  }
+
+  Widget _buildServicosSelecionadosSummary(List<Servico> todosServicos, bool esconderValores) {
+    final selecionados = todosServicos.where((s) => _servicosSelecionadosIds.contains(s.id)).toList();
+    final precoTotal = selecionados.fold<double>(0.0, (double sum, Servico s) => sum + s.precoTotal);
+    final int duracaoTotal = selecionados.fold<int>(0, (int sum, Servico s) => sum + (s.duracaoPadraoMinutos ?? 60));
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: _primaryColor.withAlpha(25),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: _primaryColor.withAlpha(76)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.shopping_basket_rounded, color: _primaryColor),
+              const SizedBox(width: 12),
+              const Text(
+                'Serviços Selecionados',
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          ...selecionados.map((Servico s) => Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(child: Text(s.nome, style: const TextStyle(color: Colors.white70))),
+                if (!esconderValores)
+                  Text('R\$ ${s.precoTotal.toStringAsFixed(2)}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+              ],
+            ),
+          )),
+          const Divider(color: Colors.white24, height: 24),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Duração Estimada', style: TextStyle(color: Colors.white38, fontSize: 12)),
+                  Text('$duracaoTotal minutos', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                ],
+              ),
+              if (!esconderValores)
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    const Text('Valor Total', style: TextStyle(color: Colors.white38, fontSize: 12)),
+                    Text('R\$ ${precoTotal.toStringAsFixed(2)}', style: TextStyle(color: _primaryColor, fontWeight: FontWeight.bold, fontSize: 20)),
+                  ],
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
   }
 }

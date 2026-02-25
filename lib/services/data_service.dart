@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:sistema_exodo_novo/models/cliente.dart';
+
 import 'package:sistema_exodo_novo/models/pedido.dart';
 import 'package:sistema_exodo_novo/models/ordem_servico.dart';
 import 'package:sistema_exodo_novo/models/produto.dart';
@@ -140,6 +142,7 @@ class DataService extends ChangeNotifier {
   
   // Status de Sincronização
   DateTime? _ultimaSincronizacaoSucesso;
+  String? _ultimoErroSync;
   bool _syncEmAndamento = false;
   bool _isModoLeve = false;
   bool _primeiraCargaAgendamentosRealizada = false;
@@ -246,10 +249,21 @@ class DataService extends ChangeNotifier {
   // Estado de carregamento
   bool _isLoading = false;
   String _mensagemLoading = 'Carregando...';
+
+  // Controle de Paginação (Infinite Scroll)
+  DocumentSnapshot? _ultimoDocClientes;
+  bool _temMaisClientes = true;
+  bool _carregandoMaisClientes = false;
+  
+  DocumentSnapshot? _ultimoDocVendas;
+  bool _temMaisVendas = true;
+  bool _carregandoMaisVendas = false;
+
   bool get isLoading => _isLoading;
-  String get mensagemLoading => _mensagemLoading;
-  DateTime? get ultimaSincronizacaoSucesso => _ultimaSincronizacaoSucesso;
   bool get syncEmAndamento => _syncEmAndamento;
+  DateTime? get ultimaSincronizacaoSucesso => _ultimaSincronizacaoSucesso;
+  String? get ultimoErroSync => _ultimoErroSync;
+  String get mensagemLoading => _mensagemLoading;
   bool get isModoLeve => _isModoLeve;
 
   /// Retorna uma mensagem amigável sobre o status da sincronização
@@ -302,6 +316,13 @@ class DataService extends ChangeNotifier {
     print('>>> DataService: 🧹 Limpando dados da empresa anterior da memória...');
     print('>>> DataService: ⚠️ Os dados permanecem salvos no localStorage/Firebase');
     _primeiraCargaAgendamentosRealizada = false; // Resetar para a nova empresa
+    
+    // Resetar Paginação
+    _temMaisClientes = true;
+    _ultimoDocClientes = null;
+    _temMaisVendas = true;
+    _ultimoDocVendas = null;
+
     _clientes.clear();
     _produtos.clear();
     _tiposServico.clear();
@@ -640,7 +661,21 @@ class DataService extends ChangeNotifier {
     print('║  INICIANDO CARREGAMENTO DE DADOS              ║');
     print('╚════════════════════════════════════════════════╝');
     
-    // Firebase HABILITADO - tentar carregar do Firebase primeiro
+    // 1. Carregar dados do localStorage IMEDIATAMENTE (rápido)
+    // Isso evita que o usuário veja listas vazias enquanto o Firebase carrega
+    try {
+      if (_isLoading) {
+        _mensagemLoading = 'Carregando cache local...';
+        notifyListeners();
+      }
+      await _carregarDadosSalvos();
+      print('>>> ✓ Cache local carregado (${_clientes.length} clientes)');
+      notifyListeners();
+    } catch (e) {
+      print('>>> ⚠ Erro ao carregar cache local: $e');
+    }
+
+    // 2. Tentar atualizar/sincronizar com Firebase
     if (_firebaseHabilitado) {
       try {
         if (_isLoading) {
@@ -649,9 +684,9 @@ class DataService extends ChangeNotifier {
         }
         print('>>> 🔥 Firebase é PRINCIPAL - Carregando dados do Firebase (Modo Leve: $modoLeve)...');
         await _carregarDadosDoFirebase(modoLeve: modoLeve).timeout(
-          const Duration(seconds: 45),
+          const Duration(seconds: 60),
           onTimeout: () {
-            print('>>> ⚠ Timeout ao carregar do Firebase (45s) - usando fallback');
+            print('>>> ⚠ Timeout ao carregar do Firebase (60s) - usando fallback');
             throw TimeoutException('Firebase timeout');
           },
         );
@@ -2885,6 +2920,18 @@ class DataService extends ChangeNotifier {
       } catch (_) {}
     }
 
+    // Vincular múltiplos serviços
+    List<Servico> servicosVinculados = [];
+    if (agendamento.servicosIds.isNotEmpty) {
+      for (final sId in agendamento.servicosIds) {
+        if (sId.startsWith('vacina_')) continue;
+        try {
+          final s = _tiposServico.firstWhere((ts) => ts.id == sId);
+          servicosVinculados.add(s);
+        } catch (_) {}
+      }
+    }
+
     Cliente? cliente = agendamento.cliente;
     if (cliente == null && agendamento.clienteId != null) {
       try {
@@ -2901,6 +2948,7 @@ class DataService extends ChangeNotifier {
 
     return agendamento.copyWith(
       servico: servico,
+      servicos: servicosVinculados,
       cliente: cliente,
       pet: pet,
     );
@@ -4343,14 +4391,32 @@ class DataService extends ChangeNotifier {
       print('>>> 🔥 Empresa: $_empresaIdAtual');
       print('>>> 🔥 ========================================');
       
-      final dados = (finalModoLeve || isSilentSync)
+      final result = (finalModoLeve || isSilentSync)
           ? await _firebaseService.carregarDadosLevesDoFirebase(_empresaIdAtual!)
           : await _firebaseService.carregarTudoDoFirebase(
               _empresaIdAtual!,
-              mesesRetroativos: 3, // Carrega apenas últimos 90 dias por padrão
+              mesesRetroativos: 3,
             );
       
-      // Verificar se há dados no Firebase (incluindo agendamentos)
+      final Map<String, dynamic> dados;
+      if (result.containsKey('data') && result.containsKey('snapshots')) {
+        dados = result['data'] as Map<String, dynamic>;
+        
+        // Capturar cursors iniciais para paginação
+        final snapshots = result['snapshots'] as Map<String, QuerySnapshot>;
+        if (snapshots['clientes'] != null && snapshots['clientes']!.docs.isNotEmpty) {
+          _ultimoDocClientes = snapshots['clientes']!.docs.last;
+          _temMaisClientes = snapshots['clientes']!.docs.length >= 100;
+        }
+        if (snapshots['vendas_balcao'] != null && snapshots['vendas_balcao']!.docs.isNotEmpty) {
+          _ultimoDocVendas = snapshots['vendas_balcao']!.docs.last;
+          _temMaisVendas = snapshots['vendas_balcao']!.docs.length >= 100;
+        }
+      } else {
+        dados = result;
+      }
+      
+      // Verificar se há dados no Firebase
       final temDados = dados['clientes']?.isNotEmpty == true ||
           dados['produtos']?.isNotEmpty == true ||
           dados['pedidos']?.isNotEmpty == true ||
@@ -4622,9 +4688,11 @@ class DataService extends ChangeNotifier {
       // NOTA: Removido o salvamento forçado aqui para evitar loops de carregamento/salvamento
       // await _salvarTodosDados();
       _ultimaSincronizacaoSucesso = DateTime.now();
+      _ultimoErroSync = null; // Limpar erro anterior em caso de sucesso
       debugPrint('>>> [Sync] ✅ Sincronização concluída com sucesso às ${_ultimaSincronizacaoSucesso.toString()}');
       
     } catch (e, stackTrace) {
+      _ultimoErroSync = e.toString();
       debugPrint('>>> [Sync] ❌ ERRO na sincronização: $e');
       debugPrint('>>> StackTrace: $stackTrace');
       rethrow;
@@ -5788,4 +5856,120 @@ class DataService extends ChangeNotifier {
     await addMesaComanda(mesaComanda);
     return mesaComanda;
   }
+
+  // ===========================================================================
+  // PAGINAÇÃO E INFINITE SCROLL
+  // ===========================================================================
+
+  bool get temMaisClientes => _temMaisClientes;
+  bool get carregandoMaisClientes => _carregandoMaisClientes;
+
+  /// Carrega a próxima página de clientes (50 por vez)
+  Future<void> carregarMaisClientes() async {
+    if (_carregandoMaisClientes || !_temMaisClientes || _empresaIdAtual == null) return;
+    
+    _carregandoMaisClientes = true;
+    notifyListeners();
+    
+    try {
+      debugPrint('>>> [Sync] 📥 Carregando mais clientes...');
+      final snapshot = await _firebaseService.carregarColecaoPaginada(
+        _empresaIdAtual!, 
+        'clientes',
+        startAfter: _ultimoDocClientes,
+        orderBy: 'nome', 
+        descending: false,
+      );
+      
+      if (snapshot.docs.isEmpty) {
+        _temMaisClientes = false;
+        debugPrint('>>> [Sync] ✓ Fim da lista de clientes atingido');
+      } else {
+        _ultimoDocClientes = snapshot.docs.last;
+        final novosClientes = snapshot.docs.map((doc) => Cliente.fromMap(doc.data() as Map<String, dynamic>)).toList();
+        
+        int contagemNovos = 0;
+        for (var novo in novosClientes) {
+          final index = _clientes.indexWhere((c) => c.id == novo.id);
+          if (index == -1) {
+            _clientes.add(novo);
+            contagemNovos++;
+          } else {
+            _clientes[index] = novo; // Atualizar se já existir
+          }
+        }
+        
+        // Ordenar por nome para manter consistência na UI
+        _clientes.sort((a, b) => a.nome.toLowerCase().compareTo(b.nome.toLowerCase()));
+        
+        debugPrint('>>> [Sync] ✓ Mais $contagemNovos clientes carregados (Total: ${_clientes.length})');
+        
+        // Se veio menos que o limite, não há mais dados no servidor
+        if (snapshot.docs.length < 50) {
+          _temMaisClientes = false;
+        }
+      }
+    } catch (e) {
+      debugPrint('>>> [DataService] Erro ao carregar mais clientes: $e');
+    } finally {
+      _carregandoMaisClientes = false;
+      notifyListeners();
+    }
+  }
+
+  bool get temMaisVendas => _temMaisVendas;
+  bool get carregandoMaisVendas => _carregandoMaisVendas;
+
+  /// Carrega a próxima página de vendas (50 por vez)
+  Future<void> carregarMaisVendas() async {
+    if (_carregandoMaisVendas || !_temMaisVendas || _empresaIdAtual == null) return;
+    
+    _carregandoMaisVendas = true;
+    notifyListeners();
+    
+    try {
+      debugPrint('>>> [Sync] 📥 Carregando mais vendas...');
+      final snapshot = await _firebaseService.carregarColecaoPaginada(
+        _empresaIdAtual!, 
+        'vendas_balcao',
+        startAfter: _ultimoDocVendas,
+        orderBy: 'dataVenda', 
+        descending: true,
+      );
+      
+      if (snapshot.docs.isEmpty) {
+        _temMaisVendas = false;
+        debugPrint('>>> [Sync] ✓ Fim da lista de vendas atingido');
+      } else {
+        _ultimoDocVendas = snapshot.docs.last;
+        final novasVendas = snapshot.docs.map((doc) => VendaBalcao.fromMap(doc.data() as Map<String, dynamic>)).toList();
+        
+        int contagemNovas = 0;
+        for (var nova in novasVendas) {
+          final index = _vendasBalcao.indexWhere((v) => v.id == nova.id);
+          if (index == -1) {
+            _vendasBalcao.add(nova);
+            contagemNovas++;
+          } else {
+            _vendasBalcao[index] = nova;
+          }
+        }
+        
+        // Ordenar por data (mais recentes primeiro)
+        _vendasBalcao.sort((a, b) => b.dataVenda.compareTo(a.dataVenda));
+        
+        debugPrint('>>> [Sync] ✓ Mais $contagemNovas vendas carregadas (Total: ${_vendasBalcao.length})');
+        
+        if (snapshot.docs.length < 50) {
+          _temMaisVendas = false;
+        }
+      }
+    } catch (e) {
+      debugPrint('>>> [DataService] Erro ao carregar mais vendas: $e');
+    } finally {
+      _carregandoMaisVendas = false;
+      notifyListeners();
+    }
+  }
 }
+

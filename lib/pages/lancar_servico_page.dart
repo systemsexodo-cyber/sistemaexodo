@@ -18,6 +18,7 @@ import '../models/taxa_entrega.dart';
 import '../widgets/pagamento_widget.dart';
 import '../theme.dart';
 import 'pdv_page.dart';
+import '../widgets/sync_status_widget.dart';
 import 'package:flutter/services.dart';
 
 /// Página de lançamento de serviços com cadastro integrado
@@ -784,6 +785,7 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
             onPressed: () => Navigator.of(context).pop(),
           ),
           actions: [
+            const SyncStatusWidget(),
             TextButton.icon(
               onPressed: _servicosSelecionados.isNotEmpty ? _salvarPedido : null,
               icon: const Icon(Icons.save, color: Colors.white),

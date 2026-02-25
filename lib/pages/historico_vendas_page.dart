@@ -9,6 +9,7 @@ import '../models/troca_devolucao.dart';
 import '../models/caixa.dart';
 import 'trocas_devolucoes_page.dart';
 import 'home_page.dart';
+import '../widgets/sync_status_widget.dart';
 
 /// Classe para agrupar informações de produto vendido
 class _ProdutoVendido {
@@ -258,6 +259,7 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
 
   // Campo de busca
   final TextEditingController _buscaController = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
   String _termoBusca = '';
 
   final _formatoData = DateFormat('dd/MM/yyyy');
@@ -267,6 +269,7 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
   @override
   void initState() {
     super.initState();
+    _scrollController.addListener(_onScroll);
     // Inicializar com o dia atual
     final hoje = DateTime.now();
     _dataInicio = DateTime(hoje.year, hoje.month, hoje.day);
@@ -276,8 +279,18 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
     _horaFim = TimeOfDay.fromDateTime(_dataFim);
   }
 
+  void _onScroll() {
+    if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 300) {
+      final dataService = Provider.of<DataService>(context, listen: false);
+      if (dataService.temMaisVendas && !dataService.carregandoMaisVendas) {
+        dataService.carregarMaisVendas();
+      }
+    }
+  }
+
   @override
   void dispose() {
+    _scrollController.dispose();
     _buscaController.dispose();
     super.dispose();
   }
@@ -519,6 +532,7 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
         backgroundColor: const Color(0xFF1E1E2E),
         elevation: 0,
         actions: [
+          const SyncStatusWidget(),
           // Botão Fechar Caixa
           IconButton(
             icon: const Icon(Icons.lock, color: Colors.redAccent),
@@ -560,15 +574,6 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
             },
             tooltip: 'Trocas e Devoluções',
           ),
-          // Botão de refresh para debug
-          IconButton(
-            icon: const Icon(Icons.refresh, color: Colors.blue),
-            onPressed: () {
-              debugPrint('>>> REFRESH MANUAL PRESSIONADO');
-              setState(() {});
-            },
-            tooltip: 'Atualizar',
-          ),
           IconButton(
             icon: const Icon(Icons.filter_list),
             onPressed: _mostrarFiltros,
@@ -587,9 +592,13 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
             child: itensHistorico.isEmpty
                 ? _buildListaVazia()
                 : ListView.builder(
+                    controller: _scrollController,
                     padding: const EdgeInsets.all(16),
-                    itemCount: itensHistorico.length,
+                    itemCount: itensHistorico.length + (dataService.temMaisVendas ? 1 : 0),
                     itemBuilder: (context, index) {
+                      if (index == itensHistorico.length) {
+                        return _buildLoadingPaginacao();
+                      }
                       return _buildCardItem(itensHistorico[index], dataService);
                     },
                   ),
@@ -5035,5 +5044,20 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
       case TipoPagamento.outro:
         return Icons.more_horiz;
     }
+  }
+
+  Widget _buildLoadingPaginacao() {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 32),
+      alignment: Alignment.center,
+      child: const SizedBox(
+        width: 24,
+        height: 24,
+        child: CircularProgressIndicator(
+          strokeWidth: 2,
+          valueColor: AlwaysStoppedAnimation<Color>(Colors.blueAccent),
+        ),
+      ),
+    );
   }
 }

@@ -11,6 +11,7 @@ import '../theme.dart';
 import 'package:intl/intl.dart';
 import '../models/empresa.dart';
 import 'package:flutter/services.dart';
+import '../widgets/sync_status_widget.dart';
 // Import condicional para Web
 import 'html_helper_stub.dart' if (dart.library.html) 'html_helper_web.dart' as html_helper;
 
@@ -770,6 +771,9 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
           title: const Text('Personalizar Loja'),
           backgroundColor: Colors.transparent,
           elevation: 0,
+          actions: [
+            const SyncStatusWidget(),
+          ],
           bottom: TabBar(
             controller: _tabController,
             isScrollable: true,

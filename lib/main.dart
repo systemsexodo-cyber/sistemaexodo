@@ -41,9 +41,9 @@ void main() async {
   try {
     await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform)
         .timeout(
-      const Duration(seconds: 5),
+      const Duration(seconds: 10),
       onTimeout: () {
-        print('>>> ⚠ Timeout ao inicializar Firebase (5s)');
+        print('>>> ⚠ Timeout ao inicializar Firebase (10s)');
         throw TimeoutException('Firebase timeout');
       },
     );
@@ -90,9 +90,9 @@ void _carregarDadosEmBackground(DataService dataService, AuthService authService
     try {
       // Inicializar sincronização com timeout curto
       await dataService.iniciarSincronizacao().timeout(
-        const Duration(seconds: 10),
+        const Duration(seconds: 30),
         onTimeout: () {
-          print('>>> ⚠ Timeout na sincronização (10s) - continuando offline...');
+          print('>>> ⚠ Timeout na sincronização (30s) - continuando offline...');
         },
       );
     } catch (e) {

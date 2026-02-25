@@ -20,6 +20,8 @@ import 'venda_direta_page.dart';
 import '../services/pedido_pdf_service.dart';
 import '../services/auth_service.dart';
 import '../models/empresa.dart';
+import '../widgets/sync_status_widget.dart';
+
 
 class PedidosPage extends StatefulWidget {
   const PedidosPage({super.key});
@@ -76,6 +78,7 @@ class _PedidosPageState extends State<PedidosPage> {
                 )
               : null,
           actions: [
+            const SyncStatusWidget(),
             // Botão de busca
             IconButton(
               icon: Icon(

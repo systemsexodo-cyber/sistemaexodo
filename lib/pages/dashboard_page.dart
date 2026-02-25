@@ -10,6 +10,7 @@ import '../models/permissao.dart';
 import '../models/usuario.dart';
 import '../theme.dart';
 import '../models/conta_pagar.dart';
+import '../widgets/sync_status_widget.dart';
 import 'html_helper_stub.dart' if (dart.library.html) 'html_helper_web.dart' as html_helper;
 
 
@@ -264,6 +265,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 tooltip: 'Atualizar',
                 onPressed: () => setState(() {}),
               ),
+              const SyncStatusWidget(),
             ],
           ),
           body: body,

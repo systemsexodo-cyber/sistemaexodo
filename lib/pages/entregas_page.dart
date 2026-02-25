@@ -6,6 +6,8 @@ import '../services/data_service.dart';
 import '../theme.dart';
 import 'entrega_detalhes_page.dart';
 import 'taxas_entrega_page.dart';
+import '../widgets/sync_status_widget.dart';
+
 
 class EntregasPage extends StatefulWidget {
   const EntregasPage({super.key});
@@ -94,6 +96,8 @@ class _EntregasPageState extends State<EntregasPage>
               tooltip: 'Buscar entregas',
               onPressed: () => _mostrarBusca(context),
             ),
+            const SyncStatusWidget(),
+
           ],
           bottom: PreferredSize(
             preferredSize: const Size.fromHeight(50),

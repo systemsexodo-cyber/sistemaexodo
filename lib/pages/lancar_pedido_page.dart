@@ -10,6 +10,7 @@ import '../models/item_pedido.dart';
 import '../models/forma_pagamento.dart';
 import '../widgets/pagamento_widget.dart';
 import '../theme.dart';
+import '../widgets/sync_status_widget.dart';
 
 /// Item no carrinho de compras
 class ItemCarrinho {
@@ -583,6 +584,7 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
             onPressed: () => Navigator.of(context).pop(),
           ),
           actions: [
+            const SyncStatusWidget(),
             TextButton.icon(
               onPressed: _carrinho.isNotEmpty ? _salvarPedido : null,
               icon: const Icon(Icons.save, color: Colors.white),

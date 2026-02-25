@@ -5,6 +5,7 @@ import '../services/data_service.dart';
 import '../models/funcionario.dart';
 import '../models/pedido.dart';
 import '../theme.dart';
+import '../widgets/sync_status_widget.dart';
 
 class ComissoesPage extends StatefulWidget {
   const ComissoesPage({super.key});
@@ -80,6 +81,9 @@ class _ComissoesPageState extends State<ComissoesPage> {
           backgroundColor: Colors.transparent,
           elevation: 0,
           foregroundColor: Colors.white,
+          actions: [
+            const SyncStatusWidget(),
+          ],
         ),
         body: Column(
           children: [

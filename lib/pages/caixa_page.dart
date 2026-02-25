@@ -6,6 +6,8 @@ import '../models/caixa.dart';
 import '../models/forma_pagamento.dart';
 import '../theme.dart';
 import 'home_page.dart';
+import '../widgets/sync_status_widget.dart';
+
 
 /// Página de gerenciamento de caixa
 class CaixaPage extends StatefulWidget {
@@ -27,6 +29,9 @@ class _CaixaPageState extends State<CaixaPage> {
         appBar: AppBar(
           title: const Text('Gerenciar Caixa'),
           backgroundColor: Colors.transparent,
+          actions: [
+            const SyncStatusWidget(),
+          ],
         ),
         body: Consumer<DataService>(
           builder: (context, dataService, child) {

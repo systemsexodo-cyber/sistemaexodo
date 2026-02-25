@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import '../services/data_service.dart';
 import '../models/mesa_comanda.dart';
 import '../models/conta_pagar.dart';
+import '../widgets/sync_status_widget.dart';
 
 /// Página de histórico completo de operações (rastreamento)
 class HistoricoOperacoesPage extends StatefulWidget {
@@ -75,6 +76,9 @@ class _HistoricoOperacoesPageState extends State<HistoricoOperacoesPage> {
           style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
         ),
         backgroundColor: const Color(0xFF1E1E2E),
+        actions: [
+          const SyncStatusWidget(),
+        ],
       ),
       body: Column(
         children: [

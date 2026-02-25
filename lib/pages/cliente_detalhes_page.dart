@@ -23,6 +23,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
 import '../services/image_storage_service.dart';
 import 'dart:typed_data';
+import '../widgets/sync_status_widget.dart';
 
 /// Widget simplificado para carregar imagem - SEM verificação prévia que pode bloquear
 /// PROTEÇÃO CONTRA CRASH: Todos os erros são capturados
@@ -470,6 +471,7 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                 tooltip: 'Excluir cliente',
                 onPressed: _confirmarExclusao,
               ),
+            const SyncStatusWidget(),
           ],
           bottom: PreferredSize(
             preferredSize: const Size.fromHeight(50),

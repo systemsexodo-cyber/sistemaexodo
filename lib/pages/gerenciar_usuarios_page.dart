@@ -5,6 +5,7 @@ import '../models/usuario.dart';
 import '../models/empresa.dart';
 import '../services/permission_service.dart';
 import '../theme.dart';
+import '../widgets/sync_status_widget.dart';
 import 'gerenciar_permissoes_page.dart';
 
 /// Página para gerenciar usuários de uma empresa
@@ -60,6 +61,7 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
               tooltip: 'Adicionar Usuário',
               onPressed: () => _mostrarDialogoCriarUsuario(context, authService),
             ),
+            const SyncStatusWidget(),
           ],
         ),
         body: usuariosDaEmpresa.isEmpty

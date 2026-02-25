@@ -29,6 +29,8 @@ import '../models/nfce.dart';
 import '../models/carrinho_item.dart';
 import '../widgets/exodo_logo.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import '../widgets/sync_status_widget.dart';
+
 
 /// Item no carrinho da venda direta
 class ItemCarrinho {
@@ -5507,6 +5509,7 @@ o padrão padrão (sem opções avançadas).
             elevation: 0,
             centerTitle: true,
             actions: [
+              const SyncStatusWidget(),
               if (kIsWeb)
                 IconButton(
                   onPressed: () => _toggleTelaCheia(),
@@ -5587,6 +5590,7 @@ o padrão padrão (sem opções avançadas).
             centerTitle: true,
             toolbarHeight: isSmallHeight ? 48 : 56,
             actions: [
+              const SyncStatusWidget(),
               // Botão Tela Cheia
               if (kIsWeb)
                 IconButton(

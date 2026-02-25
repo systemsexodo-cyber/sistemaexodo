@@ -5,6 +5,7 @@ import 'package:sistema_exodo_novo/models/funcionario.dart';
 import 'package:sistema_exodo_novo/services/data_service.dart';
 import 'package:sistema_exodo_novo/services/auth_service.dart';
 import 'package:sistema_exodo_novo/theme.dart';
+import 'package:sistema_exodo_novo/widgets/sync_status_widget.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -47,6 +48,7 @@ class _GerenciarLinksVendedoresPageState extends State<GerenciarLinksVendedoresP
               tooltip: 'Criar novo link',
               onPressed: () => _mostrarDialogoCriarLink(funcionarios),
             ),
+            const SyncStatusWidget(),
           ],
         ),
         body: Column(

@@ -38,6 +38,7 @@ import 'gerenciar_usuarios_page.dart';
 import 'trocas_devolucoes_page.dart';
 import 'configuracoes_agenda_page.dart';
 import '../services/data_service.dart';
+import '../widgets/sync_status_widget.dart';
 
 // Import condicional para Web
 import 'html_helper_stub.dart' if (dart.library.html) 'html_helper_web.dart' as html_helper;
@@ -181,6 +182,7 @@ class _HomePageState extends State<HomePage> {
           title: const ExodoLogoCompact(fontSize: 28),
           centerTitle: true,
           actions: [
+            const SyncStatusWidget(),
 
             IconButton(
               icon: Icon(

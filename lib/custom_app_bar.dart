@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'widgets/sync_status_widget.dart';
 
 class CustomAppBar extends StatelessWidget implements PreferredSizeWidget {
   final String title;
@@ -12,7 +13,10 @@ class CustomAppBar extends StatelessWidget implements PreferredSizeWidget {
       title: Text(title),
       elevation: 0,
       backgroundColor: Colors.transparent,
-      actions: actions ?? [],
+      actions: [
+        const SyncStatusWidget(),
+        if (actions != null) ...actions!,
+      ],
     );
   }
 

@@ -11,6 +11,7 @@ import '../services/codigo_service.dart';
 import '../services/grupos_manager.dart';
 import '../theme.dart';
 import 'package:intl/intl.dart';
+import '../widgets/sync_status_widget.dart';
 
 class EntradaMercadoriasPage extends StatefulWidget {
   const EntradaMercadoriasPage({super.key});
@@ -1531,6 +1532,7 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
           backgroundColor: Colors.transparent,
           elevation: 0,
           actions: [
+            const SyncStatusWidget(),
             IconButton(
               icon: const Icon(Icons.upload_file),
               tooltip: 'Carregar XML',
