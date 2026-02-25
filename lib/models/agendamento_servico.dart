@@ -39,6 +39,8 @@ class AgendamentoServico {
   final String? pontoReferencia;
   final bool excluido;
   final bool travado;
+  final String? funcionarioId;
+  final String? funcionarioNome;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -74,6 +76,8 @@ class AgendamentoServico {
     this.pontoReferencia,
     this.excluido = false,
     this.travado = false,
+    this.funcionarioId,
+    this.funcionarioNome,
     List<ItemMaterial>? materiais,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -159,6 +163,8 @@ class AgendamentoServico {
     String? pontoReferencia,
     bool? excluido,
     bool? travado,
+    String? funcionarioId,
+    String? funcionarioNome,
   }) {
     return AgendamentoServico(
       id: id ?? this.id,
@@ -195,6 +201,8 @@ class AgendamentoServico {
       pontoReferencia: pontoReferencia ?? this.pontoReferencia,
       excluido: excluido ?? this.excluido,
       travado: travado ?? this.travado,
+      funcionarioId: funcionarioId ?? this.funcionarioId,
+      funcionarioNome: funcionarioNome ?? this.funcionarioNome,
     );
   }
 
@@ -227,6 +235,8 @@ class AgendamentoServico {
       'pontoReferencia': pontoReferencia,
       'excluido': excluido,
       'travado': travado,
+      'funcionarioId': funcionarioId,
+      'funcionarioNome': funcionarioNome,
       'pet': pet?.toMap(),
       'servico': servico?.toMap(),
       'servicos': servicos.map((s) => s.toMap()).toList(),
@@ -280,6 +290,8 @@ class AgendamentoServico {
       pontoReferencia: map['pontoReferencia']?.toString(),
       excluido: (map['excluido'] as bool?) ?? false,
       travado: (map['travado'] as bool?) ?? false,
+      funcionarioId: map['funcionarioId']?.toString(),
+      funcionarioNome: map['funcionarioNome']?.toString(),
       pet: map['pet'] != null ? Pet.fromMap(Map<String, dynamic>.from(map['pet'])) : null,
       servico: map['servico'] != null ? Servico.fromMap(Map<String, dynamic>.from(map['servico'])) : null,
       servicos: map['servicos'] != null 
