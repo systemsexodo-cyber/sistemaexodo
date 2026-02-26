@@ -4186,7 +4186,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                   controller: phoneController,
                   style: const TextStyle(color: Colors.white, fontSize: 13),
                   decoration: InputDecoration(
-                    hintText: 'Buscar por Nome ou Telefone...',
+                    hintText: 'Buscar por Nome, Telefone ou Pet...',
                     hintStyle: TextStyle(color: Colors.white.withOpacity(0.3), fontSize: 13),
                     prefixIcon: const Icon(Icons.search, color: Colors.blueAccent, size: 18),
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
@@ -4261,7 +4261,30 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                   ],
                                 ),
                               ),
-                              Icon(Icons.close, color: Colors.white.withOpacity(0.5), size: 16),
+                              IconButton(
+                                  icon: const Icon(Icons.edit, color: Colors.blueAccent, size: 18),
+                                  tooltip: 'Editar Cadastro do Cliente',
+                                  onPressed: () async {
+                                    final resultado = await Navigator.push<Cliente>(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) => ClienteDetalhesPage(cliente: clienteSelecionado!),
+                                      ),
+                                    );
+                                    if (resultado != null) {
+                                      setState(() {
+                                        clienteSelecionado = resultado;
+                                        enderecoController.text = resultado.endereco ?? '';
+                                        numeroEnderecoController.text = resultado.numero ?? '';
+                                        complementoEnderecoController.text = resultado.complemento ?? '';
+                                        pontoReferenciaController.text = resultado.pontoReferencia ?? '';
+                                        bairroEntregaController.text = resultado.bairro ?? '';
+                                      });
+                                    }
+                                  },
+                                ),
+                                const SizedBox(width: 8),
+                                Icon(Icons.close, color: Colors.white.withOpacity(0.5), size: 16),
                             ],
                           ),
                         ),
@@ -4275,7 +4298,9 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                         : dataService.clientes.where((c) {
                             final nome = c.nome.toLowerCase();
                             if (nome.contains(termo)) return true;
-                            if (termoNumeros.isNotEmpty) {
+                          // Buscar pelo nome dos pets
+                          if (c.pets.any((p) => p.nome.toLowerCase().contains(termo))) return true;
+                          if (termoNumeros.isNotEmpty) {
                               final tel = c.telefone.replaceAll(RegExp(r'[^0-9]'), '');
                               final zap = (c.whatsapp ?? '').replaceAll(RegExp(r'[^0-9]'), '');
                               if (tel.contains(termoNumeros) || zap.contains(termoNumeros)) return true;
@@ -4643,19 +4668,40 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                     : null,
                                 value: isSelecionado,
                                 activeColor: Colors.blueAccent,
-                                contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-                                onChanged: (value) {
-                                  setState(() {
-                                    if (value == true) {
-                                      if (!petsSelecionadosIds.contains(pet.id)) {
-                                        petsSelecionadosIds.add(pet.id);
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                                  onChanged: (value) {
+                                    setState(() {
+                                      if (value == true) {
+                                        if (!petsSelecionadosIds.contains(pet.id)) {
+                                          petsSelecionadosIds.add(pet.id);
+                                        }
+                                      } else {
+                                        petsSelecionadosIds.remove(pet.id);
                                       }
-                                    } else {
-                                      petsSelecionadosIds.remove(pet.id);
-                                    }
-                                  });
-                                },
-                              );
+                                    });
+                                  },
+                                  secondary: IconButton(
+                                    icon: const Icon(Icons.edit, size: 18, color: Colors.orange),
+                                    tooltip: 'Editar Pet',
+                                    onPressed: () async {
+                                      final clienteAtualizado = await Navigator.push<Cliente>(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (context) => ClienteDetalhesPage(
+                                            cliente: clienteSelecionado!,
+                                            abaInicial: 3, // Aba Pet
+                                            petIdParaEditar: pet.id,
+                                          ),
+                                        ),
+                                      );
+                                      if (clienteAtualizado != null) {
+                                        setState(() {
+                                          clienteSelecionado = clienteAtualizado;
+                                        });
+                                      }
+                                    },
+                                  ),
+                                );
                             }).toList(),
                           ),
                         );
@@ -5351,6 +5397,29 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                         ),
                                       ),
                                       const Text('Trocar', style: TextStyle(color: Colors.blueAccent, fontSize: 11)),
+                                      const SizedBox(width: 8),
+                                      IconButton(
+                                        icon: const Icon(Icons.edit, color: Colors.blueAccent, size: 18),
+                                        tooltip: 'Editar Cadastro do Cliente',
+                                        onPressed: () async {
+                                          final resultado = await Navigator.push<Cliente>(
+                                            context,
+                                            MaterialPageRoute(
+                                              builder: (context) => ClienteDetalhesPage(cliente: clienteSelecionado!),
+                                            ),
+                                          );
+                                          if (resultado != null) {
+                                            setStateDialog(() {
+                                              clienteSelecionado = resultado;
+                                              enderecoController.text = resultado.endereco ?? '';
+                                              numeroEnderecoController.text = resultado.numero ?? '';
+                                              complementoEnderecoController.text = resultado.complemento ?? '';
+                                              pontoReferenciaController.text = resultado.pontoReferencia ?? '';
+                                              bairroEntregaController.text = resultado.bairro ?? '';
+                                            });
+                                          }
+                                        },
+                                      ),
                                       const SizedBox(width: 4),
                                       Icon(Icons.close, color: Colors.white.withOpacity(0.5), size: 16),
                                     ],
@@ -5362,7 +5431,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                             TextField(
                               style: const TextStyle(color: Colors.white, fontSize: 13),
                               decoration: InputDecoration(
-                                hintText: 'Buscar cliente por nome ou telefone...',
+                                hintText: 'Buscar cliente por nome, telefone ou pet...',
                                 hintStyle: TextStyle(color: Colors.white.withOpacity(0.3), fontSize: 13),
                                 prefixIcon: const Icon(Icons.search, color: Colors.blueAccent, size: 18),
                                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
@@ -5401,9 +5470,12 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                   if (query.isEmpty) return true;
                                   final tel = c.telefone.replaceAll(RegExp(r'[^0-9]'), '');
                                   final zap = (c.whatsapp ?? '').replaceAll(RegExp(r'[^0-9]'), '');
-                                  final nome = c.nome.toLowerCase();
-                                  if (queryNum.isNotEmpty && (tel.contains(queryNum) || zap.contains(queryNum))) return true;
-                                  return nome.contains(query);
+                                   final nome = c.nome.toLowerCase();
+                                   if (nome.contains(query)) return true;
+                                   // Buscar pelo nome dos pets
+                                   if (c.pets.any((p) => p.nome.toLowerCase().contains(query))) return true;
+                                   if (queryNum.isNotEmpty && (tel.contains(queryNum) || zap.contains(queryNum))) return true;
+                                   return false;
                                 }).take(30).toList();
 
                                 if (filtrados.isEmpty) {
@@ -5595,6 +5667,27 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                               }
                             });
                           },
+                          secondary: IconButton(
+                            icon: const Icon(Icons.edit, size: 18, color: Colors.orange),
+                            tooltip: 'Editar Pet',
+                            onPressed: () async {
+                              final clienteAtualizado = await Navigator.push<Cliente>(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => ClienteDetalhesPage(
+                                    cliente: clienteSelecionado!,
+                                    abaInicial: 3, // Aba Pet
+                                    petIdParaEditar: pet.id,
+                                  ),
+                                ),
+                              );
+                              if (clienteAtualizado != null) {
+                                setStateDialog(() {
+                                  clienteSelecionado = clienteAtualizado;
+                                });
+                              }
+                            },
+                          ),
                         );
                       }).toList(),
                     ),
