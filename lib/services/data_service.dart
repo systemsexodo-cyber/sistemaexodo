@@ -4422,7 +4422,8 @@ class DataService extends ChangeNotifier {
           dados['pedidos']?.isNotEmpty == true ||
           dados['agendamentos_servico']?.isNotEmpty == true ||
           dados['servicos']?.isNotEmpty == true ||
-          dados['ordens_servico']?.isNotEmpty == true;
+          dados['ordens_servico']?.isNotEmpty == true ||
+          dados['funcionarios']?.isNotEmpty == true;
       
       if (!temDados) {
         print('>>> ⚠ Firebase está vazio. Continuando com dados locais se existirem...');
@@ -4597,6 +4598,16 @@ class DataService extends ChangeNotifier {
           }
         }
         print('>>> ✓ ${novasMesas.length} mesas/comandas carregadas do Firebase (total: ${_mesasComandas.length})');
+      }
+
+      // Carregar funcionários - ISOLAMENTO: Apenas dados da empresa atual do Firebase
+      if (dados['funcionarios'] != null) {
+        final novosRaw = dados['funcionarios'] as List;
+        if (novosRaw.isNotEmpty || !isSilentSync) {
+          final novos = novosRaw.map((map) => Funcionario.fromMap(map as Map<String, dynamic>)).toList();
+          _atualizarListaInPlace(_funcionarios, novos);
+          print('>>> ✓ ${novos.length} funcionários carregados do Firebase para empresa $_empresaIdAtual (isolados)');
+        }
       }
 
       // Carregar agendamentos de serviço - Otimizado: Pular se em sync silencioso e stream ativo
