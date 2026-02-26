@@ -25,7 +25,7 @@ class _ComissoesPageState extends State<ComissoesPage> {
   }
 
   List<Pedido> _filtrarPedidos(List<Pedido> pedidos) {
-    var resultado = pedidos.where((p) => p.servicos.isNotEmpty).toList();
+    var resultado = pedidos.where((p) => p.servicos.isNotEmpty && p.status == 'Concluído').toList();
     
     // Filtro por funcionário
     if (_funcionarioFiltro != null) {
@@ -373,13 +373,26 @@ class _ComissoesPageState extends State<ComissoesPage> {
                                                 ],
                                               ),
                                             ),
-                                            Text(
-                                              formatoMoeda.format(servico.valorComissao),
-                                              style: const TextStyle(
-                                                color: Colors.orange,
-                                                fontWeight: FontWeight.bold,
+                                             Column(
+                                                crossAxisAlignment: CrossAxisAlignment.end,
+                                                children: [
+                                                  Text(
+                                                    formatoMoeda.format(servico.valorComissao),
+                                                    style: const TextStyle(
+                                                      color: Colors.orange,
+                                                      fontWeight: FontWeight.bold,
+                                                    ),
+                                                  ),
+                                                  if (servico.tipoComissao == 'Porcentagem' && servico.porcentagemComissao > 0)
+                                                    Text(
+                                                      '(${servico.porcentagemComissao.toStringAsFixed(1).replaceAll('.', ',')}%)',
+                                                      style: TextStyle(
+                                                        color: Colors.white.withOpacity(0.5),
+                                                        fontSize: 10,
+                                                      ),
+                                                    ),
+                                                ],
                                               ),
-                                            ),
                                           ],
                                         ),
                                       );

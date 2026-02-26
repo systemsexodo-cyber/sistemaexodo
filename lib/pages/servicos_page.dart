@@ -561,6 +561,8 @@ class _EditarServicoDialogState extends State<_EditarServicoDialog> {
   late TextEditingController _descricaoAdicionalController;
   late TextEditingController _duracaoController;
   late TextEditingController _intervaloController;
+  late TextEditingController _comissaoController;
+  late String _tipoComissao;
 
   @override
   void initState() {
@@ -586,6 +588,12 @@ class _EditarServicoDialogState extends State<_EditarServicoDialog> {
     _intervaloController = TextEditingController(
       text: widget.servico.intervaloMinutos?.toString() ?? '0',
     );
+    _comissaoController = TextEditingController(
+      text: widget.servico.tipoComissao == 'Porcentagem' 
+          ? widget.servico.porcentagemComissao.toString().replaceAll('.', ',') 
+          : widget.servico.valorComissao.toString().replaceAll('.', ','),
+    );
+    _tipoComissao = widget.servico.tipoComissao;
   }
 
   @override
@@ -597,6 +605,7 @@ class _EditarServicoDialogState extends State<_EditarServicoDialog> {
     _descricaoAdicionalController.dispose();
     _duracaoController.dispose();
     _intervaloController.dispose();
+    _comissaoController.dispose();
     super.dispose();
   }
 
@@ -647,6 +656,9 @@ class _EditarServicoDialogState extends State<_EditarServicoDialog> {
       descricaoAdicional: _descricaoAdicionalController.text.isEmpty ? null : _descricaoAdicionalController.text,
       duracaoPadraoMinutos: duracao,
       intervaloMinutos: intervalo,
+      tipoComissao: _tipoComissao,
+      porcentagemComissao: _tipoComissao == 'Porcentagem' ? (double.tryParse(_comissaoController.text.replaceAll(',', '.')) ?? 0.0) : 0.0,
+      valorComissao: _tipoComissao == 'Fixo' ? (double.tryParse(_comissaoController.text.replaceAll(',', '.')) ?? 0.0) : 0.0,
       createdAt: widget.servico.createdAt,
       updatedAt: DateTime.now(),
     );
@@ -878,6 +890,53 @@ class _EditarServicoDialogState extends State<_EditarServicoDialog> {
                   ),
                 ],
               ),
+              const SizedBox(height: 12),
+              // Comissão
+              DropdownButtonFormField<String>(
+                value: _tipoComissao,
+                dropdownColor: theme.dialogBackgroundColor,
+                style: TextStyle(color: colorScheme.onSurface),
+                decoration: InputDecoration(
+                  labelText: 'Tipo de Comissão',
+                  labelStyle: TextStyle(color: colorScheme.onSurfaceVariant),
+                  filled: true,
+                  fillColor: theme.inputDecorationTheme.fillColor,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                items: ['Porcentagem', 'Fixo'].map((String value) {
+                  return DropdownMenuItem<String>(
+                    value: value,
+                    child: Text(value),
+                  );
+                }).toList(),
+                onChanged: (value) {
+                  setState(() {
+                    _tipoComissao = value ?? 'Porcentagem';
+                  });
+                },
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _comissaoController,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                style: TextStyle(color: colorScheme.onSurface),
+                decoration: InputDecoration(
+                  labelText: _tipoComissao == 'Porcentagem' ? 'Comissão (%)' : 'Comissão (R\$)',
+                  labelStyle: TextStyle(color: colorScheme.onSurfaceVariant),
+                  prefixText: _tipoComissao == 'Porcentagem' ? '' : 'R\$ ',
+                  suffixText: _tipoComissao == 'Porcentagem' ? '%' : '',
+                  filled: true,
+                  fillColor: theme.inputDecorationTheme.fillColor,
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: colorScheme.outline),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: colorScheme.primary),
+                  ),
+                ),
+              ),
               const SizedBox(height: 24),
               Row(
                 children: [
@@ -929,6 +988,8 @@ class _CriarServicoDialogState extends State<_CriarServicoDialog> {
   final _descricaoAdicionalController = TextEditingController();
   final _duracaoController = TextEditingController(text: '60');
   final _intervaloController = TextEditingController(text: '0');
+  final _comissaoController = TextEditingController(text: '0');
+  String _tipoComissao = 'Porcentagem';
 
   @override
   void dispose() {
@@ -939,6 +1000,7 @@ class _CriarServicoDialogState extends State<_CriarServicoDialog> {
     _descricaoAdicionalController.dispose();
     _duracaoController.dispose();
     _intervaloController.dispose();
+    _comissaoController.dispose();
     super.dispose();
   }
 
@@ -972,6 +1034,9 @@ class _CriarServicoDialogState extends State<_CriarServicoDialog> {
       descricaoAdicional: _descricaoAdicionalController.text.isEmpty ? null : _descricaoAdicionalController.text,
       duracaoPadraoMinutos: duracao,
       intervaloMinutos: intervalo,
+      tipoComissao: _tipoComissao,
+      porcentagemComissao: _tipoComissao == 'Porcentagem' ? (double.tryParse(_comissaoController.text.replaceAll(',', '.')) ?? 0.0) : 0.0,
+      valorComissao: _tipoComissao == 'Fixo' ? (double.tryParse(_comissaoController.text.replaceAll(',', '.')) ?? 0.0) : 0.0,
       createdAt: DateTime.now(),
       updatedAt: DateTime.now(),
     );
@@ -1091,6 +1156,52 @@ class _CriarServicoDialogState extends State<_CriarServicoDialog> {
                             controller: _intervaloController,
                             label: 'Intervalo (min)',
                             keyboardType: TextInputType.number,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    
+                    // Linha: Tipo e Valor de Comissão
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF121212),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: Colors.white.withOpacity(0.05)),
+                            ),
+                            child: DropdownButtonFormField<String>(
+                              value: _tipoComissao,
+                              dropdownColor: const Color(0xFF1A1A1A),
+                              style: const TextStyle(color: Colors.white, fontSize: 14),
+                              decoration: const InputDecoration(
+                                labelText: 'Tipo de Comissão',
+                                labelStyle: TextStyle(color: Colors.white54, fontSize: 13),
+                                contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                                border: InputBorder.none,
+                              ),
+                              items: ['Porcentagem', 'Fixo'].map((String value) {
+                                return DropdownMenuItem<String>(
+                                  value: value,
+                                  child: Text(value),
+                                );
+                              }).toList(),
+                              onChanged: (value) {
+                                setState(() {
+                                  _tipoComissao = value ?? 'Porcentagem';
+                                });
+                              },
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: _buildField(
+                            controller: _comissaoController,
+                            label: _tipoComissao == 'Porcentagem' ? 'Comissão (%)' : 'Comissão (R\$)',
+                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
                           ),
                         ),
                       ],

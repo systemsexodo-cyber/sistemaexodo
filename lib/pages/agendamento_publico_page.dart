@@ -91,6 +91,8 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
   String _petEspecie = 'Cachorro';
   bool _modoMultiPets = false;
   List<Pet> _petsMultiSelecionados = [];
+  String? _funcionarioSelecionadoId;
+  String? _funcionarioSelecionadoNome;
 
 
   bool _enviando = false;
@@ -600,12 +602,14 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
   bool get _mostrarPassoEntrega => _clienteEncontrado?.habilitaTaxiDog ?? false;
 
   Widget _buildStepper(Color primaryColor, bool moduloPet) {
+    final agendamentoConfig = Provider.of<DataService>(context, listen: false).empresaAtual?.configuracoes?['agendamento'] as Map<String, dynamic>? ?? {};
     final bool mostrarEntrega = moduloPet && _mostrarPassoEntrega;
     final List<String> stepLabels = [
       'Serviço', 
       'Seus Dados', 
       if (moduloPet) 'O Pet', 
       if (mostrarEntrega) 'Entrega',
+      if (agendamentoConfig['permitirEscolhaProfissional'] == true) 'Profissional',
       'Horário'
     ];
     final List<IconData> stepIcons = [
@@ -613,6 +617,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       Icons.person_rounded,
       if (moduloPet) Icons.pets_rounded,
       if (mostrarEntrega) Icons.local_shipping_rounded,
+      if (agendamentoConfig['permitirEscolhaProfissional'] == true) Icons.person_search,
       Icons.access_time_filled_rounded
     ];
 
@@ -700,17 +705,21 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
   Widget _buildCurrentStepView(bool moduloPet, bool esconderValores) {
     // Mapear o índice atual para o passo real
     // Passos reais: 0=Serviço, 1=Dados, 2=Pet, 3=Entrega, 4=Horário
-    int passoReal = _currentStep;
-    if (!moduloPet) {
-       if (_currentStep >= 2) {
-          passoReal = _currentStep + 2; // Pula Pet e Entrega
-       }
-    } else if (!_mostrarPassoEntrega) {
-       // moduloPet mas sem TaxiDog: pula Entrega (step 3 -> passoReal 4)
-       if (_currentStep >= 3) {
-          passoReal = _currentStep + 1; // Pula Entrega
-       }
-    }
+    // Passos reais: 0=Serviço, 1=Dados, 2=Pet, 3=Entrega, 4=Horário, 5=Profissional
+    
+    // Passo 5: Profissional (Opcional)
+    final agendamentoConfig = Provider.of<DataService>(context, listen: false).empresaAtual?.configuracoes?['agendamento'] as Map<String, dynamic>? ?? {};
+    final bool permiteProfissional = agendamentoConfig['permitirEscolhaProfissional'] == true;
+    
+    // Se está no último passo visual mas ainda não é o passoReal 4, 
+    // precisamos ajustar para saber se cai ou não no profissional
+    final List<int> passosReaisHabilitados = [0, 1];
+    if (moduloPet) passosReaisHabilitados.add(2);
+    if (moduloPet && _mostrarPassoEntrega) passosReaisHabilitados.add(3);
+    if (permiteProfissional) passosReaisHabilitados.add(5);
+    passosReaisHabilitados.add(4); // Horário sempre por último
+
+    int passoReal = passosReaisHabilitados[_currentStep];
 
     switch (passoReal) {
       case 0:
@@ -729,7 +738,8 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
         final empresa = (slugP.isNotEmpty && eFromData?.slug == slugP) ? eFromData : (eFromAuth ?? eFromData);
 
         final config = empresa?.configuracoes ?? {};
-        final agendamentoConfig = config['agendamento'] as Map<String, dynamic>? ?? {};
+        // agendamentoConfig já está definido acima, mas aqui é usado para a lógica de bairros
+        // final agendamentoConfig = config['agendamento'] as Map<String, dynamic>? ?? {};
         
         // --- CONSOLIDAÇÃO DE CONFIGURAÇÕES (Exclusivo da Agenda) ---
         final Map<String, Map<String, dynamic>> bairrosUnicos = {};
@@ -779,6 +789,8 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
 
         // 3. Fallback: Lista Padrão se nada estiver configurado
         return _buildStepEntrega([]);
+      case 5:
+        return _buildStepProfissional();
       case 4:
         return _buildStepHorario();
       default:
@@ -2099,6 +2111,116 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     );
   }
 
+  Widget _buildStepProfissional() {
+    final dataService = Provider.of<DataService>(context);
+    final funcionarios = dataService.funcionarios.where((f) => f.ativo).toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildStepTitle('Escolha o Profissional', 'Quem você gostaria que atendesse seu pet?'),
+        const SizedBox(height: 32),
+        
+        // Opção "Qualquer Profissional"
+        _buildProfissionalCard(
+          id: null,
+          nome: 'Qualquer Profissional',
+          detalhes: 'O profissional disponível no horário escolhido.',
+          isSelected: _funcionarioSelecionadoId == null,
+          onTap: () {
+            setState(() {
+              _funcionarioSelecionadoId = null;
+              _funcionarioSelecionadoNome = null;
+            });
+          },
+        ),
+        const SizedBox(height: 12),
+        
+        ...funcionarios.map((f) => Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: _buildProfissionalCard(
+            id: f.id,
+            nome: f.nome,
+            detalhes: 'Profissional especialista', // Pode adicionar especialidade no futuro
+            isSelected: _funcionarioSelecionadoId == f.id,
+            onTap: () {
+              setState(() {
+                _funcionarioSelecionadoId = f.id;
+                _funcionarioSelecionadoNome = f.nome;
+              });
+            },
+          ),
+        )),
+      ],
+    );
+  }
+
+  Widget _buildProfissionalCard({
+    required String? id,
+    required String nome,
+    required String detalhes,
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: isSelected ? _primaryColor.withOpacity(0.1) : (_isDark ? Colors.white.withAlpha(12) : Colors.grey[100]),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: isSelected ? _primaryColor : (_isDark ? Colors.white.withAlpha(25) : Colors.grey[300]!),
+            width: isSelected ? 2 : 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: isSelected ? _primaryColor : (_isDark ? Colors.white.withAlpha(25) : Colors.grey[300]),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                id == null ? Icons.people_rounded : Icons.person_rounded,
+                color: isSelected ? Colors.white : (_isDark ? Colors.white38 : Colors.grey[600]),
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    nome,
+                    style: TextStyle(
+                      color: isSelected ? Colors.white : (_isDark ? Colors.white70 : Colors.black87),
+                      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                      fontSize: 16,
+                    ),
+                  ),
+                  Text(
+                    detalhes,
+                    style: TextStyle(
+                      color: isSelected ? _primaryColor : Colors.grey[500],
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (isSelected)
+              Icon(Icons.check_circle_rounded, color: _primaryColor),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildStepHorario() {
     final dataService = Provider.of<DataService>(context);
     final agendamentoConfig = dataService.empresaAtual?.configuracoes?['agendamento'] as Map<String, dynamic>?;
@@ -2584,7 +2706,15 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
   }
 
   Widget _buildNavigationButtons(Color primaryColor, bool moduloPet) {
-    final int maxIndex = moduloPet ? (_mostrarPassoEntrega ? 4 : 3) : 2;
+    final agendamentoConfig = Provider.of<DataService>(context, listen: false).empresaAtual?.configuracoes?['agendamento'] as Map<String, dynamic>? ?? {};
+    final bool permiteProfissional = agendamentoConfig['permitirEscolhaProfissional'] == true;
+    final List<int> passosReaisHabilitados = [0, 1];
+    if (moduloPet) passosReaisHabilitados.add(2);
+    if (moduloPet && _mostrarPassoEntrega) passosReaisHabilitados.add(3);
+    if (permiteProfissional) passosReaisHabilitados.add(5);
+    passosReaisHabilitados.add(4); // Horário sempre por último
+
+    final int maxIndex = passosReaisHabilitados.length - 1;
     final bool noUltimoPasso = _currentStep == maxIndex;
 
     return Column(
@@ -2685,7 +2815,15 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       return;
     }
 
-    final int maxIndex = moduloPet ? (_mostrarPassoEntrega ? 4 : 3) : 2;
+    final agendamentoConfig = Provider.of<DataService>(context, listen: false).empresaAtual?.configuracoes?['agendamento'] as Map<String, dynamic>? ?? {};
+    final bool permiteProfissional = agendamentoConfig['permitirEscolhaProfissional'] == true;
+    final List<int> passosReaisHabilitados = [0, 1];
+    if (moduloPet) passosReaisHabilitados.add(2);
+    if (moduloPet && _mostrarPassoEntrega) passosReaisHabilitados.add(3);
+    if (permiteProfissional) passosReaisHabilitados.add(5);
+    passosReaisHabilitados.add(4); // Horário sempre por último
+
+    final int maxIndex = passosReaisHabilitados.length - 1;
 
     if (_formKey.currentState!.validate()) {
       if (_currentStep < maxIndex) {
@@ -2893,11 +3031,13 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
           complemento: _enderecoComplementoController.text.isNotEmpty ? _enderecoComplementoController.text : null,
           pontoReferencia: _pontoReferenciaController.text.isNotEmpty ? _pontoReferenciaController.text : null,
           observacoes: 'SOLICITAÇÃO ONLINE DETALHADA',
+          funcionarioId: _funcionarioSelecionadoId,
+          funcionarioNome: _funcionarioSelecionadoNome,
         ));
       }
 
       // 2. Unir com agendamentos já salvos no carrinho local
-      final todos = [..._agendamentosCarrinho, ...agendamentosAtuais];
+      final List<AgendamentoServico> todos = [..._agendamentosCarrinho, ...agendamentosAtuais];
       bool algumOcupado = false;
 
       // Garantir empresa ativa
@@ -2954,14 +3094,14 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
               updatedAt: DateTime.now(),
               createdAt: DateTime.now(),
             );
-            final novosPets = [...clienteReal.pets, novoPet];
+            final List<Pet> novosPets = [...clienteReal.pets, novoPet];
             clienteReal = clienteReal.copyWith(pets: novosPets, updatedAt: DateTime.now());
             await dataService.updateCliente(clienteReal);
             petNoCliente = novoPet;
           }
 
           agdFinal = agdFinal.copyWith(
-            petId: petNoCliente.id,
+            petId: petNoCliente!.id,
             pet: petNoCliente,
           );
 
@@ -2980,7 +3120,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
             );
             
             // Atualizar na lista do cliente
-            final novosPets = clienteReal!.pets.map((p) => p.id == petAtualizado.id ? petAtualizado : p).toList();
+            final List<Pet> novosPets = clienteReal!.pets.map((p) => p.id == petAtualizado.id ? petAtualizado : p).toList();
             clienteReal = clienteReal!.copyWith(pets: novosPets, updatedAt: DateTime.now());
             await dataService.updateCliente(clienteReal!);
             
@@ -3169,6 +3309,8 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
           complemento: _enderecoComplementoController.text.isNotEmpty ? _enderecoComplementoController.text : null,
           pontoReferencia: _pontoReferenciaController.text.isNotEmpty ? _pontoReferenciaController.text : null,
           observacoes: 'SOLICITAÇÃO ONLINE ADICIONAL (MULTI)',
+          funcionarioId: _funcionarioSelecionadoId,
+          funcionarioNome: _funcionarioSelecionadoNome,
         ));
         counter++;
       }
@@ -3211,6 +3353,8 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
         complemento: _enderecoComplementoController.text.isNotEmpty ? _enderecoComplementoController.text : null,
         pontoReferencia: _pontoReferenciaController.text.isNotEmpty ? _pontoReferenciaController.text : null,
         observacoes: 'SOLICITAÇÃO ONLINE ADICIONAL',
+        funcionarioId: _funcionarioSelecionadoId,
+        funcionarioNome: _funcionarioSelecionadoNome,
       ));
     }
 
@@ -3245,6 +3389,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
         mensagem += "--------------------------\n";
         mensagem += "*Serviço:* ${agd.servico?.nome}\n";
         if (agd.petNome != null) mensagem += "*Pet:* ${agd.petNome}\n";
+        if (agd.funcionarioNome != null) mensagem += "*Profissional:* ${agd.funcionarioNome}\n";
         mensagem += "*Data:* ${DateFormat('dd/MM/yyyy HH:mm').format(agd.dataAgendamento)}\n";
         if (agd.tipoEntrega != null) mensagem += "*Entrega:* ${agd.tipoEntrega}\n";
         if (agd.valorTaxiDog != null && agd.valorTaxiDog! > 0) mensagem += "*Taxa Taxi Dog:* R\$ ${agd.valorTaxiDog!.toStringAsFixed(2)}\n";

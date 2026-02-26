@@ -14,6 +14,9 @@ class Servico {
   final List<ItemMaterial> materiais; // Lista de materiais padrão do serviço
   final int? duracaoPadraoMinutos; // Duração estimada em minutos
   final int? intervaloMinutos; // Intervalo/Pausa após o serviço
+  final String tipoComissao; // 'Porcentagem' ou 'Fixo'
+  final double porcentagemComissao;
+  final double valorComissao;
 
   Servico({
     required this.id,
@@ -27,6 +30,9 @@ class Servico {
     List<ItemMaterial>? materiais,
     this.duracaoPadraoMinutos,
     this.intervaloMinutos,
+    this.tipoComissao = 'Porcentagem',
+    this.porcentagemComissao = 0.0,
+    this.valorComissao = 0.0,
   }) : materiais = materiais ?? [];
 
   // Getter para o preço total (base + adicional)
@@ -51,6 +57,9 @@ class Servico {
       'materiais': materiais.map((m) => m.toMap()).toList(),
       'duracaoPadraoMinutos': duracaoPadraoMinutos,
       'intervaloMinutos': intervaloMinutos,
+      'tipoComissao': tipoComissao,
+      'porcentagemComissao': porcentagemComissao,
+      'valorComissao': valorComissao,
     };
   }
 
@@ -71,6 +80,9 @@ class Servico {
           : [],
       duracaoPadraoMinutos: map['duracaoPadraoMinutos'] as int?,
       intervaloMinutos: map['intervaloMinutos'] as int?,
+      tipoComissao: map['tipoComissao']?.toString() ?? 'Porcentagem',
+      porcentagemComissao: (map['porcentagemComissao'] as num?)?.toDouble() ?? 0.0,
+      valorComissao: (map['valorComissao'] as num?)?.toDouble() ?? 0.0,
     );
   }
 
@@ -87,6 +99,9 @@ class Servico {
     List<ItemMaterial>? materiais,
     int? duracaoPadraoMinutos,
     int? intervaloMinutos,
+    String? tipoComissao,
+    double? porcentagemComissao,
+    double? valorComissao,
   }) {
     return Servico(
       id: id ?? this.id,
@@ -100,6 +115,9 @@ class Servico {
       materiais: materiais ?? this.materiais,
       duracaoPadraoMinutos: duracaoPadraoMinutos ?? this.duracaoPadraoMinutos,
       intervaloMinutos: intervaloMinutos ?? this.intervaloMinutos,
+      tipoComissao: tipoComissao ?? this.tipoComissao,
+      porcentagemComissao: porcentagemComissao ?? this.porcentagemComissao,
+      valorComissao: valorComissao ?? this.valorComissao,
     );
   }
 }

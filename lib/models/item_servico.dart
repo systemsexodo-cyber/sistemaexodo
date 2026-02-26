@@ -9,7 +9,9 @@ class ItemServico {
   final DateTime? dataAgendamento;
   final int? duracaoMinutos;
   final String? funcionarioId; // ID do funcionário que irá fazer o serviço
-  final double valorComissao; // Valor da comissão para o funcionário
+  final String tipoComissao; // 'Porcentagem' ou 'Fixo'
+  final double porcentagemComissao; // Porcentagem se for o caso
+  final double valorComissao; // Valor final da comissão para o funcionário
   final List<ItemMaterial> materiais; // Lista de materiais que serão consumidos
   // Controle de entrega do animal
   final String? tipoEntrega; // 'Taxi Dog' ou 'Cliente busca' ou null
@@ -29,6 +31,8 @@ class ItemServico {
     this.dataAgendamento,
     this.duracaoMinutos,
     this.funcionarioId,
+    this.tipoComissao = 'Fixo',
+    this.porcentagemComissao = 0.0,
     this.valorComissao = 0.0,
     List<ItemMaterial>? materiais,
     this.tipoEntrega,
@@ -55,6 +59,8 @@ class ItemServico {
           : null,
       duracaoMinutos: map['duracaoMinutos'] as int?,
       funcionarioId: map['funcionarioId'] as String?,
+      tipoComissao: map['tipoComissao']?.toString() ?? 'Fixo',
+      porcentagemComissao: (map['porcentagemComissao'] ?? 0.0).toDouble(),
       valorComissao: (map['valorComissao'] ?? 0.0).toDouble(),
       materiais: map['materiais'] != null
           ? (map['materiais'] as List).map((m) => ItemMaterial.fromMap(m as Map<String, dynamic>)).toList()
@@ -79,6 +85,8 @@ class ItemServico {
       'dataAgendamento': dataAgendamento?.toIso8601String(),
       'duracaoMinutos': duracaoMinutos,
       'funcionarioId': funcionarioId,
+      'tipoComissao': tipoComissao,
+      'porcentagemComissao': porcentagemComissao,
       'valorComissao': valorComissao,
       'materiais': materiais.map((m) => m.toMap()).toList(),
       'tipoEntrega': tipoEntrega,
@@ -100,6 +108,8 @@ class ItemServico {
     DateTime? dataAgendamento,
     int? duracaoMinutos,
     String? funcionarioId,
+    String? tipoComissao,
+    double? porcentagemComissao,
     double? valorComissao,
     List<ItemMaterial>? materiais,
     String? tipoEntrega,
@@ -119,6 +129,8 @@ class ItemServico {
       dataAgendamento: dataAgendamento ?? this.dataAgendamento,
       duracaoMinutos: duracaoMinutos ?? this.duracaoMinutos,
       funcionarioId: funcionarioId ?? this.funcionarioId,
+      tipoComissao: tipoComissao ?? this.tipoComissao,
+      porcentagemComissao: porcentagemComissao ?? this.porcentagemComissao,
       valorComissao: valorComissao ?? this.valorComissao,
       materiais: materiais ?? this.materiais,
       tipoEntrega: tipoEntrega ?? this.tipoEntrega,

@@ -21,6 +21,7 @@ class _ConfiguracoesAgendaPageState extends State<ConfiguracoesAgendaPage> {
   final _taxaSolevaController = TextEditingController();
   bool _esconderValores = false;
   bool _modoSolicitacao = false;
+  bool _permitirEscolhaProfissional = false;
   List<Map<String, dynamic>> _bairrosConfig = [];
   List<Map<String, dynamic>> _horariosIndisponiveis = [];
   bool _isLoading = false;
@@ -59,6 +60,7 @@ class _ConfiguracoesAgendaPageState extends State<ConfiguracoesAgendaPage> {
       _whatsappContatoController.text = agendamentoConfig['whatsappContato']?.toString() ?? '';
       _esconderValores = agendamentoConfig['esconderValores'] as bool? ?? false;
       _modoSolicitacao = agendamentoConfig['modoSolicitacao'] as bool? ?? false;
+      _permitirEscolhaProfissional = agendamentoConfig['permitirEscolhaProfissional'] as bool? ?? false;
       
       final bairrosData = (config['bairrosTaxiDogV2'] ?? agendamentoConfig['bairrosTaxiDogV2']) as List<dynamic>?;
       
@@ -112,7 +114,8 @@ class _ConfiguracoesAgendaPageState extends State<ConfiguracoesAgendaPage> {
       agendamentoConfig['horariosIndisponiveis'] = _horariosIndisponiveis;
       agendamentoConfig['whatsappContato'] = _whatsappContatoController.text.trim();
       agendamentoConfig['esconderValores'] = _esconderValores;
-      agendamentoConfig['modoSolicitacao'] = _modoSolicitacao;
+       agendamentoConfig['modoSolicitacao'] = _modoSolicitacao;
+      agendamentoConfig['permitirEscolhaProfissional'] = _permitirEscolhaProfissional;
       agendamentoConfig['horarioAbertura'] = '${_horarioAbertura.hour.toString().padLeft(2, '0')}:${_horarioAbertura.minute.toString().padLeft(2, '0')}';
       agendamentoConfig['horarioFechamento'] = '${_horarioFechamento.hour.toString().padLeft(2, '0')}:${_horarioFechamento.minute.toString().padLeft(2, '0')}';
       agendamentoConfig['intervaloSlots'] = _intervaloSlots;
@@ -942,6 +945,42 @@ class _ConfiguracoesAgendaPageState extends State<ConfiguracoesAgendaPage> {
                   color: _modoSolicitacao ? Colors.amber[200] : Colors.white60,
                   fontSize: 12,
                 ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        // Permitir Escolha de Profissional
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.05),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.person_search, color: Colors.blueAccent, size: 24),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Text(
+                      'Permitir Escolha de Profissional no Agendamento Online',
+                      style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  Switch(
+                    value: _permitirEscolhaProfissional,
+                    onChanged: (v) => setState(() => _permitirEscolhaProfissional = v),
+                    activeColor: Colors.blueAccent,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Se ativado, os clientes poderão selecionar o profissional de sua preferência durante o agendamento online.',
+                style: TextStyle(color: Colors.white60, fontSize: 12),
               ),
             ],
           ),

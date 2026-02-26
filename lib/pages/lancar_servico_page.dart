@@ -333,6 +333,10 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
       dataAgendamento: dataHoraAgendamento,
       duracaoMinutos: dataHoraAgendamento != null ? duracao : null,
       funcionarioId: _funcionarioSelecionado?.id,
+      tipoComissao: _comissaoEmPorcentagem ? 'Porcentagem' : 'Fixo',
+      porcentagemComissao: _comissaoEmPorcentagem 
+          ? (double.tryParse(_valorComissaoController.text.replaceAll(',', '.')) ?? 0.0)
+          : 0.0,
       valorComissao: _calcularComissao(),
       materiais: List.from(_materiaisSelecionados), // Copiar lista de materiais
       tipoEntrega: _tipoEntrega,
@@ -2072,6 +2076,25 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
                 // Carregar materiais do serviço cadastrado
                 _materiaisSelecionados = List.from(servico.materiais);
                 
+                // Prioridade para comissão:
+                // 1. Se o serviço tem comissão definida (> 0), usa ela
+                // 2. Se não, se o funcionário tem comissão definida, usa a dele
+                if (servico.tipoComissao == 'Fixo' && servico.valorComissao > 0) {
+                  _comissaoEmPorcentagem = false;
+                  _valorComissaoController.text = servico.valorComissao.toStringAsFixed(2).replaceAll('.', ',');
+                } else if (servico.tipoComissao == 'Porcentagem' && servico.porcentagemComissao > 0) {
+                  _comissaoEmPorcentagem = true;
+                  _valorComissaoController.text = servico.porcentagemComissao.toStringAsFixed(2).replaceAll('.', ',');
+                } else if (_funcionarioSelecionado != null) {
+                  if (_funcionarioSelecionado!.tipoComissao == 'Fixo' && _funcionarioSelecionado!.valorComissao > 0) {
+                    _comissaoEmPorcentagem = false;
+                    _valorComissaoController.text = _funcionarioSelecionado!.valorComissao.toStringAsFixed(2).replaceAll('.', ',');
+                  } else if (_funcionarioSelecionado!.tipoComissao == 'Porcentagem' && _funcionarioSelecionado!.porcentagemComissao > 0) {
+                    _comissaoEmPorcentagem = true;
+                    _valorComissaoController.text = _funcionarioSelecionado!.porcentagemComissao.toStringAsFixed(2).replaceAll('.', ',');
+                  }
+                }
+                
                 debugPrint('>>> Serviço selecionado: ${servico.nome}');
                 debugPrint('>>> Materiais carregados: ${servico.materiais.length}');
                 for (var material in servico.materiais) {
@@ -2300,6 +2323,21 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
                         onChanged: (funcionario) {
                           setState(() {
                             _funcionarioSelecionado = funcionario;
+                            
+                            // Se selecionou um funcionário e a comissão ainda está zerada ou vazia,
+                            // tenta carregar a comissão padrão do funcionário
+                            if (funcionario != null) {
+                              final comissaoAtual = double.tryParse(_valorComissaoController.text.replaceAll(',', '.')) ?? 0.0;
+                              if (comissaoAtual == 0) {
+                                if (funcionario.tipoComissao == 'Fixo' && funcionario.valorComissao > 0) {
+                                  _comissaoEmPorcentagem = false;
+                                  _valorComissaoController.text = funcionario.valorComissao.toStringAsFixed(2).replaceAll('.', ',');
+                                } else if (funcionario.tipoComissao == 'Porcentagem' && funcionario.porcentagemComissao > 0) {
+                                  _comissaoEmPorcentagem = true;
+                                  _valorComissaoController.text = funcionario.porcentagemComissao.toStringAsFixed(2).replaceAll('.', ',');
+                                }
+                              }
+                            }
                           });
                         },
                       ),
@@ -3904,10 +3942,11 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
       }
     }
     
+    bool comissaoEmPorcentagem = itemServico.tipoComissao == 'Porcentagem';
     final valorComissaoController = TextEditingController(
-      text: itemServico.valorComissao > 0
-        ? itemServico.valorComissao.toStringAsFixed(2).replaceAll('.', ',')
-        : '',
+      text: (comissaoEmPorcentagem 
+          ? itemServico.porcentagemComissao 
+          : itemServico.valorComissao).toStringAsFixed(2).replaceAll('.', ','),
     );
 
     showDialog(
@@ -4061,12 +4100,43 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
                   },
                 ),
                 const SizedBox(height: 16),
+                const SizedBox(height: 16),
+                // Tipo de comissão
+                Row(
+                  children: [
+                    Expanded(
+                      child: ChoiceChip(
+                        label: const Text('Valor Fixo (R\$)'),
+                        selected: !comissaoEmPorcentagem,
+                        onSelected: (selected) {
+                          setState(() {
+                            comissaoEmPorcentagem = false;
+                          });
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: ChoiceChip(
+                        label: const Text('Porcentagem (%)'),
+                        selected: comissaoEmPorcentagem,
+                        onSelected: (selected) {
+                          setState(() {
+                            comissaoEmPorcentagem = true;
+                          });
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
                 TextField(
                   controller: valorComissaoController,
-                  decoration: const InputDecoration(
-                    labelText: 'Comissão (opcional)',
-                    prefixText: 'R\$ ',
-                    border: OutlineInputBorder(),
+                  decoration: InputDecoration(
+                    labelText: comissaoEmPorcentagem ? 'Porcentagem da Comissão (%)' : 'Valor da Comissão (R\$)',
+                    prefixText: comissaoEmPorcentagem ? '' : 'R\$ ',
+                    suffixText: comissaoEmPorcentagem ? '%' : null,
+                    border: const OutlineInputBorder(),
                   ),
                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
                 ),
@@ -4099,10 +4169,22 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
                 final valorAdicional = valorAdicionalTexto.isEmpty 
                   ? 0.0 
                   : (double.tryParse(valorAdicionalTexto) ?? 0.0);
-                final comissao = valorComissaoController.text.trim().isEmpty
+                final rawComissao = valorComissaoController.text.trim().isEmpty
                   ? 0.0
                   : (double.tryParse(valorComissaoController.text.trim().replaceAll(',', '.')) ?? 0.0);
+                
+                double comissaoCalculada = 0.0;
+                double porcentagemComissao = 0.0;
+                
+                if (comissaoEmPorcentagem) {
+                  porcentagemComissao = rawComissao;
+                  comissaoCalculada = (precoBase + valorAdicional) * (porcentagemComissao / 100);
+                } else {
+                  comissaoCalculada = rawComissao;
+                }
+
                 final duracao = int.tryParse(duracaoController.text) ?? 60;
+                
 
                 if (precoBase <= 0) {
                   ScaffoldMessenger.of(context).showSnackBar(
@@ -4147,7 +4229,9 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
                   dataAgendamento: dataHoraAgendamento,
                   duracaoMinutos: dataHoraAgendamento != null ? duracao : null,
                   funcionarioId: funcionarioSelecionado?.id,
-                  valorComissao: comissao,
+                  tipoComissao: comissaoEmPorcentagem ? 'Porcentagem' : 'Fixo',
+                  porcentagemComissao: porcentagemComissao,
+                  valorComissao: comissaoCalculada,
                 );
 
                 setState(() {

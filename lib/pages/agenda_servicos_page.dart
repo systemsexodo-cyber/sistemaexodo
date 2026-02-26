@@ -15,13 +15,16 @@ import '../models/item_material.dart';
 import '../models/produto.dart';
 import '../models/item_servico.dart';
 import '../models/empresa.dart';
+import 'package:sistema_exodo_novo/models/funcionario.dart';
 import '../services/codigo_service.dart';
 import '../services/auth_service.dart';
 
 import '../widgets/sync_status_widget.dart';
 import '../theme.dart';
 import 'cliente_detalhes_page.dart';
+import 'comissoes_page.dart';
 import 'configuracoes_agenda_page.dart';
+import 'funcionarios_page.dart';
 import 'package:uuid/uuid.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -52,6 +55,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
   bool _mostrarPendentes = true; // Filtro mestre para "Aguardando Confirmação"
   bool _mostrarExcluidos = false; // Novo filtro para agendamentos excluídos
   bool _mostrarCancelados = true; // Novo filtro para agendamentos cancelados
+  String? _filtroFuncionarioId; // null = todos os funcionários
 
   @override
   void initState() {
@@ -140,8 +144,18 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                   tooltip: 'Mapa de Disponibilidade',
                 ),
                 IconButton(
+                  icon: const Icon(Icons.monetization_on_outlined, color: Colors.amber),
+                  onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ComissoesPage())),
+                  tooltip: 'Comissões',
+                ),
+                IconButton(
+                  icon: const Icon(Icons.people_alt_outlined, color: Colors.blueAccent),
+                  onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => FuncionariosPage())),
+                  tooltip: 'Funcionários / Vendedores',
+                ),
+                IconButton(
                   icon: const Icon(Icons.settings),
-                  onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ConfiguracoesAgendaPage())),
+                  onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ConfiguracoesAgendaPage())),
                   tooltip: 'Configurações de Agendamento',
                 ),
                 IconButton(
@@ -188,10 +202,13 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
       if (!_mostrarExcluidos && a.excluido) return false;
       if (!_mostrarCancelados && a.status == 'Cancelado' && !a.travado) return false;
 
-      if (_termoBusca.isEmpty) return true;
-      final nome = (a.cliente?.nome ?? a.clienteNome ?? '').toLowerCase();
+       final nome = (a.cliente?.nome ?? a.clienteNome ?? '').toLowerCase();
       final pet = (a.pet?.nome ?? a.petNome ?? '').toLowerCase();
       final tsv = _getTipoServico(a, dataService: dataService).toLowerCase();
+      
+      // Filtro por funcionário
+      if (_filtroFuncionarioId != null && a.funcionarioId != _filtroFuncionarioId) return false;
+
       return nome.contains(_termoBusca) || pet.contains(_termoBusca) || tsv.contains(_termoBusca);
     }).toList();
 
@@ -337,7 +354,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                           _filtrosExpandidos ? Icons.filter_list_off : Icons.filter_list,
                           color: _filtrosExpandidos ? Colors.orange : Colors.white70,
                         ),
-                        if (!_filtrosExpandidos && (_filtroStatus != null || _filtroTipo != 'Todos'))
+                        if (!_filtrosExpandidos && (_filtroStatus != null || _filtroTipo != 'Todos' || _filtroFuncionarioId != null))
                           Positioned(
                             top: -2,
                             right: -2,
@@ -428,6 +445,32 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
               ],
             ),
             const SizedBox(height: 12),
+            // NOVO: FILA FUNCIONÁRIO
+            const Text('Filtrar por Profissional:', style: TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 6),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  _buildChipFiltro(
+                    'Todos', 
+                    _filtroFuncionarioId == null, 
+                    () => setState(() => _filtroFuncionarioId = null),
+                    color: Colors.indigoAccent
+                  ),
+                  ...dataService.funcionarios.where((f) => f.ativo).map((f) => Padding(
+                    padding: const EdgeInsets.only(left: 8),
+                    child: _buildChipFiltro(
+                      f.nome, 
+                      _filtroFuncionarioId == f.id, 
+                      () => setState(() => _filtroFuncionarioId = f.id),
+                      color: Colors.indigoAccent
+                    ),
+                  )),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
 
             // FILA 2: SERVIÇOS
             const Text('Filtrar por Serviço:', style: TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.bold)),
@@ -503,6 +546,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                     setState(() {
                       _filtroStatus = null;
                       _filtroTipo = 'Todos';
+                      _filtroFuncionarioId = null;
                       _termoBusca = '';
                       _buscaController.clear();
                     });
@@ -836,6 +880,13 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
     if (_filtroStatus != null) {
       agendamentos = agendamentos.where((a) {
         return a.status == _filtroStatus;
+      }).toList();
+    }
+
+    // Filtrar por profissional
+    if (_filtroFuncionarioId != null) {
+      agendamentos = agendamentos.where((a) {
+        return a.funcionarioId == _filtroFuncionarioId;
       }).toList();
     }
 
@@ -2689,6 +2740,8 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
               ],
               _buildInfoLinha('Data/Hora', _formatoDataHora!.format(agendamento.dataAgendamento)),
               _buildInfoLinha('Duração', '${agendamento.duracaoMinutos} minutos'),
+              if (agendamento.funcionarioNome != null)
+                _buildInfoLinha('Profissional', agendamento.funcionarioNome!),
               _buildInfoLinha('Status', agendamento.status),
               if (agendamento.tipoEntrega != null || (agendamento.endereco != null && agendamento.endereco!.isNotEmpty)) ...[
                 const SizedBox(height: 16),
@@ -3917,7 +3970,8 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
     final complementoEnderecoController = TextEditingController();
     final pontoReferenciaController = TextEditingController();
     final List<ItemMaterial> materiaisAgendamento = []; 
-    
+    String? funcionarioSelecionadoId;
+    String? funcionarioSelecionadoNome;    
     // Verificar se o horário está dentro de algum bloqueio
     final novoInicio = DateTime(
       dataAgendamento.year, dataAgendamento.month, dataAgendamento.day,
@@ -4271,6 +4325,43 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                             },
                           ),
                     );
+                  },
+                ),
+                const SizedBox(height: 16),
+                // --- SEÇÃO DE PROFISSIONAL ---
+                const Text('Profissional / Atendente:', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String?>(
+                  value: funcionarioSelecionadoId,
+                  decoration: InputDecoration(
+                    hintText: 'Selecionar Profissional...',
+                    hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
+                    prefixIcon: const Icon(Icons.person, color: Colors.indigoAccent, size: 20),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    filled: true,
+                    fillColor: Colors.white.withOpacity(0.05),
+                  ),
+                  dropdownColor: const Color(0xFF2C2C3E),
+                  style: const TextStyle(color: Colors.white),
+                  items: [
+                    const DropdownMenuItem<String?>(
+                      value: null,
+                      child: Text('Nenhum Profissional'),
+                    ),
+                    ...dataService.funcionarios.where((f) => f.ativo).map((f) => DropdownMenuItem<String?>(
+                      value: f.id,
+                      child: Text(f.nome),
+                    )),
+                  ],
+                  onChanged: (value) {
+                    setState(() {
+                      funcionarioSelecionadoId = value;
+                      if (value != null) {
+                        funcionarioSelecionadoNome = dataService.funcionarios.firstWhere((f) => f.id == value).nome;
+                      } else {
+                        funcionarioSelecionadoNome = null;
+                      }
+                    });
                   },
                 ),
                 const SizedBox(height: 16),
@@ -4983,6 +5074,8 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                       complemento: complementoEnderecoController.text.isNotEmpty ? complementoEnderecoController.text.trim() : null,
                       pontoReferencia: pontoReferenciaController.text.isNotEmpty ? pontoReferenciaController.text.trim() : null,
                       materiais: List.from(materiaisAgendamento),
+                      funcionarioId: funcionarioSelecionadoId,
+                      funcionarioNome: funcionarioSelecionadoNome,
                     );
                     
                     agendamentosParaSalvar.add(novoAgendamento);
@@ -5110,6 +5203,8 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
     final numeroEnderecoController = TextEditingController(text: agendamento.numeroEndereco ?? agendamento.cliente?.numero ?? '');
     final complementoEnderecoController = TextEditingController(text: agendamento.complemento ?? agendamento.cliente?.complemento ?? '');
     final pontoReferenciaController = TextEditingController(text: agendamento.pontoReferencia ?? agendamento.cliente?.pontoReferencia ?? '');
+    String? funcionarioSelecionadoId = agendamento.funcionarioId;
+    String? funcionarioSelecionadoNome = agendamento.funcionarioNome;
     
     showDialog(
       context: context,
@@ -5655,6 +5750,44 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                 ],
                 const SizedBox(height: 16),
                 
+                // --- SEÇÃO DE PROFISSIONAL ---
+                const Text('Profissional / Atendente:', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String?>(
+                  value: funcionarioSelecionadoId,
+                  decoration: InputDecoration(
+                    hintText: 'Selecionar Profissional...',
+                    hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
+                    prefixIcon: const Icon(Icons.person, color: Colors.indigoAccent, size: 20),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    filled: true,
+                    fillColor: Colors.white.withOpacity(0.05),
+                  ),
+                  dropdownColor: const Color(0xFF2C2C3E),
+                  style: const TextStyle(color: Colors.white),
+                  items: [
+                    const DropdownMenuItem<String?>(
+                      value: null,
+                      child: Text('Nenhum Profissional'),
+                    ),
+                    ...dataService.funcionarios.where((f) => f.ativo).map((f) => DropdownMenuItem<String?>(
+                      value: f.id,
+                      child: Text(f.nome),
+                    )),
+                  ],
+                  onChanged: (value) {
+                    setStateDialog(() {
+                      funcionarioSelecionadoId = value;
+                      if (value != null) {
+                        funcionarioSelecionadoNome = dataService.funcionarios.firstWhere((f) => f.id == value).nome;
+                      } else {
+                        funcionarioSelecionadoNome = null;
+                      }
+                    });
+                  },
+                ),
+                const SizedBox(height: 16),
+                
                 // Data
                 ListTile(
                   title: const Text('Data', style: TextStyle(color: Colors.white70)),
@@ -5840,6 +5973,8 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                       numeroEndereco: numeroEnderecoController.text.isNotEmpty ? numeroEnderecoController.text.trim() : null,
                       complemento: complementoEnderecoController.text.isNotEmpty ? complementoEnderecoController.text.trim() : null,
                       pontoReferencia: pontoReferenciaController.text.isNotEmpty ? pontoReferenciaController.text.trim() : null,
+                      funcionarioId: funcionarioSelecionadoId,
+                      funcionarioNome: funcionarioSelecionadoNome,
                       updatedAt: DateTime.now(),
                     ),
                   );
@@ -5874,6 +6009,8 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                         numeroEndereco: numeroEnderecoController.text.isNotEmpty ? numeroEnderecoController.text.trim() : null,
                         complemento: complementoEnderecoController.text.isNotEmpty ? complementoEnderecoController.text.trim() : null,
                         pontoReferencia: pontoReferenciaController.text.isNotEmpty ? pontoReferenciaController.text.trim() : null,
+                        funcionarioId: funcionarioSelecionadoId,
+                        funcionarioNome: funcionarioSelecionadoNome,
                       );
                       await dataService.addAgendamentoServico(novoAgendamento);
                       agendamentosCriados++;
@@ -6966,26 +7103,123 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
         if (agendamento.servico != null) ...agendamento.servico!.materiais,
       ];
 
-      // Criar ItemServico a partir do agendamento
-      final servicoNome = agendamento.servico?.nome ?? 
-          (agendamento.observacoes ?? 'Serviço do Agendamento');
-      final servicoValor = agendamento.servico?.preco ?? 0.0;
+      // Coletar serviços do agendamento (garantir que temos os objetos Servico)
+      final listaServicos = <Servico>[];
       
-      final itemServico = ItemServico(
-        id: uuid.v4(),
-        descricao: servicoNome,
-        valor: servicoValor,
-        valorAdicional: agendamento.valorTaxiDog ?? 0.0,
-        descricaoAdicional: agendamento.tipoEntrega == 'Taxi Dog' 
-            ? 'Taxi Dog${agendamento.bairroEntrega != null ? ' - ${agendamento.bairroEntrega}' : ''}'
-            : null,
-        dataAgendamento: agendamento.dataAgendamento,
-        duracaoMinutos: agendamento.duracaoMinutos,
-        materiais: todosMateriais,
-        tipoEntrega: agendamento.tipoEntrega,
-        valorTaxiDog: agendamento.valorTaxiDog,
-        bairroEntrega: agendamento.bairroEntrega,
-      );
+      // 1. Tentar pelos objetos já vinculados
+      if (agendamento.servicos.isNotEmpty) {
+        listaServicos.addAll(agendamento.servicos);
+      } else if (agendamento.servico != null) {
+        listaServicos.add(agendamento.servico!);
+      }
+      
+      // 2. Se ainda estiver vazio, tentar buscar pelos IDs no dataService
+      if (listaServicos.isEmpty) {
+        if (agendamento.servicosIds.isNotEmpty) {
+          for (final sId in agendamento.servicosIds) {
+            try {
+              final s = dataService.servicos.firstWhere((ts) => ts.id == sId);
+              listaServicos.add(s);
+            } catch (_) {}
+          }
+        } else if (agendamento.servicoId != null) {
+          try {
+            final s = dataService.servicos.firstWhere((ts) => ts.id == agendamento.servicoId);
+            listaServicos.add(s);
+          } catch (_) {}
+        }
+      }
+
+      debugPrint('>>> [_criarPedidoDoAgendamento] Serviços encontrados: ${listaServicos.length}');
+
+      // Buscar funcionário para comissão padrão se necessário
+      Funcionario? funcRef;
+      if (agendamento.funcionarioId != null) {
+        try {
+          funcRef = dataService.funcionarios.firstWhere((f) => f.id == agendamento.funcionarioId);
+          debugPrint('>>> [_criarPedidoDoAgendamento] Profissional encontrado: ${funcRef.nome}');
+        } catch (_) {
+          debugPrint('>>> [_criarPedidoDoAgendamento] ⚠ Profissional id ${agendamento.funcionarioId} não encontrado no DataService');
+        }
+      }
+
+      final itensServico = <ItemServico>[];
+      
+      if (listaServicos.isEmpty) {
+        debugPrint('>>> [_criarPedidoDoAgendamento] ⚠ NENHUM SERVIÇO VINCULADO! Usando fallback.');
+        // Fallback para caso não tenha serviço vinculado (ex: bloqueio ou notas)
+        itensServico.add(ItemServico(
+          id: uuid.v4(),
+          descricao: agendamento.observacoes ?? 'Serviço do Agendamento',
+          valor: 0.0,
+          valorAdicional: agendamento.valorTaxiDog ?? 0.0,
+          descricaoAdicional: agendamento.tipoEntrega == 'Taxi Dog' ? 'Taxi Dog' : null,
+          dataAgendamento: agendamento.dataAgendamento,
+          duracaoMinutos: agendamento.duracaoMinutos,
+          materiais: todosMateriais,
+          tipoEntrega: agendamento.tipoEntrega,
+          valorTaxiDog: agendamento.valorTaxiDog,
+          funcionarioId: agendamento.funcionarioId,
+        ));
+      } else {
+        for (var i = 0; i < listaServicos.length; i++) {
+          final s = listaServicos[i];
+          
+          // Dividir taxi dog apenas no primeiro item
+          final valorTaxi = i == 0 ? (agendamento.valorTaxiDog ?? 0.0) : 0.0;
+          final descAdicional = i == 0 && agendamento.tipoEntrega == 'Taxi Dog' 
+              ? 'Taxi Dog${agendamento.bairroEntrega != null ? ' - ${agendamento.bairroEntrega}' : ''}'
+              : null;
+
+          // Lógica de Comissão
+          String tipoCom = 'Fixo';
+          double porcCom = 0.0;
+          double valorCom = 0.0;
+
+          if (s.tipoComissao == 'Fixo' && s.valorComissao > 0) {
+            tipoCom = 'Fixo';
+            valorCom = s.valorComissao;
+            debugPrint('>>>   [Comissão] Usando Valor Fixo do Serviço: R\$ $valorCom');
+          } else if (s.tipoComissao == 'Porcentagem' && s.porcentagemComissao > 0) {
+            tipoCom = 'Porcentagem';
+            porcCom = s.porcentagemComissao;
+            valorCom = (s.preco * porcCom) / 100;
+            debugPrint('>>>   [Comissão] Usando Porcentagem do Serviço: $porcCom% de R\$ ${s.preco} = R\$ $valorCom');
+          } else if (funcRef != null) {
+            if (funcRef.tipoComissao == 'Fixo' && funcRef.valorComissao > 0) {
+              tipoCom = 'Fixo';
+              valorCom = funcRef.valorComissao;
+              debugPrint('>>>   [Comissão] Usando Valor Fixo do Funcionário: R\$ $valorCom');
+            } else if (funcRef.tipoComissao == 'Porcentagem' && funcRef.porcentagemComissao > 0) {
+              tipoCom = 'Porcentagem';
+              porcCom = funcRef.porcentagemComissao;
+              valorCom = (s.preco * porcCom) / 100;
+              debugPrint('>>>   [Comissão] Usando Porcentagem do Funcionário: $porcCom% de R\$ ${s.preco} = R\$ $valorCom');
+            } else {
+              debugPrint('>>>   [Comissão] ⚠ Funcionário não tem comissão configurada.');
+            }
+          } else {
+            debugPrint('>>>   [Comissão] ⚠ Sem funcionário ou serviço com comissão definida.');
+          }
+
+          itensServico.add(ItemServico(
+            id: uuid.v4(),
+            descricao: s.nome,
+            valor: s.preco,
+            valorAdicional: valorTaxi,
+            descricaoAdicional: descAdicional,
+            dataAgendamento: agendamento.dataAgendamento,
+            duracaoMinutos: agendamento.duracaoMinutos,
+            materiais: i == 0 ? todosMateriais : [], // Colocar materiais no primeiro item
+            tipoEntrega: i == 0 ? agendamento.tipoEntrega : null,
+            valorTaxiDog: i == 0 ? agendamento.valorTaxiDog : null,
+            funcionarioId: agendamento.funcionarioId,
+            tipoComissao: tipoCom,
+            porcentagemComissao: porcCom,
+            valorComissao: valorCom,
+          ));
+        }
+      }
 
       // Gerar número do pedido (usar SRV- para serviços)
       final numeroPedido = dataService.getProximoNumeroServico();
@@ -6999,10 +7233,12 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
         clienteTelefone: agendamento.cliente?.telefone,
         clienteEndereco: agendamento.cliente?.endereco,
         clienteCpfCnpj: agendamento.cliente?.cpfCnpj,
+        vendedorId: agendamento.funcionarioId,
+        vendedorNome: agendamento.funcionarioNome,
         dataPedido: agendamento.dataAgendamento,
         status: 'Concluído',
         produtos: [],
-        servicos: [itemServico],
+        servicos: itensServico,
         materiaisConsumidos: todosMateriais,
         observacoes: 'Agendamento ${agendamento.numero}${agendamento.observacoes != null ? ' - ${agendamento.observacoes}' : ''}',
       );

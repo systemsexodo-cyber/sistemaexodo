@@ -215,6 +215,17 @@ class _FuncionariosPageState extends State<FuncionariosPage> {
                                       color: Colors.red,
                                     ),
                                   ),
+                                if (funcionario.porcentagemComissao > 0 || funcionario.valorComissao > 0)
+                                  Text(
+                                    funcionario.tipoComissao == 'Porcentagem'
+                                        ? '💰 Comissão: ${funcionario.porcentagemComissao.toStringAsFixed(1)}%'
+                                        : '💰 Comissão: R\$ ${funcionario.valorComissao.toStringAsFixed(2)}',
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.greenAccent,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
                               ],
                             ),
                             trailing: Row(
@@ -267,6 +278,8 @@ class _FuncionariosPageState extends State<FuncionariosPage> {
     final emailController = TextEditingController();
     final senhaController = TextEditingController();
     final observacoesController = TextEditingController();
+    final comissaoController = TextEditingController(text: '0');
+    String tipoComissao = 'Porcentagem';
     bool ativo = true;
     bool temAcesso = false;
     bool obscureSenha = true;
@@ -379,6 +392,41 @@ class _FuncionariosPageState extends State<FuncionariosPage> {
                     maxLines: 3,
                   ),
                   const SizedBox(height: 16),
+                  DropdownButtonFormField<String>(
+                    value: tipoComissao,
+                    dropdownColor: const Color(0xFF10151B),
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(
+                      labelText: 'Tipo de Comissão',
+                      labelStyle: TextStyle(color: Colors.white70),
+                      border: OutlineInputBorder(),
+                    ),
+                    items: ['Porcentagem', 'Fixo'].map((String value) {
+                      return DropdownMenuItem<String>(
+                        value: value,
+                        child: Text(value),
+                      );
+                    }).toList(),
+                    onChanged: (value) {
+                      setState(() {
+                        tipoComissao = value ?? 'Porcentagem';
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  TextFormField(
+                    controller: comissaoController,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      labelText: tipoComissao == 'Porcentagem' ? 'Porcentagem de Comissão (%)' : 'Valor Fixo de Comissão (R\$)',
+                      labelStyle: const TextStyle(color: Colors.white70),
+                      border: const OutlineInputBorder(),
+                      suffixText: tipoComissao == 'Porcentagem' ? '%' : 'R\$',
+                      helperText: 'Será cobrada em cima do valor do serviço',
+                    ),
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  ),
+                  const SizedBox(height: 16),
                   CheckboxListTile(
                     title: const Text(
                       'Ativo',
@@ -435,6 +483,9 @@ class _FuncionariosPageState extends State<FuncionariosPage> {
                         : observacoesController.text.trim(),
                     ativo,
                     temAcesso,
+                    tipoComissao == 'Porcentagem' ? (double.tryParse(comissaoController.text.replaceAll(',', '.')) ?? 0.0) : 0.0,
+                    tipoComissao,
+                    tipoComissao == 'Fixo' ? (double.tryParse(comissaoController.text.replaceAll(',', '.')) ?? 0.0) : 0.0,
                   );
                   Navigator.pop(context);
                 },
@@ -454,6 +505,12 @@ class _FuncionariosPageState extends State<FuncionariosPage> {
     final senhaController = TextEditingController(text: '');
     final observacoesController =
         TextEditingController(text: funcionario.observacoes ?? '');
+    final comissaoController = TextEditingController(
+      text: funcionario.tipoComissao == 'Porcentagem' 
+          ? funcionario.porcentagemComissao.toString() 
+          : funcionario.valorComissao.toString()
+    );
+    String tipoComissao = funcionario.tipoComissao;
     bool ativo = funcionario.ativo;
     bool temAcesso = funcionario.temAcesso;
     bool obscureSenha = true;
@@ -567,6 +624,41 @@ class _FuncionariosPageState extends State<FuncionariosPage> {
                     maxLines: 3,
                   ),
                   const SizedBox(height: 16),
+                  DropdownButtonFormField<String>(
+                    value: tipoComissao,
+                    dropdownColor: const Color(0xFF10151B),
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(
+                      labelText: 'Tipo de Comissão',
+                      labelStyle: TextStyle(color: Colors.white70),
+                      border: OutlineInputBorder(),
+                    ),
+                    items: ['Porcentagem', 'Fixo'].map((String value) {
+                      return DropdownMenuItem<String>(
+                        value: value,
+                        child: Text(value),
+                      );
+                    }).toList(),
+                    onChanged: (value) {
+                      setState(() {
+                        tipoComissao = value ?? 'Porcentagem';
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  TextFormField(
+                    controller: comissaoController,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      labelText: tipoComissao == 'Porcentagem' ? 'Porcentagem de Comissão (%)' : 'Valor Fixo de Comissão (R\$)',
+                      labelStyle: const TextStyle(color: Colors.white70),
+                      border: const OutlineInputBorder(),
+                      suffixText: tipoComissao == 'Porcentagem' ? '%' : 'R\$',
+                      helperText: 'Será cobrada em cima do valor do serviço',
+                    ),
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  ),
+                  const SizedBox(height: 16),
                   CheckboxListTile(
                     title: const Text(
                       'Ativo',
@@ -627,6 +719,9 @@ class _FuncionariosPageState extends State<FuncionariosPage> {
                       : observacoesController.text.trim(),
                   ativo,
                   temAcesso,
+                  tipoComissao == 'Porcentagem' ? (double.tryParse(comissaoController.text.replaceAll(',', '.')) ?? 0.0) : 0.0,
+                  tipoComissao,
+                  tipoComissao == 'Fixo' ? (double.tryParse(comissaoController.text.replaceAll(',', '.')) ?? 0.0) : 0.0,
                 );
               },
               child: const Text('Salvar'),
@@ -646,6 +741,9 @@ class _FuncionariosPageState extends State<FuncionariosPage> {
     String? observacoes,
     bool ativo,
     bool temAcesso,
+    double porcentagemComissao,
+    String tipoComissao,
+    double valorComissao,
   ) async {
     final dataService = Provider.of<DataService>(context, listen: false);
     final authService = Provider.of<AuthService>(context, listen: false);
@@ -661,6 +759,9 @@ class _FuncionariosPageState extends State<FuncionariosPage> {
       observacoes: observacoes,
       ativo: ativo,
       temAcesso: temAcesso,
+      porcentagemComissao: porcentagemComissao,
+      tipoComissao: tipoComissao,
+      valorComissao: valorComissao,
       createdAt: DateTime.now(),
       updatedAt: DateTime.now(),
     );
@@ -724,6 +825,9 @@ class _FuncionariosPageState extends State<FuncionariosPage> {
     String? observacoes,
     bool ativo,
     bool temAcesso,
+    double porcentagemComissao,
+    String tipoComissao,
+    double valorComissao,
   ) async {
     final dataService = Provider.of<DataService>(context, listen: false);
     final authService = Provider.of<AuthService>(context, listen: false);
@@ -736,6 +840,9 @@ class _FuncionariosPageState extends State<FuncionariosPage> {
       observacoes: observacoes,
       ativo: ativo,
       temAcesso: temAcesso,
+      porcentagemComissao: porcentagemComissao,
+      tipoComissao: tipoComissao,
+      valorComissao: valorComissao,
       updatedAt: DateTime.now(),
     );
 
