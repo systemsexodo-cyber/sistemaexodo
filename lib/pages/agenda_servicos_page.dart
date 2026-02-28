@@ -7240,7 +7240,25 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
       
       if (listaServicos.isEmpty) {
         debugPrint('>>> [_criarPedidoDoAgendamento] ⚠ NENHUM SERVIÇO VINCULADO! Usando fallback.');
-        // Fallback para caso não tenha serviço vinculado (ex: bloqueio ou notas)
+        
+        // Lógica de Comissão para Fallback
+        String tipoCom = 'Fixo';
+        double porcCom = 0.0;
+        double valorCom = 0.0;
+        
+        if (funcRef != null) {
+          if (funcRef.tipoComissao == 'Fixo' && funcRef.valorComissao > 0) {
+            tipoCom = 'Fixo';
+            valorCom = funcRef.valorComissao;
+            debugPrint('>>>   [Comissão-Fallback] Usando Valor Fixo do Funcionário: R\$ $valorCom');
+          } else if (funcRef.tipoComissao == 'Porcentagem' && funcRef.porcentagemComissao > 0) {
+            tipoCom = 'Porcentagem';
+            porcCom = funcRef.porcentagemComissao;
+            // No fallback sem serviço, não temos preço base. Comissão por porcentagem será 0 a menos que usemos valorTotal.
+            debugPrint('>>>   [Comissão-Fallback] ⚠ Porcentagem do Funcionário ($porcCom%) ignorada pois não há serviço vinculado.');
+          }
+        }
+
         itensServico.add(ItemServico(
           id: uuid.v4(),
           descricao: agendamento.observacoes ?? 'Serviço do Agendamento',
@@ -7253,10 +7271,15 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
           tipoEntrega: agendamento.tipoEntrega,
           valorTaxiDog: agendamento.valorTaxiDog,
           funcionarioId: agendamento.funcionarioId,
+          tipoComissao: tipoCom,
+          porcentagemComissao: porcCom,
+          valorComissao: valorCom,
         ));
       } else {
         for (var i = 0; i < listaServicos.length; i++) {
           final s = listaServicos[i];
+          
+          debugPrint('>>> [_criarPedidoDoAgendamento] Processando serviço ${i+1}/${listaServicos.length}: ${s.nome} (R\$ ${s.preco})');
           
           // Dividir taxi dog apenas no primeiro item
           final valorTaxi = i == 0 ? (agendamento.valorTaxiDog ?? 0.0) : 0.0;
@@ -7272,27 +7295,27 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
           if (s.tipoComissao == 'Fixo' && s.valorComissao > 0) {
             tipoCom = 'Fixo';
             valorCom = s.valorComissao;
-            debugPrint('>>>   [Comissão] Usando Valor Fixo do Serviço: R\$ $valorCom');
+            debugPrint('>>>   [Comissão] Usando Valor Fixo do Serviço "${s.nome}": R\$ $valorCom');
           } else if (s.tipoComissao == 'Porcentagem' && s.porcentagemComissao > 0) {
             tipoCom = 'Porcentagem';
             porcCom = s.porcentagemComissao;
             valorCom = (s.preco * porcCom) / 100;
-            debugPrint('>>>   [Comissão] Usando Porcentagem do Serviço: $porcCom% de R\$ ${s.preco} = R\$ $valorCom');
+            debugPrint('>>>   [Comissão] Usando Porcentagem do Serviço "${s.nome}": $porcCom% de R\$ ${s.preco} = R\$ $valorCom');
           } else if (funcRef != null) {
             if (funcRef.tipoComissao == 'Fixo' && funcRef.valorComissao > 0) {
               tipoCom = 'Fixo';
               valorCom = funcRef.valorComissao;
-              debugPrint('>>>   [Comissão] Usando Valor Fixo do Funcionário: R\$ $valorCom');
+              debugPrint('>>>   [Comissão] Usando Valor Fixo do Funcionário "${funcRef.nome}" para serviço "${s.nome}": R\$ $valorCom');
             } else if (funcRef.tipoComissao == 'Porcentagem' && funcRef.porcentagemComissao > 0) {
               tipoCom = 'Porcentagem';
               porcCom = funcRef.porcentagemComissao;
               valorCom = (s.preco * porcCom) / 100;
-              debugPrint('>>>   [Comissão] Usando Porcentagem do Funcionário: $porcCom% de R\$ ${s.preco} = R\$ $valorCom');
+              debugPrint('>>>   [Comissão] Usando Porcentagem do Funcionário "${funcRef.nome}" ($porcCom%) para serviço "${s.nome}" (R\$ ${s.preco}) = R\$ $valorCom');
             } else {
-              debugPrint('>>>   [Comissão] ⚠ Funcionário não tem comissão configurada.');
+              debugPrint('>>>   [Comissão] ⚠ Funcionário "${funcRef.nome}" não tem comissão configurada para serviço "${s.nome}".');
             }
           } else {
-            debugPrint('>>>   [Comissão] ⚠ Sem funcionário ou serviço com comissão definida.');
+            debugPrint('>>>   [Comissão] ⚠ Sem funcionário ou serviço com comissão definida para "${s.nome}".');
           }
 
           itensServico.add(ItemServico(

@@ -89,9 +89,13 @@ $RECYCLE.BIN/
 *.tar.gz
 .pontos_restauracao/
 
-
 # dependencias
 node_modules/
 .npm/
 pnpm-lock.yaml
 yarn.lock
+
+# Credenciais (Segurança)
+gdrive_service_account.json
+gdrive_client_id.json
+gdrive_token.json

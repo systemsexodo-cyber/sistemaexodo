@@ -3871,8 +3871,15 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         NFCePagamento(tipo: tipoPagamento, valor: vendaBalcao.valorTotal),
       );
 
-      // Usar factory para criar o serviço apropriado (backend Python ou local)
-      debugPrint('>>> [VendaDireta] Criando serviço NFC-e via factory...');
+      // Usar URL configurada na empresa (importante para Túneis como Zrok/Ngrok)
+      final configUrl = empresa.configuracoes?['bridgeNfceUrl'] as String?;
+      if (configUrl != null && configUrl.isNotEmpty) {
+        debugPrint('>>> [VendaDireta] Configurando URL customizada para NFC-e: $configUrl');
+        NFCeServiceFactory.configurarBackend(url: configUrl);
+      } else {
+        // Garantir que use o valor padrão do Factory se não houver config
+        NFCeServiceFactory.configurarBackend(url: null);
+      }
 
       // Verificar se backend está disponível (se configurado para usar)
       final backendDisponivel = await NFCeServiceFactory.verificarBackend();

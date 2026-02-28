@@ -100,35 +100,35 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const SizedBox(height: 20),
-                    const ExodoLogo(fontSize: 48, showSubtitle: true),
-                    const SizedBox(height: 32),
+                    const SizedBox(height: 8),
+                    const ExodoLogo(fontSize: 32, showSubtitle: true),
+                    const SizedBox(height: 16),
                     Text(
                       'Selecione a empresa',
-                      style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
                             color: Colors.white,
                             fontWeight: FontWeight.bold,
                           ),
                       textAlign: TextAlign.center,
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 4),
                     Text(
                       'Escolha a empresa que deseja gerenciar',
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
                             color: Colors.white70,
                           ),
                       textAlign: TextAlign.center,
                     ),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 16),
                     // Card com informações do usuário (incluindo senha)
                     _buildUsuarioInfoCard(context, authService),
                     // Card do Google Drive (Apenas Admin)
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 12),
                     _buildCardGoogleDrive(context, authService),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 12),
                     // Campo de busca
                     _buildSearchField(),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 12),
                     Expanded(
                       child: authService.getEmpresasDoUsuario().isEmpty
                           ? _buildEmptyState(context)
@@ -224,12 +224,12 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
     return StatefulBuilder(
       builder: (context, setState) {
         return Container(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.1),
+            color: Colors.white.withOpacity(0.08),
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
-              color: Colors.white.withOpacity(0.2),
+              color: Colors.white.withOpacity(0.15),
               width: 1,
             ),
           ),
@@ -240,58 +240,63 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                 children: [
                   const Icon(
                     Icons.person,
-                    color: Colors.white,
-                    size: 20,
+                    color: Colors.blueAccent,
+                    size: 18,
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    'Usuário Logado',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                        ),
+                    'Usuário: ${usuario.nome}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    usuario.tipo == TipoUsuario.administrador
+                        ? 'ADMIN'
+                        : usuario.tipo == TipoUsuario.gerente
+                            ? 'GERENTE'
+                            : 'OPERADOR',
+                    style: TextStyle(
+                      color: Colors.blueAccent.withOpacity(0.8),
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 1,
+                    ),
                   ),
                 ],
               ),
-              const SizedBox(height: 12),
-              _buildInfoRow('Nome:', usuario.nome),
-              const SizedBox(height: 8),
-              _buildInfoRow('Email:', usuario.email),
               const SizedBox(height: 8),
               Row(
                 children: [
                   Expanded(
-                    child: _buildInfoRow(
-                      'Senha:',
-                      _senhaVisivel ? usuario.senha : '••••••••',
+                    child: Text(
+                      'Email: ${usuario.email}',
+                      style: const TextStyle(color: Colors.white70, fontSize: 12),
                     ),
                   ),
                   const SizedBox(width: 8),
-                  IconButton(
-                    icon: Icon(
-                      _senhaVisivel ? Icons.visibility : Icons.visibility_off,
-                      color: Colors.white70,
-                      size: 20,
+                  GestureDetector(
+                    onTap: () => setState(() => _senhaVisivel = !_senhaVisivel),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          _senhaVisivel ? usuario.senha : '••••',
+                          style: const TextStyle(color: Colors.white54, fontSize: 12),
+                        ),
+                        const SizedBox(width: 4),
+                        Icon(
+                          _senhaVisivel ? Icons.visibility : Icons.visibility_off,
+                          color: Colors.white38,
+                          size: 14,
+                        ),
+                      ],
                     ),
-                    onPressed: () {
-                      setState(() {
-                        _senhaVisivel = !_senhaVisivel;
-                      });
-                    },
-                    tooltip: _senhaVisivel ? 'Ocultar senha' : 'Mostrar senha',
                   ),
                 ],
-              ),
-              const SizedBox(height: 8),
-              _buildInfoRow(
-                'Tipo:',
-                usuario.tipo == TipoUsuario.administrador
-                    ? 'Administrador'
-                    : usuario.tipo == TipoUsuario.gerente
-                        ? 'Gerente'
-                        : usuario.tipo == TipoUsuario.operador
-                            ? 'Operador'
-                            : 'Funcionário',
               ),
             ],
           ),
@@ -455,23 +460,23 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
           },
           borderRadius: BorderRadius.circular(16),
           child: Padding(
-            padding: const EdgeInsets.all(20),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             child: Row(
               children: [
                 Container(
-                  width: 56,
-                  height: 56,
+                  width: 40,
+                  height: 40,
                   decoration: BoxDecoration(
                     color: Colors.greenAccent.withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(10),
                   ),
                   child: const Icon(
                     Icons.add_business,
                     color: Colors.greenAccent,
-                    size: 32,
+                    size: 24,
                   ),
                 ),
-                const SizedBox(width: 16),
+                const SizedBox(width: 12),
                 const Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -565,24 +570,24 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
         },
         borderRadius: BorderRadius.circular(16),
         child: Padding(
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: Row(
             children: [
               // Ícone da empresa
               Container(
-                width: 56,
-                height: 56,
+                width: 40,
+                height: 40,
                 decoration: BoxDecoration(
                   color: Colors.blueAccent.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(10),
                 ),
                 child: const Icon(
                   Icons.business,
                   color: Colors.blueAccent,
-                  size: 32,
+                  size: 24,
                 ),
               ),
-              const SizedBox(width: 16),
+              const SizedBox(width: 12),
               // Informações da empresa
               Expanded(
                 child: Column(
@@ -850,7 +855,7 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
           onTap: () => _realizarBackupGoogleDrive(context),
           borderRadius: BorderRadius.circular(16),
           child: Padding(
-            padding: const EdgeInsets.all(20),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             child: Row(
               children: [
                 Container(
@@ -869,10 +874,10 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                   child: const Icon(
                     Icons.cloud_upload,
                     color: Colors.white,
-                    size: 36,
+                    size: 24,
                   ),
                 ),
-                const SizedBox(width: 20),
+                const SizedBox(width: 12),
                 const Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,

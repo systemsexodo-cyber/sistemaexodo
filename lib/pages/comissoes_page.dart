@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import '../services/data_service.dart';
 import '../models/funcionario.dart';
 import '../models/pedido.dart';
+import '../models/comissao_vendedor.dart';
 import '../theme.dart';
 import '../widgets/sync_status_widget.dart';
 
@@ -45,33 +46,79 @@ class _ComissoesPageState extends State<ComissoesPage> {
     return resultado;
   }
 
-  Map<String, double> _calcularComissoesPorFuncionario(List<Pedido> pedidos) {
-    final comissoes = <String, double>{};
+  List<ComissaoVendedor> _filtrarComissoesVenda(List<ComissaoVendedor> comissoes) {
+    var resultado = comissoes;
     
-    for (final pedido in pedidos) {
-      for (final servico in pedido.servicos) {
-        if (servico.funcionarioId != null && servico.valorComissao > 0) {
-          comissoes[servico.funcionarioId!] = 
-              (comissoes[servico.funcionarioId] ?? 0.0) + servico.valorComissao;
-        }
-      }
+    // Filtro por funcionário
+    if (_funcionarioFiltro != null) {
+      resultado = resultado.where((c) => c.funcionarioId == _funcionarioFiltro!.id).toList();
     }
     
-    return comissoes;
+    // Filtro por data
+    if (_dataInicio != null) {
+      resultado = resultado.where((c) => c.createdAt.isAfter(_dataInicio!.subtract(const Duration(days: 1)))).toList();
+    }
+    if (_dataFim != null) {
+      resultado = resultado.where((c) => c.createdAt.isBefore(_dataFim!.add(const Duration(days: 1)))).toList();
+    }
+    
+    return resultado;
   }
 
   @override
   Widget build(BuildContext context) {
     final dataService = Provider.of<DataService>(context);
-    final pedidos = _filtrarPedidos(dataService.pedidos);
-    final comissoesPorFuncionario = _calcularComissoesPorFuncionario(pedidos);
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final formatoData = DateFormat('dd/MM/yyyy');
     final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
 
-    // Calcular total geral
-    final totalGeral = comissoesPorFuncionario.values.fold(0.0, (sum, valor) => sum + valor);
+    // 1. Filtrar dados
+    final pedidos = _filtrarPedidos(dataService.pedidos);
+    final comissoesVenda = _filtrarComissoesVenda(dataService.comissoesVendedores);
+
+    // 2. Agrupar por funcionário
+    final Map<String, Map<String, dynamic>> metricasPorFuncionario = {};
+
+    // Processar serviços
+    for (final pedido in pedidos) {
+      for (final servico in pedido.servicos) {
+        if (servico.funcionarioId != null && servico.valorComissao > 0) {
+          final fId = servico.funcionarioId!;
+          if (!metricasPorFuncionario.containsKey(fId)) {
+            metricasPorFuncionario[fId] = {
+              'total': 0.0,
+              'servicos': <Map<String, dynamic>>[],
+              'vendas': <ComissaoVendedor>[],
+            };
+          }
+          metricasPorFuncionario[fId]!['total'] += servico.valorComissao;
+          metricasPorFuncionario[fId]!['servicos'].add({
+            'descricao': servico.descricao,
+            'data': pedido.dataPedido,
+            'valor': servico.valorComissao,
+            'tipo': servico.tipoComissao,
+            'porc': servico.porcentagemComissao,
+          });
+        }
+      }
+    }
+
+    // Processar vendas (links)
+    for (final com in comissoesVenda) {
+      final fId = com.funcionarioId;
+      if (!metricasPorFuncionario.containsKey(fId)) {
+        metricasPorFuncionario[fId] = {
+          'total': 0.0,
+          'servicos': <Map<String, dynamic>>[],
+          'vendas': <ComissaoVendedor>[],
+        };
+      }
+      metricasPorFuncionario[fId]!['total'] += com.valorComissao;
+      metricasPorFuncionario[fId]!['vendas'].add(com);
+    }
+
+    final totalGeral = metricasPorFuncionario.values.fold(0.0, (sum, item) => sum + item['total']);
 
     return AppTheme.appBackground(
       child: Scaffold(
@@ -125,93 +172,15 @@ class _ComissoesPageState extends State<ComissoesPage> {
                         );
                       }),
                     ],
-                    onChanged: (funcionario) {
-                      setState(() {
-                        _funcionarioFiltro = funcionario;
-                      });
-                    },
+                    onChanged: (funcionario) => setState(() => _funcionarioFiltro = funcionario),
                   ),
                   const SizedBox(height: 12),
                   // Filtro por data
                   Row(
                     children: [
-                      Expanded(
-                        child: InkWell(
-                          onTap: () async {
-                            final data = await showDatePicker(
-                              context: context,
-                              initialDate: _dataInicio ?? DateTime.now(),
-                              firstDate: DateTime(2020),
-                              lastDate: DateTime.now(),
-                            );
-                            if (data != null) {
-                              setState(() {
-                                _dataInicio = data;
-                              });
-                            }
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF181A1B),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Row(
-                              children: [
-                                const Icon(Icons.calendar_today, size: 16, color: Colors.white70),
-                                const SizedBox(width: 8),
-                                Text(
-                                  _dataInicio == null
-                                      ? 'Data Início'
-                                      : formatoData.format(_dataInicio!),
-                                  style: TextStyle(
-                                    color: _dataInicio == null ? Colors.white54 : Colors.white,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
+                      _buildDateTile('Início', _dataInicio, (d) => setState(() => _dataInicio = d), formatoData),
                       const SizedBox(width: 8),
-                      Expanded(
-                        child: InkWell(
-                          onTap: () async {
-                            final data = await showDatePicker(
-                              context: context,
-                              initialDate: _dataFim ?? DateTime.now(),
-                              firstDate: _dataInicio ?? DateTime(2020),
-                              lastDate: DateTime.now(),
-                            );
-                            if (data != null) {
-                              setState(() {
-                                _dataFim = data;
-                              });
-                            }
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF181A1B),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Row(
-                              children: [
-                                const Icon(Icons.calendar_today, size: 16, color: Colors.white70),
-                                const SizedBox(width: 8),
-                                Text(
-                                  _dataFim == null
-                                      ? 'Data Fim'
-                                      : formatoData.format(_dataFim!),
-                                  style: TextStyle(
-                                    color: _dataFim == null ? Colors.white54 : Colors.white,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
+                      _buildDateTile('Fim', _dataFim, (d) => setState(() => _dataFim = d), formatoData),
                     ],
                   ),
                 ],
@@ -222,184 +191,52 @@ class _ComissoesPageState extends State<ComissoesPage> {
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
                 color: Colors.orange.withOpacity(0.2),
-                border: Border(
-                  bottom: BorderSide(color: Colors.orange.withOpacity(0.3)),
-                ),
+                border: Border(bottom: BorderSide(color: Colors.orange.withOpacity(0.3))),
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text(
-                    'Total de Comissões:',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  Text(
-                    formatoMoeda.format(totalGeral),
-                    style: const TextStyle(
-                      color: Colors.orange,
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
+                  const Text('Total de Comissões:', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                  Text(formatoMoeda.format(totalGeral), style: const TextStyle(color: Colors.orange, fontSize: 24, fontWeight: FontWeight.bold)),
                 ],
               ),
             ),
-            // Lista de comissões
+            // Lista
             Expanded(
-              child: comissoesPorFuncionario.isEmpty
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.money_off,
-                            size: 64,
-                            color: Colors.white.withOpacity(0.5),
-                          ),
-                          const SizedBox(height: 16),
-                          Text(
-                            'Nenhuma comissão encontrada',
-                            style: TextStyle(
-                              color: Colors.white.withOpacity(0.7),
-                              fontSize: 16,
-                            ),
-                          ),
-                        ],
-                      ),
-                    )
+              child: metricasPorFuncionario.isEmpty
+                  ? _buildEmptyState()
                   : ListView.separated(
                       padding: const EdgeInsets.all(16),
-                      itemCount: comissoesPorFuncionario.length,
+                      itemCount: metricasPorFuncionario.length,
                       separatorBuilder: (_, __) => const SizedBox(height: 12),
                       itemBuilder: (context, index) {
-                        final funcionarioId = comissoesPorFuncionario.keys.elementAt(index);
-                        final totalComissao = comissoesPorFuncionario[funcionarioId]!;
-                        final funcionario = dataService.funcionarios.firstWhere(
-                          (f) => f.id == funcionarioId,
-                          orElse: () => Funcionario(
-                            id: funcionarioId,
-                            nome: 'Funcionário não encontrado',
-                            createdAt: DateTime.now(),
-                            updatedAt: DateTime.now(),
-                          ),
-                        );
+                        final fId = metricasPorFuncionario.keys.elementAt(index);
+                        final dados = metricasPorFuncionario[fId]!;
+                        final total = dados['total'] as double;
+                        final servicos = dados['servicos'] as List<Map<String, dynamic>>;
+                        final vendas = dados['vendas'] as List<ComissaoVendedor>;
                         
-                        // Contar serviços deste funcionário
-                        final servicosFuncionario = pedidos.expand((p) => p.servicos)
-                            .where((s) => s.funcionarioId == funcionarioId && s.valorComissao > 0)
-                            .toList();
-                        
+                        final fNome = dataService.funcionarios.any((f) => f.id == fId) 
+                            ? dataService.funcionarios.firstWhere((f) => f.id == fId).nome
+                            : (vendas.isNotEmpty ? vendas.first.funcionarioNome : 'Desconhecido');
+
                         return Card(
-                          elevation: theme.cardTheme.elevation ?? 2,
-                          shape: theme.cardTheme.shape,
                           color: theme.cardTheme.color,
+                          shape: theme.cardTheme.shape,
                           child: ExpansionTile(
                             leading: CircleAvatar(
                               backgroundColor: Colors.orange.withOpacity(0.2),
                               child: const Icon(Icons.person, color: Colors.orange),
                             ),
-                            title: Text(
-                              funcionario.nome,
-                              style: TextStyle(
-                                color: colorScheme.onSurface,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            subtitle: Text(
-                              '${servicosFuncionario.length} serviço${servicosFuncionario.length != 1 ? 's' : ''}',
-                              style: TextStyle(
-                                color: colorScheme.onSurfaceVariant,
-                                fontSize: 12,
-                              ),
-                            ),
-                            trailing: Text(
-                              formatoMoeda.format(totalComissao),
-                              style: const TextStyle(
-                                color: Colors.orange,
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
+                            title: Text(fNome, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                            subtitle: Text('${servicos.length} servs, ${vendas.length} vendas', style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                            trailing: Text(formatoMoeda.format(total), style: const TextStyle(color: Colors.orange, fontSize: 18, fontWeight: FontWeight.bold)),
                             children: [
-                              Padding(
-                                padding: const EdgeInsets.all(16),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    const Text(
-                                      'Serviços:',
-                                      style: TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 8),
-                                    ...servicosFuncionario.map((servico) {
-                                      final pedido = pedidos.firstWhere(
-                                        (p) => p.servicos.contains(servico),
-                                      );
-                                      return Container(
-                                        margin: const EdgeInsets.only(bottom: 8),
-                                        padding: const EdgeInsets.all(12),
-                                        decoration: BoxDecoration(
-                                          color: const Color(0xFF1E1E2E),
-                                          borderRadius: BorderRadius.circular(8),
-                                        ),
-                                        child: Row(
-                                          children: [
-                                            Expanded(
-                                              child: Column(
-                                                crossAxisAlignment: CrossAxisAlignment.start,
-                                                children: [
-                                                  Text(
-                                                    servico.descricao,
-                                                    style: const TextStyle(
-                                                      color: Colors.white,
-                                                      fontWeight: FontWeight.w500,
-                                                    ),
-                                                  ),
-                                                  const SizedBox(height: 4),
-                                                  Text(
-                                                    formatoData.format(pedido.dataPedido),
-                                                    style: TextStyle(
-                                                      color: Colors.white.withOpacity(0.6),
-                                                      fontSize: 12,
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
-                                            ),
-                                             Column(
-                                                crossAxisAlignment: CrossAxisAlignment.end,
-                                                children: [
-                                                  Text(
-                                                    formatoMoeda.format(servico.valorComissao),
-                                                    style: const TextStyle(
-                                                      color: Colors.orange,
-                                                      fontWeight: FontWeight.bold,
-                                                    ),
-                                                  ),
-                                                  if (servico.tipoComissao == 'Porcentagem' && servico.porcentagemComissao > 0)
-                                                    Text(
-                                                      '(${servico.porcentagemComissao.toStringAsFixed(1).replaceAll('.', ',')}%)',
-                                                      style: TextStyle(
-                                                        color: Colors.white.withOpacity(0.5),
-                                                        fontSize: 10,
-                                                      ),
-                                                    ),
-                                                ],
-                                              ),
-                                          ],
-                                        ),
-                                      );
-                                    }),
-                                  ],
-                                ),
-                              ),
+                              if (servicos.isNotEmpty) _buildSectionHeader('Comissões de Serviços'),
+                              ...servicos.map((s) => _buildItemTile(s['descricao'], s['data'], s['valor'], formatoData, formatoMoeda, sub: s['tipo'] == 'Porcentagem' ? '${s['porc'].toStringAsFixed(1).replaceAll('.', ',')}%' : null)),
+                              if (vendas.isNotEmpty) _buildSectionHeader('Comissões de Vendas (Links)'),
+                              ...vendas.map((v) => _buildItemTile('Venda ${v.pedidoNumero}', v.createdAt, v.valorComissao, formatoData, formatoMoeda, sub: '${v.percentualComissao.toStringAsFixed(1).replaceAll('.', ',')}%')),
+                              const SizedBox(height: 16),
                             ],
                           ),
                         );
@@ -411,5 +248,74 @@ class _ComissoesPageState extends State<ComissoesPage> {
       ),
     );
   }
-}
 
+  Widget _buildDateTile(String label, DateTime? value, Function(DateTime) onSelected, DateFormat format) {
+    return Expanded(
+      child: InkWell(
+        onTap: () async {
+          final data = await showDatePicker(context: context, initialDate: value ?? DateTime.now(), firstDate: DateTime(2020), lastDate: DateTime.now());
+          if (data != null) onSelected(data);
+        },
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(color: const Color(0xFF181A1B), borderRadius: BorderRadius.circular(8)),
+          child: Row(
+            children: [
+              const Icon(Icons.calendar_today, size: 16, color: Colors.white70),
+              const SizedBox(width: 8),
+              Text(value == null ? label : format.format(value), style: TextStyle(color: value == null ? Colors.white54 : Colors.white)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSectionHeader(String title) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+      child: Text(title, style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold, fontSize: 13)),
+    );
+  }
+
+  Widget _buildItemTile(String desc, DateTime date, double val, DateFormat df, NumberFormat mf, {String? sub}) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(color: const Color(0xFF1E1E2E), borderRadius: BorderRadius.circular(8)),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(desc, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w500)),
+                Text(df.format(date), style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 11)),
+              ],
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(mf.format(val), style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold)),
+              if (sub != null) Text(sub, style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 10)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.money_off, size: 64, color: Colors.white.withOpacity(0.5)),
+          const SizedBox(height: 16),
+          Text('Nenhuma comissão encontrada', style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 16)),
+        ],
+      ),
+    );
+  }
+}

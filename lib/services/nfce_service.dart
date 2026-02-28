@@ -6,10 +6,15 @@ import '../models/cliente.dart';
 import '../models/empresa.dart';
 
 class NfceService {
-  // URL do backend Python (FastAPI)
-  // Se rodando no Android Emulator use 'http://10.0.2.2:8000'
-  // Se rodando Web/Desktop use 'http://localhost:8000'
-  static const String _baseUrl = 'http://localhost:8000';
+  // URL base dinâmica para permitir uso de túneis (Ngrok/Zrok) quando no Firebase
+  String _baseUrl = 'http://localhost:8000';
+
+  void setBaseUrl(String url) {
+    _baseUrl = url.endsWith('/') ? url.substring(0, url.length - 1) : url;
+    print('>>> [NFC-e] Nova URL configurada: $_baseUrl');
+  }
+
+  String get baseUrl => _baseUrl;
 
   /// Envia os dados da venda para o backend Python emitir a NFC-e
   Future<Map<String, dynamic>> emitirNfce({

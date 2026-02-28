@@ -59,6 +59,8 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
   String? _certificadoDigitalBytes; // Bytes em base64 (fallback se não conseguir salvar arquivo)
   String? _certificadoWindowsThumbprint; // Thumbprint do certificado do Windows
   bool _ambienteHomologacao = true; // Padrão: homologação
+  final _bridgeNfceUrlController = TextEditingController(text: 'http://localhost:8000');
+  final _bridgeNfceKeyController = TextEditingController();
   
   Color _corPrimaria = Colors.blueAccent;
   Color _corSecundaria = Colors.blue;
@@ -136,6 +138,8 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
     _cscIdTokenController.text = empresa.cscIdToken ?? '';
     _serieNFCeController.text = empresa.serieNFCe ?? '1';
     _ambienteHomologacao = empresa.ambienteHomologacao ?? true;
+    _bridgeNfceUrlController.text = empresa.configuracoes?['bridgeNfceUrl'] as String? ?? 'http://localhost:8000';
+    _bridgeNfceKeyController.text = empresa.configuracoes?['bridgeNfceKey'] as String? ?? '';
     
     // Converter cores hex para Color
     if (empresa.corPrimaria != null && empresa.corPrimaria!.isNotEmpty) {
@@ -183,6 +187,8 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
     _whatsappApiUrlController.dispose();
     _whatsappApiKeyController.dispose();
     _whatsappInstanceNameController.dispose();
+    _bridgeNfceUrlController.dispose();
+    _bridgeNfceKeyController.dispose();
     super.dispose();
   }
 
@@ -293,6 +299,8 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
           'certificadoWindowsThumbprint': _certificadoWindowsThumbprint,
         if (_certificadoWindowsThumbprint != null && _certificadoDigitalNome != null)
           'certificadoWindowsSubject': _certificadoDigitalNome,
+        'bridgeNfceUrl': _bridgeNfceUrlController.text.trim(),
+        'bridgeNfceKey': _bridgeNfceKeyController.text.trim(),
       },
     );
 
@@ -534,8 +542,23 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
 
               const SizedBox(height: 24),
 
-              // Configurações NFC-e
-              _buildSectionTitle('Configurações NFC-e (Opcional)'),
+              _buildSectionTitle('Configurações NFC-e (Executável local)'),
+              _buildTextField(
+                controller: _bridgeNfceUrlController,
+                label: 'URL do Emissor Local (Bridge)',
+                icon: Icons.lan,
+                hintText: 'http://localhost:8000',
+                helperText: 'Se usar o Firebase Online, coloque aqui o link do seu túnel (Zrok/Ngrok)',
+              ),
+              const SizedBox(height: 8),
+              _buildTextField(
+                controller: _bridgeNfceKeyController,
+                label: 'Chave de API do Emissor',
+                icon: Icons.key,
+                obscureText: true,
+                helperText: 'Chave gerada pelo executável (veja no log do bridge)',
+              ),
+              const SizedBox(height: 16),
               _buildCertificadoUpload(),
               const SizedBox(height: 16),
               _buildTextField(

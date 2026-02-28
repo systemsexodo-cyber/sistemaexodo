@@ -282,11 +282,20 @@ class DataService extends ChangeNotifier {
   /// Define a empresa atual e recarrega os dados
   /// [modoLeve]: Se true, carrega apenas dados essenciais (otimizado para loja pública)
   Future<void> definirEmpresaAtual(String? empresaId, {bool modoLeve = false}) async {
-    _isModoLeve = modoLeve;
-    if (_empresaIdAtual == empresaId) {
-      print('>>> DataService: Empresa já está definida: $empresaId - pulando recarregamento');
+    // Se a empresa for a mesma, mas mudamos de modoLeve para modoFull, precisamos recarregar
+    if (_empresaIdAtual == empresaId && empresaId != null) {
+      if (_isModoLeve && !modoLeve) {
+        debugPrint('>>> [DataService] ⚡ Upgrade: modoLeve -> Full sync (empresa: $empresaId)');
+        _isModoLeve = false;
+        await iniciarSincronizacao(modoLeve: false);
+        return;
+      }
+      debugPrint('>>> [DataService] ℹ️ Empresa já definida: $empresaId (Leve: $_isModoLeve)');
+      _isModoLeve = modoLeve;
       return;
     }
+    
+    _isModoLeve = modoLeve;
     
     // Iniciar loading
     _isLoading = true;
@@ -1969,26 +1978,29 @@ class DataService extends ChangeNotifier {
   // ============ CRUD ComissaoVendedor ============
 
   Future<void> addComissaoVendedor(ComissaoVendedor comissao) async {
+    debugPrint('>>> [ComissaoVendedor] ➕ Adicionando nova comissão: ${comissao.id}');
+    debugPrint('>>> [ComissaoVendedor]     Vendedor: ${comissao.funcionarioNome} (ID: ${comissao.funcionarioId})');
+    debugPrint('>>> [ComissaoVendedor]     Pedido: ${comissao.pedidoNumero} (ID: ${comissao.pedidoId})');
+    debugPrint('>>> [ComissaoVendedor]     Valor: R\$ ${comissao.valorComissao}');
+
     _comissoesVendedores.add(comissao);
-    // Notificar listeners IMEDIATAMENTE para atualizar a UI
     notifyListeners();
     
-    // Salvar localmente IMEDIATAMENTE (sem debounce)
+    // Salvar localmente IMEDIATAMENTE
     try {
-      await _storage.salvarLista(
-        _getChaveComEmpresa(LocalStorageService.keyComissoesVendedores), 
-        _comissoesVendedores
-      );
-      debugPrint('>>> [ComissaoVendedor] ✅ Salva localmente: ${comissao.id}');
+      final chave = _getChaveComEmpresa(LocalStorageService.keyComissoesVendedores);
+      debugPrint('>>> [ComissaoVendedor] 💾 Salvando localmente na chave: $chave');
+      await _storage.salvarLista(chave, _comissoesVendedores);
+      debugPrint('>>> [ComissaoVendedor] ✅ Salva localmente com sucesso! Total na lista: ${_comissoesVendedores.length}');
     } catch (e) {
-      debugPrint('>>> [ComissaoVendedor] ❌ Erro ao salvar localmente: $e');
+      debugPrint('>>> [ComissaoVendedor] ❌ ERRO ao salvar localmente: $e');
     }
     
-    // Também chamar salvamento automático (para sincronizar outros dados)
     _salvarAutomaticamente();
     
-    // Salvar imediatamente no Firebase (aguardando para garantir que foi salvo)
+    // Salvar imediatamente no Firebase
     if (_firebaseHabilitado && _empresaIdAtual != null) {
+      debugPrint('>>> [ComissaoVendedor] 🔥 Tentando salvar no Firebase (empresa: $_empresaIdAtual)...');
       try {
         await _firebaseService.salvarComissaoVendedor(_empresaIdAtual!, comissao);
         debugPrint('>>> [ComissaoVendedor] ✅✅✅ SALVA NO FIREBASE COM SUCESSO! ✅✅✅');
@@ -1997,10 +2009,8 @@ class DataService extends ChangeNotifier {
         debugPrint('>>> [ComissaoVendedor] Erro: $e');
         debugPrint('>>> [ComissaoVendedor] StackTrace: $stackTrace');
         _adicionarSincronizacaoPendente();
-        // NÃO re-throw - dados já estão salvos localmente
       }
     } else {
-      debugPrint('>>> [ComissaoVendedor] ⚠️ NÃO SALVOU NO FIREBASE!');
       if (!_firebaseHabilitado) debugPrint('>>> [ComissaoVendedor] Motivo: Firebase NÃO está habilitado');
       if (_empresaIdAtual == null) debugPrint('>>> [ComissaoVendedor] Motivo: Empresa NÃO está selecionada');
     }
@@ -3329,10 +3339,10 @@ class DataService extends ChangeNotifier {
     // Notificar novamente para garantir que a UI refletiu o salvamento
     notifyListeners();
     forceUpdate(); // Forçar rebuild global para garantir que o sino e agenda atualizem
-  } else {
-    debugPrint('>>> [Agendamento] ❌ ERRO: Agendamento $agendamentoId não encontrado para aprovação!');
+    } else {
+      debugPrint('>>> [Agendamento] ❌ ERRO: Agendamento $agendamentoId não encontrado para aprovação!');
+    }
   }
-}
 
   /// Rejeita um agendamento (muda status para 'Cancelado')
   Future<void> rejeitarAgendamento(String agendamentoId) async {
@@ -3340,35 +3350,35 @@ class DataService extends ChangeNotifier {
     if (index != -1) {
       final agendamento = _agendamentosServico[index];
       final agendamentoPrevio = agendamento.copyWith(
-      status: 'Cancelado',
-      updatedAt: DateTime.now(),
-    );
-    
-    final agendamentoAtualizado = _vincularReferenciasAgendamento(agendamentoPrevio);
-    
-    // Atualizar a instância com prioridade
-    _upsertAgendamentoLocal(agendamentoAtualizado, prioritario: true);
-    
-    notifyListeners();
-    _salvarAutomaticamente();
-    
-    // Sincronizar com Firebase
-    if (_firebaseHabilitado && _empresaIdAtual != null) {
-      try {
-        await _firebaseService.salvarAgendamentoServico(_empresaIdAtual!, agendamentoAtualizado);
-      } catch (e) {
-        debugPrint('>>> [Agendamento] Erro ao rejeitar no Firebase: $e');
+        status: 'Cancelado',
+        updatedAt: DateTime.now(),
+      );
+      
+      final agendamentoAtualizado = _vincularReferenciasAgendamento(agendamentoPrevio);
+      
+      // Atualizar a instância com prioridade
+      _upsertAgendamentoLocal(agendamentoAtualizado, prioritario: true);
+      
+      notifyListeners();
+      _salvarAutomaticamente();
+      
+      // Sincronizar com Firebase
+      if (_firebaseHabilitado && _empresaIdAtual != null) {
+        try {
+          await _firebaseService.salvarAgendamentoServico(_empresaIdAtual!, agendamentoAtualizado);
+        } catch (e) {
+          debugPrint('>>> [Agendamento] Erro ao rejeitar no Firebase: $e');
+        }
       }
-    }
-    
-    // Notificar cliente via WhatsApp em background
-    // ignore: unawaited_futures
-    _enviarNotificacaoWhatsAppAgendamento(agendamentoAtualizado, isNovo: false);
+      
+      // Notificar cliente via WhatsApp em background
+      // ignore: unawaited_futures
+      _enviarNotificacaoWhatsAppAgendamento(agendamentoAtualizado, isNovo: false);
 
-    notifyListeners();
-    forceUpdate();
+      notifyListeners();
+      forceUpdate();
+    }
   }
-}
 
   /// Verifica se há conflito de horário para um agendamento
 

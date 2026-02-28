@@ -3,3 +3,8 @@ uvicorn
 pynfe
 python-multipart
 requests
+signxml
+lxml
+cryptography
+pywin32
+pyinstaller

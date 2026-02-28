@@ -2922,13 +2922,16 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
       return dataB.compareTo(dataA);
     });
 
-    // Buscar agendamentos de vacina do cliente
-    final agendamentosVacina = dataService.agendamentosServico
-        .where((a) => a.clienteId == widget.cliente?.id && 
-                      ((a.servicoId?.startsWith('vacina_') ?? false) || 
-                       (a.observacoes != null && a.observacoes!.toLowerCase().contains('vacina'))))
+    // Buscar todos os agendamentos do cliente (não apenas vacinas)
+    final todosAgendamentos = dataService.agendamentosServico
+        .where((a) => a.clienteId == widget.cliente?.id)
         .toList()
       ..sort((a, b) => b.dataAgendamento.compareTo(a.dataAgendamento));
+
+    final agendamentosVacina = todosAgendamentos
+        .where((a) => (a.servicoId?.startsWith('vacina_') ?? false) || 
+                      (a.observacoes != null && a.observacoes!.toLowerCase().contains('vacina')))
+        .toList();
 
     // Buscar materiais consumidos dos pedidos do cliente
     final materiaisConsumidos = <Map<String, dynamic>>[];
@@ -3021,6 +3024,21 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                   (venda) => _buildCardVendaBalcaoHistorico(
                     venda,
                     formatoMoeda,
+                    formatoData,
+                  ),
+                ),
+
+          // Histórico de Agendamentos (Serviços)
+          _buildSecaoTitulo('Histórico de Agendamentos', Icons.calendar_today),
+          const SizedBox(height: 12),
+          if (todosAgendamentos.isEmpty)
+            _buildSemHistorico()
+          else
+            ...todosAgendamentos
+                .take(15)
+                .map(
+                  (agendamento) => _buildCardAgendamentoHistorico(
+                    agendamento,
                     formatoData,
                   ),
                 ),
@@ -4251,6 +4269,77 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
         ],
       ),
     );
+  }
+
+  Widget _buildCardAgendamentoHistorico(AgendamentoServico agendamento, DateFormat formatoData) {
+    final statusColor = _getStatusColor(agendamento.status);
+    
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withOpacity(0.1)),
+      ),
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        leading: Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: statusColor.withOpacity(0.2),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(Icons.calendar_today, color: statusColor),
+        ),
+        title: Text(
+          agendamento.servicoNome ?? 'Serviço',
+          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${formatoData.format(agendamento.dataAgendamento)} às ${DateFormat('HH:mm').format(agendamento.dataAgendamento)}',
+              style: const TextStyle(color: Colors.white70),
+            ),
+            if (agendamento.petNome != null)
+              Text(
+                'Pet: ${agendamento.petNome}',
+                style: const TextStyle(color: Colors.white60, fontSize: 12),
+              ),
+          ],
+        ),
+        trailing: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: statusColor.withOpacity(0.2),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: statusColor.withOpacity(0.5)),
+          ),
+          child: Text(
+            agendamento.status,
+            style: TextStyle(color: statusColor, fontSize: 10, fontWeight: FontWeight.bold),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Color _getStatusColor(String status) {
+    switch (status) {
+      case 'Concluído':
+        return Colors.greenAccent;
+      case 'Cancelado':
+        return Colors.redAccent;
+      case 'Em Andamento':
+        return Colors.blueAccent;
+      case 'Aguardando Confirmação':
+        return Colors.orangeAccent;
+      default:
+        return Colors.yellowAccent;
+    }
   }
 }
 

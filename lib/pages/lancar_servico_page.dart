@@ -619,8 +619,11 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
                            (s.preco == itemServico.valor || s.precoTotal == (itemServico.valor + itemServico.valorAdicional)),
                     orElse: () => Servico(
                       id: '',
-                      nome: '',
-                      preco: 0,
+                      nome: itemServico.descricao,
+                      preco: itemServico.valor,
+                      tipoComissao: itemServico.tipoComissao,
+                      porcentagemComissao: itemServico.porcentagemComissao,
+                      valorComissao: itemServico.tipoComissao == 'Fixo' ? itemServico.valorComissao : 0.0,
                       createdAt: DateTime.now(),
                       updatedAt: DateTime.now(),
                     ),
@@ -671,6 +674,11 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
                   numeroEndereco: itemServico.numeroEndereco,
                   complemento: itemServico.complemento,
                   pontoReferencia: itemServico.pontoReferencia,
+                  funcionarioId: itemServico.funcionarioId,
+                  funcionarioNome: itemServico.funcionarioId != null 
+                    ? dataService.funcionarios.firstWhere((f) => f.id == itemServico.funcionarioId, orElse: () => Funcionario(id: '', nome: '')).nome 
+                    : null,
+                  servico: servicoCadastrado,
                 );
                 
                 // Validação de conflito REMOVIDA - permitir múltiplos agendamentos no mesmo horário
@@ -2324,18 +2332,14 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
                           setState(() {
                             _funcionarioSelecionado = funcionario;
                             
-                            // Se selecionou um funcionário e a comissão ainda está zerada ou vazia,
-                            // tenta carregar a comissão padrão do funcionário
+                            // Carregar a comissão padrão do funcionário se disponível
                             if (funcionario != null) {
-                              final comissaoAtual = double.tryParse(_valorComissaoController.text.replaceAll(',', '.')) ?? 0.0;
-                              if (comissaoAtual == 0) {
-                                if (funcionario.tipoComissao == 'Fixo' && funcionario.valorComissao > 0) {
-                                  _comissaoEmPorcentagem = false;
-                                  _valorComissaoController.text = funcionario.valorComissao.toStringAsFixed(2).replaceAll('.', ',');
-                                } else if (funcionario.tipoComissao == 'Porcentagem' && funcionario.porcentagemComissao > 0) {
-                                  _comissaoEmPorcentagem = true;
-                                  _valorComissaoController.text = funcionario.porcentagemComissao.toStringAsFixed(2).replaceAll('.', ',');
-                                }
+                              if (funcionario.tipoComissao == 'Fixo') {
+                                _comissaoEmPorcentagem = false;
+                                _valorComissaoController.text = funcionario.valorComissao.toStringAsFixed(2).replaceAll('.', ',');
+                              } else if (funcionario.tipoComissao == 'Porcentagem') {
+                                _comissaoEmPorcentagem = true;
+                                _valorComissaoController.text = funcionario.porcentagemComissao.toStringAsFixed(2).replaceAll('.', ',');
                               }
                             }
                           });
@@ -3387,6 +3391,16 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
                     onChanged: (funcionario) {
                       setDialogState(() {
                         funcionarioSelecionado = funcionario;
+                        // Carregar a comissão padrão do funcionário se disponível
+                        if (funcionario != null) {
+                          if (funcionario.tipoComissao == 'Fixo') {
+                            comissaoEmPorcentagem = false;
+                            comissaoController.text = funcionario.valorComissao.toStringAsFixed(2).replaceAll('.', ',');
+                          } else if (funcionario.tipoComissao == 'Porcentagem') {
+                            comissaoEmPorcentagem = true;
+                            comissaoController.text = funcionario.porcentagemComissao.toStringAsFixed(2).replaceAll('.', ',');
+                          }
+                        }
                       });
                     },
                   ),
@@ -4096,6 +4110,16 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
                   onChanged: (value) {
                     setState(() {
                       funcionarioSelecionado = value;
+                      // Atualizar campos de comissão se o funcionário tiver comissão padrão
+                      if (value != null) {
+                        if (value.tipoComissao == 'Fixo') {
+                          comissaoEmPorcentagem = false;
+                          valorComissaoController.text = value.valorComissao.toStringAsFixed(2).replaceAll('.', ',');
+                        } else if (value.tipoComissao == 'Porcentagem') {
+                          comissaoEmPorcentagem = true;
+                          valorComissaoController.text = value.porcentagemComissao.toStringAsFixed(2).replaceAll('.', ',');
+                        }
+                      }
                     });
                   },
                 ),

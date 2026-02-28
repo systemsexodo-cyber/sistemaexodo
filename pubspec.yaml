@@ -44,7 +44,7 @@ dependencies:
 
   cloud_firestore: ^6.1.0
   xml: ^6.4.2
-  file_picker: ^6.1.1
+  file_picker: ^8.0.0
   image_picker: ^1.0.7
   image: ^4.1.7  # Para compressão de imagens
   excel: ^3.0.0

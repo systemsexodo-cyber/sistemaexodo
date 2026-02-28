@@ -164,6 +164,67 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     });
   }
 
+  Future<void> _sincronizarDadosClienteAgora() async {
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final authService = Provider.of<AuthService>(context, listen: false);
+
+    // Garantir empresa ativa para o salvamento
+    if (dataService.empresaIdAtual == null) {
+      final slugParaUsar = widget.slugEmpresa;
+      if (slugParaUsar != null) {
+        final emp = authService.obterEmpresaPorSlug(slugParaUsar);
+        if (emp != null) await dataService.definirEmpresaAtual(emp.id);
+      }
+    }
+
+    final telefoneBusca = _whatsappController.text.replaceAll(RegExp(r'\D'), '');
+    if (telefoneBusca.length < 8) return;
+
+    debugPrint('>>> [Agendamento] Sincronizando dados prematuros do cliente...');
+
+    Cliente? clienteReal;
+    try {
+      clienteReal = dataService.clientes.firstWhere(
+        (c) => c.telefone.replaceAll(RegExp(r'\D'), '') == telefoneBusca
+      );
+    } catch (_) {}
+
+    if (clienteReal == null) {
+      clienteReal = Cliente(
+        id: _clienteEncontrado?.id ?? 'pub_${DateTime.now().microsecondsSinceEpoch}',
+        nome: _nomeController.text,
+        telefone: _whatsappController.text,
+        whatsapp: telefoneBusca,
+        endereco: _enderecoRuaController.text.isNotEmpty ? _enderecoRuaController.text : null,
+        numero: _enderecoNumeroController.text.isNotEmpty ? _enderecoNumeroController.text : null,
+        bairro: _bairroController.text.isNotEmpty ? _bairroController.text : null,
+        pets: [],
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+      );
+      await dataService.addCliente(clienteReal);
+      if (mounted) setState(() => _clienteEncontrado = clienteReal);
+    } else {
+      // Atualizar se mudou
+      Cliente novo = clienteReal.copyWith(
+        nome: _nomeController.text.isNotEmpty ? _nomeController.text : clienteReal.nome,
+        endereco: _enderecoRuaController.text.isNotEmpty ? _enderecoRuaController.text : clienteReal.endereco,
+        numero: _enderecoNumeroController.text.isNotEmpty ? _enderecoNumeroController.text : clienteReal.numero,
+        bairro: _bairroController.text.isNotEmpty ? _bairroController.text : clienteReal.bairro,
+        updatedAt: DateTime.now(),
+      );
+      
+      // Verificação simples de mudança para evitar saves desnecessários
+      if (novo.nome != clienteReal.nome || 
+          novo.endereco != clienteReal.endereco || 
+          novo.numero != clienteReal.numero || 
+          novo.bairro != clienteReal.bairro) {
+         await dataService.updateCliente(novo);
+         if (mounted) setState(() => _clienteEncontrado = novo);
+      }
+    }
+  }
+
   Future<void> _buscarClientePorTelefone(String telefone) async {
     final normalizado = telefone.replaceAll(RegExp(r'\D'), '');
     
@@ -2826,6 +2887,11 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     final int maxIndex = passosReaisHabilitados.length - 1;
 
     if (_formKey.currentState!.validate()) {
+      // Se estiver saindo do passo de dados pessoais (passoReal 1), salvar cliente prematuramente
+      if (passosReaisHabilitados[_currentStep] == 1) {
+        _sincronizarDadosClienteAgora();
+      }
+
       if (_currentStep < maxIndex) {
         setState(() => _currentStep++);
       } else {

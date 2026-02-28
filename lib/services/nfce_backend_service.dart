@@ -44,11 +44,11 @@ class NFCeBackendService implements NFCeServiceBase {
       return cloudRunUrl;
     }
     
-    // Modo local - Backend Python (PyNFe) usa porta 5000
+    // Modo local - Backend Python (PyNFe) usa porta 8000 (atualizado)
     // Android Emulator: usar 10.0.2.2
     // iOS Simulator: usar localhost
     // Dispositivo físico: usar IP da máquina
-    return 'http://localhost:5000';
+    return 'http://localhost:8000';
   }
   
   /// Emite uma NFC-e via backend Python
@@ -108,11 +108,15 @@ class NFCeBackendService implements NFCeServiceBase {
       
       debugPrint('>>> [NFCeBackend] Enviando requisição...');
       
+      // Obter chave de API das configurações da empresa
+      final apiKey = empresa.configuracoes?['bridgeNfceKey'] as String? ?? '';
+      
       // Fazer requisição HTTP
       final response = await http.post(
-        Uri.parse('$baseUrl/api/nfce/emitir'),
+        Uri.parse('$baseUrl/emitir'), // Nota: O novo backend usa /emitir e não /api/nfce/emitir
         headers: {
           'Content-Type': 'application/json',
+          if (apiKey.isNotEmpty) 'X-Api-Key': apiKey,
         },
         body: jsonEncode(requestData),
       ).timeout(
@@ -374,15 +378,14 @@ class NFCeBackendService implements NFCeServiceBase {
           errorStr.contains('ClientException') ||
           errorStr.contains('SocketException') ||
           errorStr.contains('Connection refused')) {
-          throw Exception('Não foi possível conectar ao backend Python!\n\n'
-            'O servidor backend não está rodando ou não está acessível.\n\n'
+          throw Exception('Não foi possível conectar ao Emissor NFC-e!\n\n'
+            'O serviço local não está rodando ou a URL está incorreta.\n\n'
             'SOLUÇÃO:\n'
-            '1. Abra um terminal PowerShell\n'
-            '2. Navegue até: sistema_exodo_01-12\\backend_pynfe\n'
-            '3. Execute: .\\start_local.bat\n'
-            '4. Aguarde o servidor iniciar (aparecerá "Running on http://0.0.0.0:5000")\n'
-            '5. Tente emitir a NFC-e novamente\n\n'
-            'URL esperada: http://localhost:5000');
+            '1. Certifique-se de que o programa "ExodoNfceBridge.exe" está aberto no computador.\n'
+            '2. Vá em Editar Empresa e verifique se a "URL do Emissor Local" está correta.\n'
+            '3. Se estiver usando o App Online, você precisa colar o link público (Ex: https://...localhost.run).\n'
+            '4. Tente emitir a NFC-e novamente.\n\n'
+            'URL configurada: $baseUrl');
       }
       
       // Se for Exception com mensagem, usar a mensagem

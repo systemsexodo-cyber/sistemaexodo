@@ -101,4 +101,13 @@ class Funcionario {
       updatedAt: updatedAt ?? this.updatedAt,
     );
   }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is Funcionario && other.id == id;
+  }
+
+  @override
+  int get hashCode => id.hashCode;
 }

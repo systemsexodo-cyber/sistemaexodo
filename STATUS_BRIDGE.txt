@@ -1,0 +1,6 @@
+=== STATUS DO EMISSOR EXODO ===
+
+LINK PUBLICO: create an account and add your key for a longer lasting domain name. see https://localhost.run/docs/forever-free/ for more information.
+CHAVE DE API: 4b8307f64051ed1e0d84487e607827be
+
+Copie esses dados para as configuracoes da empresa no seu App.

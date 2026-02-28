@@ -1120,11 +1120,14 @@ class FirebaseService {
   /// Salva uma comissão de vendedor no Firebase
   Future<void> salvarComissaoVendedor(String empresaId, ComissaoVendedor comissao) async {
     try {
+      debugPrint('>>> [Firebase] 🔥 Salvando comissão: ${comissao.id} na empresa $empresaId');
       final docRef = _getSubCollection(empresaId, _subCollectionComissoesVendedores).doc(comissao.id);
-      await docRef.set(comissao.toMap());
-      debugPrint('>>> [Firebase] Comissão de vendedor salva: ${comissao.pedidoNumero} (ID: ${comissao.id})');
+      final data = comissao.toMap();
+      debugPrint('>>> [Firebase] 📦 Dados: $data');
+      await docRef.set(data);
+      debugPrint('>>> [Firebase] ✅ Comissão salva com sucesso!');
     } catch (e, stackTrace) {
-      debugPrint('>>> [Firebase] ERRO ao salvar comissão de vendedor: $e');
+      debugPrint('>>> [Firebase] ❌ ERRO ao salvar comissão: $e');
       debugPrint('>>> [Firebase] StackTrace: $stackTrace');
       rethrow;
     }
