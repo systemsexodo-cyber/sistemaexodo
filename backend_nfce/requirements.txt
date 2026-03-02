@@ -8,3 +8,4 @@ lxml
 cryptography
 pywin32
 pyinstaller
+firebase-admin

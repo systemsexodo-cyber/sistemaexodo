@@ -1,3 +1,7 @@
+=== STATUS DO EMISSOR EXODO ===
+
+FIREBASE: CONECTADO (Modo Sem Link Ativo)
+
 === STATUS DO EMISSOR EXODO (MODO LOCAL) ===
 
 ACESSO: http://localhost:8000

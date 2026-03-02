@@ -4,14 +4,19 @@ from PyInstaller.utils.hooks import collect_all
 datas = []
 binaries = []
 hiddenimports = ['multiprocessing', '_multiprocessing', 'multiprocessing.resource_tracker', 'multiprocessing.popen_spawn_win32', 'uvicorn', 'pynfe']
-tmp_ret = collect_all('lxml')
+import pynfe
+import os
+pynfe_dir = os.path.dirname(pynfe.__file__)
+pynfe_data = os.path.join(pynfe_dir, 'data')
+datas += [(pynfe_data, 'pynfe/data')]
+tmp_ret = collect_all('firebase_admin')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('pynfe')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
-    ['backend_nfce\\main.py'],
+    ['main.py'],
     pathex=[],
     binaries=binaries,
     datas=datas,
@@ -44,5 +49,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['exodo_logo.ico'],
+    icon=['..\\exodo_logo.ico'],
 )

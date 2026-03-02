@@ -7,9 +7,18 @@ import sys
 import os
 import uvicorn
 
-# Adicionar a pasta do backend ao path
-sys.path.append(os.path.dirname(__file__))
-from main import app
+# Adicionar a pasta do backend ao path e mudar diretório de trabalho
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(BASE_DIR)
+os.chdir(BASE_DIR)
+
+try:
+    from main import app
+except Exception as e:
+    # Se falhar o import, o serviço não inicia
+    with open("service_error.log", "a") as f:
+        f.write(f"Erro ao importar app: {e}\n")
+    raise
 
 class NfceBridgeService(win32serviceutil.ServiceFramework):
     _svc_name_ = "ExodoNfceBridge"

@@ -433,7 +433,7 @@ class FirebaseService {
 
           totalProcessado += chunk.length;
           // Pausa obrigatória para o garbage collector do navegador respirar
-          await Future.delayed(const Duration(milliseconds: 100));
+          await Future.delayed(const Duration(milliseconds: 200));
         }
       }
 

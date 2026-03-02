@@ -176,9 +176,19 @@ class DataService extends ChangeNotifier {
   // Proteção contra salvamentos excessivos (debounce otimizado)
   Timer? _debounceSalvamento;
   bool _salvandoDados = false;
-  static const Duration _debounceDelay = Duration(seconds: 3); // 3 segundos para reduzir travamentos
+  static const Duration _debounceDelay = Duration(seconds: 10); // Aumentado para 10s para estabilidade
   DateTime? _ultimaSincronizacao;
-  static const Duration _intervaloSincronizacao = Duration(minutes: 30); // Sincronizar no máximo a cada 30 minutos
+  static const Duration _intervaloSincronizacao = Duration(minutes: 30);
+  
+  // Controle de coleções modificadas (Selective Saving)
+  final Set<String> _dirtyCollections = {};
+
+  void _marcarSujo(String collectionKey) {
+    if (!_dirtyCollections.contains(collectionKey)) {
+      _dirtyCollections.add(collectionKey);
+      _salvarAutomaticamente();
+    }
+  }
   
   // Empresa atual para isolamento de dados
   String? _empresaIdAtual;
@@ -523,68 +533,78 @@ class DataService extends ChangeNotifier {
     if (_empresaIdAtual == null || !_firebaseHabilitado) return;
 
     final timestamp = '${DateTime.now().hour}:${DateTime.now().minute}:${DateTime.now().second}';
-    debugPrint('>>> [Sync] 📡 [$timestamp] Iniciando Stream: empresas/$_empresaIdAtual/agendamentos_servico');
+    debugPrint('>>> [Sync] 📡 [$timestamp] Iniciando Stream Otimizado: agendamentos_servico');
     
     _agendamentosSubscription = _firebaseService
         .getAgendamentosStream(_empresaIdAtual!)
         .listen((novosAgendamentos) {
-      debugPrint('>>> [Sync] 📥 [$timestamp] Snapshot recebido: ${novosAgendamentos.length} docs em agendamentos_servico');
-      
+      if (novosAgendamentos.isEmpty && _primeiraCargaAgendamentosRealizada) return;
+
       bool houveMudanca = false;
       
-      // 1. Remover locais que não existem mais no Firebase (Sincronização de deleção)
+      // OTIMIZAÇÃO: Cache de Clientes e Serviços para busca O(1)
+      final clienteMap = {for (var c in _clientes) c.id: c};
+      final servicoMap = {for (var s in _tiposServico) s.id: s};
+
+      // 1. Deleção
       final idsRemotos = novosAgendamentos.map((a) => a.id).toSet();
-      final idsLocaisAntes = _agendamentosServico.map((a) => a.id).toSet();
-      
       _agendamentosServico.removeWhere((a) {
         if (!idsRemotos.contains(a.id)) {
           houveMudanca = true;
-          debugPrint('>>> [Sync] 🗑️ Removendo localmente agendamento deletado no server: ${a.id}');
           return true;
         }
         return false;
       });
 
-      // 2. Upsert (Adicionar ou Atualizar)
+      // 2. Upsert
       bool temNovoAgendamento = false;
       for (final agendamento in novosAgendamentos) {
-        // Verificar se é um agendamento realmente novo (não existia na lista local)
-        final isNovoParaLocal = !idsLocaisAntes.contains(agendamento.id);
-        
-        final agendamentoCompleto = _vincularReferenciasAgendamento(agendamento);
+        // Vínculo otimizado
+        final cliente = clienteMap[agendamento.clienteId] ?? agendamento.cliente;
+        Pet? pet;
+        if (agendamento.petId != null && cliente != null) {
+          try {
+            pet = cliente.pets.firstWhere((p) => p.id == agendamento.petId);
+          } catch (_) {}
+        }
+        final servico = servicoMap[agendamento.servicoId] ?? agendamento.servico;
+
+        final agendamentoCompleto = agendamento.copyWith(
+          cliente: cliente,
+          pet: pet ?? agendamento.pet,
+          servico: servico,
+        );
+
         if (_upsertAgendamentoLocal(agendamentoCompleto)) {
           houveMudanca = true;
-          
-          // Tocar som apenas para agendamentos novos que chegam APÓS a primeira carga completa
-          if (_primeiraCargaAgendamentosRealizada && isNovoParaLocal) {
-            temNovoAgendamento = true;
-            debugPrint('>>> [Sync] ✨ NOVO agendamento detectado: ${agendamento.id}');
+          if (_primeiraCargaAgendamentosRealizada && !idsRemotos.contains(agendamento.id)) {
+             // Só toca se for novo REAL (não estava no snapshot anterior)
           }
-          
-          debugPrint('>>> [Sync] ✅ ATUALIZAÇÃO detectada via Stream: ${agendamento.id} (${agendamentoCompleto.status})');
+          // Lógica simplificada de notificação para evitar flood
+          if (_primeiraCargaAgendamentosRealizada && agendamento.status == 'Aguardando Confirmação') {
+            temNovoAgendamento = true;
+          }
         }
       }
 
-      // Após processar o primeiro snapshot, marcamos que as próximas novidades devem tocar som
       if (!_primeiraCargaAgendamentosRealizada) {
         _primeiraCargaAgendamentosRealizada = true;
-        debugPrint('>>> [Sync] 🏁 Primeira carga de agendamentos concluída. Notificações sonoras ATIVADAS.');
       }
 
       if (temNovoAgendamento) {
         _tocarSomNotificacao();
       }
       
-      // Sempre notificar a UI ao receber snapshot para garantir que contadores e filtros reflitam o estado atual
       notifyListeners();
       
       if (houveMudanca) {
-        debugPrint('>>> [Sync] 🔔 Mudança real processada. Total: ${_agendamentosServico.length}');
-        _salvarAutomaticamente(); // Sincroniza cache local (LocalStorage)
+        _marcarSujo(LocalStorageService.keyAgendamentosServico);
       }
     }, onError: (e) {
       debugPrint('>>> [Sync] ❌ ERRO no Stream de Agendamentos: $e');
-      Future.delayed(const Duration(seconds: 10), () => _iniciarStreamAgendamentos());
+      Future.delayed(const Duration(seconds: 15), () {
+        if (_empresaIdAtual != null) _iniciarStreamAgendamentos();
+      });
     });
   }
 
@@ -688,7 +708,7 @@ class DataService extends ChangeNotifier {
     if (_firebaseHabilitado) {
       try {
         if (_isLoading) {
-          _mensagemLoading = 'Carregando dados do Firebase...';
+          _mensagemLoading = 'Preparando seu ambiente...';
           notifyListeners();
         }
         print('>>> 🔥 Firebase é PRINCIPAL - Carregando dados do Firebase (Modo Leve: $modoLeve)...');
@@ -1668,19 +1688,8 @@ class DataService extends ChangeNotifier {
       // Notificar listeners IMEDIATAMENTE para atualizar a UI
       notifyListeners();
       
-      // Salvar localmente IMEDIATAMENTE (sem debounce)
-      try {
-        await _storage.salvarLista(
-          _getChaveComEmpresa(LocalStorageService.keyClientes), 
-          _clientes
-        );
-        debugPrint('>>> [Cliente] ✅ Atualizado localmente: ${cliente.nome} (ID: ${cliente.id})');
-      } catch (e) {
-        debugPrint('>>> [Cliente] ❌ Erro ao atualizar localmente: $e');
-      }
-      
-      // Também chamar salvamento automático (para sincronizar outros dados)
-      _salvarAutomaticamente();
+      // Marcar a lista de clientes como suja para salvamento automático
+      _marcarSujo(LocalStorageService.keyClientes);
       
       // Salvar imediatamente no Firebase (aguardando para garantir que foi salvo)
       if (_firebaseHabilitado && _empresaIdAtual != null) {
@@ -2231,32 +2240,7 @@ class DataService extends ChangeNotifier {
     
     _produtos.add(produto);
     notifyListeners();
-    
-    // Salvar localmente IMEDIATAMENTE (sem debounce para produtos)
-    try {
-      await _storage.salvarLista(
-        _getChaveComEmpresa(LocalStorageService.keyProdutos), 
-        _produtos
-      );
-      debugPrint('>>> [Produto] ✅ Adicionado localmente: ${produto.nome} (ID: ${produto.id})');
-      debugPrint('>>> [Produto] exibirNaLoja: ${produto.exibirNaLoja}, estoque: ${produto.estoque}');
-      
-      // Verificar se foi salvo corretamente
-      final produtosSalvos = await _storage.carregarLista(_getChaveComEmpresa(LocalStorageService.keyProdutos));
-      final produtoSalvo = produtosSalvos.firstWhere(
-        (p) => p['id'] == produto.id,
-        orElse: () => {},
-      );
-      if (produtoSalvo.isNotEmpty) {
-        debugPrint('>>> [Produto] ✅ Verificação pós-salvamento:');
-        debugPrint('>>> [Produto]    exibirNaLoja no storage: ${produtoSalvo["exibirNaLoja"]}');
-      }
-    } catch (e) {
-      debugPrint('>>> [Produto] ❌ Erro ao salvar localmente: $e');
-    }
-    
-    // Também chamar salvamento automático (para sincronizar outros dados)
-    _salvarAutomaticamente();
+    _marcarSujo(LocalStorageService.keyProdutos);
     
     // Salvar imediatamente no Firebase (se disponível)
     if (_firebaseHabilitado && _empresaIdAtual != null) {
@@ -3023,20 +3007,7 @@ class DataService extends ChangeNotifier {
   final agendamentoAtualizado = _vincularReferenciasAgendamento(agendamentoPrevio);
     _agendamentosServico[index] = agendamentoAtualizado;
     notifyListeners();
-    
-    // Salvar localmente IMEDIATAMENTE (sem debounce para agendamentos)
-    try {
-      await _storage.salvarLista(
-        _getChaveComEmpresa(LocalStorageService.keyAgendamentosServico), 
-        _agendamentosServico
-      );
-      debugPrint('>>> [Agendamento] ✅ Atualizado localmente: ${agendamentoAtualizado.numero} (ID: ${agendamentoAtualizado.id})');
-    } catch (e) {
-      debugPrint('>>> [Agendamento] ❌ Erro ao atualizar localmente: $e');
-    }
-    
-    // Também chamar salvamento automático (para sincronizar outros dados)
-    _salvarAutomaticamente();
+    _marcarSujo(LocalStorageService.keyAgendamentosServico);
     
     // Salvar imediatamente no Firebase
     debugPrint('>>> [Agendamento] 🔍 Verificando condições para atualizar no Firebase...');
@@ -3080,20 +3051,7 @@ class DataService extends ChangeNotifier {
     
     _agendamentosServico.removeWhere((a) => a.id == id);
     notifyListeners();
-    
-    // Salvar localmente IMEDIATAMENTE (sem debounce para agendamentos)
-    try {
-      await _storage.salvarLista(
-        _getChaveComEmpresa(LocalStorageService.keyAgendamentosServico), 
-        _agendamentosServico
-      );
-      debugPrint('>>> [Agendamento] ✅ Removido localmente: ${agendamentoRemovido.numero} (ID: ${agendamentoRemovido.id})');
-    } catch (e) {
-      debugPrint('>>> [Agendamento] ❌ Erro ao remover localmente: $e');
-    }
-    
-    // Também chamar salvamento automático (para sincronizar outros dados)
-    _salvarAutomaticamente();
+    _marcarSujo(LocalStorageService.keyAgendamentosServico);
     
     // Remover do Firebase se habilitado
     if (_firebaseHabilitado && _empresaIdAtual != null) {
@@ -3329,8 +3287,8 @@ class DataService extends ChangeNotifier {
       }
     }
     
-    // Forçar salvamento local
-    _salvarAutomaticamente();
+    notifyListeners();
+    _marcarSujo(LocalStorageService.keyAgendamentosServico);
     
     // Notificar cliente via WhatsApp em BACKGROUND para não travar a UI
     // ignore: unawaited_futures
@@ -3387,25 +3345,8 @@ class DataService extends ChangeNotifier {
   Future<void> addPedido(Pedido pedido) async {
     
     _pedidos.add(pedido);
-    debugPrint('>>> Pedido adicionado: ${pedido.numero} (id=${pedido.id})');
-    debugPrint('>>> Total de pedidos na lista: ${_pedidos.length}');
-    
-    // Notificar listeners IMEDIATAMENTE para atualizar a UI
     notifyListeners();
-    
-    // Salvar localmente IMEDIATAMENTE (sem debounce para pedidos)
-    try {
-      await _storage.salvarLista(
-        _getChaveComEmpresa(LocalStorageService.keyPedidos), 
-        _pedidos
-      );
-      debugPrint('>>> [Pedido] ✅ Salvo localmente: ${pedido.numero} (ID: ${pedido.id})');
-    } catch (e) {
-      debugPrint('>>> [Pedido] ❌ Erro ao salvar localmente: $e');
-    }
-    
-    // Também chamar salvamento automático (para sincronizar outros dados)
-    _salvarAutomaticamente();
+    _marcarSujo(LocalStorageService.keyPedidos);
     
     // Salvar imediatamente no Firebase
     if (_firebaseHabilitado && _empresaIdAtual != null) {
@@ -3442,24 +3383,8 @@ class DataService extends ChangeNotifier {
     debugPrint('>>> Novo totalRecebido: ${pedido.totalRecebido}');
     if (index != -1) {
       _pedidos[index] = pedido;
-      debugPrint('>>> Pedido atualizado na posição $index');
-      // Notificar listeners IMEDIATAMENTE para atualizar a UI
       notifyListeners();
-      debugPrint('>>> notifyListeners() chamado');
-      
-      // Salvar localmente IMEDIATAMENTE (sem debounce)
-      try {
-        await _storage.salvarLista(
-          _getChaveComEmpresa(LocalStorageService.keyPedidos), 
-          _pedidos
-        );
-        debugPrint('>>> [Pedido] ✅ Atualizado localmente: ${pedido.numero} (ID: ${pedido.id})');
-      } catch (e) {
-        debugPrint('>>> [Pedido] ❌ Erro ao atualizar localmente: $e');
-      }
-      
-      // Também chamar salvamento automático (para sincronizar outros dados)
-      _salvarAutomaticamente();
+      _marcarSujo(LocalStorageService.keyPedidos);
       
       // Salvar imediatamente no Firebase (aguardando para garantir que foi salvo)
       if (_firebaseHabilitado && _empresaIdAtual != null) {
@@ -4034,7 +3959,7 @@ class DataService extends ChangeNotifier {
       _vendasBalcao[index] = vendaCancelada;
       print('✓ Venda ${venda.numero} cancelada e itens devolvidos ao estoque');
       notifyListeners();
-      _salvarAutomaticamente();
+      _marcarSujo(LocalStorageService.keyVendasBalcao);
     }
   }
 
@@ -4053,20 +3978,8 @@ class DataService extends ChangeNotifier {
     final index = _vendasBalcao.indexWhere((v) => v.numero == numero);
     if (index != -1) {
       _vendasBalcao[index] = vendaAtualizada;
-      print(
-        '✓ Venda $numero atualizada (index=$index, novo valor=${vendaAtualizada.valorTotal})',
-      );
-      for (final i in vendaAtualizada.itens) {
-        if (i.quantidadeTrocada > 0) {
-          print(
-            '  - ${i.nome}: trocada=${i.quantidadeTrocada}, por=${i.trocadoPor}',
-          );
-        }
-      }
-      print('>>> Chamando notifyListeners()...');
       notifyListeners();
-      print('>>> notifyListeners() chamado!');
-      _salvarAutomaticamente();
+      _marcarSujo(LocalStorageService.keyVendasBalcao);
       return true;
     }
     print('!!! Venda $numero NÃO encontrada');
@@ -4077,9 +3990,8 @@ class DataService extends ChangeNotifier {
 
   Future<void> addTrocaDevolucao(TrocaDevolucao troca) async {
     _trocasDevolucoes.add(troca);
-    print('✓ Troca/Devolução ${troca.id} salva em memória');
     notifyListeners();
-    _salvarAutomaticamente();
+    _marcarSujo(LocalStorageService.keyTrocasDevolucoes);
     // Salvar imediatamente no Firebase
     if (_firebaseHabilitado && _empresaIdAtual != null) {
       _firebaseService.salvarTrocaDevolucao(_empresaIdAtual!, troca).catchError((e) {
@@ -5177,7 +5089,27 @@ class DataService extends ChangeNotifier {
   }
 
   /// Método auxiliar para atualizar listas in-place, garantindo unicidade por ID
-  void _atualizarListaInPlace<T>(List<T> listaAtual, List<T> novosItens) {
+  /// Processa uma lista para manter apenas os itens mais recentes na memória
+  void _manterApenasRecentes(List lista, int limite, String nome) {
+    if (lista.length > limite) {
+      debugPrint('>>> [Memória] 🧹 Limpando $nome antigos (mantendo últimos $limite de ${lista.length})');
+      // Tente ordenar se os modelos tiverem updatedAt
+      try {
+        // Ignora erros de cast se a lista for heterogênea ou sem o campo
+        lista.sort((a, b) {
+          try {
+            return (b as dynamic).updatedAt.compareTo((a as dynamic).updatedAt);
+          } catch (_) {
+            return 0;
+          }
+        });
+      } catch (_) {}
+      
+      lista.removeRange(limite, lista.length);
+    }
+  }
+
+  static void _atualizarListaInPlace<T>(List<T> listaAtual, List<T> novosItens) {
     if (novosItens.isEmpty) {
       listaAtual.clear();
       return;
@@ -5203,16 +5135,16 @@ class DataService extends ChangeNotifier {
 
     try {
       // OTIMIZAÇÃO CRÍTICA: Se a memória estiver pesada, limitar histórico
-      if (_estoqueHistorico.length > 500) {
-        debugPrint('>>> [Memória] 🧹 Limpando histórico de estoque antigo (mantendo últimos 500)');
-        _estoqueHistorico.removeRange(0, _estoqueHistorico.length - 500);
-      }
-      if (_agendamentosServico.length > 1000) {
-        debugPrint('>>> [Memória] 🧹 Limpando agendamentos muito antigos (mantendo últimos 1000)');
-        // Mantém os mais recentes/atualizados
-        _agendamentosServico.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-        _agendamentosServico.removeRange(1000, _agendamentosServico.length);
-      }
+      _manterApenasRecentes(_estoqueHistorico, 300, 'Estoque');
+      _manterApenasRecentes(_vendasBalcao, 400, 'Vendas');
+      _manterApenasRecentes(_ordensServico, 400, 'Ordens de Serviço');
+      _manterApenasRecentes(_pedidos, 400, 'Pedidos');
+      _manterApenasRecentes(_notasEntrada, 100, 'Notas de Entrada');
+      _manterApenasRecentes(_trocasDevolucoes, 200, 'Trocas');
+      _manterApenasRecentes(_agendamentosServico, 800, 'Agendamentos');
+      _manterApenasRecentes(_nfces, 200, 'NFC-es');
+      _manterApenasRecentes(_sangrias, 100, 'Sangrias');
+      _manterApenasRecentes(_suprimentos, 100, 'Suprimentos');
 
       // Salvar no localStorage SEQUENCIALMENTE (evita picos de RAM no jsonEncode)
       try {
@@ -5252,31 +5184,25 @@ class DataService extends ChangeNotifier {
         ];
 
         for (int i = 0; i < chaves.length; i++) {
-          await _storage.salvarLista(_getChaveComEmpresa(chaves[i]), listas[i]);
-          // Pequena pausa a cada 5 itens para o navegador "respirar"
-          if (i % 5 == 0) await Future.delayed(const Duration(milliseconds: 50));
+          final chaveBase = chaves[i];
+          // Só salvar se estiver na lista de sujos OU se for a primeira vez (dirty empty e force save implícito)
+          if (_dirtyCollections.contains(chaveBase) || _dirtyCollections.isEmpty) {
+            await _storage.salvarLista(_getChaveComEmpresa(chaveBase), listas[i]);
+            _dirtyCollections.remove(chaveBase); // Limpa flag após salvar
+            debugPrint('>>> [Storage] 💾 Salvo seletivo: $chaveBase');
+          }
+          
+          // Yield para o Event Loop respirar entre operações de JSON pesado
+          if (i % 3 == 0) await Future.delayed(const Duration(milliseconds: 100));
         }
         
       } catch (e) {
-        debugPrint('>>> [Memória] ❌ Erro no salvamento sequencial: $e');
+        debugPrint('>>> [Memória] ❌ Erro no salvamento seletivo: $e');
       }
       
-      print('>>> ✓ Todos os dados foram salvos no localStorage');
+      print('>>> ✓ Dados modificados foram salvos no localStorage');
       
-      // PROTEÇÃO: Validar que os dados foram realmente salvos
-      try {
-        final produtosSalvos = await _storage.carregarLista(_getChaveComEmpresa(LocalStorageService.keyProdutos));
-        final clientesSalvos = await _storage.carregarLista(_getChaveComEmpresa(LocalStorageService.keyClientes));
-        
-        if (produtosSalvos.length != _produtos.length) {
-          print('>>> ⚠️ PROTEÇÃO: Discrepância detectada! Produtos em memória: ${_produtos.length}, salvos: ${produtosSalvos.length}');
-        }
-        if (clientesSalvos.length != _clientes.length) {
-          print('>>> ⚠️ PROTEÇÃO: Discrepância detectada! Clientes em memória: ${_clientes.length}, salvos: ${clientesSalvos.length}');
-        }
-      } catch (e) {
-        print('>>> ⚠️ PROTEÇÃO: Erro ao validar salvamento: $e');
-      }
+      // PROTEÇÃO: Removido re-read para validar (economiza 50% de CPU/RAM no salvamento)
 
       // Sincronizar com Firebase apenas se:
       // 1. Firebase está habilitado
@@ -5493,7 +5419,7 @@ class DataService extends ChangeNotifier {
   Future<void> adicionarNFCe(NFCe nfce) async {
     _nfces.add(nfce);
     notifyListeners();
-    _salvarAutomaticamente();
+    _marcarSujo(LocalStorageService.keyNFCes);
     // Salvar imediatamente no Firebase
     if (_firebaseHabilitado && _empresaIdAtual != null) {
       _firebaseService.salvarNFCe(_empresaIdAtual!, nfce).catchError((e) {

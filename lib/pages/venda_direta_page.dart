@@ -28,6 +28,9 @@ import '../services/nfce_service.dart';
 import '../models/nfce.dart';
 import '../models/carrinho_item.dart';
 import '../widgets/exodo_logo.dart';
+import '../widgets/exodo_loading.dart';
+import '../widgets/exodo_error_dialog.dart';
+import '../widgets/exodo_success_dialog.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import '../widgets/sync_status_widget.dart';
 
@@ -3744,7 +3747,10 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
 
       if (empresa == null) {
         debugPrint('>>> [VendaDireta] ❌ Nenhuma empresa selecionada!');
-        _mostrarErro('Nenhuma empresa selecionada');
+        _mostrarErro(
+          'Nenhuma empresa selecionada.\n\n'
+          'SOLUÇÃO: Verifique se você está logado e se uma empresa foi selecionada no início do aplicativo.',
+        );
         return;
       }
 
@@ -3796,7 +3802,10 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       }
 
       if (empresa.csc == null || empresa.cscIdToken == null) {
-        _mostrarErro('CSC não configurado. Configure na empresa.');
+        _mostrarErro(
+          'CSC (Código de Segurança do Contribuinte) não configurado.\n\n'
+          'SOLUÇÃO: Acesse as configurações da empresa e informe o CSC e o ID do Token fornecidos pela SEFAZ.',
+        );
         return;
       }
 
@@ -3805,20 +3814,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       showDialog(
         context: context,
         barrierDismissible: false,
-        builder: (context) => const Center(
-          child: Card(
-            child: Padding(
-              padding: EdgeInsets.all(24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  CircularProgressIndicator(),
-                  SizedBox(height: 16),
-                  Text('Emitindo NFC-e...'),
-                ],
-              ),
-            ),
-          ),
+        builder: (context) => const ExodoLoading(
+          mensagem: 'Emitindo sua NFC-e...\nPor favor, aguarde.',
         ),
       );
 
@@ -3843,7 +3840,10 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
 
       if (produtos.isEmpty) {
         if (mounted) Navigator.pop(context);
-        _mostrarErro('Nenhum produto encontrado para emitir NFC-e');
+        _mostrarErro(
+          'Nenhum produto encontrado na venda para emitir NFC-e.\n\n'
+          'SOLUÇÃO: Adicione produtos ao carrinho antes de tentar emitir a nota fiscal.',
+        );
         return;
       }
 
@@ -4021,65 +4021,44 @@ o padrão padrão (sem opções avançadas).
   void _mostrarErro(String mensagem) {
     if (!mounted) return;
 
-    // Se a mensagem for longa ou contiver quebras de linha, usar diálogo
+    // Tentar extrair solução se houver (padrões variados)
+    String? solucao;
+    String mensagemLimpa = mensagem;
+    
+    final patterns = [
+      'SOLUÇÃO:',
+      'POSSÍVEL SOLUÇÃO:',
+      'SOLUÇÃO SUGERIDA:',
+      '✅ POSSÍVEL SOLUÇÃO:',
+      'DICA:',
+    ];
+
+    for (var pattern in patterns) {
+      if (mensagem.contains(pattern)) {
+        final partes = mensagem.split(pattern);
+        mensagemLimpa = partes[0].trim();
+        solucao = partes[1].trim();
+        // Limpar separadores visuais comuns se ficarem na mensagem
+        mensagemLimpa = mensagemLimpa.replaceAll('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', '').trim();
+        solucao = solucao.replaceAll('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', '').trim();
+        break;
+      }
+    }
+
+    // Se a mensagem for longa ou contiver quebras de linha, usar novo diálogo premium
     final isMensagemLonga =
-        mensagem.length > 150 ||
+        mensagem.length > 80 ||
         mensagem.contains('\n') ||
-        mensagem.contains('SOLUÇÃO') ||
-        mensagem.contains('RE-EXPORTAR');
+        mensagem.contains('cStat') ||
+        mensagem.contains('Erro ao');
 
     if (isMensagemLonga) {
-      // Usar diálogo para mensagens longas
-      showDialog(
-        context: context,
-        barrierDismissible: true,
-        builder: (context) => AlertDialog(
-          backgroundColor: const Color(0xFF1E1E2E),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(24),
-            side: BorderSide(color: Colors.red.withOpacity(0.5), width: 2),
-          ),
-          title: Row(
-            children: [
-              Icon(Icons.error_outline, color: Colors.red, size: 28),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  mensagem.contains('🔴') || mensagem.contains('cStat')
-                      ? 'Status da NFC-e'
-                      : 'Erro na Emissão',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
-          content: SizedBox(
-            width: MediaQuery.of(context).size.width * 0.85,
-            child: SingleChildScrollView(
-              child: Text(
-                mensagem,
-                style: const TextStyle(color: Colors.white70, fontSize: 14),
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text(
-                'FECHAR',
-                style: TextStyle(
-                  color: Colors.red,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          ],
-        ),
+      ExodoErrorDialog.mostrar(
+        context,
+        titulo: mensagem.contains('cStat') ? 'Status da NFC-e' : 'Erro na Emissão',
+        mensagem: mensagemLimpa,
+        solucao: solucao,
+        detalhes: mensagem.contains('traceback') || mensagem.contains('Exception') ? mensagem : null,
       );
     } else {
       // Usar SnackBar para mensagens curtas
@@ -4170,194 +4149,7 @@ o padrão padrão (sem opções avançadas).
 
   void _mostrarSucessoNFCe(NFCe nfce) {
     if (!mounted) return;
-
-    // Gerar QR Code se disponível
-    String? qrCodeUrl;
-    if (nfce.qrCode != null && nfce.qrCode!.isNotEmpty) {
-      qrCodeUrl = nfce.qrCode;
-    }
-
-    showDialog(
-      context: context,
-      barrierDismissible: true,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1E1E2E),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(24),
-          side: BorderSide(color: Colors.green.withOpacity(0.5), width: 2),
-        ),
-        title: Row(
-          children: [
-            const Icon(Icons.check_circle, color: Colors.green, size: 32),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'NFC-e Autorizada!',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  if (nfce.numero != null)
-                    Text(
-                      'Nº ${nfce.numero}',
-                      style: const TextStyle(
-                        color: Colors.white70,
-                        fontSize: 14,
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // QR Code
-              if (qrCodeUrl != null) ...[
-                Center(
-                  child: Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Column(
-                      children: [
-                        const Text(
-                          'QR Code para Consulta',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.black87,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        QrImageView(
-                          data: qrCodeUrl,
-                          version: QrVersions.auto,
-                          size: 200.0,
-                          backgroundColor: Colors.white,
-                        ),
-                        const SizedBox(height: 12),
-                        Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: Colors.grey[100],
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            'Aponte a câmera para consultar',
-                            style: TextStyle(
-                              fontSize: 10,
-                              color: Colors.grey[600],
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-              ],
-
-              // Informações da NFC-e
-              if (nfce.chaveAcesso != null) ...[
-                const Text(
-                  'Chave de Acesso:',
-                  style: TextStyle(
-                    color: Colors.white70,
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: SelectableText(
-                    nfce.chaveAcesso!,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 11,
-                      fontFamily: 'monospace',
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-              ],
-
-              if (nfce.protocolo != null) ...[
-                const Text(
-                  'Protocolo:',
-                  style: TextStyle(
-                    color: Colors.white70,
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  nfce.protocolo!,
-                  style: const TextStyle(color: Colors.white, fontSize: 12),
-                ),
-                const SizedBox(height: 12),
-              ],
-
-              if (nfce.dataEmissao != null) ...[
-                const Text(
-                  'Data de Emissão:',
-                  style: TextStyle(
-                    color: Colors.white70,
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  DateFormat('dd/MM/yyyy HH:mm:ss').format(nfce.dataEmissao!),
-                  style: const TextStyle(color: Colors.white, fontSize: 12),
-                ),
-              ],
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text(
-              'FECHAR',
-              style: TextStyle(
-                color: Colors.white70,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-          ElevatedButton.icon(
-            onPressed: () {
-              Navigator.pop(context);
-              // Aqui você pode adicionar ação para copiar QR Code ou compartilhar
-            },
-            icon: const Icon(Icons.share, size: 18),
-            label: const Text('Compartilhar'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.green,
-              foregroundColor: Colors.white,
-            ),
-          ),
-        ],
-      ),
-    );
+    ExodoSuccessDialog.mostrar(context, nfce);
   }
 
   IconData _getIconeTipo(TipoPagamento tipo) {

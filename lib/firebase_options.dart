@@ -49,12 +49,13 @@ class DefaultFirebaseOptions {
   }
 
   static const FirebaseOptions web = FirebaseOptions(
-    apiKey: 'AIzaSyALiVxc5XXMbVDFQP7ZIIckIatcvGHuIYs',
-    appId: '1:959755913630:web:297d86a78c681f66c56e8f',
-    messagingSenderId: '959755913630',
-    projectId: 'exodo-system',
-    authDomain: 'exodo-system.firebaseapp.com',
-    storageBucket: 'exodo-system.firebasestorage.app',
-    measurementId: 'G-Z7QWN2054D',
+    apiKey: 'AIzaSyBWvs6jCOFXZ3wN-5gwlvSDhfDR-bv-h_k',
+    appId: '1:54918146922:web:8c26f3e66135f17bf8d313',
+    messagingSenderId: '54918146922',
+    projectId: 'exodosystems-1541d',
+    authDomain: 'exodosystems-1541d.firebaseapp.com',
+    storageBucket: 'exodosystems-1541d.firebasestorage.app',
+    databaseURL: 'https://exodosystems-1541d-default-rtdb.firebaseio.com',
+    measurementId: 'G-P5Z93JCW1F',
   );
 }

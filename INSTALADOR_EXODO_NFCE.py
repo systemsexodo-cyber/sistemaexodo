@@ -52,11 +52,30 @@ print("\n--- Gerando executável do servidor (Isso pode demorar alguns minutos) 
 main_script = os.path.abspath("backend_nfce/main.py")
 dist_path = os.path.abspath("dist")
 icon_path = os.path.abspath("exodo_logo.ico")
-build_cmd = f'"{sys.executable}" -m PyInstaller --onefile --noconsole --collect-all lxml --icon="{icon_path}" --name ExodoNfceBridge "{main_script}"'
+build_cmd = f'"{sys.executable}" -m PyInstaller --onefile --noconsole --collect-all lxml --collect-all uvicorn --collect-all multiprocessing --hidden-import multiprocessing --hidden-import _multiprocessing --hidden-import uvicorn --icon="{icon_path}" --name ExodoNfceBridge "{main_script}"'
 
 if run_command(build_cmd) == 0:
     print("\n[OK] Executável gerado com sucesso!")
     exe_path = os.path.join(dist_path, "ExodoNfceBridge.exe")
+    
+    # Garantir que o executável também esteja em backend_nfce/dist
+    target_dir = os.path.abspath("backend_nfce/dist")
+    if not os.path.exists(target_dir):
+        os.makedirs(target_dir)
+    
+    import shutil
+    shutil.copy2(exe_path, os.path.join(target_dir, "ExodoNfceBridge.exe"))
+    
+    # Copiar credenciais do Firebase para ambas as pastas dist
+    cred_src = os.path.abspath("backend_nfce/firebase-credentials.json")
+    if os.path.exists(cred_src):
+        shutil.copy2(cred_src, os.path.join(dist_path, "firebase-credentials.json"))
+        shutil.copy2(cred_src, os.path.join(target_dir, "firebase-credentials.json"))
+        print("[OK] Credenciais do Firebase copiadas para as pastas dist.")
+    else:
+        print("[WARN] firebase-credentials.json NÃO ENCONTRADO para cópia!")
+
+    print(f"[OK] Cópia atualizada em: {target_dir}")
     
     # 3. Registrar no Windows para iniciar com o sistema (HKCU - Não precisa admin)
     print("\n--- Configurando para iniciar automaticamente ---")

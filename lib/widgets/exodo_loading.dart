@@ -89,25 +89,29 @@ class _ExodoLoadingState extends State<ExodoLoading>
               ),
             ),
             const SizedBox(height: 24),
-            // Mensagem de carregamento
+            // Mensagem de carregamento animada
             FadeTransition(
               opacity: _fadeAnimation,
               child: Text(
-                widget.mensagem ?? 'Carregando...',
+                widget.mensagem ?? 'Preparando ambiente...',
                 style: TextStyle(
-                  color: Colors.white.withOpacity(0.8),
-                  fontSize: 16,
-                  fontWeight: FontWeight.w500,
+                  color: Colors.white.withOpacity(0.9),
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.5,
                 ),
+                textAlign: TextAlign.center,
               ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 12),
             Text(
-              'Aguarde alguns instantes',
+              'Ajustando os últimos detalhes para você',
               style: TextStyle(
-                color: Colors.white.withOpacity(0.5),
-                fontSize: 12,
+                color: corLoading.withOpacity(0.8),
+                fontSize: 13,
+                fontStyle: FontStyle.italic,
               ),
+              textAlign: TextAlign.center,
             ),
           ],
         ),
