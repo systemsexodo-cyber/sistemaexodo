@@ -10,6 +10,7 @@ import '../theme.dart';
 import 'adicionar_empresa_page.dart';
 import 'login_page.dart';
 import '../services/google_drive_service.dart';
+import '../services/bridge_management_service.dart';
 
 /// Página de gerenciamento de empresas
 class EmpresasPage extends StatefulWidget {
@@ -192,6 +193,8 @@ class _EmpresasPageState extends State<EmpresasPage> {
                   _buildCardImportacao(context),
                   // Card do Google Drive (Apenas Admin)
                   _buildCardGoogleDrive(context),
+                  // NOVO: Card de Gerenciamento do Emissor NFC-e
+                  _buildCardBridgeManagement(context),
                   // Cards das empresas
                       if (empresasPermitidas.isEmpty)
                     _buildEmptyState()
@@ -299,6 +302,233 @@ class _EmpresasPageState extends State<EmpresasPage> {
         );
       }
     }
+  }
+
+  Widget _buildCardBridgeManagement(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Colors.orange.withOpacity(0.3), Colors.orange.withOpacity(0.1)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: Colors.orange,
+          width: 2,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.orange.withOpacity(0.3),
+            blurRadius: 10,
+            spreadRadius: 2,
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () => _mostrarDialogoGerenciamentoBridge(context),
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: Colors.orange,
+                    borderRadius: BorderRadius.circular(14),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.orange.withOpacity(0.5),
+                        blurRadius: 8,
+                        spreadRadius: 1,
+                      ),
+                    ],
+                  ),
+                  child: const Icon(
+                    Icons.terminal,
+                    color: Colors.white,
+                    size: 36,
+                  ),
+                ),
+                const SizedBox(width: 20),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '🖥️ GERENCIAR EMISSOR (BRIDGE)',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                      SizedBox(height: 6),
+                      Text(
+                        'Atualizar softwares, reiniciar serviços e identificar computadores de emissão remotamente.',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Colors.white70,
+                          height: 1.4,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(
+                  Icons.settings_remote,
+                  color: Colors.white,
+                  size: 24,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _mostrarDialogoGerenciamentoBridge(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.terminal, color: Colors.orange),
+            SizedBox(width: 12),
+            Text('Comandos do Emissor', style: TextStyle(color: Colors.white)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Estes comandos serão enviados para TODOS os computadores que estão rodando o Bridge NFC-e.',
+              style: TextStyle(color: Colors.white70, fontSize: 13),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 20),
+            _buildBridgeActionTile(
+              context,
+              icon: Icons.system_update,
+              color: Colors.green,
+              title: 'Atualizar Software (Git Pull)',
+              subtitle: 'Baixa as correções de código mais recentes.',
+              onTap: () => _confirmarComandoBridge(context, 'update', 'Atualizar todos os PCs?'),
+            ),
+            const SizedBox(height: 12),
+            _buildBridgeActionTile(
+              context,
+              icon: Icons.restart_alt,
+              color: Colors.blue,
+              title: 'Reiniciar Serviços',
+              subtitle: 'Força o reinício de todos os emissores.',
+              onTap: () => _confirmarComandoBridge(context, 'restart', 'Reiniciar todos os serviços?'),
+            ),
+            const SizedBox(height: 12),
+            _buildBridgeActionTile(
+              context,
+              icon: Icons.info_outline,
+              color: Colors.orange,
+              title: 'Identificar Máquinas',
+              subtitle: 'Solicita nome do PC e versão do Windows.',
+              onTap: () => _confirmarComandoBridge(context, 'identify', 'Identificar máquinas agora?'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('FECHAR', style: TextStyle(color: Colors.white54)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBridgeActionTile(
+    BuildContext context, {
+    required IconData icon,
+    required Color color,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: color.withOpacity(0.3)),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: color),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  Text(subtitle, style: const TextStyle(color: Colors.white54, fontSize: 11)),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right, color: color.withOpacity(0.5)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _confirmarComandoBridge(BuildContext context, String comando, String pergunta) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF2E2E3E),
+        title: const Text('Confirmar Comando', style: TextStyle(color: Colors.white)),
+        content: Text(pergunta, style: const TextStyle(color: Colors.white70)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('NÃO'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(context); // Fecha confirmação
+              try {
+                await BridgeManagementService.instance.enviarComando(comando);
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Comando "$comando" enviado com sucesso!'),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Erro: $e'), backgroundColor: Colors.red),
+                  );
+                }
+              }
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+            child: const Text('SIM, ENVIAR'),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildCardGoogleDrive(BuildContext context) {

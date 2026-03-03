@@ -21,10 +21,15 @@ import threading
 import subprocess
 import time
 import os
+import re
 import secrets
 import ctypes
 import pynfe.utils # Importar para correção de caminhos
 import sys
+import platform
+import re
+from datetime import datetime
+import json
 
 # Correção de caminhos para pynfe quando compilado com PyInstaller
 if getattr(sys, 'frozen', False):
@@ -80,10 +85,6 @@ async def startup_event():
     print("="*40)
     print("INICIANDO EMISSOR EXODO - MODO BACKGROUND")
     print("="*40)
-    
-    # Iniciar túnel SSH (DESATIVADO A PEDIDO)
-    # print("[INFO] Iniciando Túnel SSH (Link Público)...")
-    # start_tunnel()
     
     # Criar arquivo de status local
     update_local_status()
@@ -185,11 +186,6 @@ def processar_requisicao_firebase(db, doc_id, data):
             data['venda_numero'] = int(time.time()) % 100000000 # Max 9 digits
             print(f"[FIREBASE] venda_numero era None, gerado fallback: {data['venda_numero']}")
         
-        # DEBUG: Identificar qual campo tem 'N'
-        for k, v in data.items():
-            if v == 'N' or (hasattr(v, 'startswith') and v.startswith('N')):
-                print(f"[FIREBASE DEBUG] Campo suspeito: {k} = {v}")
-        
         try:
             req = RequisicaoEmissao(**data)
             print(f"[FIREBASE] Requisição validada.")
@@ -225,249 +221,224 @@ def processar_requisicao_firebase(db, doc_id, data):
         except:
             pass
 
+def processar_comando_remoto(db, doc_id, data):
+    """Processa comandos recebidos via Firebase (update, restart, etc)"""
+    try:
+        comando = data.get('comando')
+        print(f"[CMD] Recebido: {comando}")
+        doc_ref = db.collection('bridge_commands').document(doc_id)
+        doc_ref.update({'status': 'processando', 'started_at': firestore.SERVER_TIMESTAMP})
+        
+        resultado = "Comando desconhecido"
+        sucesso = False
+        
+        if comando == 'update':
+            print("[CMD] Executando Git Pull...")
+            # Detecta diretório
+            orig_dir = os.getcwd()
+            try:
+                # Tenta ir para a raiz do projeto (um nível acima de backend_nfce geralmente)
+                os.chdir("..")
+                res = subprocess.run(["git", "pull"], capture_output=True, text=True, timeout=30)
+                resultado = f"Git Pull:\n{res.stdout}\n{res.stderr}"
+                sucesso = res.returncode == 0
+                print(f"[CMD] Update result: {sucesso}")
+            finally:
+                os.chdir(orig_dir)
+        
+        elif comando == 'restart':
+            print("[CMD] Reiniciando serviço em 3 segundos...")
+            doc_ref.update({'status': 'concluido', 'resultado': 'Reiniciando...', 'sucesso': True})
+            time.sleep(3)
+            # Função de restart definida no final do arquivo
+            restart_action_silent()
+            return
+
+        elif comando == 'identify':
+            pc_name = platform.node()
+            os_info = platform.platform()
+            resultado = f"PC: {pc_name} | OS: {os_info}"
+            sucesso = True
+
+        doc_ref.update({
+            'status': 'concluido',
+            'resultado': resultado,
+            'sucesso': sucesso,
+            'finished_at': firestore.SERVER_TIMESTAMP
+        })
+        
+    except Exception as e:
+        print(f"[CMD] ✗ Erro ao processar comando: {e}")
+        try:
+            db.collection('bridge_commands').document(doc_id).update({
+                'status': 'erro',
+                'resultado': str(e),
+                'sucesso': False
+            })
+        except: pass
+
 def start_firebase_listener():
     global FIREBASE_ACTIVE
     
-    # Se estiver rodando como EXE compilado, buscar na pasta do executável
     if getattr(sys, 'frozen', False):
         base_path = os.path.dirname(sys.executable)
     else:
-        # Se estiver rodando como script .py
         base_path = os.path.dirname(os.path.abspath(__file__))
     
     cred_file = os.path.join(base_path, "firebase-credentials.json")
     status_file = os.path.join(base_path, "STATUS_BRIDGE.txt")
     
     if not os.path.exists(cred_file):
-        print(f"[WARN] {cred_file} não encontrado. Buscando em caminhos alternativos...")
-        # Fallback para o diretorio atual por garantia
-        if not os.path.exists("firebase-credentials.json"):
-            print(f"[ERRO] firebase-credentials.json não encontrado.")
-            if os.path.exists(status_file):
-                with open(status_file, "a") as f:
-                    f.write("\nFIREBASE: ERRO (firebase-credentials.json não encontrado)")
-            return
         cred_file = "firebase-credentials.json"
-        
+        if not os.path.exists(cred_file):
+            print(f"[ERRO] firebase-credentials.json não encontrado.")
+            return
+            
     try:
-        # Tenta inicializar apenas se não houver um app padrão
         try:
             firebase_admin.get_app()
-            print("[INFO] Firebase já possui um app ativo.")
         except ValueError:
             cred = credentials.Certificate(cred_file)
             firebase_admin.initialize_app(cred)
-            print("[OK] Firebase App Inicializado!")
 
         db = firestore.client()
         FIREBASE_ACTIVE = True
         print(f"[OK] Firebase Listener ativo!")
-        
-        # Atualiza o arquivo de status para avisar que o Firebase está ativo
-        if os.path.exists(status_file):
-            with open(status_file, "r") as f:
-                content = f.read()
-            if "FIREBASE:" not in content:
-                with open(status_file, "w") as f:
-                    f.write("=== STATUS DO EMISSOR EXODO ===\n\n")
-                    f.write("FIREBASE: CONECTADO (Modo Sem Link Ativo)\n\n")
-                    f.write(content.replace("=== STATUS DO EMISSOR EXODO ===\n\n", ""))
 
+        # 0. Registrar heartbeat (online) no Firestore de forma segura
+        def _safe_heartbeat():
+            import time as _time
+            while FIREBASE_ACTIVE:
+                try:
+                    _registrar_heartbeat(db)
+                except Exception as e:
+                    print(f"[DEBUG] Erro heartbeat: {e}")
+                _time.sleep(60)
+        
+        threading.Thread(target=_safe_heartbeat, daemon=True).start()
+        # Registrar o primeiro imediatamente
+        _registrar_heartbeat(db)
+
+        # 1. Listener de Notas Fiscais
         def on_snapshot(col_snapshot, changes, read_time):
+            print(f">>> [DEBUG] Snapshot recebido! {len(changes)} alterações detectadas.")
             for change in changes:
-                if change.type.name == 'ADDED':
-                    doc = change.document
-                    data = doc.to_dict()
-                    # Apenas processa se for novo e estiver pendente
+                doc = change.document
+                data = doc.to_dict()
+                print(f">>> [DEBUG] Doc: {doc.id} | Status: {data.get('status')} | Tipo: {change.type.name}")
+                
+                if change.type.name == 'ADDED' or (change.type.name == 'MODIFIED' and data.get('status') == 'pendente'):
                     if data.get('status') == 'pendente':
-                        # Rodar em uma thread separada para não travar o listener
+                        print(f">>> [FIREBASE] 🔔 Nova nota recebida: {doc.id}")
                         threading.Thread(
                             target=processar_requisicao_firebase, 
                             args=(db, doc.id, data),
                             daemon=True
                         ).start()
 
-        col_query = db.collection('nfce_requests').where('status', '==', 'pendente')
-        col_query.on_snapshot(on_snapshot)
+        db.collection('nfce_requests').where('status', '==', 'pendente').on_snapshot(on_snapshot)
+        
+        # 2. Listener de Comandos Remotos
+        def on_command_snapshot(col_snapshot, changes, read_time):
+            for change in changes:
+                if change.type.name == 'ADDED':
+                    doc = change.document
+                    data = doc.to_dict()
+                    if data.get('status') == 'pendente':
+                        threading.Thread(
+                            target=processar_comando_remoto, 
+                            args=(db, doc.id, data),
+                            daemon=True
+                        ).start()
+        
+        db.collection('bridge_commands').where('status', '==', 'pendente').on_snapshot(on_command_snapshot)
+        print(f"[OK] Listener de Comandos Remotos ativo!")
         
     except Exception as e:
-        error_msg = f"[ERRO] Falha ao iniciar Firebase Listener: {e}"
-        print(error_msg)
+        print(f"[ERRO] Falha ao iniciar Firebase Listener: {e}")
         FIREBASE_ACTIVE = False
-        if os.path.exists(status_file):
-            with open(status_file, "a") as f:
-                f.write(f"\nFIREBASE: ERRO ({e})")
 
-def self_install():
-    """
-    Auto-instalação robusta e silenciosa.
-    """
+# --- UTILITÁRIOS ---
+def _registrar_heartbeat(db):
+    """Registra/atualiza o heartbeat do Bridge no Firestore."""
     try:
-        import sys
-        import winreg
-        import subprocess
+        import platform as _plt
+        pc_name = _plt.node()
+        # Higienizar id do documento
+        import re as _re
+        doc_id = _re.sub(r'[^a-zA-Z0-9_-]', '_', pc_name) or 'bridge'
         
-        # Obter o caminho do executável atual
-        if getattr(sys, 'frozen', False):
-            current_exe = sys.executable
-            base_dir = os.path.dirname(current_exe)
-        else:
-            return # Se não for executável, ignore
-            
-        app_name = "ExodoNfceBridge"
-        marker_file = os.path.join(base_dir, ".installed_v1") # Versão do instalador
-        
-        # Se já estiver instalado silenciosamente, pula
-        if os.path.exists(marker_file) and "--force-install" not in sys.argv:
-            return
-
-        # --- 1. REGISTRO DO WINDOWS ---
-        try:
-            key = winreg.HKEY_CURRENT_USER
-            key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
-            with winreg.OpenKey(key, key_path, 0, winreg.KEY_SET_VALUE) as reg_key:
-                winreg.SetValueEx(reg_key, app_name, 0, winreg.REG_SZ, f'"{current_exe}"')
-        except:
-            pass
-            
-        # --- 2. TAREFA AGENDADA (Monitoria silenciosa) ---
-        # Flags para esconder janelas de comando
-        HIDDEN = 0x08000000
-        try:
-            task_name = "ExodoNfceBridgeMonitor"
-            # Criar tarefa de monitoria a cada 5 minutos
-            # Se já existir, o /f sobrescreve
-            cmd = f'schtasks /create /tn "{task_name}" /tr "\'{current_exe}\'" /sc minute /mo 5 /rl highest /f'
-            subprocess.run(cmd, shell=True, capture_output=True, creationflags=HIDDEN)
-        except:
-            pass
-            
-        # Marca como instalado
-        with open(marker_file, "w") as f: f.write(str(time.time()))
-        
-        # Notificar o usuário apenas se não for um reinício automático
-        if "--silent" not in sys.argv:
-            import ctypes
-            ctypes.windll.user32.MessageBoxW(0, 
-                "O Emissor Exodo foi otimizado! \n\nEle agora inicia com o Windows e se recupera sozinho se fechar.", 
-                "Êxodo NFC-e - Blindagem Ativada", 0x40)
-        
+        db.collection('bridge_status').document(doc_id).set({
+            'online': True,
+            'pc_name': pc_name,
+            'last_seen': firestore.SERVER_TIMESTAMP,
+            'versao': '2.1'
+        }, merge=True)
+        print(f">>> [OK] Sinal de vida (Heartbeat) enviado com sucesso: {pc_name}")
     except Exception as e:
-        print(f"Erro na auto-instalação: {e}")
+        print(f">>> [AVISO] Falha ao enviar sinal de vida ao servidor: {e}")
 
 def update_local_status():
-    """Cria o arquivo de status para modo local sem segurança."""
-    status_file = "STATUS_BRIDGE.txt"
-    try:
-        with open(status_file, "w") as f:
-            f.write("=== STATUS DO EMISSOR EXODO (MODO LOCAL) ===\n\n")
-            f.write("ACESSO: http://localhost:8000\n")
-            f.write("SEGURANÇA: Desativada (Acesso Livre)\n")
-            f.write("MODO: Apenas rede local / Rede Interna\n\n")
-            f.write("Configure o IP desta máquina no seu Aplicativo.")
-    except:
-        pass
-
-def start_tunnel():
-    """Tenta iniciar um túnel SSH (DESATIVADO)"""
-    pass
-
-import sys
-
-def open_logs():
-    # Abre o arquivo de status com o bloco de notas
-    status_file = "STATUS_BRIDGE.txt"
-    if os.path.exists(status_file):
-        os.startfile(status_file)
+    if getattr(sys, 'frozen', False):
+        base_path = os.path.dirname(sys.executable)
     else:
-        ctypes.windll.user32.MessageBoxW(0, "O Emissor ainda está iniciando e o arquivo não foi gerado. Aguarde alguns segundos.", "Exodo NFC-e", 0x40)
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    
+    status_file = os.path.join(base_path, "STATUS_BRIDGE.txt")
+    with open(status_file, "w") as f:
+        f.write("=== STATUS DO EMISSOR EXODO ===\n")
+        f.write(f"Última inicialização: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\n")
+        f.write(f"Porta Local: 8000\n")
+        f.write(f"Firebase: ATIVO\n")
 
-def quit_action(icon, item):
-    icon.stop()
-    # Mata forçosamente via Taskkill para garantir fechamento de tudo
-    subprocess.run(["taskkill", "/F", "/PID", str(os.getpid())], creationflags=0x08000000)
-    sys.exit(0)
+def self_install():
+    if not getattr(sys, 'frozen', False): return
+    import winreg
+    key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE)
+    winreg.SetValueEx(key, "ExodoNfceBridge", 0, winreg.REG_SZ, f'"{sys.executable}" --silent')
+    winreg.CloseKey(key)
 
-def restart_action(icon, item):
-    """Reinicia o aplicativo lançando uma nova instância e fechando a atual"""
-    # Obter o comando de execução (funciona para script ou exe)
+# --- TRAY ICON ---
+def restart_action_silent():
     if getattr(sys, 'frozen', False):
         subprocess.Popen([sys.executable, "--silent"])
     else:
         subprocess.Popen([sys.executable] + sys.argv + ["--silent"])
-    
-    # Fechar a instância atual
-    quit_action(icon, item)
+    subprocess.run(["taskkill", "/F", "/PID", str(os.getpid())], creationflags=0x08000000)
 
 def setup_tray():
     import pystray
     from PIL import Image, ImageDraw
     
-    # Cria um ícone visual profissional (Quadrado laranja arredondado com um E branco)
-    width = 64
-    height = 64
+    width, height = 64, 64
     image = Image.new('RGBA', (width, height), (0, 0, 0, 0))
     dc = ImageDraw.Draw(image)
-    
-    # Fundo Laranja (Cor padrão do Exodo)
-    orange_color = (255, 152, 0) # #FF9800
-    dc.rounded_rectangle([2, 2, 62, 62], radius=15, fill=orange_color)
-    
-    # Desenhar um "E" estilizado e grosso para ser visivel em 16x16 (area da bandeja)
-    # Haste Vertical
+    dc.rounded_rectangle([2, 2, 62, 62], radius=15, fill=(255, 152, 0))
     dc.rectangle([18, 16, 28, 48], fill="white")
-    # Barras horizontais
-    dc.rectangle([28, 16, 46, 23], fill="white") # Topo
-    dc.rectangle([28, 28, 40, 35], fill="white") # Meio
-    dc.rectangle([28, 40, 46, 47], fill="white") # Base
+    dc.rectangle([28, 16, 46, 23], fill="white")
+    dc.rectangle([28, 28, 40, 35], fill="white")
+    dc.rectangle([28, 40, 46, 47], fill="white")
     
+    def quit_app(icon):
+        icon.stop()
+        os._exit(0)
+
     menu = pystray.Menu(
-        pystray.MenuItem("Exodo Bridge Rodando", lambda text: None, enabled=False),
-        pystray.Menu.SEPARATOR,
-        pystray.MenuItem("Copiar Dados / Ver Status", open_logs),
-        pystray.MenuItem("Reiniciar Serviço", restart_action),
-        pystray.Menu.SEPARATOR,
-        pystray.MenuItem("Sair (Desliga emissões)", quit_action)
+        pystray.MenuItem("Exodo Bridge Rodando", lambda: None, enabled=False),
+        pystray.MenuItem("Reiniciar Serviço", lambda icon, item: restart_action_silent()),
+        pystray.MenuItem("Sair", lambda icon, item: quit_app(icon))
     )
-    
-    icon = pystray.Icon("exodo_bridge", image, "Exodo NFC-e Bridge", menu)
-    return icon
+    return pystray.Icon("exodo_bridge", image, "Exodo NFC-e Bridge", menu)
 
 def run_server():
-    log_config = {
-        "version": 1,
-        "disable_existing_loggers": False,
-        "formatters": {
-            "default": {
-                "format": "%(asctime)s - %(message)s",
-            },
-        },
-        "handlers": {
-            "default": {
-                "formatter": "default",
-                "class": "logging.StreamHandler",
-                "stream": "ext://sys.stderr",
-            },
-        },
-        "loggers": {
-            "uvicorn": {"handlers": ["default"], "level": "INFO"},
-        },
-    }
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_config=log_config, reload=False, workers=1)
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info", reload=False, workers=1)
 
 if __name__ == "__main__":
-    # Rodar servidor web em uma thread para não travar a bandeja
     server_thread = threading.Thread(target=run_server, daemon=True)
     server_thread.start()
-    
-    # Inicia a Bandeja do Sistema
     try:
         icon = setup_tray()
-        # O icon.run() é bloqueante, manterá o script vivo
         icon.run()
     except Exception as e:
-        print(f"Erro ao iniciar bandeja: {e}")
-        # Se falhar, pelo menos o servidor já está rodando via thread
-        # Mas vamos entrar em loop infinito pra manter o exe vivo
-        while True:
-            time.sleep(1)
+        print(f"Erro Tray: {e}")
+        while True: time.sleep(1)

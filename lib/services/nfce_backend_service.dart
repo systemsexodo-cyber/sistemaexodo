@@ -449,6 +449,52 @@ class NFCeBackendService implements NFCeServiceBase {
     }
   }
   
+  /// Verifica o status do Bridge via Firestore
+  Future<Map<String, dynamic>> _verificarBridgeOnline() async {
+    try {
+      final agora = DateTime.now().toUtc();
+      final limite = agora.subtract(const Duration(minutes: 5)); // Aumentado para 5 minutos
+
+      final snap = await FirebaseFirestore.instance
+          .collection('bridge_status')
+          .get()
+          .timeout(const Duration(seconds: 7));
+
+      final pcsOnline = <String>[];
+      final pcsOffline = <Map<String, String>>[];
+      
+      for (final doc in snap.docs) {
+        final data = doc.data();
+        final pcName = data['pc_name']?.toString() ?? doc.id;
+        
+        if (data['online'] != true) continue;
+        
+        final lastSeen = data['last_seen'];
+        if (lastSeen != null) {
+          DateTime? lastSeenDt;
+          if (lastSeen is Timestamp) {
+            lastSeenDt = lastSeen.toDate().toUtc();
+          }
+          
+          if (lastSeenDt != null && lastSeenDt.isAfter(limite)) {
+            pcsOnline.add(pcName);
+          } else {
+            final diff = lastSeenDt != null ? agora.difference(lastSeenDt).inMinutes : 0;
+            pcsOffline.add({'nome': pcName, 'atraso': '$diff min'});
+          }
+        }
+      }
+      return {
+        'pcsOnline': pcsOnline,
+        'pcsOffline': pcsOffline,
+        'totalRegistros': snap.docs.length,
+      };
+    } catch (e) {
+      debugPrint('>>> [NFCeFirebase] Erro ao verificar bridge_status: $e');
+      return {'pcsOnline': <String>[], 'totalRegistros': -1};
+    }
+  }
+
   /// Emite uma NFC-e via Firebase Firestore (Listener no PC)
   /// Isso elimina a necessidade de Túneis SSH ou URLs públicas
   Future<NFCe> emitirViaFirebase({
@@ -463,8 +509,22 @@ class NFCeBackendService implements NFCeServiceBase {
     bool ambienteHomologacao = true,
   }) async {
     try {
+      debugPrint('>>> [NFCeFirebase] VERSÃO DO CÓDIGO: FIX_REMOVIDO_OFFLINE_v1');
       debugPrint('>>> [NFCeFirebase] Iniciando emissão via FIRESTORE LISTENER...');
+
+      // ── VERIFICAÇÃO DE PRESENÇA ──────────────────────────────────────────
+      debugPrint('>>> [NFCeFirebase] Verificando se o Bridge está rodando...');
+      final statusBridge = await _verificarBridgeOnline();
+      final List<String> pcsOnline = List<String>.from(statusBridge['pcsOnline'] as List);
       
+      if (pcsOnline.isEmpty) {
+        debugPrint('>>> [NFCeFirebase] ⚠️ Bridge não detectado (relógio dessincronizado ou offline). Tentando mesmo assim...');
+      } else {
+        debugPrint('>>> [NFCeFirebase] ✅ Bridge online em: ${pcsOnline.join(", ")}');
+      }
+      // ────────────────────────────────────────────────────────────────────
+
+
       // Preparar dados
       final requestData = _prepararDadosEmissao(
         empresa: empresa,
@@ -477,48 +537,62 @@ class NFCeBackendService implements NFCeServiceBase {
         observacoes: observacoes,
         ambienteHomologacao: ambienteHomologacao,
       );
-      
+
       // Adicionar metadados
       requestData['status'] = 'pendente';
       requestData['created_at'] = FieldValue.serverTimestamp();
       requestData['empresa_id'] = empresa.id;
-      
+
       // Criar documento no Firestore
       final docRef = await FirebaseFirestore.instance
           .collection('nfce_requests')
           .add(requestData);
-          
-      debugPrint('>>> [NFCeFirebase] Documento enviado: ${docRef.id}. Aguardando processamento...');
-      
-      // Listen para o resultado (Timeout de 60 segundos)
+
+      debugPrint('>>> [NFCeFirebase] Documento enviado: ${docRef.id}. Aguardando Bridge (120s)...');
+
+      // Listen para o resultado (Aumentado para 120s)
       final completer = Completer<NFCe>();
       StreamSubscription? subscription;
-      
+
       Timer(const Duration(seconds: 120), () {
         if (!completer.isCompleted) {
           subscription?.cancel();
+          // Marcar o documento como expirado no Firestore para não ser processado
+          docRef.update({'status': 'expirado'}).catchError((_) {});
+          
+          String msgPC = pcsOnline.isNotEmpty 
+            ? 'O Bridge está rodando no PC: ${pcsOnline.join(", ")}\n\n' 
+            : 'O Bridge não sinalizou presença (Verifique se o programa ExodoNfceBridge.exe está aberto).\n\n';
+
           completer.completeError(Exception(
-            'Timeout ao aguardar resposta do Emissor Local via Firebase (120s).\n\n'
-            'Verifique se o programa "ExodoNfceBridge.exe" está aberto no seu PC e se ele mostra "Firebase: CONECTADO".'
+            'O Emissor NFC-e demorou demais para responder (120s).\n\n'
+            '$msgPC'
+            'Possíveis causas:\n'
+            '• O Bridge está processando outra nota\n'
+            '• Problema de conexão com a SEFAZ\n'
+            '• Erro interno no Bridge\n\n'
+            'Tente emitir novamente em alguns segundos.',
           ));
         }
       });
-      
+
       subscription = docRef.snapshots().listen((snapshot) {
         if (!snapshot.exists) return;
-        
+
         final data = snapshot.data() as Map<String, dynamic>;
         final status = data['status'];
-        
+
         if (status == 'autorizada') {
           subscription?.cancel();
           final resultado = data['resultado'] as Map<String, dynamic>?;
-          
+
           if (resultado == null) {
-            completer.completeError(Exception('O emissor autorizou a nota, mas não enviou os dados de retorno.'));
+            if (!completer.isCompleted) {
+              completer.completeError(Exception('O emissor autorizou a nota, mas não enviou os dados de retorno.'));
+            }
             return;
           }
-          
+
           final nfce = _criarNFCeDaResposta(
             data: resultado,
             empresa: empresa,
@@ -530,16 +604,18 @@ class NFCeBackendService implements NFCeServiceBase {
             nomeConsumidor: nomeConsumidor,
             observacoes: observacoes,
           );
-          
-          completer.complete(nfce);
+
+          if (!completer.isCompleted) completer.complete(nfce);
         } else if (status == 'erro') {
           subscription?.cancel();
           final resultado = data['resultado'] as Map<String, dynamic>?;
-          final mensagem = resultado != null ? (resultado['mensagem'] ?? resultado['error'] ?? 'Erro desconhecido') : 'Erro desconhecido no processamento.';
-          completer.completeError(Exception(mensagem));
+          final mensagem = resultado != null
+              ? (resultado['mensagem'] ?? resultado['error'] ?? 'Erro desconhecido')
+              : 'Erro desconhecido no processamento.';
+          if (!completer.isCompleted) completer.completeError(Exception(mensagem));
         }
       });
-      
+
       return await completer.future;
     } catch (e) {
       debugPrint('>>> [NFCeFirebase] ❌ ERRO: $e');

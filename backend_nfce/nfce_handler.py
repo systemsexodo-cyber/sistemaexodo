@@ -172,65 +172,108 @@ def _new_serializar_cliente(self, cliente, modelo, tag_raiz="dest", retorna_stri
 from pynfe.processamento.serializacao import SerializacaoQrcode
 
 def _new_gerar_qrcode(self, token, csc, xml, online=True, return_qr=False):
-    # O pynfe original tem um bug: re.sub("([0])", "", token) que limpa todos os zeros do ID!
-    # Esta versão corrigida mantém o token (IdToken) intacto.
-    from pynfe.utils.flags import NFCE
-    from pynfe.utils import so_numeros
-    
-    nfe = xml
-    ns = {"ns": "http://www.portalfiscal.inf.br/nfe"}
-    sig = {"sig": "http://www.w3.org/2000/09/xmldsig#"}
-    
-    chave = nfe.xpath("ns:infNFe/@Id", namespaces=ns)[0][3:]
-    v_nf = nfe.xpath("ns:infNFe/ns:total/ns:ICMSTot/ns:vNF/text()", namespaces=ns)[0]
-    digest = nfe.xpath("sig:Signature/sig:SignedInfo/sig:Reference/sig:DigestValue/text()", namespaces=sig)[0]
-    
-    tpamb = nfe.xpath("ns:infNFe/ns:ide/ns:tpAmb/text()", namespaces=ns)[0]
-    uf = nfe.xpath("ns:infNFe/ns:ide/ns:cUF/text()", namespaces=ns)[0]
-    
-    # O PYNFE original apaga os zeros aqui, o que é um ERRO. Vamos manter o token original.
-    # token = re.sub("([0])", lambda m: {"0": ""}[m.group()], token) <-- Removido o bug
-    
+    """
+    Monkeypatch corrigido para geração de QR Code da NFC-e.
+    Corrige dois bugs do pynfe original:
+    1. Import de NFCE estava errado (flags vs webservices)
+    2. Bug que removia zeros do token (IdToken)
+    """
     import hashlib
-    # NFC-e 4.00 exige concatenação de dados para o hash
-    # chNFe + nVersao + tpAmb + [cDest] + dhEmi + vNF + vICMS + digVal + cIdToken
-    # Para simplificar e garantir compatibilidade, usamos a lógica do pynfe mas sem o bug do zero
-    
-    # Parâmetros padrão do QR-Code 2.0
-    cIdToken = token
-    
-    # Montar a URL do QR Code conforme NT 2015.002
-    from pynfe.utils.flags import VERSAO_QRCODE
+    from pynfe.utils.flags import VERSAO_QRCODE, CODIGOS_ESTADOS
+    from pynfe.utils.webservices import NFCE  # NFCE está em webservices, NÃO em flags!
+
+    nfe = xml
+    ns  = {"ns":  "http://www.portalfiscal.inf.br/nfe"}
+    sig = {"sig": "http://www.w3.org/2000/09/xmldsig#"}
+    ns_nfe = "http://www.portalfiscal.inf.br/nfe"
+
+    # Pegar chave de acesso (remover prefixo 'NFe')
+    id_attr = nfe[0].attrib.get("Id") or nfe[0].attrib.get(f"{{{ns_nfe}}}Id") or ""
+    chave = id_attr.replace("NFe", "")
+
+    tpamb = nfe.xpath("ns:infNFe/ns:ide/ns:tpAmb/text()", namespaces=ns)[0]
+    cuf   = nfe.xpath("ns:infNFe/ns:ide/ns:cUF/text()", namespaces=ns)[0]  # código numérico (ex: '35')
+
+    # Converter código numérico de UF para sigla (ex: '35' -> 'SP')
+    uf_sigla = [k for k, v in CODIGOS_ESTADOS.items() if v == cuf]
+    if not uf_sigla:
+        raise ValueError(f"Código de UF '{cuf}' não encontrado em CODIGOS_ESTADOS")
+    uf = uf_sigla[0].upper()
+
+    # Identificador do CSC (IdToken) deve ter de 1 a 6 dígitos decimais.
+    # Se for maior que 6, pegamos apenas os últimos 6 para não quebrar o Schema 225.
+    cIdToken = str(token)
+    if len(cIdToken) > 6:
+        cIdToken = cIdToken[-6:]
+    elif len(cIdToken) < 1:
+        cIdToken = "000001"
     
     if online:
-        # Lógica simplificada de hash conforme pynfe mas preservando o token
-        # p=chNFe|nVersao|tpAmb|cIdToken|cHashQRCode
-        str_hash = f"{chave}|{VERSAO_QRCODE}|{tpamb}|{cIdToken}{csc}"
-        hash_qr = hashlib.sha1(str_hash.encode()).hexdigest().upper()
-        url_params = f"p={chave}|{VERSAO_QRCODE}|{tpamb}|{cIdToken}|{hash_qr}"
-        
-        qrcode_base = NFCE[uf]["HTTPS"] if tpamb == "1" else NFCE[uf]["HOMOLOGACAO"]
-        qrcode_url = qrcode_base + NFCE[uf]["QR"] + url_params
-        url_chave = NFCE[uf]["HTTPS"] if tpamb == "1" else NFCE[uf]["HOMOLOGACAO"]
-        url_chave += NFCE[uf]["URL"]
+        # Formato NT 2015.002 versão online:
+        # url = chNFe|nVersao|tpAmb|cIdToken
+        url = "{}|{}|{}|{}".format(chave, VERSAO_QRCODE, tpamb, cIdToken)
+        # Hash = SHA1(url + csc), em hex maiúsculo
+        string_hash = url + csc
+        print(f"[DEBUG] String para Hash QR Code: {string_hash}")
+        url_hash = hashlib.sha1(string_hash.encode()).digest()
+        import base64 as _b64
+        url_hash_hex = _b64.b16encode(url_hash).decode()
+        url_params = "p={}|{}".format(url, url_hash_hex)
     else:
-        # Offline não implementado aqui por brevidade, mas o pynfe usa online por padrão
+        # Versão offline não é usada para NFC-e no Brasil normalmente
         return xml
 
-    # Inserir infNFeSupl (Remover se já existir para não duplicar)
-    ns_nfe = "http://www.portalfiscal.inf.br/nfe"
-    for tag in ["infNFeSupl", f"{{{ns_nfe}}}infNFeSupl"]:
+    # Montar URL completa de acordo com a UF
+    lista_uf_padrao = ["PR", "CE", "RS", "RJ", "RO", "DF"]
+    if uf in lista_uf_padrao:
+        qrcode_url = NFCE[uf]["QR"] + url_params
+        url_chave  = NFCE[uf]["URL"]
+    elif uf == "SP":
+        if tpamb == "1":  # Produção
+            qrcode_url = NFCE[uf]["HTTPS"] + "www." + NFCE[uf]["QR"] + url_params
+            url_chave  = NFCE[uf]["HTTPS"] + "www." + NFCE[uf]["URL"]
+        else:  # Homologação
+            qrcode_url = NFCE[uf]["HTTPS"] + "www.homologacao." + NFCE[uf]["QR"] + url_params
+            url_chave  = NFCE[uf]["HTTPS"] + "www.homologacao." + NFCE[uf]["URL"]
+    elif uf == "BA":
+        if tpamb == "1":
+            qrcode_url = NFCE[uf]["HTTPS"] + NFCE[uf]["QR"] + url_params
+        else:
+            qrcode_url = NFCE[uf]["HOMOLOGACAO"] + NFCE[uf]["QR"] + url_params
+        url_chave = NFCE[uf]["URL"]
+    elif uf == "MG":
+        qrcode_url = NFCE[uf]["QR"] + url_params
+        if tpamb == "1":
+            url_chave = NFCE[uf]["HTTPS"] + NFCE[uf]["URL"]
+        else:
+            url_chave = NFCE[uf]["HOMOLOGACAO"] + NFCE[uf]["URL"]
+    else:  # Demais estados (AC, AM, RR, PA, SE, etc.)
+        if tpamb == "1":
+            qrcode_url = NFCE[uf]["HTTPS"] + NFCE[uf]["QR"] + url_params
+            url_chave  = NFCE[uf]["HTTPS"] + NFCE[uf]["URL"]
+        else:
+            qrcode_url = NFCE[uf]["HOMOLOGACAO"] + NFCE[uf]["QR"] + url_params
+            url_chave  = NFCE[uf]["HOMOLOGACAO"] + NFCE[uf]["URL"]
+
+    # Remover infNFeSupl existente para não duplicar
+    for tag in [f"{{{ns_nfe}}}infNFeSupl", "infNFeSupl"]:
         old = nfe.find(f".//{tag}")
         if old is not None:
             nfe.remove(old)
 
-    info = etree.Element(f"{{{ns_nfe}}}infNFeSupl")
-    etree.SubElement(info, f"{{{ns_nfe}}}qrCode").text = etree.CDATA(qrcode_url.strip())
-    etree.SubElement(info, f"{{{ns_nfe}}}urlChave").text = url_chave
+    # Inserir infNFeSupl após infNFe
+    # No etree, infNFe é o index 0. Signature é index 1 (se existir).
+    # Queremos: [infNFe, infNFeSupl, Signature]
+    info = etree.Element("infNFeSupl") 
+    etree.SubElement(info, "qrCode").text = etree.CDATA(qrcode_url.strip())
+    etree.SubElement(info, "urlChave").text = url_chave
     
-    # Inserir na posição correta (após infNFe e antes de Signature)
-    nfe.insert(1, info)
-    
+    # Se já tiver Signature, insere no meio
+    if len(nfe) > 1:
+        nfe.insert(1, info)
+    else:
+        nfe.append(info)
+
     if return_qr:
         return nfe, qrcode_url.strip()
     return nfe
@@ -241,6 +284,94 @@ SerializacaoQrcode.gerar_qrcode = _new_gerar_qrcode
 # Aplicar os outros monkeypatches
 SerializacaoXML._serializar_emitente = _new_serializar_emitente
 SerializacaoXML._serializar_cliente = _new_serializar_cliente
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MONKEYPATCH: ComunicacaoSefaz._post
+# Problema: o lxml serializa o infNFeSupl sem namespace explícito (ou com
+# xmlns="" vazio) quando inserido dentro de NFe que já declara o mesmo namespace.
+# Isso viola o XSD do enviNFe e causa erro 225 no SEFAZ.
+# Fix: pós-processar a string XML para garantir que infNFeSupl tenha o namespace.
+# ─────────────────────────────────────────────────────────────────────────────
+import requests as _requests
+from pynfe.entidades.certificado import CertificadoA1 as _CertA1
+
+_NS_NFE = "http://www.portalfiscal.inf.br/nfe"
+
+def _fixed_post(self, url, xml, timeout=None):
+    """_post com fix completo para schema NFC-e 4.00."""
+    from pynfe.utils import etree as _etree
+    certificado_a1 = _CertA1(self.certificado)
+    chave, cert = certificado_a1.separar_arquivo(self.certificado_senha, caminho=True)
+    chave_cert = (cert, chave)
+    try:
+        xml_declaration = '<?xml version="1.0" encoding="UTF-8"?>'
+
+        # Serialize to string
+        xml_str = _etree.tostring(xml, encoding="unicode").replace("\n", "")
+
+        # --- FIX ROBUSTO PARA SEFAZ SP (Schema 225 / HTTP 400) ---
+        # 1. Limpar namespaces repetidos em tags internas
+        tags_internas = ['infNFe', 'ide', 'emit', 'dest', 'det', 'prod', 'imposto', 'total', 'transp', 'pag', 'infAdic', 'infNFeSupl']
+        for tag in tags_internas:
+            xml_str = re.sub(rf'<{tag}\s+xmlns=["\'][^"\']*["\']', f'<{tag}', xml_str)
+            xml_str = xml_str.replace(f'<{tag} xmlns="">', f'<{tag}>')
+
+        # 2. Garantir namespace oficial APENAS em enviNFe (Exigência SP)
+        if '<enviNFe' in xml_str:
+            xml_str = re.sub(r'<enviNFe\s+xmlns=["\'][^"\']*["\']', '<enviNFe', xml_str)
+            xml_str = xml_str.replace('<enviNFe', f'<enviNFe xmlns="{_NS_NFE}"')
+        
+        # Remover xmlns do NFe e infNFe
+        xml_str = re.sub(r'<NFe\s+xmlns=["\'][^"\']*["\']', '<NFe', xml_str)
+        xml_str = re.sub(r'<infNFe\s+xmlns=["\'][^"\']*["\']', '<infNFe', xml_str)
+
+        # FIX ULTRA RIGOROSO: Corrigir possível duplicidade de '>'
+        xml_str = xml_str.replace('>>', '>')
+
+        # 3. Limpezas finais
+        xml_str = xml_str.replace(' xmlns=""', '')
+        # Corrige CDATA se o pynfe escapou
+        xml_str = xml_str.replace('&lt;![CDATA[', '<![CDATA[').replace(']]&gt;', ']]>')
+
+        # DEBUG: Salvar XML final enviado
+        try:
+            dbg_path = os.path.join(os.environ.get('TEMP', 'c:/temp'), 'last_enviNFe.xml')
+            with open(dbg_path, 'w', encoding='utf-8') as _f:
+                _f.write(xml_declaration + xml_str)
+            print(f"[DEBUG] enviNFe salvo em {dbg_path}")
+        except:
+            pass
+
+        xml_str = xml_declaration + xml_str
+        result = _requests.post(
+            url,
+            xml_str,
+            headers=self._post_header(),
+            cert=chave_cert,
+            verify=False,
+            timeout=timeout,
+        )
+        result.encoding = "utf-8"
+        
+        # FIX 4: Salvar resposta do SEFAZ para debug
+        try:
+            resp_path = os.path.join(os.environ.get('TEMP', 'c:/temp'), 'last_sefaz_response.xml')
+            with open(resp_path, 'w', encoding='utf-8') as _f:
+                _f.write(result.text)
+            print(f"[DEBUG] Resposta SEFAZ (status {result.status_code}) salva em {resp_path}")
+        except Exception:
+            pass
+        
+        return result
+    except _requests.exceptions.RequestException as e:
+        raise e
+    finally:
+        certificado_a1.excluir()
+
+ComunicacaoSefaz._post = _fixed_post
+print("[PATCH] ComunicacaoSefaz._post substituído com fix de namespace infNFeSupl")
+
 
 class MockFonteDados:
     def __init__(self, nota):
@@ -264,8 +395,12 @@ def emitir_nfce_pynfe(req):
 
         # Emitente
         emp = req.empresa
-        # Limpar nome do emitente (remover caracteres especiais suspeitos como :)
-        razao_limpa = re.sub(r'[:]', ' ', emp.razao_social)[:60].strip()
+        # Limpar nome do emitente:
+        # 1. Remove o CNPJ que pode vir concatenado ao nome (ex: "BMJ PETSHOP LTDA 04829400000165")
+        # 2. Remove caracteres especiais como ':'
+        cnpj_limpo = re.sub(r'[^0-9]', '', emp.cnpj)  # CNPJ apenas dígitos
+        razao_sem_cnpj = re.sub(r'\s*' + re.escape(cnpj_limpo) + r'\s*$', '', emp.razao_social).strip()
+        razao_limpa = re.sub(r'[^A-Za-z0-9 \-\.\,\/\&]', ' ', razao_sem_cnpj)[:60].strip()
         
         # Limpar Município (remover /SP ou similar que pode vir no nome)
         municipio_limpo = re.sub(r'[/].*$', '', emp.municipio).strip()
@@ -394,20 +529,33 @@ def emitir_nfce_pynfe(req):
         csc_db = str(emp.csc or '').strip()
         id_token_db = str(emp.csc_id or '').strip()
         
-        # Tratamento de erro comum: usuário inverte as bolas ou deixa um vazio
-        # Se um estiver vazio, mas o outro tiver o ID (geralmente '1' ou '000001')
-        if not id_token_db and csc_db and len(csc_db) <= 3:
+        # DETECÇÃO INTELIGENTE DE INVERSÃO (CSC x IdToken)
+        # CSC (Token) é uma chave longa (geralmente > 20 chars).
+        # IdToken é um identificador curto (geralmente 1 a 6 dígitos).
+        if len(csc_db) > 0 and len(csc_db) <= 6 and len(id_token_db) > 10:
+            print(f">>> [SISTEMA] Atenção: CSC e IdToken parecem invertidos. Corrigindo: CSC={id_token_db}, IdToken={csc_db}")
+            original_csc = csc_db
+            csc_db = id_token_db
+            id_token_db = original_csc
+
+        # Se IdToken estiver vazio mas o CSC tiver cara de ID (curto)
+        if not id_token_db and csc_db and len(csc_db) <= 6:
             id_token_db = csc_db
-            csc_db = "" # Força erro de CSC vazio abaixo
+            csc_db = ""
             
         if not id_token_db: 
-            id_token_db = "1" # Tenta '1' como padrão se estiver vazio
+            id_token_db = "1"
             
         if csc_db and id_token_db:
             try:
                 # Limpar CSC (remover espaços e quebras de linha) e IdToken
-                csc_limpo = csc_db.replace(' ', '').replace('\n', '').replace('\r', '').replace('-', '')
-                id_token_limpo = re.sub(r'[^0-9]', '', id_token_db).zfill(1)
+                # CSC (Token): Manter como no DB, apenas remover espaços. 
+                # SEFAZ SP aceita com ou sem hifen, DESDE QUE bata com o cadastro no portal.
+                csc_limpo = csc_db.strip().replace(' ', '').replace('\n', '').replace('\r', '')
+                
+                # SEFAZ SP exige IdToken com 6 dígitos decimais (ex: '000001')
+                id_token_limpo = re.sub(r'[^0-9]', '', id_token_db).zfill(6)
+                if id_token_limpo == "000000": id_token_limpo = "000001"
                 
                 qrcode_gen = SerializacaoQrcode()
                 # O nosso monkeypatch já cuida de inserir o infNFeSupl corretamente no XML assinado
@@ -499,8 +647,59 @@ def emitir_nfce_pynfe(req):
             try:
                 # Se for response do requests
                 corpo_erro = retorno.text
-                return {"status": "erro", "mensagem": f"Erro SEFAZ: {corpo_erro}"}
-            except:
+                print(f"[SEFAZ ERRO RAW] Status: {retorno.status_code}")
+                print(f"[SEFAZ ERRO RAW] Body: {corpo_erro[:2000]}")
+                
+                # Tentar extrair cStat e xMotivo da resposta XML
+                try:
+                    resp_elem = etree.fromstring(corpo_erro.encode('utf-8'))
+                    ns = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
+                    
+                    c_stat_el = resp_elem.xpath('//ns:cStat', namespaces=ns)
+                    c_stat = c_stat_el[0].text if c_stat_el else ''
+                    
+                    # CASO ESPECIAL: 104 = Lote Processado. 
+                    if c_stat == '104':
+                        # Tentar encontrar o protocolo da nota (onde está o erro real)
+                        inf_prot = resp_elem.xpath('//ns:infProt', namespaces=ns)
+                        if inf_prot:
+                            prot_c_stat = inf_prot[0].xpath('ns:cStat', namespaces=ns)
+                            prot_c_stat = prot_c_stat[0].text if prot_c_stat else ''
+                            
+                            prot_x_motivo = inf_prot[0].xpath('ns:xMotivo', namespaces=ns)
+                            prot_x_motivo = prot_x_motivo[0].text if prot_x_motivo else ''
+
+                            if prot_c_stat in ('100', '150'):
+                                # SUCESSO!
+                                chave = inf_prot[0].xpath('ns:chNFe', namespaces=ns)[0].text
+                                protocolo = inf_prot[0].xpath('ns:nProt', namespaces=ns)[0].text
+                                proc = etree.Element(f"{{{_NS_NFE}}}nfeProc", versao="4.00", nsmap={None: _NS_NFE})
+                                proc.append(xml_assinado)
+                                prot_nfe_el = resp_elem.xpath('//ns:protNFe', namespaces=ns)[0]
+                                proc.append(prot_nfe_el)
+                                xml_final = etree.tostring(proc, encoding='utf-8', xml_declaration=True).decode('utf-8')
+                                salvar_xml_local(emp.cnpj, chave, xml_final)
+                                return {
+                                    "status": "sucesso",
+                                    "chave": chave, "protocolo": protocolo, "xml": xml_final,
+                                    "mensagem": "NFC-e Autorizada!"
+                                }
+                            else:
+                                # MOSTRAR O ERRO REAL DA NOTA
+                                return {"status": "erro", "mensagem": f"Rejeição SEFAZ [{prot_c_stat}]: {prot_x_motivo}"}
+                        
+                        # Se não achou infProt, pegar o xMotivo do retEnviNFe (se disponível e não for 104)
+                        x_motivo_el = resp_elem.xpath('//ns:retEnviNFe/ns:xMotivo', namespaces=ns)
+                        if not x_motivo_el: x_motivo_el = resp_elem.xpath('//ns:xMotivo', namespaces=ns)
+                        
+                        x_motivo = x_motivo_el[0].text if x_motivo_el else 'Lote processado, mas nota não encontrada.'
+                        return {"status": "erro", "mensagem": f"Rejeição SEFAZ [104]: {x_motivo}"}
+
+                except Exception as parse_err:
+                    print(f"[SEFAZ] Não conseguiu parsear resposta: {parse_err}")
+                
+                return {"status": "erro", "mensagem": f"Erro SEFAZ (HTTP {retorno.status_code}): {corpo_erro[:500]}"}
+            except AttributeError:
                 return {"status": "erro", "mensagem": f"Rejeição ou erro de rede: {str(retorno)}"}
             
     except Exception as e:
