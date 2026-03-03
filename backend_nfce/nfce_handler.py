@@ -261,18 +261,35 @@ def _new_gerar_qrcode(self, token, csc, xml, online=True, return_qr=False):
         if old is not None:
             nfe.remove(old)
 
-    # Inserir infNFeSupl após infNFe
-    # No etree, infNFe é o index 0. Signature é index 1 (se existir).
-    # Queremos: [infNFe, infNFeSupl, Signature]
+    # ORDEM CRÍTICA (NFC-e 4.00): 1. infNFe, 2. infNFeSupl, 3. Signature
+    # Vamos remontar os filhos da NFe para garantir que nada saia da ordem
+    signature_tag = None
+    inf_nfe_tag = None
+    
+    for child in list(nfe):
+        tag_name = child.tag.split('}')[-1] if '}' in child.tag else child.tag
+        if tag_name == "Signature":
+            signature_tag = child
+            nfe.remove(child)
+        elif tag_name == "infNFe":
+            inf_nfe_tag = child
+        elif tag_name == "infNFeSupl":
+            nfe.remove(child)
+
+    # Novo elemento infNFeSupl
     info = etree.Element("infNFeSupl") 
-    etree.SubElement(info, "qrCode").text = etree.CDATA(qrcode_url.strip())
+    # MOC 4.00 SP aceita sem CDATA
+    etree.SubElement(info, "qrCode").text = qrcode_url.strip()
     etree.SubElement(info, "urlChave").text = url_chave
     
-    # Se já tiver Signature, insere no meio
-    if len(nfe) > 1:
-        nfe.insert(1, info)
-    else:
-        nfe.append(info)
+    # Adicionar na ordem correta exigida pelo XSD da NF-e 4.00:
+    # 1. infNFe (já está lá no índice 0)
+    # 2. infNFeSupl (insere no índice 1)
+    nfe.insert(1, info)
+    
+    # 3. Signature (por último)
+    if signature_tag is not None:
+        nfe.append(signature_tag)
 
     if return_qr:
         return nfe, qrcode_url.strip()
@@ -314,25 +331,59 @@ def _fixed_post(self, url, xml, timeout=None):
         # 1. Limpar namespaces repetidos em tags internas
         tags_internas = ['infNFe', 'ide', 'emit', 'dest', 'det', 'prod', 'imposto', 'total', 'transp', 'pag', 'infAdic', 'infNFeSupl']
         for tag in tags_internas:
+            # Remover xmlns se ele estiver sozinho na tag ou seguido de espaço
             xml_str = re.sub(rf'<{tag}\s+xmlns=["\'][^"\']*["\']', f'<{tag}', xml_str)
             xml_str = xml_str.replace(f'<{tag} xmlns="">', f'<{tag}>')
 
-        # 2. Garantir namespace oficial APENAS em enviNFe (Exigência SP)
+        # 2. Garantir namespace oficial em enviNFe E NFe preservando atributos
         if '<enviNFe' in xml_str:
+            # Remover xmlns e versao existentes para evitar duplicidade
             xml_str = re.sub(r'<enviNFe\s+xmlns=["\'][^"\']*["\']', '<enviNFe', xml_str)
-            xml_str = xml_str.replace('<enviNFe', f'<enviNFe xmlns="{_NS_NFE}"')
+            xml_str = re.sub(r'<enviNFe\s+versao=["\'][^"\']*["\']', '<enviNFe', xml_str)
+            # Adicionar xmlns e versao padrão
+            xml_str = xml_str.replace('<enviNFe', f'<enviNFe xmlns="{_NS_NFE}" versao="4.00"')
         
-        # Remover xmlns do NFe e infNFe
-        xml_str = re.sub(r'<NFe\s+xmlns=["\'][^"\']*["\']', '<NFe', xml_str)
-        xml_str = re.sub(r'<infNFe\s+xmlns=["\'][^"\']*["\']', '<infNFe', xml_str)
-
-        # FIX ULTRA RIGOROSO: Corrigir possível duplicidade de '>'
-        xml_str = xml_str.replace('>>', '>')
-
-        # 3. Limpezas finais
+        if '<NFe' in xml_str:
+            # Remover xmlns preservando outros atributos (como Id)
+            xml_str = re.sub(r'<NFe\s+xmlns=["\'][^"\']*["\']', '<NFe', xml_str)
+            # Adicionar xmlns sem fechar a tag precocemente
+            xml_str = xml_str.replace('<NFe', f'<NFe xmlns="{_NS_NFE}"')
+        
+        # 3. Garantir versao em infNFe preservando Id
+        if '<infNFe' in xml_str:
+            # Remover xmlns e versao existentes
+            xml_str = re.sub(r'<infNFe\s+xmlns=["\'][^"\']*["\']', '<infNFe', xml_str)
+            xml_str = re.sub(r'<infNFe\s+versao=["\'][^"\']*["\']', '<infNFe', xml_str)
+            # Adicionar versao 4.00
+            xml_str = xml_str.replace('<infNFe', '<infNFe versao="4.00"')
+        
+        # Correção final de lixo e namespaces vazios
         xml_str = xml_str.replace(' xmlns=""', '')
-        # Corrige CDATA se o pynfe escapou
-        xml_str = xml_str.replace('&lt;![CDATA[', '<![CDATA[').replace(']]&gt;', ']]>')
+        # Garantir que não existam tags de fechamento duplicadas ou mal formadas
+        xml_str = xml_str.replace('>>', '>')
+        
+        # FIX DE ORDEM CRÍTICO (infNFe -> infNFeSupl -> Signature)
+        # 1. Separar a tag infNFeSupl e Signature
+        match_supl = re.search(r'(<infNFeSupl>.*?</infNFeSupl>)', xml_str, re.DOTALL)
+        match_sig = re.search(r'(<Signature xmlns="http://www.w3.org/2000/09/xmldsig#">.*?</Signature>)', xml_str, re.DOTALL)
+        
+        if match_supl and match_sig:
+            # Remover de onde estiver
+            xml_str = xml_str.replace(match_supl.group(1), '')
+            xml_str = xml_str.replace(match_sig.group(1), '')
+            
+            # Limpar lixo de tag de fechamento infNFe se existir duplicata
+            xml_str = xml_str.replace('</infNFe></NFe>', '</infNFe>')
+            
+            # Reconstruir na ordem perfeita do Schema 4.00 
+            # (Sem whitespace para não dar hash error)
+            # A ordem EXATA do XML autorizado: </infNFe><infNFeSupl>...</infNFeSupl><Signature...>...</Signature></NFe>
+            rearranjado = f'{match_supl.group(1)}{match_sig.group(1)}</NFe>'
+            if '</infNFe>' in xml_str:
+                xml_str = xml_str.replace('</infNFe>', f'</infNFe>{rearranjado}')
+            else:
+                # Se NFe já foi fechada
+                pass
 
         # DEBUG: Salvar XML final enviado
         try:
@@ -463,12 +514,12 @@ def emitir_nfce_pynfe(req):
         # Data de emissão (precisa ser um datetime object no pynfe)
         nota_fiscal.data_emissao = datetime.now()
         
-        # Pagamento (obrigatório para NFC-e 4.00 - Falha no Schema se faltar)
+        # Pagamento (obrigatório para NFC-e 4.00)
+        # ind_pag foi removido da NFC-e 4.00 (opcional ou não aceito em alguns casos)
         nota_fiscal.valor_troco = Decimal('0.00')
         nota_fiscal.adicionar_pagamento(
             t_pag='01', # 01=Dinheiro
-            v_pag=Decimal(str(req.valor_total)),
-            ind_pag='0' # 0=Pagamento à vista
+            v_pag=Decimal(str(req.valor_total))
         )
 
         # Itens
@@ -502,6 +553,11 @@ def emitir_nfce_pynfe(req):
         serializador = SerializacaoXML(MockFonteDados(nota_fiscal), homologacao=is_homologacao)
         # No pynfe 0.6.5, exportar retorna o Element tree por padrão a menos que passa retorna_string
         xml_string = serializador.exportar(retorna_string=True)
+        
+        # LIMPEZA ESTRUTURAL 4.00: Remover indPag (extinto) ANTES de calcular a Assinatura (para manter Hash válido)
+        xml_string = re.sub(r'<indPag>[^<]*</indPag>', '', xml_string)
+        
+        # Criar a árvore DOM limpa oficial
         xml_element = etree.fromstring(xml_string.encode('utf-8'))
         
         # Garantir namespace correto em todo o XML (evitar xmlns="")
@@ -550,12 +606,13 @@ def emitir_nfce_pynfe(req):
             try:
                 # Limpar CSC (remover espaços e quebras de linha) e IdToken
                 # CSC (Token): Manter como no DB, apenas remover espaços. 
-                # SEFAZ SP aceita com ou sem hifen, DESDE QUE bata com o cadastro no portal.
                 csc_limpo = csc_db.strip().replace(' ', '').replace('\n', '').replace('\r', '')
                 
-                # SEFAZ SP exige IdToken com 6 dígitos decimais (ex: '000001')
-                id_token_limpo = re.sub(r'[^0-9]', '', id_token_db).zfill(6)
-                if id_token_limpo == "000000": id_token_limpo = "000001"
+                # SEFAZ SP: O IdToken deve bater exatamente com o cadastrado no portal.
+                # Se cadastrou "1", enviamos "1". Se cadastrou "000001", enviamos "000001".
+                # O preenchimento com zeros (zfill) pode causar erro 464 se o cadastro for diferente.
+                id_token_limpo = re.sub(r'[^0-9]', '', id_token_db)
+                if not id_token_limpo: id_token_limpo = "1"
                 
                 qrcode_gen = SerializacaoQrcode()
                 # O nosso monkeypatch já cuida de inserir o infNFeSupl corretamente no XML assinado
