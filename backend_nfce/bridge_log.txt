@@ -491,3 +491,5 @@ nfce_handler.py: Erro 404
 2026-03-04 21:20:21,104 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
 2026-03-04 21:21:21,432 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
 2026-03-04 21:22:21,658 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 17:46:28,838 [INFO] Proteção básica ativa no Registro: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\backend_nfce\ExodoNfceBridge.exe
+2026-03-05 17:49:32,521 [INFO] Proteção básica ativa no Registro: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\backend_nfce\ExodoNfceBridge.exe

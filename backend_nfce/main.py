@@ -33,8 +33,13 @@ import json
 import logging
 
 # Configuração de Logs para Arquivo
+def _get_log_path():
+    if getattr(sys, 'frozen', False):
+        return os.path.join(os.path.dirname(sys.executable), 'bridge_log.txt')
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), 'bridge_log.txt')
+
 logging.basicConfig(
-    filename='bridge_log.txt',
+    filename=_get_log_path(),
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
     filemode='a'

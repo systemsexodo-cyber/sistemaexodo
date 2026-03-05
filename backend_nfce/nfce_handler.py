@@ -7,13 +7,13 @@ import traceback
 from datetime import datetime
 from lxml import etree
 from pynfe.processamento.comunicacao import ComunicacaoSefaz
-from pynfe.processamento.serializacao import SerializacaoXML, SerializacaoQrcode
+from pynfe.processamento.serializacao import SerializacaoXML
 from pynfe.processamento.assinatura import AssinaturaA1
 from pynfe.entidades.emitente import Emitente
 from pynfe.entidades.cliente import Cliente
 from pynfe.entidades.produto import Produto
 from pynfe.entidades.notafiscal import NotaFiscal
-from pynfe.entidades.notafiscal import NotaFiscalProduto
+from pynfe.entidades.fonte_dados import FonteDados
 # Monkeypatch para evitar erros de atributos faltando no pynfe 0.6.5
 NotaFiscalProduto.ind_total = 1
 NotaFiscalProduto.valor_tributos_aprox = Decimal('0.00')
@@ -474,14 +474,15 @@ def emitir_nfce_pynfe(req):
             endereco_cod_municipio=str(emp.codigo_municipio)
         )
 
-        # Cliente (Destinatário)
-        cliente = None
+        # 3. DADOS DO DESTINATÁRIO (Opcional na NFC-e se < R$ 10k)
+        destinatario = None
         if req.cpf_cliente:
-            cliente = Cliente(
+            destinatario = Cliente(
                 numero_documento=req.cpf_cliente,
-                razao_social='Consumidor Final',
-                indicador_ie='9', # 9=Não Contribuinte
-                endereco_uf=emp.uf
+                razao_social='Consumidor Final', # Ou nome real se tiver
+                tipo_documento='CPF',
+                indicador_ie=9, # Não contribuinte
+                # Endereço é opcional na NFC-e presencial
             )
 
         # Nota Fiscal
@@ -490,9 +491,11 @@ def emitir_nfce_pynfe(req):
         numero_nf_limpo = re.sub(r'[^0-9]', '', numero_nf_str)
         if not numero_nf_limpo: numero_nf_limpo = "1"
 
+        # 5. MONTAGEM DA NOTA FISCAL
         nota_fiscal = NotaFiscal(
             emitente=emitente,
-            destinatario_remetente=cliente,
+            cliente=destinatario,
+            produtos=[], # Initialize with an empty list, products will be added later
             natureza_operacao='VENDA AO CONSUMIDOR',
             modelo=65, # 65=NFC-e (como int)
             serie='1',
@@ -509,10 +512,6 @@ def emitir_nfce_pynfe(req):
             forma_emissao='1', # 1=Normal (string conforme esperado)
             transporte_modalidade_frete=9 # 9=Sem Ocorrência de Transporte (OBRIGATÓRIO para NFC-e)
         )
-        
-        # Garantir que o atributo 'cliente' exista para o serializador APENAS se houver cliente
-        if cliente:
-            nota_fiscal.cliente = cliente
         
         # Data de emissão (precisa ser um datetime object no pynfe)
         nota_fiscal.data_emissao = datetime.now()
@@ -553,7 +552,7 @@ def emitir_nfce_pynfe(req):
         # Assinatura
         assinatura = AssinaturaA1(caminho_cert, senha_cert)
         # Passar is_homologacao para o serializador para que o tpAmb (1 ou 2) fique correto no XML
-        serializador = SerializacaoXML(MockFonteDados(nota_fiscal), homologacao=is_homologacao)
+        serializador = SerializacaoXML(FonteDados(nota_fiscal), homologacao=is_homologacao)
         # No pynfe 0.6.5, exportar retorna o Element tree por padrão a menos que passa retorna_string
         xml_string = serializador.exportar(retorna_string=True)
         
@@ -643,12 +642,12 @@ def emitir_nfce_pynfe(req):
         except:
             pass
 
-        # Transmissão SÍNCRONA (indSinc=1) para NFC-e em SP
+        # 7. TRANSMISSÃO PARA SEFAZ
         con = ComunicacaoSefaz(
             uf=emp.uf, 
             certificado=caminho_cert, 
             certificado_senha=senha_cert, 
-            homologacao=is_homologacao
+            ambiente=req.empresa.ambiente
         )
         
         # Enviar XML Assinado com indSinc=1
