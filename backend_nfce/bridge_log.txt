@@ -493,3 +493,137 @@ nfce_handler.py: Erro 404
 2026-03-04 21:22:21,658 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
 2026-03-05 17:46:28,838 [INFO] Proteção básica ativa no Registro: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\backend_nfce\ExodoNfceBridge.exe
 2026-03-05 17:49:32,521 [INFO] Proteção básica ativa no Registro: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\backend_nfce\ExodoNfceBridge.exe
+2026-03-05 18:32:41,388 [INFO] ========================================
+2026-03-05 18:32:41,390 [INFO] INICIANDO EMISSOR EXODO - MODO BACKGROUND
+2026-03-05 18:32:41,391 [INFO] ========================================
+2026-03-05 18:32:41,392 [INFO] Iniciando Listener do Firebase (Modo Sem Link)...
+2026-03-05 18:32:41,522 [INFO] Firebase Listener ativo!
+2026-03-05 18:32:42,806 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:32:42,811 [INFO] Listener de Comandos Remotos ativo!
+2026-03-05 18:32:42,811 [INFO] ========================================
+2026-03-05 18:32:42,812 [INFO] SISTEMA PRONTO PARA OPERAR
+2026-03-05 18:32:42,812 [INFO] ========================================
+2026-03-05 18:32:42,838 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:33:43,071 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:34:43,332 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:35:22,999 [INFO] [CMD] Comando Reiniciar recebido.
+2026-03-05 18:35:29,863 [INFO] ========================================
+2026-03-05 18:35:29,867 [INFO] INICIANDO EMISSOR EXODO - MODO BACKGROUND
+2026-03-05 18:35:29,868 [INFO] ========================================
+2026-03-05 18:35:29,873 [INFO] Iniciando Listener do Firebase (Modo Sem Link)...
+2026-03-05 18:35:29,965 [INFO] Firebase Listener ativo!
+2026-03-05 18:35:31,173 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:35:31,863 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:35:31,866 [INFO] Listener de Comandos Remotos ativo!
+2026-03-05 18:35:31,866 [INFO] ========================================
+2026-03-05 18:35:31,866 [INFO] SISTEMA PRONTO PARA OPERAR
+2026-03-05 18:35:31,867 [INFO] ========================================
+2026-03-05 18:35:32,773 [INFO] ========================================
+2026-03-05 18:35:32,774 [INFO] INICIANDO EMISSOR EXODO - MODO BACKGROUND
+2026-03-05 18:35:32,774 [INFO] ========================================
+2026-03-05 18:35:32,776 [INFO] Iniciando Listener do Firebase (Modo Sem Link)...
+2026-03-05 18:35:32,875 [INFO] Firebase Listener ativo!
+2026-03-05 18:35:33,991 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:35:33,997 [INFO] Listener de Comandos Remotos ativo!
+2026-03-05 18:35:33,998 [INFO] ========================================
+2026-03-05 18:35:33,999 [INFO] SISTEMA PRONTO PARA OPERAR
+2026-03-05 18:35:33,999 [INFO] ========================================
+2026-03-05 18:35:34,668 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:36:31,397 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:36:34,920 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:37:31,831 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:37:35,136 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:38:32,056 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:38:35,361 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:39:32,271 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:39:35,581 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:40:32,491 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:40:35,841 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:41:32,713 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:41:36,076 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:42:32,938 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:42:36,297 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:43:33,198 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:43:36,510 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:44:33,417 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:44:36,750 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:45:33,642 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:45:36,974 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:46:33,885 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:46:37,190 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:47:34,112 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:47:37,419 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:48:34,334 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:48:37,635 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:49:34,558 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:49:37,856 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:50:34,773 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:50:38,068 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:51:35,006 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:51:38,286 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:52:35,310 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:52:38,505 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:53:35,547 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:53:38,724 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:54:35,814 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:54:39,016 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:55:36,151 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:55:39,233 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:56:36,374 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:56:39,443 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:57:36,676 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:57:39,659 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:58:36,991 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:58:39,965 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:59:37,211 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 18:59:40,192 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 19:00:37,444 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 19:00:40,510 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 19:01:45,535 [INFO] ========================================
+2026-03-05 19:01:45,536 [INFO] INICIANDO EMISSOR EXODO - MODO BACKGROUND
+2026-03-05 19:01:45,536 [INFO] ========================================
+2026-03-05 19:01:45,537 [INFO] Iniciando Listener do Firebase (Modo Sem Link)...
+2026-03-05 19:01:45,622 [INFO] Firebase Listener ativo!
+2026-03-05 19:01:47,445 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 19:01:47,461 [INFO] Listener de Comandos Remotos ativo!
+2026-03-05 19:01:47,463 [INFO] ========================================
+2026-03-05 19:01:47,465 [INFO] SISTEMA PRONTO PARA OPERAR
+2026-03-05 19:01:47,473 [INFO] ========================================
+2026-03-05 19:01:47,482 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 19:02:47,700 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 19:03:47,928 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 19:04:48,157 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 19:06:18,531 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 19:07:18,753 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 19:08:18,965 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 19:09:19,189 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 19:10:19,401 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 19:11:19,671 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 19:12:19,933 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 19:13:20,149 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 19:14:20,372 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 19:15:37,009 [INFO] ========================================
+2026-03-05 19:15:37,010 [INFO] INICIANDO EMISSOR EXODO - MODO BACKGROUND
+2026-03-05 19:15:37,013 [INFO] ========================================
+2026-03-05 19:15:37,015 [INFO] Iniciando Listener do Firebase (Modo Sem Link)...
+2026-03-05 19:15:37,126 [INFO] Firebase Listener ativo!
+2026-03-05 19:15:38,662 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 19:15:38,668 [INFO] Listener de Comandos Remotos ativo!
+2026-03-05 19:15:38,670 [INFO] ========================================
+2026-03-05 19:15:38,672 [INFO] SISTEMA PRONTO PARA OPERAR
+2026-03-05 19:15:38,680 [INFO] ========================================
+2026-03-05 19:15:39,364 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 19:16:39,599 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 19:36:52,964 [INFO] ========================================
+2026-03-05 19:36:52,965 [INFO] INICIANDO EMISSOR EXODO - MODO BACKGROUND
+2026-03-05 19:36:52,965 [INFO] ========================================
+2026-03-05 19:36:52,965 [INFO] Iniciando Listener do Firebase (Modo Sem Link)...
+2026-03-05 19:36:53,035 [INFO] Firebase Listener ativo!
+2026-03-05 19:36:54,753 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 19:36:54,756 [INFO] Listener de Comandos Remotos ativo!
+2026-03-05 19:36:54,756 [INFO] ========================================
+2026-03-05 19:36:54,756 [INFO] SISTEMA PRONTO PARA OPERAR
+2026-03-05 19:36:54,756 [INFO] ========================================
+2026-03-05 19:36:54,774 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 19:37:54,986 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-05 19:38:55,195 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7

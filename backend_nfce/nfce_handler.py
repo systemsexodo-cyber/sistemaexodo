@@ -12,7 +12,7 @@ from pynfe.processamento.assinatura import AssinaturaA1
 from pynfe.entidades.emitente import Emitente
 from pynfe.entidades.cliente import Cliente
 from pynfe.entidades.produto import Produto
-from pynfe.entidades.notafiscal import NotaFiscal
+from pynfe.entidades.notafiscal import NotaFiscal, NotaFiscalProduto
 from pynfe.entidades.fonte_dados import FonteDados
 # Monkeypatch para evitar erros de atributos faltando no pynfe 0.6.5
 NotaFiscalProduto.ind_total = 1
@@ -552,7 +552,7 @@ def emitir_nfce_pynfe(req):
         # Assinatura
         assinatura = AssinaturaA1(caminho_cert, senha_cert)
         # Passar is_homologacao para o serializador para que o tpAmb (1 ou 2) fique correto no XML
-        serializador = SerializacaoXML(FonteDados(nota_fiscal), homologacao=is_homologacao)
+        serializador = SerializacaoXML(MockFonteDados(nota_fiscal), homologacao=is_homologacao)
         # No pynfe 0.6.5, exportar retorna o Element tree por padrão a menos que passa retorna_string
         xml_string = serializador.exportar(retorna_string=True)
         
@@ -647,7 +647,7 @@ def emitir_nfce_pynfe(req):
             uf=emp.uf, 
             certificado=caminho_cert, 
             certificado_senha=senha_cert, 
-            ambiente=req.empresa.ambiente
+            homologacao=is_homologacao
         )
         
         # Enviar XML Assinado com indSinc=1

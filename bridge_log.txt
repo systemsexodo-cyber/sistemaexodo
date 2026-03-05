@@ -19,3 +19,17 @@
 2026-03-05 05:41:03,804 [INFO] ========================================
 2026-03-05 05:41:03,804 [INFO] SISTEMA PRONTO PARA OPERAR
 2026-03-05 05:41:03,804 [INFO] ========================================
+2026-03-05 17:57:38,974 [INFO] Proteção básica ativa no Registro: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\ExodoNfceBridge.exe
+2026-03-05 17:57:39,528 [INFO] ========================================
+2026-03-05 17:57:39,623 [INFO] INICIANDO EMISSOR EXODO - MODO BACKGROUND
+2026-03-05 17:57:39,625 [INFO] ========================================
+2026-03-05 17:57:39,627 [INFO] Iniciando Listener do Firebase (Modo Sem Link)...
+2026-03-05 17:57:39,782 [INFO] Proteção básica ativa no Registro: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\ExodoNfceBridge.exe
+2026-03-05 17:57:39,796 [INFO] ========================================
+2026-03-05 17:57:39,796 [INFO] SISTEMA PRONTO PARA OPERAR
+2026-03-05 17:57:39,797 [INFO] ========================================
+2026-03-05 18:00:19,936 [INFO] Proteção básica ativa no Registro: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\ExodoNfceBridge.exe
+2026-03-05 19:34:25,806 [INFO] Proteção básica ativa no Registro: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\ExodoNfceBridge.exe
+2026-03-05 19:35:33,528 [INFO] Proteção básica ativa no Registro: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\ExodoNfceBridge.exe
+2026-03-05 19:35:51,735 [INFO] Proteção básica ativa no Registro: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\ExodoNfceBridge.exe
+2026-03-05 19:36:38,212 [INFO] Proteção básica ativa no Registro: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\ExodoNfceBridge.exe
