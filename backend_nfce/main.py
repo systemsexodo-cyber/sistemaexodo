@@ -30,6 +30,21 @@ import platform
 import re
 from datetime import datetime
 import json
+import logging
+
+# Configuração de Logs para Arquivo
+logging.basicConfig(
+    filename='bridge_log.txt',
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    filemode='a'
+)
+
+def log_message(msg, level="INFO"):
+    print(f"[{level}] {msg}")
+    if level == "INFO": logging.info(msg)
+    elif level == "ERROR": logging.error(msg)
+    elif level == "WARN": logging.warning(msg)
 
 # Correção de caminhos para pynfe quando compilado com PyInstaller
 if getattr(sys, 'frozen', False):
@@ -79,29 +94,32 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Variáveis globais para rastreamento
+LAST_PROCESSED_COMPANY = {"cnpj": None, "nome": None, "timestamp": None}
+
 # --- EVENTOS DE STARTUP ---
 @app.on_event("startup")
 async def startup_event():
-    print("="*40)
-    print("INICIANDO EMISSOR EXODO - MODO BACKGROUND")
-    print("="*40)
+    log_message("="*40)
+    log_message("INICIANDO EMISSOR EXODO - MODO BACKGROUND")
+    log_message("="*40)
     
     # Criar arquivo de status local
     update_local_status()
     
     # Iniciar Listener do Firebase (Modo Sem Link)
-    print("[INFO] Iniciando Listener do Firebase (Modo Sem Link)...")
+    log_message("Iniciando Listener do Firebase (Modo Sem Link)...")
     start_firebase_listener()
     
     # Auto-instalação no registro do Windows para iniciar com o PC
     try:
         self_install()
     except Exception as e:
-        print(f"[WARN] Falha na auto-instalação: {e}")
+        log_message(f"Falha na auto-instalação: {e}", "WARN")
     
-    print("="*40)
-    print("SISTEMA PRONTO PARA OPERAR")
-    print("="*40)
+    log_message("="*40)
+    log_message("SISTEMA PRONTO PARA OPERAR")
+    log_message("="*40)
 
 # Chave de segurança (DESATIVADA A PEDIDO - ACESSO TOTAL)
 async def verify_api_key(x_api_key: str = Header(None)):
@@ -156,6 +174,15 @@ async def emitir(req: RequisicaoEmissao):
         
         # O handler agora recebe tudo da requisição
         resultado = emitir_nfce_pynfe(req)
+
+        # Atualizar rastreamento da empresa
+        global LAST_PROCESSED_COMPANY
+        LAST_PROCESSED_COMPANY = {
+            "cnpj": req.empresa.cnpj,
+            "nome": req.empresa.nome_fantasia or req.empresa.razao_social,
+            "timestamp": datetime.now().isoformat()
+        }
+
         return resultado
     except Exception as e:
         import traceback
@@ -195,6 +222,14 @@ def processar_requisicao_firebase(db, doc_id, data):
         
         resultado = emitir_nfce_pynfe(req)
         
+        # Atualizar rastreamento da empresa
+        global LAST_PROCESSED_COMPANY
+        LAST_PROCESSED_COMPANY = {
+            "cnpj": req.empresa.cnpj,
+            "nome": req.empresa.nome_fantasia or req.empresa.razao_social,
+            "timestamp": datetime.now().isoformat()
+        }
+
         if resultado.get('status') == 'sucesso':
             doc_ref.update({
                 'status': 'autorizada',
@@ -225,40 +260,128 @@ def processar_comando_remoto(db, doc_id, data):
     """Processa comandos recebidos via Firebase (update, restart, etc)"""
     try:
         comando = data.get('comando')
-        print(f"[CMD] Recebido: {comando}")
+        target_pc = data.get('target_pc')
+        pc_name = platform.node()
+        
+        # Se um target_pc foi definido e não for o meu PC, ignorar o comando
+        if target_pc and target_pc != pc_name:
+            print(f"[CMD] Ignorado comando para outra máquina: {target_pc} (Sou: {pc_name})")
+            return
+            
+        print(f"[CMD] Recebido: {comando} para {target_pc or 'Todos'}")
         doc_ref = db.collection('bridge_commands').document(doc_id)
-        doc_ref.update({'status': 'processando', 'started_at': firestore.SERVER_TIMESTAMP})
+        
+        # Tentar reivindicar e atualizar o status usando transaction (ou update genérico)
+        doc_ref.update({'status': 'processando', 'started_at': firestore.SERVER_TIMESTAMP, 'processor_pc': pc_name})
         
         resultado = "Comando desconhecido"
         sucesso = False
         
         if comando == 'update':
-            print("[CMD] Executando Git Pull...")
-            # Detecta diretório
-            orig_dir = os.getcwd()
+            log_message("[CMD] Iniciando Processo de Atualização...")
+            
+            # Tenta Git primeiro (Se disponível na máquina)
+            git_sucesso = False
             try:
-                # Tenta ir para a raiz do projeto (um nível acima de backend_nfce geralmente)
-                os.chdir("..")
-                res = subprocess.run(["git", "pull"], capture_output=True, text=True, timeout=30)
-                resultado = f"Git Pull:\n{res.stdout}\n{res.stderr}"
-                sucesso = res.returncode == 0
-                print(f"[CMD] Update result: {sucesso}")
-            finally:
+                import subprocess
+                # Verifica se git existe e se há um .git
+                orig_dir = os.getcwd()
+                git_dir = ".." if os.path.exists("../.git") else "."
+                os.chdir(git_dir)
+                
+                res = subprocess.run(["git", "--version"], capture_output=True, text=True, timeout=5)
+                if res.returncode == 0:
+                    log_message("[CMD] Git detectado. Tentando atualização via Git...")
+                    subprocess.run(["git", "fetch", "--all"], capture_output=True, text=True, timeout=30)
+                    res = subprocess.run(["git", "reset", "--hard", "origin/modo-dev"], capture_output=True, text=True, timeout=30)
+                    
+                    if res.returncode != 0:
+                        res = subprocess.run(["git", "reset", "--hard", "origin/main"], capture_output=True, text=True, timeout=30)
+                    
+                    if res.returncode == 0:
+                        log_message("[CMD] Atualização via Git concluída com sucesso.")
+                        git_sucesso = True
+                        resultado = f"Atualizado via Git:\n{res.stdout}"
                 os.chdir(orig_dir)
+            except Exception as e:
+                log_message(f"[CMD] Git não disponível ou erro: {e}")
+                try: os.chdir(orig_dir)
+                except: pass
+
+            # Se Git falhou ou não existe, tenta download via HTTP
+            if not git_sucesso:
+                log_message("[CMD] Git indisponível. Tentando Download Direto (HTTP)...")
+                # URLs do GitHub - Nota: Se o repo for privado, isso dará 404 sem um Token
+                BASE_URL = "https://raw.githubusercontent.com/systemsexodo-cyber/sistemaexodo/modo-dev/backend_nfce/"
+                
+                if getattr(sys, 'frozen', False):
+                    # Modo Executável
+                    exe_url = "https://github.com/systemsexodo-cyber/sistemaexodo/raw/modo-dev/ExodoNfceBridge.exe"
+                    target_exe = sys.executable
+                    new_exe = target_exe + ".new"
+                    
+                    try:
+                        import requests
+                        r = requests.get(exe_url, stream=True, timeout=60)
+                        if r.status_code == 200:
+                            with open(new_exe, 'wb') as f:
+                                for chunk in r.iter_content(chunk_size=8192): f.write(chunk)
+                            
+                            bat_path = os.path.join(os.path.dirname(target_exe), "update_bridge.bat")
+                            with open(bat_path, "w") as f:
+                                f.write(f'@echo off\ntimeout /t 3\ntaskkill /F /PID {os.getpid()}\nmove /Y "{new_exe}" "{target_exe}"\nstart "" "{target_exe}"\ndel "%~f0"')
+                            
+                            doc_ref.update({'status': 'concluido', 'resultado': 'Atualizado via Download. Reiniciando.', 'sucesso': True})
+                            subprocess.Popen([bat_path], shell=True)
+                            return
+                        else:
+                            resultado = f"Erro HTTP {r.status_code}. Repositório pode ser privado."
+                            git_sucesso = False
+                    except Exception as e:
+                        resultado = f"Erro no download: {e}"
+                else:
+                    # Modo Script
+                    try:
+                        import requests
+                        files = ["main.py", "nfce_handler.py"]
+                        for f_name in files:
+                            r = requests.get(BASE_URL + f_name, timeout=30)
+                            if r.status_code == 200:
+                                with open(os.path.join(os.path.dirname(__file__), f_name), "wb") as f:
+                                    f.write(r.content)
+                            else:
+                                raise Exception(f"Erro {r.status_code} no arquivo {f_name}")
+                        git_sucesso = True
+                        resultado = "Arquivos atualizados via HTTP."
+                    except Exception as e:
+                        resultado = f"Falha no download: {e}"
+            
+            sucesso = git_sucesso
+            if sucesso:
+                notify_user("Atualização Concluída", "O sistema foi atualizado com sucesso!")
+                # Reiniciar par aplicar
+                if not getattr(sys, 'frozen', False):
+                    restart_action_silent()
+            else:
+                log_message(f"[CMD] Falha na atualização: {resultado}", "ERROR")
+                notify_user("Falha na Atualização", "Não foi possível baixar os arquivos. Verifique a conexão.")
         
         elif comando == 'restart':
-            print("[CMD] Reiniciando serviço em 3 segundos...")
+            log_message("[CMD] Comando Reiniciar recebido.")
+            notify_user("Reiniciando", "O sistema do Emissor NFC-e será reiniciado remotamente agora.")
             doc_ref.update({'status': 'concluido', 'resultado': 'Reiniciando...', 'sucesso': True})
             time.sleep(3)
-            # Função de restart definida no final do arquivo
             restart_action_silent()
             return
 
         elif comando == 'identify':
+            log_message("[CMD] Comando Identificar recebido.")
             pc_name = platform.node()
             os_info = platform.platform()
-            resultado = f"PC: {pc_name} | OS: {os_info}"
+            resultado = f"PC: {pc_name} | Versão Bridge: 2.2 | OS: {os_info}"
             sucesso = True
+            notify_user("Sinal Recebido", "A máquina foi identificada remotamente pelo Admin!")
+            log_message(f"[CMD] Identificação enviada: {resultado}")
 
         doc_ref.update({
             'status': 'concluido',
@@ -303,7 +426,7 @@ def start_firebase_listener():
 
         db = firestore.client()
         FIREBASE_ACTIVE = True
-        print(f"[OK] Firebase Listener ativo!")
+        log_message("Firebase Listener ativo!")
 
         # 0. Registrar heartbeat (online) no Firestore de forma segura
         def _safe_heartbeat():
@@ -352,10 +475,10 @@ def start_firebase_listener():
                         ).start()
         
         db.collection('bridge_commands').where('status', '==', 'pendente').on_snapshot(on_command_snapshot)
-        print(f"[OK] Listener de Comandos Remotos ativo!")
+        log_message("Listener de Comandos Remotos ativo!")
         
     except Exception as e:
-        print(f"[ERRO] Falha ao iniciar Firebase Listener: {e}")
+        log_message(f"Falha ao iniciar Firebase Listener: {e}", "ERROR")
         FIREBASE_ACTIVE = False
 
 # --- UTILITÁRIOS ---
@@ -372,11 +495,14 @@ def _registrar_heartbeat(db):
             'online': True,
             'pc_name': pc_name,
             'last_seen': firestore.SERVER_TIMESTAMP,
-            'versao': '2.1'
+            'versao': '2.2',
+            'ultima_empresa': LAST_PROCESSED_COMPANY.get('nome'),
+            'ultimo_cnpj': LAST_PROCESSED_COMPANY.get('cnpj'),
+            'ultimo_processamento': LAST_PROCESSED_COMPANY.get('timestamp')
         }, merge=True)
-        print(f">>> [OK] Sinal de vida (Heartbeat) enviado com sucesso: {pc_name}")
+        log_message(f"Sinal de vida (Heartbeat) enviado com sucesso: {pc_name}")
     except Exception as e:
-        print(f">>> [AVISO] Falha ao enviar sinal de vida ao servidor: {e}")
+        log_message(f"Falha ao enviar sinal de vida ao servidor: {e}", "WARN")
 
 def update_local_status():
     if getattr(sys, 'frozen', False):
@@ -433,12 +559,21 @@ def setup_tray():
 def run_server():
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info", reload=False, workers=1)
 
+GLOBAL_TRAY_ICON = None
+
+def notify_user(title, message):
+    try:
+        if GLOBAL_TRAY_ICON:
+            GLOBAL_TRAY_ICON.notify(message, title=title)
+    except Exception as e:
+        print(f"Erro notificação: {e}")
+
 if __name__ == "__main__":
     server_thread = threading.Thread(target=run_server, daemon=True)
     server_thread.start()
     try:
-        icon = setup_tray()
-        icon.run()
+        GLOBAL_TRAY_ICON = setup_tray()
+        GLOBAL_TRAY_ICON.run()
     except Exception as e:
         print(f"Erro Tray: {e}")
         while True: time.sleep(1)

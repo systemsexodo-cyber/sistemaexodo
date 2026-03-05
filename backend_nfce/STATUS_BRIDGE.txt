@@ -1,4 +1,4 @@
 === STATUS DO EMISSOR EXODO ===
-Última inicialização: 03/03/2026 18:53:21
+Última inicialização: 04/03/2026 21:09:16
 Porta Local: 8000
 Firebase: ATIVO

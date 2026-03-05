@@ -278,8 +278,8 @@ def _new_gerar_qrcode(self, token, csc, xml, online=True, return_qr=False):
 
     # Novo elemento infNFeSupl
     info = etree.Element("infNFeSupl") 
-    # MOC 4.00 SP aceita sem CDATA
-    etree.SubElement(info, "qrCode").text = qrcode_url.strip()
+    # O MOC 4.00 dita que o QRCode é literal (CDATA mode) na viagem do envelope HTTP
+    etree.SubElement(info, "qrCode").text = etree.CDATA(qrcode_url.strip())
     etree.SubElement(info, "urlChave").text = url_chave
     
     # Adicionar na ordem correta exigida pelo XSD da NF-e 4.00:
@@ -354,8 +354,8 @@ def _fixed_post(self, url, xml, timeout=None):
             # Remover xmlns e versao existentes
             xml_str = re.sub(r'<infNFe\s+xmlns=["\'][^"\']*["\']', '<infNFe', xml_str)
             xml_str = re.sub(r'<infNFe\s+versao=["\'][^"\']*["\']', '<infNFe', xml_str)
-            # Adicionar versao 4.00
-            xml_str = xml_str.replace('<infNFe', '<infNFe versao="4.00"')
+            # Adicionar versao 4.00 (lookahead para não alterar a tag <infNFeSupl>)
+            xml_str = re.sub(r'<infNFe(?=\s|>)', '<infNFe versao="4.00"', xml_str)
         
         # Correção final de lixo e namespaces vazios
         xml_str = xml_str.replace(' xmlns=""', '')
@@ -368,22 +368,25 @@ def _fixed_post(self, url, xml, timeout=None):
         match_sig = re.search(r'(<Signature xmlns="http://www.w3.org/2000/09/xmldsig#">.*?</Signature>)', xml_str, re.DOTALL)
         
         if match_supl and match_sig:
-            # Remover de onde estiver
+            # Remover de onde estiver para remontar no final
             xml_str = xml_str.replace(match_supl.group(1), '')
             xml_str = xml_str.replace(match_sig.group(1), '')
             
-            # Limpar lixo de tag de fechamento infNFe se existir duplicata
+            # Limpar lixo de tag de fechamento infNFe se existir duplicata ou erro de concatenação
             xml_str = xml_str.replace('</infNFe></NFe>', '</infNFe>')
             
             # Reconstruir na ordem perfeita do Schema 4.00 
-            # (Sem whitespace para não dar hash error)
-            # A ordem EXATA do XML autorizado: </infNFe><infNFeSupl>...</infNFeSupl><Signature...>...</Signature></NFe>
+            # A ordem EXATA: ...</infNFe><infNFeSupl>...</infNFeSupl><Signature>...</Signature></NFe>
             rearranjado = f'{match_supl.group(1)}{match_sig.group(1)}</NFe>'
+            
+            # Garantir que inserimos logo após o fechamento do infNFe
             if '</infNFe>' in xml_str:
+                # Primeiro removemos qualquer </NFe> que tenha sobrado após o replaces acima
+                xml_str = xml_str.replace('</NFe>', '')
                 xml_str = xml_str.replace('</infNFe>', f'</infNFe>{rearranjado}')
             else:
-                # Se NFe já foi fechada
-                pass
+                # Fallback caso a estrutura esteja muito bagunçada
+                xml_str = xml_str.replace('</NFe>', rearranjado)
 
         # DEBUG: Salvar XML final enviado
         try:
@@ -554,9 +557,6 @@ def emitir_nfce_pynfe(req):
         # No pynfe 0.6.5, exportar retorna o Element tree por padrão a menos que passa retorna_string
         xml_string = serializador.exportar(retorna_string=True)
         
-        # LIMPEZA ESTRUTURAL 4.00: Remover indPag (extinto) ANTES de calcular a Assinatura (para manter Hash válido)
-        xml_string = re.sub(r'<indPag>[^<]*</indPag>', '', xml_string)
-        
         # Criar a árvore DOM limpa oficial
         xml_element = etree.fromstring(xml_string.encode('utf-8'))
         
@@ -608,11 +608,14 @@ def emitir_nfce_pynfe(req):
                 # CSC (Token): Manter como no DB, apenas remover espaços. 
                 csc_limpo = csc_db.strip().replace(' ', '').replace('\n', '').replace('\r', '')
                 
-                # SEFAZ SP: O IdToken deve bater exatamente com o cadastrado no portal.
-                # Se cadastrou "1", enviamos "1". Se cadastrou "000001", enviamos "000001".
-                # O preenchimento com zeros (zfill) pode causar erro 464 se o cadastro for diferente.
+                # SEFAZ SP Schema requires NO leading zeros in IdToken for QR Code Version 2
+                # e.g., '000001' must be '1' in the URL, otherwise XSD pattern rejects it (cStat 225).
                 id_token_limpo = re.sub(r'[^0-9]', '', id_token_db)
-                if not id_token_limpo: id_token_limpo = "1"
+                if not id_token_limpo: 
+                    id_token_limpo = "1"
+                else:
+                    # Strip leading zeros, but keep at least '0' if it's all zeros
+                    id_token_limpo = str(int(id_token_limpo))
                 
                 qrcode_gen = SerializacaoQrcode()
                 # O nosso monkeypatch já cuida de inserir o infNFeSupl corretamente no XML assinado
@@ -650,12 +653,14 @@ def emitir_nfce_pynfe(req):
         
         # Enviar XML Assinado com indSinc=1
         # O pynfe espera o Element Tree assinado
-        sucesso, retorno, _ = con.autorizacao(
+        aut_result = con.autorizacao(
             modelo='nfce',
             nota_fiscal=xml_assinado,
             id_lote=1,
             ind_sinc=1 # Síncrono
         )
+        sucesso = aut_result[0]
+        retorno = aut_result[1]
 
         # Analisar retorno
         if sucesso == 0:

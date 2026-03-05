@@ -46,7 +46,7 @@ class SyncStatusWidget extends StatelessWidget {
                       ),
                     const SizedBox(width: 8),
                     Text(
-                      temErro ? 'Erro na sincronização' : service.getSyncStatusText,
+                      temErro ? 'V2 - Erro na sincronização' : 'V2 - ${service.getSyncStatusText}',
                       style: TextStyle(
                         color: temErro ? Colors.redAccent : Colors.white.withOpacity(0.6),
                         fontSize: 10,

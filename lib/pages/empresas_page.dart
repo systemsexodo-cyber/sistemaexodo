@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:io';
 import '../services/auth_service.dart';
 import '../services/data_service.dart';
@@ -194,7 +195,8 @@ class _EmpresasPageState extends State<EmpresasPage> {
                   // Card do Google Drive (Apenas Admin)
                   _buildCardGoogleDrive(context),
                   // NOVO: Card de Gerenciamento do Emissor NFC-e
-                  _buildCardBridgeManagement(context),
+                  if (podeAcessar)
+                    _buildCardBridgeManagement(context),
                   // Cards das empresas
                       if (empresasPermitidas.isEmpty)
                     _buildEmptyState()
@@ -420,7 +422,7 @@ class _EmpresasPageState extends State<EmpresasPage> {
               color: Colors.green,
               title: 'Atualizar Software (Git Pull)',
               subtitle: 'Baixa as correções de código mais recentes.',
-              onTap: () => _confirmarComandoBridge(context, 'update', 'Atualizar todos os PCs?'),
+              onTap: () => _selecionarPCEDispararComando(context, 'update', 'Atualizar'),
             ),
             const SizedBox(height: 12),
             _buildBridgeActionTile(
@@ -428,8 +430,8 @@ class _EmpresasPageState extends State<EmpresasPage> {
               icon: Icons.restart_alt,
               color: Colors.blue,
               title: 'Reiniciar Serviços',
-              subtitle: 'Força o reinício de todos os emissores.',
-              onTap: () => _confirmarComandoBridge(context, 'restart', 'Reiniciar todos os serviços?'),
+              subtitle: 'Força o reinício do emissor.',
+              onTap: () => _selecionarPCEDispararComando(context, 'restart', 'Reiniciar'),
             ),
             const SizedBox(height: 12),
             _buildBridgeActionTile(
@@ -438,7 +440,7 @@ class _EmpresasPageState extends State<EmpresasPage> {
               color: Colors.orange,
               title: 'Identificar Máquinas',
               subtitle: 'Solicita nome do PC e versão do Windows.',
-              onTap: () => _confirmarComandoBridge(context, 'identify', 'Identificar máquinas agora?'),
+              onTap: () => _selecionarPCEDispararComando(context, 'identify', 'Identificar'),
             ),
           ],
         ),
@@ -490,7 +492,80 @@ class _EmpresasPageState extends State<EmpresasPage> {
     );
   }
 
-  void _confirmarComandoBridge(BuildContext context, String comando, String pergunta) {
+  void _selecionarPCEDispararComando(BuildContext context, String comando, String acaoTitulo) {
+    // Primeiro traz a UI com a lista de computadores
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        title: Text('Selecione o PC para $acaoTitulo', style: const TextStyle(color: Colors.white, fontSize: 18)),
+        content: SizedBox(
+          width: double.maxFinite,
+          height: 300,
+          child: StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance
+                .collection('bridge_status')
+                .where('online', isEqualTo: true)
+                .snapshots(),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              if (snapshot.hasError) {
+                return Center(child: Text('Erro: ${snapshot.error}', style: const TextStyle(color: Colors.white)));
+              }
+
+              final docs = snapshot.data?.docs ?? [];
+              
+              if (docs.isEmpty) {
+                return const Center(
+                  child: Text('Nenhum emissor online encontrado.', style: TextStyle(color: Colors.white54)),
+                );
+              }
+
+              return ListView(
+                children: [
+                  // Opção de enviar para todos
+                  ListTile(
+                    leading: const Icon(Icons.computer, color: Colors.white),
+                    title: const Text('TODOS OS COMPUTADORES', style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold)),
+                    onTap: () {
+                      Navigator.pop(context); // Fecha popup
+                      _confirmarComandoBridge(context, comando, 'Deseja $acaoTitulo em TODOS os emissores simultaneamente?', targetPc: null);
+                    },
+                  ),
+                  const Divider(color: Colors.white24),
+                  // Lista de Pcs Específicos
+                  ...docs.map((doc) {
+                    final data = doc.data() as Map<String, dynamic>;
+                    final pcName = data['pc_name'] ?? doc.id;
+                    
+                    return ListTile(
+                      leading: const Icon(Icons.desktop_windows, color: Colors.green),
+                      title: Text(pcName, style: const TextStyle(color: Colors.white)),
+                      subtitle: const Text('Online', style: TextStyle(color: Colors.green, fontSize: 12)),
+                      onTap: () {
+                        Navigator.pop(context); // Fecha popup
+                        _confirmarComandoBridge(context, comando, 'Deseja $acaoTitulo APENAS no PC: $pcName?', targetPc: pcName);
+                      },
+                    );
+                  }).toList(),
+                ],
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _confirmarComandoBridge(BuildContext context, String comando, String pergunta, {String? targetPc}) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -506,7 +581,7 @@ class _EmpresasPageState extends State<EmpresasPage> {
             onPressed: () async {
               Navigator.pop(context); // Fecha confirmação
               try {
-                await BridgeManagementService.instance.enviarComando(comando);
+                await BridgeManagementService.instance.enviarComando(comando, targetPc: targetPc);
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(

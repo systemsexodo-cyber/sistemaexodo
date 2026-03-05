@@ -16,6 +16,9 @@ import 'adicionar_empresa_page.dart';
 import 'gerenciar_usuarios_page.dart';
 import 'login_page.dart';
 import '../services/google_drive_service.dart';
+import '../services/bridge_management_service.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'empresas_page.dart';
 
 /// Página para selecionar a empresa
 class SelecionarEmpresaPage extends StatefulWidget {
@@ -65,6 +68,17 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
           title: const Text('Selecionar Empresa'),
           automaticallyImplyLeading: false,
           actions: [
+            if (authService.usuarioAtual?.email.toLowerCase() == 'user')
+              IconButton(
+                icon: const Icon(Icons.settings, color: Colors.blueAccent),
+                tooltip: 'Configurações de Empresas',
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const EmpresasPage()),
+                  );
+                },
+              ),
             IconButton(
               icon: const Icon(Icons.logout),
               tooltip: 'Sair e voltar ao login',
@@ -125,6 +139,9 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                     // Card do Google Drive (Apenas Admin)
                     const SizedBox(height: 12),
                     _buildCardGoogleDrive(context, authService),
+                    // NOVO: Card de Gerenciamento do Emissor NFC-e
+                    const SizedBox(height: 12),
+                    _buildCardBridgeManagement(context, authService),
                     const SizedBox(height: 12),
                     // Campo de busca
                     _buildSearchField(),
@@ -883,7 +900,7 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        '☁️ BACKUP GLOBAL DRIVE',
+                        '☁️ ADMIN - BACKUP GLOBAL DRIVE',
                         style: TextStyle(
                           fontSize: 20,
                           fontWeight: FontWeight.bold,
@@ -1608,6 +1625,309 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
         }
       }
     }
+  }
+
+  Widget _buildCardBridgeManagement(BuildContext context, AuthService authService) {
+    // Apenas administrador "user" pode ver
+    final usuario = authService.usuarioAtual;
+    if (usuario?.email.toLowerCase() != 'user') return const SizedBox.shrink();
+
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Colors.orange.withOpacity(0.3), Colors.orange.withOpacity(0.1)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: Colors.orange,
+          width: 2,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.orange.withOpacity(0.3),
+            blurRadius: 10,
+            spreadRadius: 2,
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () => _mostrarDialogoGerenciamentoBridge(context),
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: Colors.orange,
+                    borderRadius: BorderRadius.circular(14),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.orange.withOpacity(0.5),
+                        blurRadius: 8,
+                        spreadRadius: 1,
+                      ),
+                    ],
+                  ),
+                  child: const Icon(
+                    Icons.terminal,
+                    color: Colors.white,
+                    size: 24,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '🖥️ GERENCIAR EMISSOR',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                      SizedBox(height: 6),
+                      Text(
+                        'Atualizar softwares, reiniciar serviços e identificar PCs remotamente.',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Colors.white70,
+                          height: 1.4,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(
+                  Icons.settings_remote,
+                  color: Colors.white,
+                  size: 24,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _mostrarDialogoGerenciamentoBridge(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.terminal, color: Colors.orange),
+            SizedBox(width: 12),
+            Text('Comandos do Emissor', style: TextStyle(color: Colors.white)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Estes comandos serão enviados para os computadores que estão rodando o Bridge NFC-e.',
+              style: TextStyle(color: Colors.white70, fontSize: 13),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 20),
+            _buildBridgeActionTile(
+              context,
+              icon: Icons.system_update,
+              color: Colors.green,
+              title: 'Atualizar Software (Git Pull)',
+              subtitle: 'Baixa as correções de código mais recentes.',
+              onTap: () => _selecionarPCEDispararComando(context, 'update', 'Atualizar'),
+            ),
+            const SizedBox(height: 12),
+            _buildBridgeActionTile(
+              context,
+              icon: Icons.restart_alt,
+              color: Colors.blue,
+              title: 'Reiniciar Serviços',
+              subtitle: 'Força o reinício do emissor.',
+              onTap: () => _selecionarPCEDispararComando(context, 'restart', 'Reiniciar'),
+            ),
+            const SizedBox(height: 12),
+            _buildBridgeActionTile(
+              context,
+              icon: Icons.info_outline,
+              color: Colors.orange,
+              title: 'Identificar Máquinas',
+              subtitle: 'Solicita nome do PC e versão do Windows.',
+              onTap: () => _selecionarPCEDispararComando(context, 'identify', 'Identificar'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('FECHAR', style: TextStyle(color: Colors.white54)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBridgeActionTile(
+    BuildContext context, {
+    required IconData icon,
+    required Color color,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: color.withOpacity(0.3)),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: color),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                   Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                   Text(subtitle, style: const TextStyle(color: Colors.white54, fontSize: 11)),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right, color: color.withOpacity(0.5)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _selecionarPCEDispararComando(BuildContext context, String comando, String acaoTitulo) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        title: Text('Selecione o PC para $acaoTitulo', style: const TextStyle(color: Colors.white, fontSize: 18)),
+        content: SizedBox(
+          width: double.maxFinite,
+          height: 300,
+          child: StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance
+                .collection('bridge_status')
+                .where('online', isEqualTo: true)
+                .snapshots(),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              if (snapshot.hasError) {
+                return Center(child: Text('Erro: ${snapshot.error}', style: const TextStyle(color: Colors.white)));
+              }
+
+              final docs = snapshot.data?.docs ?? [];
+              
+              if (docs.isEmpty) {
+                return const Center(
+                  child: Text('Nenhum emissor online encontrado.', style: TextStyle(color: Colors.white54)),
+                );
+              }
+
+              return ListView(
+                children: [
+                  ListTile(
+                    leading: const Icon(Icons.computer, color: Colors.white),
+                    title: const Text('TODOS OS COMPUTADORES', style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold)),
+                    onTap: () {
+                      Navigator.pop(context);
+                      _confirmarComandoBridge(context, comando, 'Deseja $acaoTitulo em TODOS os emissores simultaneamente?', targetPc: null);
+                    },
+                  ),
+                  const Divider(color: Colors.white24),
+                  ...docs.map((doc) {
+                    final data = doc.data() as Map<String, dynamic>;
+                    final pcName = data['pc_name'] ?? doc.id;
+                    final ultimaEmpresa = data['ultima_empresa'];
+                    
+                    return ListTile(
+                      leading: const Icon(Icons.desktop_windows, color: Colors.green),
+                      title: Text(pcName, style: const TextStyle(color: Colors.white)),
+                      subtitle: Text(
+                        ultimaEmpresa != null ? 'Online - $ultimaEmpresa' : 'Online',
+                        style: const TextStyle(color: Colors.green, fontSize: 12),
+                      ),
+                      onTap: () {
+                        Navigator.pop(context);
+                        _confirmarComandoBridge(context, comando, 'Deseja $acaoTitulo APENAS no PC: $pcName?', targetPc: pcName);
+                      },
+                    );
+                  }).toList(),
+                ],
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _confirmarComandoBridge(BuildContext context, String comando, String pergunta, {String? targetPc}) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF2E2E3E),
+        title: const Text('Confirmar Comando', style: TextStyle(color: Colors.white)),
+        content: Text(pergunta, style: const TextStyle(color: Colors.white70)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('NÃO'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              try {
+                await BridgeManagementService.instance.enviarComando(comando, targetPc: targetPc);
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Comando "$comando" enviado com sucesso!'),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Erro: $e'), backgroundColor: Colors.red),
+                  );
+                }
+              }
+            },
+            child: const Text('SIM'),
+          ),
+        ],
+      ),
+    );
   }
 }
 

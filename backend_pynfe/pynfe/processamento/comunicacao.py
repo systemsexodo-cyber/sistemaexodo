@@ -70,11 +70,11 @@ class ComunicacaoSefaz(Comunicacao):
         url = self._get_url(modelo=modelo, consulta="AUTORIZACAO", contingencia=contingencia)
 
         # Monta XML do corpo da requisição
-        raiz = etree.Element("enviNFe", xmlns=NAMESPACE_NFE, versao=VERSAO_PADRAO)
-        etree.SubElement(raiz, "idLote").text = str(
+        raiz = etree.Element("{%s}enviNFe" % NAMESPACE_NFE, nsmap={None: NAMESPACE_NFE}, versao=VERSAO_PADRAO)
+        etree.SubElement(raiz, "{%s}idLote" % NAMESPACE_NFE).text = str(
             id_lote
-        )  # numero autoincremental gerado pelo sistema
-        etree.SubElement(raiz, "indSinc").text = str(ind_sinc)  # 0 para assincrono, 1 para sincrono
+        ).zfill(15)  # numero autoincremental gerado pelo sistema
+        etree.SubElement(raiz, "{%s}indSinc" % NAMESPACE_NFE).text = str(ind_sinc)  # 0 para assincrono, 1 para sincrono
         raiz.append(nota_fiscal)
 
         # Monta XML para envio da requisição
