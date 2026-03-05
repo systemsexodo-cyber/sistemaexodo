@@ -539,11 +539,15 @@ class _EmpresasPageState extends State<EmpresasPage> {
                   ...docs.map((doc) {
                     final data = doc.data() as Map<String, dynamic>;
                     final pcName = data['pc_name'] ?? doc.id;
+                    final ultimaEmpresa = data['ultima_empresa'];
                     
                     return ListTile(
                       leading: const Icon(Icons.desktop_windows, color: Colors.green),
                       title: Text(pcName, style: const TextStyle(color: Colors.white)),
-                      subtitle: const Text('Online', style: TextStyle(color: Colors.green, fontSize: 12)),
+                      subtitle: Text(
+                        ultimaEmpresa != null ? 'Online | $ultimaEmpresa' : 'Online',
+                        style: const TextStyle(color: Colors.green, fontSize: 12),
+                      ),
                       onTap: () {
                         Navigator.pop(context); // Fecha popup
                         _confirmarComandoBridge(context, comando, 'Deseja $acaoTitulo APENAS no PC: $pcName?', targetPc: pcName);

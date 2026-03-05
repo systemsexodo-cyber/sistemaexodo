@@ -43,11 +43,11 @@ class ExodoSuccessDialog extends StatelessWidget {
                 Container(
                   width: double.infinity,
                   padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 24),
-                  decoration: const BoxDecoration(
+                  decoration: BoxDecoration(
                     gradient: LinearGradient(
                       colors: [
-                        Color(0xFF00C853),
-                        Color(0xFF00E676),
+                        const Color(0xFF00C853),
+                        Color(0xFF00E676).withOpacity(0.8),
                       ],
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
@@ -55,16 +55,18 @@ class ExodoSuccessDialog extends StatelessWidget {
                   ),
                   child: Column(
                     children: [
-                      Container(
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.2),
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(
-                          Icons.check_circle_outline_rounded,
-                          color: Colors.white,
-                          size: 48,
+                      _AnimatedPulseIcon(
+                        child: Container(
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.2),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.check_circle_outline_rounded,
+                            color: Colors.white,
+                            size: 48,
+                          ),
                         ),
                       ),
                       const SizedBox(height: 16),
@@ -213,44 +215,84 @@ class ExodoSuccessDialog extends StatelessWidget {
   }
 
   Widget _buildInfoRow(String label, String value) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: TextStyle(
-            color: Colors.white.withOpacity(0.4),
-            fontSize: 10,
-            fontWeight: FontWeight.bold,
-            letterSpacing: 1.0,
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withOpacity(0.1)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              color: Colors.greenAccent.withOpacity(0.7),
+              fontSize: 10,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 1.0,
+            ),
           ),
-        ),
-        const SizedBox(height: 4),
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.05),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: SelectableText(
+          const SizedBox(height: 6),
+          SelectableText(
             value,
             style: const TextStyle(
               color: Colors.white,
-              fontSize: 12,
+              fontSize: 13,
               fontFamily: 'monospace',
+              fontWeight: FontWeight.w500,
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
   static void mostrar(BuildContext context, NFCe nfce) {
     showDialog(
       context: context,
-      barrierColor: Colors.black.withOpacity(0.8),
+      barrierColor: Colors.black.withOpacity(0.85),
       builder: (context) => ExodoSuccessDialog(nfce: nfce),
     );
+  }
+}
+
+/// Helper para animação pulsante
+class _AnimatedPulseIcon extends StatefulWidget {
+  final Widget child;
+  const _AnimatedPulseIcon({required this.child});
+
+  @override
+  State<_AnimatedPulseIcon> createState() => _AnimatedPulseIconState();
+}
+
+class _AnimatedPulseIconState extends State<_AnimatedPulseIcon>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _scaleAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 1000),
+      vsync: this,
+    )..repeat(reverse: true);
+    _scaleAnimation = Tween<double>(begin: 1.0, end: 1.15).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ScaleTransition(scale: _scaleAnimation, child: widget.child);
   }
 }

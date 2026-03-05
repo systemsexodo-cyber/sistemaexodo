@@ -1,11 +1,4 @@
 === STATUS DO EMISSOR EXODO ===
-
-FIREBASE: CONECTADO (Modo Sem Link Ativo)
-
-=== STATUS DO EMISSOR EXODO (MODO LOCAL) ===
-
-ACESSO: http://localhost:8000
-SEGURANÇA: Desativada (Acesso Livre)
-MODO: Apenas rede local / Rede Interna
-
-Configure o IP desta máquina no seu Aplicativo.
+Última inicialização: 05/03/2026 09:57:52
+Porta Local: 8000
+Firebase: ATIVO

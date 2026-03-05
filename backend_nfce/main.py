@@ -25,9 +25,9 @@ import re
 import secrets
 import ctypes
 import pynfe.utils # Importar para correção de caminhos
-import sys
 import platform
 import re
+import shutil
 from datetime import datetime
 import json
 import logging
@@ -45,6 +45,10 @@ def log_message(msg, level="INFO"):
     if level == "INFO": logging.info(msg)
     elif level == "ERROR": logging.error(msg)
     elif level == "WARN": logging.warning(msg)
+
+def get_pystray():
+    import pystray
+    return pystray
 
 # Correção de caminhos para pynfe quando compilado com PyInstaller
 if getattr(sys, 'frozen', False):
@@ -96,6 +100,31 @@ app.add_middleware(
 
 # Variáveis globais para rastreamento
 LAST_PROCESSED_COMPANY = {"cnpj": None, "nome": None, "timestamp": None}
+
+def get_base_path():
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+IDENTITY_FILE = os.path.join(get_base_path(), "bridge_identity.json")
+
+def load_identity():
+    global LAST_PROCESSED_COMPANY
+    if os.path.exists(IDENTITY_FILE):
+        try:
+            with open(IDENTITY_FILE, "r") as f:
+                data = json.load(f)
+                if data: LAST_PROCESSED_COMPANY = data
+        except: pass
+
+def save_identity():
+    try:
+        with open(IDENTITY_FILE, "w") as f:
+            json.dump(LAST_PROCESSED_COMPANY, f)
+    except: pass
+
+# Carregar identidade ao iniciar
+load_identity()
 
 # --- EVENTOS DE STARTUP ---
 @app.on_event("startup")
@@ -182,6 +211,26 @@ async def emitir(req: RequisicaoEmissao):
             "nome": req.empresa.nome_fantasia or req.empresa.razao_social,
             "timestamp": datetime.now().isoformat()
         }
+        save_identity()
+        
+        # Atualizar ícone da bandeja se disponível
+        if GLOBAL_TRAY_ICON:
+            try:
+                empresa_nome = LAST_PROCESSED_COMPANY["nome"]
+                cnpj = LAST_PROCESSED_COMPANY["cnpj"]
+                ps = get_pystray()
+                
+                menu_items = [
+                    ps.MenuItem(f"Empresa: {empresa_nome}", lambda: None, enabled=False),
+                    ps.MenuItem(f"CNPJ: {cnpj}", lambda: None, enabled=False),
+                    ps.Menu.SEPARATOR,
+                    ps.MenuItem("Reiniciar Serviço", lambda icon, item: restart_action_silent()),
+                    ps.MenuItem("Sair", lambda icon, item: quit_app(icon))
+                ]
+                GLOBAL_TRAY_ICON.menu = ps.Menu(*menu_items)
+                GLOBAL_TRAY_ICON.title = f"Exodo Bridge - {empresa_nome}"
+            except Exception as tray_err: 
+                print(f"[TRAY ERROR] {tray_err}")
 
         return resultado
     except Exception as e:
@@ -229,6 +278,25 @@ def processar_requisicao_firebase(db, doc_id, data):
             "nome": req.empresa.nome_fantasia or req.empresa.razao_social,
             "timestamp": datetime.now().isoformat()
         }
+        save_identity()
+
+        # Atualizar ícone da bandeja se disponível
+        if GLOBAL_TRAY_ICON:
+            try:
+                empresa_nome = LAST_PROCESSED_COMPANY["nome"]
+                cnpj = LAST_PROCESSED_COMPANY["cnpj"]
+                ps = get_pystray()
+                
+                menu_items = [
+                    ps.MenuItem(f"Empresa: {empresa_nome}", lambda: None, enabled=False),
+                    ps.MenuItem(f"CNPJ: {cnpj}", lambda: None, enabled=False),
+                    ps.Menu.SEPARATOR,
+                    ps.MenuItem("Reiniciar Serviço", lambda icon, item: restart_action_silent()),
+                    ps.MenuItem("Sair", lambda icon, item: quit_app(icon))
+                ]
+                GLOBAL_TRAY_ICON.menu = ps.Menu(*menu_items)
+                GLOBAL_TRAY_ICON.title = f"Exodo Bridge - {empresa_nome}"
+            except: pass
 
         if resultado.get('status') == 'sucesso':
             doc_ref.update({
@@ -378,7 +446,8 @@ def processar_comando_remoto(db, doc_id, data):
             log_message("[CMD] Comando Identificar recebido.")
             pc_name = platform.node()
             os_info = platform.platform()
-            resultado = f"PC: {pc_name} | Versão Bridge: 2.2 | OS: {os_info}"
+            empresa = LAST_PROCESSED_COMPANY.get('nome') or "Não Identificada"
+            resultado = f"PC: {pc_name} | Empresa: {empresa} | Versão Bridge: 2.2 | OS: {os_info}"
             sucesso = True
             notify_user("Sinal Recebido", "A máquina foi identificada remotamente pelo Admin!")
             log_message(f"[CMD] Identificação enviada: {resultado}")
@@ -519,10 +588,18 @@ def update_local_status():
 
 def self_install():
     if not getattr(sys, 'frozen', False): return
+    
     import winreg
-    key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE)
-    winreg.SetValueEx(key, "ExodoNfceBridge", 0, winreg.REG_SZ, f'"{sys.executable}" --silent')
-    winreg.CloseKey(key)
+    exe_path = os.path.abspath(sys.executable)
+    
+    try:
+        # Registrar o caminho atual para iniciar com o Windows
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE)
+        winreg.SetValueEx(key, "ExodoNfceBridge", 0, winreg.REG_SZ, f'"{exe_path}" --silent')
+        winreg.CloseKey(key)
+        # log_message(f"Auto-inicialização configurada para: {exe_path}")
+    except Exception as e:
+        log_message(f"Erro ao configurar inicialização automática: {e}", "ERROR")
 
 # --- TRAY ICON ---
 def restart_action_silent():
@@ -549,12 +626,28 @@ def setup_tray():
         icon.stop()
         os._exit(0)
 
-    menu = pystray.Menu(
+    def update_menu(icon):
+        empresa_nome = LAST_PROCESSED_COMPANY.get('nome') or "Nenhuma"
+        cnpj = LAST_PROCESSED_COMPANY.get('cnpj') or "Aguardando..."
+        
+        menu_items = [
+            pystray.MenuItem(f"Exodo Bridge: {empresa_nome}", lambda: None, enabled=False),
+            pystray.MenuItem(f"CNPJ: {cnpj}", lambda: None, enabled=False),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Reiniciar Serviço", lambda icon, item: restart_action_silent()),
+            pystray.MenuItem("Sair", lambda icon, item: quit_app(icon))
+        ]
+        icon.menu = pystray.Menu(*menu_items)
+
+    icon = pystray.Icon("exodo_bridge", image, "Exodo NFC-e Bridge")
+    icon.menu = pystray.Menu(
         pystray.MenuItem("Exodo Bridge Rodando", lambda: None, enabled=False),
+        pystray.MenuItem("Aguardando empresa...", lambda: None, enabled=False),
+        pystray.Menu.SEPARATOR,
         pystray.MenuItem("Reiniciar Serviço", lambda icon, item: restart_action_silent()),
         pystray.MenuItem("Sair", lambda icon, item: quit_app(icon))
     )
-    return pystray.Icon("exodo_bridge", image, "Exodo NFC-e Bridge", menu)
+    return icon
 
 def run_server():
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info", reload=False, workers=1)
@@ -569,6 +662,10 @@ def notify_user(title, message):
         print(f"Erro notificação: {e}")
 
 if __name__ == "__main__":
+    # Tentar auto-instalação se for a primeira vez
+    if getattr(sys, 'frozen', False):
+        self_install()
+        
     server_thread = threading.Thread(target=run_server, daemon=True)
     server_thread.start()
     try:

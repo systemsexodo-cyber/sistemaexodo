@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = []
+datas = [('firebase-credentials.json', '.')]
 binaries = []
 hiddenimports = ['multiprocessing', '_multiprocessing', 'multiprocessing.resource_tracker', 'multiprocessing.popen_spawn_win32', 'uvicorn', 'pynfe']
 import pynfe
