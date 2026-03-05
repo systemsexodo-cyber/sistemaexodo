@@ -168,240 +168,95 @@ class NFCeBackendService implements NFCeServiceBase {
       debugPrint('>>> [NFCeBackend] Response: ${response.body}');
       
       if (response.statusCode == 200) {
-        final responseData = jsonDecode(response.body) as Map<String, dynamic>;
+        final Map<String, dynamic> responseData = jsonDecode(response.body);
         
-        if (responseData['success'] == true) {
-          final data = responseData['data'] as Map<String, dynamic>;
+        // Determinar se a resposta está encapsulada em 'data' ou é direta
+        final bool isWrapped = responseData.containsKey('success');
+        final Map<String, dynamic> data = isWrapped 
+            ? (responseData['data'] as Map<String, dynamic>? ?? responseData)
+            : responseData;
+            
+        final bool success = isWrapped 
+            ? (responseData['success'] == true) 
+            : (responseData['status'] == 'sucesso' || responseData['status'] == 'autorizada');
+
+        // Normalizar o status para o padrão do app ('autorizada')
+        String status = (data['status']?.toString() ?? 'processando').toLowerCase();
+        if (status == 'sucesso' || status == 'autorizado') {
+          status = 'autorizada';
+        }
+
+        if (success || status == 'autorizada') {
+          // Criar objeto NFCe a partir da resposta
+          final nfce = _criarNFCeDaResposta(
+            data: data,
+            empresa: empresa,
+            produtos: produtos,
+            quantidades: quantidades,
+            pagamentos: pagamentos,
+            valorTotal: valorTotal,
+            cpfCnpjConsumidor: cpfCnpjConsumidor,
+            nomeConsumidor: nomeConsumidor,
+            observacoes: observacoes,
+          );
           
-          // Verificar se foi autorizada
-          final status = data['status'] as String? ?? 'processando';
-          
-          if (status == 'autorizada') {
-            // Criar objeto NFCe a partir da resposta
-            final nfce = _criarNFCeDaResposta(
-              data: data,
-              empresa: empresa,
-              produtos: produtos,
-              quantidades: quantidades,
-              pagamentos: pagamentos,
-              valorTotal: valorTotal,
-              cpfCnpjConsumidor: cpfCnpjConsumidor,
-              nomeConsumidor: nomeConsumidor,
-              observacoes: observacoes,
-            );
-            
-            debugPrint('>>> [NFCeBackend] ✓✓✓ NFC-e emitida com sucesso!');
-            debugPrint('>>> [NFCeBackend] Status: $status');
-            debugPrint('>>> [NFCeBackend] Chave: ${nfce.chaveAcesso}');
-            return nfce;
-          } else {
-            // NFC-e rejeitada ou denegada - construir mensagem completa com detalhes da SEFAZ
-            String motivoCompleto = '';
-            
-            // Prioridade 1: xmotivo ou motivo
-            final xmotivo = data['xmotivo']?.toString();
-            final motivo = data['motivo']?.toString();
-            final error = data['error']?.toString();
-            
-            if (xmotivo != null && xmotivo.isNotEmpty) {
-              motivoCompleto = xmotivo;
-            } else if (motivo != null && motivo.isNotEmpty) {
-              motivoCompleto = motivo;
-            } else if (error != null && error.isNotEmpty) {
-              motivoCompleto = error;
-            } else {
-              motivoCompleto = 'Erro desconhecido';
-            }
-            
-            // Adicionar informações técnicas da SEFAZ
-            final cstat = data['cstat']?.toString();
-            final verAplic = data['verAplic']?.toString();
-            final cUF = data['cUF']?.toString();
-            final dhRecbto = data['dhRecbto']?.toString();
-            
-            String mensagemErro = 'Rejeição: $motivoCompleto';
-            
-            // Adicionar detalhes técnicos
-            final detalhes = <String>[];
-            if (cstat != null) {
-              detalhes.add('Código: $cstat');
-            }
-            if (verAplic != null) {
-              detalhes.add('Versão da aplicação SEFAZ: $verAplic');
-            }
-            if (cUF != null) {
-              final ufMap = {
-                '35': 'SP', '11': 'RO', '12': 'AC', '13': 'AM', '14': 'RR',
-                '15': 'PA', '16': 'AP', '17': 'TO', '21': 'MA', '22': 'PI',
-                '23': 'CE', '24': 'RN', '25': 'PB', '26': 'PE', '27': 'AL',
-                '28': 'SE', '29': 'BA', '31': 'MG', '32': 'ES', '33': 'RJ',
-                '41': 'PR', '42': 'SC', '43': 'RS', '50': 'MS', '51': 'MT',
-                '52': 'GO', '53': 'DF'
-              };
-              final estado = ufMap[cUF] ?? cUF;
-              detalhes.add('Estado: $estado');
-            }
-            if (dhRecbto != null) {
-              detalhes.add('Data/hora do recebimento: $dhRecbto');
-            }
-            
-            if (detalhes.isNotEmpty) {
-              mensagemErro += '\n\n${detalhes.join('\n')}';
-            }
-            
-            throw Exception(mensagemErro);
-          }
+          debugPrint('>>> [NFCeBackend] ✓✓✓ NFC-e emitida com sucesso!');
+          debugPrint('>>> [NFCeBackend] Status: $status');
+          debugPrint('>>> [NFCeBackend] Chave: ${nfce.chaveAcesso}');
+          return nfce;
         } else {
-          // Construir mensagem de erro completa com todos os detalhes da SEFAZ
+          // NFC-e rejeitada ou erro retornado pelo backend com status 200
           String errorMsg = '';
           
-          // Verificar se é erro de certificado
-          final errorType = responseData['error_type']?.toString();
+          // Verificar se é erro de certificado (comum em bridge)
+          final errorType = responseData['error_type']?.toString() ?? data['error_type']?.toString();
           if (errorType == 'CertificateError' || errorType == 'CertificateMissing') {
-            // Prioridade 1: Mensagem de erro do certificado
-            if (responseData['error'] != null && responseData['error'].toString().trim().isNotEmpty) {
-              errorMsg = responseData['error'].toString().trim();
-            } else if (responseData['message'] != null && responseData['message'].toString().trim().isNotEmpty) {
-              errorMsg = responseData['message'].toString().trim();
-            } else if (responseData['details'] != null && responseData['details'].toString().trim().isNotEmpty) {
-              errorMsg = responseData['details'].toString().trim();
-            } else {
-              errorMsg = 'Erro ao carregar certificado digital. Verifique se o certificado e a senha estão corretos.';
-            }
-            
-            // Adicionar diagnóstico se disponível
-            final diagnostico = responseData['diagnostico'] as Map<String, dynamic>?;
-            if (diagnostico != null) {
-              final tipoErro = diagnostico['tipo_erro']?.toString();
-              if (tipoErro == 'validacao') {
-                // Erro de validação (senha ou formato)
-                // A mensagem já deve estar clara no error
-              } else if (tipoErro == 'arquivo_nao_encontrado') {
-                errorMsg += '\n\nO arquivo do certificado não foi encontrado.';
-              }
-            }
-            
-            throw Exception(errorMsg);
+             errorMsg = responseData['error']?.toString() ?? data['error']?.toString() ?? responseData['message']?.toString() ?? 'Erro no certificado digital.';
+             throw Exception(errorMsg);
           }
+
+          // Tentar extrair motivo da rejeição
+          final xmotivo = data['xmotivo']?.toString() ?? data['motivo']?.toString() ?? responseData['message']?.toString() ?? responseData['error']?.toString();
+          final cstat = data['cstat']?.toString() ?? responseData['cstat']?.toString();
           
-          // Prioridade 1: Mensagem principal (para outros erros)
-          if (responseData['message'] != null && responseData['message'].toString().trim().isNotEmpty) {
-            errorMsg = responseData['message'].toString().trim();
-          } else if (responseData['error'] != null && responseData['error'].toString().trim().isNotEmpty) {
-            errorMsg = responseData['error'].toString().trim();
-          } else if (responseData['details'] != null && responseData['details'].toString().trim().isNotEmpty) {
-            errorMsg = responseData['details'].toString().trim();
+          if (xmotivo != null && xmotivo.isNotEmpty) {
+            errorMsg = 'Rejeição: $xmotivo';
+            if (cstat != null) errorMsg += ' (Código: $cstat)';
+          } else {
+            errorMsg = 'Erro desconhecido ao emitir NFC-e (Status 200 mas sem sucesso).';
           }
+
+          // Adicionar detalhes técnicos se disponíveis
+          final detalhes = <String>[];
+          if (data['verAplic'] != null) detalhes.add('Versão: ${data['verAplic']}');
+          if (data['dhRecbto'] != null) detalhes.add('Recebimento: ${data['dhRecbto']}');
           
-          // Adicionar detalhes da resposta da SEFAZ se disponíveis
-          final cstat = responseData['cstat']?.toString();
-          final motivo = responseData['motivo']?.toString();
-          final xmotivo = responseData['xmotivo']?.toString();
-          final verAplic = responseData['verAplic']?.toString();
-          final cUF = responseData['cUF']?.toString();
-          final dhRecbto = responseData['dhRecbto']?.toString();
-          
-          // Construir mensagem detalhada
-          if (cstat != null || motivo != null || xmotivo != null) {
-            errorMsg = 'Rejeição: ${xmotivo ?? motivo ?? errorMsg}';
-            
-            // Adicionar informações técnicas
-            final detalhes = <String>[];
-            if (cstat != null) {
-              detalhes.add('Código: $cstat');
-            }
-            if (verAplic != null) {
-              detalhes.add('Versão da aplicação SEFAZ: $verAplic');
-            }
-            if (cUF != null) {
-              final ufMap = {
-                '35': 'SP', '11': 'RO', '12': 'AC', '13': 'AM', '14': 'RR',
-                '15': 'PA', '16': 'AP', '17': 'TO', '21': 'MA', '22': 'PI',
-                '23': 'CE', '24': 'RN', '25': 'PB', '26': 'PE', '27': 'AL',
-                '28': 'SE', '29': 'BA', '31': 'MG', '32': 'ES', '33': 'RJ',
-                '41': 'PR', '42': 'SC', '43': 'RS', '50': 'MS', '51': 'MT',
-                '52': 'GO', '53': 'DF'
-              };
-              final estado = ufMap[cUF] ?? cUF;
-              detalhes.add('Estado: $estado');
-            }
-            if (dhRecbto != null) {
-              detalhes.add('Data/hora do recebimento: $dhRecbto');
-            }
-            
-            if (detalhes.isNotEmpty) {
-              errorMsg += '\n\n${detalhes.join('\n')}';
-            }
+          if (detalhes.isNotEmpty) {
+            errorMsg += '\n\n' + detalhes.join('\n');
           }
-          
-          // Se for erro de dependência faltando, dar instruções claras
-          if (errorMsg.contains('signxml') || errorMsg.contains('Dependência faltando')) {
-            throw Exception('Dependência do PyNFe está faltando!\n\n'
-                'SOLUÇÃO:\n'
-                '1. Abra um terminal PowerShell\n'
-                '2. Execute:\n'
-                '   cd "C:\\Users\\USER\\Downloads\\Sistema Exodo\\sistema_exodo_01-12\\backend_pynfe"\n'
-                '   .\\venv\\Scripts\\python.exe -m pip install signxml\n'
-                '3. REINICIE o servidor backend (Ctrl+C e depois .\\iniciar_simples.bat)\n'
-                '4. Tente emitir NFC-e novamente\n\n'
-                'Erro original: $errorMsg');
+
+          // Caso especial: dependência faltando no backend
+          if (errorMsg.contains('signxml')) {
+            errorMsg = 'Dependência "signxml" faltando no backend!\n\nExecute: pip install signxml';
           }
-          
-          // Garantir que nunca seja vazio
-          if (errorMsg.trim().isEmpty) {
-            errorMsg = 'Erro desconhecido ao emitir NFC-e';
-          }
-          
+
           throw Exception(errorMsg);
         }
       } else {
-        // Tentar decodificar JSON
-        Map<String, dynamic> errorData;
+        // Erro HTTP (Status != 200)
+        Map<String, dynamic>? errorData;
         try {
           errorData = jsonDecode(response.body) as Map<String, dynamic>;
-        } catch (e) {
-          // Se não conseguir decodificar, usar o body como mensagem
-          final bodyStr = response.body.toString();
-          throw Exception('Erro HTTP ${response.statusCode}: ${bodyStr.isNotEmpty ? bodyStr : 'Resposta vazia do servidor'}');
-        }
+        } catch (_) {}
         
-        // Construir mensagem de erro detalhada
-        String errorMessage = errorData['error']?.toString().trim() ?? '';
+        String errorMessage = errorData?['error']?.toString() ?? 
+                             errorData?['message']?.toString() ?? 
+                             'Erro HTTP ${response.statusCode} ao emitir NFC-e';
         
-        // Se mensagem estiver vazia, tentar outras fontes
-        if (errorMessage.isEmpty) {
-          errorMessage = errorData['message']?.toString().trim() ?? '';
-        }
-        if (errorMessage.isEmpty) {
-          errorMessage = errorData['details']?.toString().trim() ?? '';
-        }
-        if (errorMessage.isEmpty) {
-          // Último recurso: usar tipo de erro ou mensagem genérica
-          final errorType = errorData['error_type']?.toString();
-          errorMessage = errorType != null 
-              ? 'Erro do tipo $errorType ocorreu no servidor'
-              : 'Erro desconhecido ao emitir NFC-e (HTTP ${response.statusCode})';
-        }
-        
-        String? errorType = errorData['error_type']?.toString();
-        String? details = errorData['details']?.toString();
-        List<dynamic>? traceback = errorData['traceback'] as List<dynamic>?;
-        
-        // Se houver detalhes, incluir na mensagem
-        if (details != null && details.isNotEmpty && details != errorMessage) {
-          errorMessage += '\n\nDetalhes técnicos:\n$details';
-        } else if (traceback != null && traceback.isNotEmpty) {
-          errorMessage += '\n\nÚltimas linhas do erro:\n${traceback.join('\n')}';
-        }
-        
-        // Se houver tipo de erro, incluir no início
-        if (errorType != null && !errorMessage.startsWith('[$errorType]')) {
-          errorMessage = '[$errorType] $errorMessage';
-        }
-        
-        // Garantir que nunca seja vazio
-        if (errorMessage.trim().isEmpty) {
-          errorMessage = 'Erro desconhecido ao emitir NFC-e (HTTP ${response.statusCode})';
+        if (response.statusCode == 404) {
+          errorMessage = 'Rota de emissão não encontrada no backend (404). Verifique a URL.';
+        } else if (response.statusCode == 401 || response.statusCode == 403) {
+          errorMessage = 'Acesso negado ao backend (401/403). Verifique a API Key.';
         }
         
         throw Exception(errorMessage);
@@ -934,18 +789,28 @@ class NFCeBackendService implements NFCeServiceBase {
     }).toList();
     
     // Status da NFC-e
-    final statusStr = data['status'] as String? ?? 'processando';
+    String statusStr = (data['status']?.toString() ?? 'processando').toLowerCase();
+    if (statusStr == 'sucesso' || statusStr == 'autorizado') {
+      statusStr = 'autorizada';
+    }
     
+    final chave = data['chave_acesso'] ?? data['chave'] ?? '';
+    final numero = data['numero']?.toString() ?? '';
+    final serie = data['serie']?.toString() ?? '1';
+    final protocolo = data['protocolo']?.toString() ?? '';
+    final xml = data['xml'] ?? data['xml_final'] ?? '';
+    final qrCode = data['qrCode'] ?? data['qr_code'] ?? '';
+
     return NFCe(
-      id: data['chave_acesso'] ?? DateTime.now().millisecondsSinceEpoch.toString(),
+      id: (chave.isNotEmpty) ? chave : DateTime.now().millisecondsSinceEpoch.toString(),
       empresaId: empresa.id,
-      chaveAcesso: data['chave_acesso'] ?? '',
-      numero: data['numero']?.toString() ?? '',
-      serie: data['serie']?.toString() ?? '1',
+      chaveAcesso: chave,
+      numero: numero,
+      serie: serie,
       status: statusStr,
-      protocolo: data['protocolo']?.toString(),
-      qrCode: data['qr_code'] ?? '',
-      xmlEnviado: data['xml'] ?? '',
+      protocolo: protocolo,
+      qrCode: qrCode,
+      xmlEnviado: xml,
       valorTotal: valorTotal,
       dataEmissao: DateTime.now(),
       itens: itens,

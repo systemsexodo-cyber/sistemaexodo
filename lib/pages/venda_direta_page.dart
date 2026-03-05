@@ -4149,7 +4149,9 @@ o padrão padrão (sem opções avançadas).
 
   void _mostrarSucessoNFCe(NFCe nfce) {
     if (!mounted) return;
-    ExodoSuccessDialog.mostrar(context, nfce);
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final empresa = authService.empresaAtual;
+    ExodoSuccessDialog.mostrar(context, nfce, empresa: empresa);
   }
 
   IconData _getIconeTipo(TipoPagamento tipo) {

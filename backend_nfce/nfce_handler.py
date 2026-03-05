@@ -700,6 +700,8 @@ def emitir_nfce_pynfe(req):
                 "status": "sucesso",
                 "chave": chave,
                 "protocolo": protocolo,
+                "numero": numero_nf_limpo,
+                "serie": nota_fiscal.serie,
                 "xml": xml_final,
                 "mensagem": "NFC-e Autorizada com Sucesso!"
             }
@@ -742,7 +744,11 @@ def emitir_nfce_pynfe(req):
                                 salvar_xml_local(emp.cnpj, chave, xml_final)
                                 return {
                                     "status": "sucesso",
-                                    "chave": chave, "protocolo": protocolo, "xml": xml_final,
+                                    "chave": chave, 
+                                    "protocolo": protocolo,
+                                    "numero": numero_nf_limpo,
+                                    "serie": nota_fiscal.serie,
+                                    "xml": xml_final,
                                     "mensagem": "NFC-e Autorizada!"
                                 }
                             else:
