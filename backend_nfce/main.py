@@ -586,20 +586,56 @@ def update_local_status():
         f.write(f"Porta Local: 8000\n")
         f.write(f"Firebase: ATIVO\n")
 
+def is_admin():
+    try:
+        return ctypes.windll.shell32.IsUserAnAdmin()
+    except:
+        return False
+
 def self_install():
+    """Configura o Bridge para iniciar e REINICIAR sozinho no Windows."""
     if not getattr(sys, 'frozen', False): return
     
-    import winreg
     exe_path = os.path.abspath(sys.executable)
+    task_name = "ExodoNfceBridgeTask"
     
+    # 1. TENTAR TAREFA AGENDADA (Robusta - Reinicia se Fechar)
     try:
-        # Registrar o caminho atual para iniciar com o Windows
+        # Comando para criar tarefa que inicia no logon e tem privilégios altos se for admin
+        # /RL HIGHEST garante que ele rode como admin se o instalador for admin
+        # /F força a sobrescrever configurações antigas
+        
+        # Remove versão antiga se houver
+        subprocess.run(['schtasks', '/delete', '/tn', task_name, '/f'], 
+                      capture_output=True, creationflags=0x08000000)
+        
+        # Cria a nova tarefa
+        cmd = [
+            'schtasks', '/create', '/tn', task_name, 
+            '/tr', f'"{exe_path}" --silent', 
+            '/sc', 'onlogon'
+        ]
+        
+        if is_admin():
+            cmd += ['/rl', 'highest']
+            
+        res = subprocess.run(cmd + ['/f'], capture_output=True, text=True, creationflags=0x08000000)
+        
+        if res.returncode == 0:
+            log_message(f"Proteção 'Auto-Restart' ativa via Tarefa Agendada: {task_name}")
+            return
+    except Exception as e:
+        log_message(f"Falha ao configurar Tarefa Agendada: {e}", "WARN")
+
+    # 2. FALLBACK: REGISTRO RUN (Apenas Início com Windows)
+    try:
+        import winreg
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE)
         winreg.SetValueEx(key, "ExodoNfceBridge", 0, winreg.REG_SZ, f'"{exe_path}" --silent')
         winreg.CloseKey(key)
-        # log_message(f"Auto-inicialização configurada para: {exe_path}")
+        log_message(f"Proteção básica ativa no Registro: {exe_path}")
     except Exception as e:
-        log_message(f"Erro ao configurar inicialização automática: {e}", "ERROR")
+        log_message(f"Erro ao configurar inicialização básica: {e}", "ERROR")
 
 # --- TRAY ICON ---
 def restart_action_silent():
