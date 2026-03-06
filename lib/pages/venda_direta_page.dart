@@ -429,6 +429,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       _pedidoOriginal = null;
     });
     _buscaController.clear();
+    // Limpar storage persistente
+    _limparCarrinhoSalvo();
   }
 
   double get _totalCarrinho {

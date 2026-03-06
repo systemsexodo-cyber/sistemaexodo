@@ -33,3 +33,4 @@
 2026-03-05 19:35:33,528 [INFO] Proteção básica ativa no Registro: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\ExodoNfceBridge.exe
 2026-03-05 19:35:51,735 [INFO] Proteção básica ativa no Registro: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\ExodoNfceBridge.exe
 2026-03-05 19:36:38,212 [INFO] Proteção básica ativa no Registro: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\ExodoNfceBridge.exe
+2026-03-06 08:24:16,855 [INFO] Proteção básica ativa no Registro: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\ExodoNfceBridge.exe

@@ -716,3 +716,27 @@ NameError: name 'quit_app' is not defined
 2026-03-05 20:49:58,268 [INFO] [CMD] Iniciando Processo de Atualização...
 2026-03-05 20:49:58,306 [INFO] [CMD] Git detectado. Tentando atualização via Git...
 2026-03-05 20:50:01,370 [INFO] [CMD] Atualização via Git concluída com sucesso.
+2026-03-06 08:20:35,786 [INFO] Proteção básica ativa no Registro: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\backend_nfce\ExodoNfceBridge.exe
+2026-03-06 08:25:33,284 [INFO] ========================================
+2026-03-06 08:25:33,284 [INFO] INICIANDO EMISSOR EXODO - MODO BACKGROUND
+2026-03-06 08:25:33,284 [INFO] ========================================
+2026-03-06 08:25:33,286 [INFO] Iniciando Listener do Firebase (Modo Sem Link)...
+2026-03-06 08:25:33,822 [INFO] Firebase Listener ativo!
+2026-03-06 08:25:36,769 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-06 08:25:36,771 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-06 08:25:36,814 [INFO] Listener de Comandos Remotos ativo!
+2026-03-06 08:25:36,814 [INFO] ========================================
+2026-03-06 08:25:36,827 [INFO] SISTEMA PRONTO PARA OPERAR
+2026-03-06 08:25:36,829 [INFO] ========================================
+2026-03-06 08:26:19,837 [INFO] ========================================
+2026-03-06 08:26:19,837 [INFO] INICIANDO EMISSOR EXODO - MODO BACKGROUND
+2026-03-06 08:26:19,837 [INFO] ========================================
+2026-03-06 08:26:19,838 [INFO] Iniciando Listener do Firebase (Modo Sem Link)...
+2026-03-06 08:26:19,929 [INFO] Firebase Listener ativo!
+2026-03-06 08:26:21,999 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-06 08:26:22,613 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-06 08:26:22,617 [INFO] Listener de Comandos Remotos ativo!
+2026-03-06 08:26:22,617 [INFO] ========================================
+2026-03-06 08:26:22,617 [INFO] SISTEMA PRONTO PARA OPERAR
+2026-03-06 08:26:22,617 [INFO] ========================================
+2026-03-06 08:26:37,061 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
