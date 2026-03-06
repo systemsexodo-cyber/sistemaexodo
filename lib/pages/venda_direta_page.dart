@@ -1144,6 +1144,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     );
   }
 
+
   List<String> _getCategorias(DataService dataService) {
     final categorias = dataService.produtos
         .map((p) => p.grupo)

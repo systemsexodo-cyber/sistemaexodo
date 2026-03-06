@@ -647,6 +647,7 @@ class _LojaCheckoutPageState extends State<LojaCheckoutPage> {
       }
 
       if (mounted) {
+        carrinhoService.limparCarrinho();
         Navigator.of(context).pop();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
