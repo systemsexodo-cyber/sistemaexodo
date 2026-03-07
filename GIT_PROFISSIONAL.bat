@@ -84,8 +84,25 @@ echo [PASSO 3] Enviando para o Porto Seguro (GitHub)...
 git push origin HEAD
 if %ERRORLEVEL% NEQ 0 (
     echo.
+    echo >>> Detectado que seu computador esta desatualizado em relacao ao GitHub.
+    echo >>> Tentando sincronizar (PULL) antes de enviar novamente...
+    git pull origin HEAD --no-edit
+    
+    if !ERRORLEVEL! EQU 0 (
+        echo >>> Sincronizacao realizada! Tentando enviar agora...
+        git push origin HEAD
+        if !ERRORLEVEL! EQU 0 (
+            echo.
+            echo vv SUCESSO! Trabalho sincronizado e enviado. vv
+            pause
+            goto menu
+        )
+    )
+
+    echo.
     echo !!! ERRO NO ENVIO !!!
-    echo Verifique sua internet ou se ha conflitos.
+    echo Verifique se ha CONFLITOS no seu codigo ou se sua internet caiu.
+    echo Sugestao: Use a Opcao 2 (Sincronizar) ou resolva os arquivos marcados com erro.
     pause
     goto menu
 )

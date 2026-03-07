@@ -24,6 +24,8 @@ desktop.ini
 *.tmp
 *.temp
 *.log
+bridge_log.txt
+**/bridge_log.txt
 *.swp
 *.swo
 *~
