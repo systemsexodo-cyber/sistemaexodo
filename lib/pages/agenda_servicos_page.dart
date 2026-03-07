@@ -1421,35 +1421,39 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
 
   Color _getCorStatus(String status) {
     switch (status) {
-      case 'Aguardando Confirmação':
-        return Colors.purpleAccent;
       case 'Agendado':
-        return const Color(0xFF2196F3); // Azul vibrante do tema
+        return Colors.blueAccent;
+      case 'Em Espera':
+        return Colors.orangeAccent;
       case 'Em Andamento':
-        return const Color(0xFFFF9800); // Laranja vibrante
+        return Colors.amber;
       case 'Concluído':
-        return const Color(0xFF4CAF50); // Verde vibrante
+        return Colors.green;
       case 'Cancelado':
-        return const Color(0xFFF44336); // Vermelho vibrante
+        return Colors.red;
+      case 'Aguardando Confirmação':
+        return Colors.orange;
       default:
-        return const Color(0xFF757575); // Cinza
+        return Colors.grey;
     }
   }
 
   Color _getCorFundoStatus(String status) {
     switch (status) {
-      case 'Aguardando Confirmação':
-        return Colors.purple.shade900;
       case 'Agendado':
-        return const Color(0xFF1E3A5F); // Azul escuro
+        return Colors.blue.withOpacity(0.2);
+      case 'Em Espera':
+        return Colors.orange.withOpacity(0.2);
       case 'Em Andamento':
-        return const Color(0xFF663C00); // Laranja escuro
+        return Colors.amber.withOpacity(0.2);
       case 'Concluído':
-        return const Color(0xFF1B5E20); // Verde escuro
+        return Colors.green.withOpacity(0.2);
       case 'Cancelado':
-        return const Color(0xFF5D1F1F); // Vermelho escuro
+        return Colors.red.withOpacity(0.2);
+      case 'Aguardando Confirmação':
+        return Colors.orange.withOpacity(0.2);
       default:
-        return const Color(0xFF2C2C2C); // Cinza escuro
+        return Colors.grey.withOpacity(0.2);
     }
   }
 
@@ -2000,6 +2004,37 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                 ),
                               ],
                             ],
+                          ),
+                          // Profissional / Atendente (Interativo)
+                          const SizedBox(height: 4),
+                          InkWell(
+                            onTap: () => _alterarProfissionalRapido(agendamento, dataService),
+                            borderRadius: BorderRadius.circular(4),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.badge_rounded, 
+                                    size: 13, 
+                                    color: agendamento.funcionarioId != null ? Colors.blue.withOpacity(0.7) : Colors.white.withOpacity(0.3)
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    agendamento.funcionarioNome ?? 'Selecionar Profissional',
+                                    style: TextStyle(
+                                      color: agendamento.funcionarioId != null ? Colors.white.withOpacity(0.8) : Colors.white.withOpacity(0.4),
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w500,
+                                      fontStyle: agendamento.funcionarioId == null ? FontStyle.italic : FontStyle.normal,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Icon(Icons.edit, size: 10, color: Colors.blue.withOpacity(0.4)),
+                                ],
+                              ),
+                            ),
                           ),
                         ],
                         // Observações do pet (se houver, muito compacto)
@@ -3779,6 +3814,9 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
   /// Monta o texto formatado com todos os dados do agendamento para envio por WhatsApp
   String _montarTextoAgendamento(AgendamentoServico agendamento) {
     final buffer = StringBuffer();
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final agendamentoConfig = dataService.empresaAtual?.configuracoes?['agendamento'] ?? {};
+    final enviarValor = agendamentoConfig['enviarValorWhatsApp'] as bool? ?? true;
     
     // Saudação e título
     final nomeCliente = agendamento.cliente?.nome ?? agendamento.clienteNome ?? '';
@@ -3793,14 +3831,17 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
     
     // Serviço e Valor
     buffer.writeln('✂️ *Serviço:* ${agendamento.servico?.nome ?? 'N/A'}');
-    if (agendamento.servico != null && agendamento.servico!.preco > 0) {
-      buffer.writeln('💰 *Valor:* R\$ ${agendamento.servico!.precoTotal.toStringAsFixed(2)}');
-    }
-    if (agendamento.valorTaxiDog != null && agendamento.valorTaxiDog! > 0) {
-      buffer.writeln('🚗 *Taxa de Entrega:* R\$ ${agendamento.valorTaxiDog!.toStringAsFixed(2)}');
+    
+    if (enviarValor) {
       if (agendamento.servico != null && agendamento.servico!.preco > 0) {
-        final total = agendamento.servico!.precoTotal + agendamento.valorTaxiDog!;
-        buffer.writeln('💵 *Total:* R\$ ${total.toStringAsFixed(2)}');
+        buffer.writeln('💰 *Valor:* R\$ ${agendamento.servico!.precoTotal.toStringAsFixed(2)}');
+      }
+      if (agendamento.valorTaxiDog != null && agendamento.valorTaxiDog! > 0) {
+        buffer.writeln('🚗 *Taxa de Entrega:* R\$ ${agendamento.valorTaxiDog!.toStringAsFixed(2)}');
+        if (agendamento.servico != null && agendamento.servico!.preco > 0) {
+          final total = agendamento.servico!.precoTotal + agendamento.valorTaxiDog!;
+          buffer.writeln('💵 *Total:* R\$ ${total.toStringAsFixed(2)}');
+        }
       }
     }
     buffer.writeln('');
@@ -4130,7 +4171,62 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
                               Text(s.nome, style: const TextStyle(color: Colors.white70, fontSize: 13)),
-                              Text('R\$ ${s.precoTotal.toStringAsFixed(2)}', style: const TextStyle(color: Colors.white, fontSize: 13)),
+                              InkWell(
+                                onTap: () async {
+                                  final valorStr = await showDialog<String>(
+                                    context: context,
+                                    builder: (context) {
+                                      final ctrl = TextEditingController(text: s.preco.toStringAsFixed(2));
+                                      return AlertDialog(
+                                        backgroundColor: const Color(0xFF1E1E2E),
+                                        title: Text('Alterar Valor: ${s.nome}', style: const TextStyle(color: Colors.white, fontSize: 14)),
+                                        content: TextField(
+                                          controller: ctrl,
+                                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                          style: const TextStyle(color: Colors.white),
+                                          decoration: const InputDecoration(
+                                            labelText: 'Novo Valor',
+                                            labelStyle: TextStyle(color: Colors.white70),
+                                            prefixText: 'R\$ ',
+                                            prefixStyle: TextStyle(color: Colors.white),
+                                          ),
+                                          autofocus: true,
+                                        ),
+                                        actions: [
+                                          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancelar')),
+                                          ElevatedButton(
+                                            onPressed: () => Navigator.pop(context, ctrl.text),
+                                            child: const Text('Confirmar'),
+                                          ),
+                                        ],
+                                      );
+                                    },
+                                  );
+                                  if (valorStr != null) {
+                                    final novoValor = double.tryParse(valorStr.replaceAll(',', '.'));
+                                    if (novoValor != null) {
+                                      setState(() {
+                                        final index = servicosSelecionados.indexOf(s);
+                                        if (index != -1) {
+                                          servicosSelecionados[index] = s.copyWith(preco: novoValor);
+                                        }
+                                      });
+                                    }
+                                  }
+                                },
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: Colors.blueAccent.withOpacity(0.1),
+                                    borderRadius: BorderRadius.circular(4),
+                                    border: Border.all(color: Colors.blueAccent.withOpacity(0.3)),
+                                  ),
+                                  child: Text(
+                                    'R\$ ${s.precoTotal.toStringAsFixed(2)}', 
+                                    style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)
+                                  ),
+                                ),
+                              ),
                             ],
                           ),
                         )).toList(),
@@ -5089,11 +5185,22 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
 
                   final List<AgendamentoServico> agendamentosParaSalvar = [];
                   int agendamentosCriados = 0;
+                  int agendamentosEmEspera = 0; 
                   int vacinasAgendadas = 0;
                   final timestamp = DateTime.now().microsecondsSinceEpoch;
                   
                   // 1. Gerar agendamentos principais
                   for (final pet in loopList) {
+                    // Verificar conflito para fila de espera automática
+                    final tempAgd = AgendamentoServico(
+                      id: 'temp',
+                      numero: '',
+                      dataAgendamento: dataHoraCompleta,
+                      duracaoMinutos: duracaoMinutos,
+                    );
+                    
+                    bool temConflitoAtivo = dataService.agendamentosServico.any((a) => a.isAtivo && a.temSobreposicaoHorario(tempAgd));
+
                     final novoAgendamento = AgendamentoServico(
                       id: '${timestamp}_${pet?.id ?? 'sem_pet'}_$agendamentosCriados',
                       numero: '', 
@@ -5111,7 +5218,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                       observacoes: observacoesController.text.trim().isEmpty
                           ? null
                           : observacoesController.text.trim(),
-                      status: 'Agendado',
+                      status: temConflitoAtivo ? 'Em Espera' : 'Agendado',
                       tipoEntrega: tipoEntrega,
                       valorTaxiDog: valorTaxiDogPorPet,
                       bairroEntrega: bairroEntregaController.text.isNotEmpty ? bairroEntregaController.text.trim() : null,
@@ -5126,6 +5233,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                     
                     agendamentosParaSalvar.add(novoAgendamento);
                     agendamentosCriados++;
+                    if (novoAgendamento.status == 'Em Espera') agendamentosEmEspera++;
 
                     // 2. Gerar agendamentos de vacina para cada pet
                     for (final material in materiaisAgendamento) {
@@ -5162,7 +5270,12 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                     Navigator.pop(dialogContext);
                     String msg = agendamentosCriados > 1
                         ? '$agendamentosCriados agendamentos criados!'
-                        : 'Agendamento criado com sucesso!';
+                        : (agendamentosEmEspera > 0 ? 'Agendamento em ESPERA (Horário Ocupado)' : 'Agendamento criado com sucesso!');
+                    
+                    if (agendamentosCriados > 1 && agendamentosEmEspera > 0) {
+                      msg += ' ($agendamentosEmEspera em espera)';
+                    }
+
                     if (vacinasAgendadas > 0) msg += ' + $vacinasAgendadas vacinas agendadas.';
                     
                     ScaffoldMessenger.of(context).showSnackBar(
@@ -5339,7 +5452,62 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
                               Text(s.nome, style: const TextStyle(color: Colors.white70, fontSize: 13)),
-                              Text('R\$ ${s.precoTotal.toStringAsFixed(2)}', style: const TextStyle(color: Colors.white, fontSize: 13)),
+                              InkWell(
+                                onTap: () async {
+                                  final valorStr = await showDialog<String>(
+                                    context: context,
+                                    builder: (context) {
+                                      final ctrl = TextEditingController(text: s.preco.toStringAsFixed(2));
+                                      return AlertDialog(
+                                        backgroundColor: const Color(0xFF1E1E2E),
+                                        title: Text('Alterar Valor: ${s.nome}', style: const TextStyle(color: Colors.white, fontSize: 14)),
+                                        content: TextField(
+                                          controller: ctrl,
+                                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                          style: const TextStyle(color: Colors.white),
+                                          decoration: const InputDecoration(
+                                            labelText: 'Novo Valor',
+                                            labelStyle: TextStyle(color: Colors.white70),
+                                            prefixText: 'R\$ ',
+                                            prefixStyle: TextStyle(color: Colors.white),
+                                          ),
+                                          autofocus: true,
+                                        ),
+                                        actions: [
+                                          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancelar')),
+                                          ElevatedButton(
+                                            onPressed: () => Navigator.pop(context, ctrl.text),
+                                            child: const Text('Confirmar'),
+                                          ),
+                                        ],
+                                      );
+                                    },
+                                  );
+                                  if (valorStr != null) {
+                                    final novoValor = double.tryParse(valorStr.replaceAll(',', '.'));
+                                    if (novoValor != null) {
+                                      setStateDialog(() {
+                                        final index = servicosSelecionados.indexOf(s);
+                                        if (index != -1) {
+                                          servicosSelecionados[index] = s.copyWith(preco: novoValor);
+                                        }
+                                      });
+                                    }
+                                  }
+                                },
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: Colors.blueAccent.withOpacity(0.1),
+                                    borderRadius: BorderRadius.circular(4),
+                                    border: Border.all(color: Colors.blueAccent.withOpacity(0.3)),
+                                  ),
+                                  child: Text(
+                                    'R\$ ${s.precoTotal.toStringAsFixed(2)}', 
+                                    style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)
+                                  ),
+                                ),
+                              ),
                             ],
                           ),
                         )).toList(),
@@ -6254,6 +6422,75 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
   }
 
   /// Marca agendamento como recebido
+  /// Altera o profissional do agendamento de forma rápida
+  void _alterarProfissionalRapido(AgendamentoServico agendamento, DataService dataService) {
+    String? funcIdSelected = agendamento.funcionarioId;
+    String? funcNomeSelected = agendamento.funcionarioNome;
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setStateDialog) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF1E1E2E),
+              title: const Text('Alterar Profissional', style: TextStyle(color: Colors.white, fontSize: 16)),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              content: DropdownButtonFormField<String?>(
+                value: funcIdSelected,
+                dropdownColor: const Color(0xFF2C2C3E),
+                decoration: InputDecoration(
+                  labelText: 'Selecione o Profissional',
+                  labelStyle: const TextStyle(color: Colors.white70),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  prefixIcon: const Icon(Icons.person, color: Colors.blueAccent),
+                  filled: true,
+                  fillColor: Colors.white.withOpacity(0.05),
+                ),
+                style: const TextStyle(color: Colors.white),
+                items: [
+                  const DropdownMenuItem(value: null, child: Text('Nenhum')),
+                  ...dataService.funcionarios.where((f) => f.ativo).map((f) => DropdownMenuItem(
+                    value: f.id,
+                    child: Text(f.nome),
+                  )),
+                ],
+                onChanged: (val) {
+                  setStateDialog(() {
+                    funcIdSelected = val;
+                    if (val != null) {
+                      funcNomeSelected = dataService.funcionarios.firstWhere((f) => f.id == val).nome;
+                    } else {
+                      funcNomeSelected = null;
+                    }
+                  });
+                },
+              ),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancelar')),
+                ElevatedButton(
+                  onPressed: () async {
+                    final agdEdit = agendamento.copyWith(
+                      funcionarioId: funcIdSelected,
+                      funcionarioNome: funcNomeSelected,
+                      updatedAt: DateTime.now(),
+                    );
+                    await dataService.updateAgendamentoServico(agdEdit);
+                    if (mounted) Navigator.pop(context);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Profissional atualizado!'), backgroundColor: Colors.blueAccent),
+                    );
+                  },
+                  child: const Text('Salvar'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   void _marcarComoRecebido(
     BuildContext context,
     AgendamentoServico agendamento,

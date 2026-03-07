@@ -3200,7 +3200,11 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
           intervaloMinutos: agdFinal.intervaloMinutos,
           ignorarPendentes: false
         );
-        if (!disponivel) algumOcupado = true;
+
+        if (!disponivel) {
+          algumOcupado = true;
+          agdFinal = agdFinal.copyWith(status: 'Em Espera');
+        }
         
         await dataService.addAgendamentoServico(agdFinal);
       }
@@ -3618,12 +3622,14 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
                     ),
                     const SizedBox(height: 24),
                     Text(
-                      'Solicitação Recebida!',
+                      horarioOcupado ? 'Entramos na Fila de Espera!' : 'Solicitação Recebida!',
                       style: GoogleFonts.outfit(color: textColor, fontSize: 28, fontWeight: FontWeight.bold),
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      'Agendamentos realizados com sucesso. Aguarde nossa equipe analisar e confirmar.',
+                      horarioOcupado 
+                        ? 'O horário escolhido acabou de ser ocupado, mas seu pet já está na FILA DE ESPERA. Caso haja alguma desistência, você será o próximo!' 
+                        : 'Agendamentos realizados com sucesso. Aguarde nossa equipe analisar e confirmar.',
                       textAlign: TextAlign.center,
                       style: TextStyle(color: textColor.withOpacity(0.6), fontSize: 16),
                     ),

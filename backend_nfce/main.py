@@ -518,44 +518,85 @@ def start_firebase_listener():
 
         # 1. Listener de Notas Fiscais
         def on_snapshot(col_snapshot, changes, read_time):
-            print(f">>> [DEBUG] Snapshot recebido! {len(changes)} alterações detectadas.")
-            for change in changes:
-                doc = change.document
-                data = doc.to_dict()
-                print(f">>> [DEBUG] Doc: {doc.id} | Status: {data.get('status')} | Tipo: {change.type.name}")
+            try:
+                print(f">>> [DEBUG] Snapshot recebido! {len(changes)} alterações detectadas.")
+                global LAST_HEARTBEAT_TS
+                # Atualizar timestamp local para o Watchdog saber que estamos vivos
+                import time as _time
+                LAST_HEARTBEAT_TS = _time.time()
                 
-                if change.type.name == 'ADDED' or (change.type.name == 'MODIFIED' and data.get('status') == 'pendente'):
-                    if data.get('status') == 'pendente':
-                        print(f">>> [FIREBASE] 🔔 Nova nota recebida: {doc.id}")
-                        threading.Thread(
-                            target=processar_requisicao_firebase, 
-                            args=(db, doc.id, data),
-                            daemon=True
-                        ).start()
+                for change in changes:
+                    doc = change.document
+                    data = doc.to_dict()
+                    print(f">>> [DEBUG] Doc: {doc.id} | Status: {data.get('status')} | Tipo: {change.type.name}")
+                    
+                    if change.type.name == 'ADDED' or (change.type.name == 'MODIFIED' and data.get('status') == 'pendente'):
+                        if data.get('status') == 'pendente':
+                            print(f">>> [FIREBASE] 🔔 Nova nota recebida: {doc.id}")
+                            threading.Thread(
+                                target=processar_requisicao_firebase, 
+                                args=(db, doc.id, data),
+                                daemon=True
+                            ).start()
+            except Exception as e:
+                log_message(f"Erro no snapshot listener: {e}", "ERROR")
 
-        db.collection('nfce_requests').where('status', '==', 'pendente').on_snapshot(on_snapshot)
+        # Iniciar primeiro listener
+        nfce_query = db.collection('nfce_requests').where('status', '==', 'pendente')
+        nfce_watch = nfce_query.on_snapshot(on_snapshot)
         
         # 2. Listener de Comandos Remotos
         def on_command_snapshot(col_snapshot, changes, read_time):
-            for change in changes:
-                if change.type.name == 'ADDED':
-                    doc = change.document
-                    data = doc.to_dict()
-                    if data.get('status') == 'pendente':
-                        threading.Thread(
-                            target=processar_comando_remoto, 
-                            args=(db, doc.id, data),
-                            daemon=True
-                        ).start()
+            try:
+                for change in changes:
+                    if change.type.name == 'ADDED':
+                        doc = change.document
+                        data = doc.to_dict()
+                        if data.get('status') == 'pendente':
+                            threading.Thread(
+                                target=processar_comando_remoto, 
+                                args=(db, doc.id, data),
+                                daemon=True
+                            ).start()
+            except Exception as e:
+                log_message(f"Erro no comando listener: {e}", "ERROR")
         
-        db.collection('bridge_commands').where('status', '==', 'pendente').on_snapshot(on_command_snapshot)
+        cmd_query = db.collection('bridge_commands').where('status', '==', 'pendente')
+        cmd_watch = cmd_query.on_snapshot(on_command_snapshot)
         log_message("Listener de Comandos Remotos ativo!")
+
+        # 3. WATCHDOG: Garante que os listeners não morram em silêncio
+        def _watchdog_loop():
+            import time as _time
+            nonlocal nfce_watch, cmd_watch
+            
+            error_count = 0
+            while FIREBASE_ACTIVE:
+                _time.sleep(300) # Checar a cada 5 minutos
+                agora = _time.time()
+                # Se não recebemos nada (nem heartbeat interno) em 15 minutos, algo está errado
+                if (agora - LAST_HEARTBEAT_TS) > 900: 
+                    log_message("[WATCHDOG] Detectada inatividade prolongada. Reiniciando listeners...", "WARN")
+                    try:
+                        nfce_watch.unsubscribe()
+                        cmd_watch.unsubscribe()
+                    except: pass
+                    
+                    # Reiniciar
+                    nfce_watch = nfce_query.on_snapshot(on_snapshot)
+                    cmd_watch = cmd_query.on_snapshot(on_command_snapshot)
+                    LAST_HEARTBEAT_TS = _time.time()
+                    log_message("[WATCHDOG] Listeners reiniciados com sucesso.")
+        
+        threading.Thread(target=_watchdog_loop, daemon=True).start()
         
     except Exception as e:
         log_message(f"Falha ao iniciar Firebase Listener: {e}", "ERROR")
         FIREBASE_ACTIVE = False
 
 # --- UTILITÁRIOS ---
+LAST_HEARTBEAT_TS = time.time()
+
 def _registrar_heartbeat(db):
     """Registra/atualiza o heartbeat do Bridge no Firestore."""
     try:
@@ -563,13 +604,17 @@ def _registrar_heartbeat(db):
         pc_name = _plt.node()
         # Higienizar id do documento
         import re as _re
-        doc_id = _re.sub(r'[^a-zA-Z0-9_-]', '_', pc_name) or 'bridge'
+        doc_id_clean = _re.sub(r'[^a-zA-Z0-9_-]', '_', pc_name) or 'bridge'
         
-        db.collection('bridge_status').document(doc_id).set({
+        global LAST_HEARTBEAT_TS
+        LAST_HEARTBEAT_TS = time.time() # Atualiza marca de tempo local
+
+        db.collection('bridge_status').document(doc_id_clean).set({
             'online': True,
             'pc_name': pc_name,
             'last_seen': firestore.SERVER_TIMESTAMP,
             'versao': '2.2',
+            'status_cpu': f"{platform.processor()}",
             'ultima_empresa': LAST_PROCESSED_COMPANY.get('nome'),
             'ultimo_cnpj': LAST_PROCESSED_COMPANY.get('cnpj'),
             'ultimo_processamento': LAST_PROCESSED_COMPANY.get('timestamp')

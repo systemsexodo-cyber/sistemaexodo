@@ -559,14 +559,21 @@ class NFCeBackendService implements NFCeServiceBase {
   /// Verifica se o backend está disponível
   Future<bool> verificarConexao() async {
     try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/health'),
-      ).timeout(
-        const Duration(seconds: 5),
-        onTimeout: () => throw Exception('Timeout'),
-      );
+      // Se tiver URL configurada, verificar via HTTP
+      if (baseUrl.isNotEmpty && !baseUrl.contains('firebase')) {
+        final response = await http.get(
+          Uri.parse('$baseUrl/health'),
+        ).timeout(
+          const Duration(seconds: 5),
+          onTimeout: () => throw Exception('Timeout'),
+        );
+        return response.statusCode == 200;
+      }
       
-      return response.statusCode == 200;
+      // Se não tiver URL ou for modo Firebase, verificar via Firestore
+      final status = await _verificarBridgeOnline();
+      final pcsOnline = (status['pcsOnline'] as List?) ?? [];
+      return pcsOnline.isNotEmpty;
     } catch (e) {
       debugPrint('>>> [NFCeBackend] Backend não disponível: $e');
       return false;

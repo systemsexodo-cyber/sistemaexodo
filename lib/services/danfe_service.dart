@@ -23,22 +23,39 @@ class DANFEService {
 
       pdf.addPage(
         pw.Page(
-          pageFormat: const PdfPageFormat(80 * 2.83465, 297 * 2.83465), // 80mm x 297mm (térmica) - 1mm = 2.83465 points
+          pageFormat: const PdfPageFormat(80 * 2.83465, 400 * 2.83465), // 80mm x 400mm (térmica)
+          margin: const pw.EdgeInsets.all(5),
           build: (pw.Context context) {
             return pw.Column(
-              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              crossAxisAlignment: pw.CrossAxisAlignment.center,
               children: [
                 _buildCabecalho(empresa),
-                pw.SizedBox(height: 10),
-                _buildDadosNFCe(nfce),
-                pw.SizedBox(height: 10),
+                _divider(),
+                pw.Text(
+                  'DETALHE DA VENDA',
+                  style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold),
+                ),
+                _buildCabecalhoItens(),
                 _buildItens(nfce),
-                pw.SizedBox(height: 10),
-                _buildTotal(nfce),
-                pw.SizedBox(height: 10),
-                _buildPagamento(nfce),
-                pw.SizedBox(height: 10),
-                if (nfce.qrCode != null) _buildQRCode(nfce.qrCode!),
+                _divider(),
+                _buildTotalGeral(nfce),
+                _divider(),
+                _buildPagamentos(nfce),
+                _divider(),
+                _buildConsulta(nfce),
+                _divider(),
+                _buildConsumidor(nfce),
+                _divider(),
+                _buildDadosEmissao(nfce),
+                _divider(),
+                if (nfce.qrCode != null && nfce.qrCode!.isNotEmpty) ...[
+                  pw.Text(
+                    'Consulta via leitor de QR Code',
+                    style: const pw.TextStyle(fontSize: 8),
+                  ),
+                  pw.SizedBox(height: 5),
+                  _buildQRCode(nfce.qrCode!),
+                ],
                 pw.SizedBox(height: 10),
                 _buildRodape(empresa),
               ],
@@ -53,72 +70,74 @@ class DANFEService {
     }
   }
 
+  static pw.Widget _divider() {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.symmetric(vertical: 2),
+      child: pw.Text(
+        '------------------------------------------------------------',
+        style: const pw.TextStyle(fontSize: 8),
+      ),
+    );
+  }
+
   /// Constrói cabeçalho do DANFE
   static pw.Widget _buildCabecalho(Empresa empresa) {
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.center,
       children: [
         pw.Text(
-          'DANFE NFC-e',
-          style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold),
-          textAlign: pw.TextAlign.center,
-        ),
-        pw.SizedBox(height: 5),
-        pw.Text(
-          empresa.nomeExibicao,
-          style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold),
+          empresa.nomeExibicao.toUpperCase(),
+          style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold),
           textAlign: pw.TextAlign.center,
         ),
         if (empresa.cnpj != null)
           pw.Text(
             'CNPJ: ${_formatarCNPJ(empresa.cnpj!)}',
-            style: const pw.TextStyle(fontSize: 8),
+            style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold),
             textAlign: pw.TextAlign.center,
           ),
-          if (empresa.enderecoCompleto.isNotEmpty && empresa.enderecoCompleto != '')
+        if (empresa.inscricaoEstadual != null)
+          pw.Text(
+             'I.E.: ${empresa.inscricaoEstadual}',
+             style: const pw.TextStyle(fontSize: 8),
+          ),
+        if (empresa.enderecoCompleto.isNotEmpty)
           pw.Text(
             empresa.enderecoCompleto,
             style: const pw.TextStyle(fontSize: 7),
             textAlign: pw.TextAlign.center,
           ),
+        if (empresa.telefone != null && empresa.telefone != '')
+          pw.Text(
+            'Fone: ${empresa.telefone}',
+            style: const pw.TextStyle(fontSize: 8),
+          ),
       ],
     );
   }
 
-  /// Constrói dados da NFC-e
-  static pw.Widget _buildDadosNFCe(NFCe nfce) {
-    return pw.Container(
-      padding: const pw.EdgeInsets.all(5),
-      decoration: pw.BoxDecoration(
-        border: pw.Border.all(),
-      ),
-      child: pw.Column(
-        crossAxisAlignment: pw.CrossAxisAlignment.start,
+  static pw.Widget _buildCabecalhoItens() {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.only(top: 5),
+      child: pw.Row(
         children: [
-          pw.Text(
-            'NFC-e Nº ${nfce.numero}',
-            style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold),
+          pw.Expanded(
+            flex: 3,
+            child: pw.Text('CÓDIGO DESCRIÇÃO', style: pw.TextStyle(fontSize: 7, fontWeight: pw.FontWeight.bold)),
           ),
-          pw.SizedBox(height: 3),
-          pw.Text(
-            'Série: ${nfce.serie}',
-            style: const pw.TextStyle(fontSize: 8),
+          pw.Expanded(
+            child: pw.Text('QTD', style: pw.TextStyle(fontSize: 7, fontWeight: pw.FontWeight.bold), textAlign: pw.TextAlign.center),
           ),
-          if (nfce.chaveAcesso != null)
-            pw.Text(
-              'Chave: ${_formatarChaveAcesso(nfce.chaveAcesso!)}',
-              style: const pw.TextStyle(fontSize: 7),
-            ),
-          pw.SizedBox(height: 3),
-          pw.Text(
-            'Emissão: ${_formatarData(nfce.dataEmissao)}',
-            style: const pw.TextStyle(fontSize: 8),
+          pw.Expanded(
+            child: pw.Text('UN', style: pw.TextStyle(fontSize: 7, fontWeight: pw.FontWeight.bold), textAlign: pw.TextAlign.center),
           ),
-          if (nfce.protocolo != null)
-            pw.Text(
-              'Protocolo: ${nfce.protocolo}',
-              style: const pw.TextStyle(fontSize: 8),
-            ),
+          pw.Expanded(
+            child: pw.Text('V.UN', style: pw.TextStyle(fontSize: 7, fontWeight: pw.FontWeight.bold), textAlign: pw.TextAlign.right),
+          ),
+          pw.Expanded(
+            flex: 2,
+            child: pw.Text('V.TOT', style: pw.TextStyle(fontSize: 7, fontWeight: pw.FontWeight.bold), textAlign: pw.TextAlign.right),
+          ),
         ],
       ),
     );
@@ -127,89 +146,85 @@ class DANFEService {
   /// Constrói itens da NFC-e
   static pw.Widget _buildItens(NFCe nfce) {
     return pw.Column(
-      crossAxisAlignment: pw.CrossAxisAlignment.start,
-      children: [
-        pw.Text(
-          'ITENS',
-          style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold),
-        ),
-        pw.SizedBox(height: 3),
-        ...nfce.itens.map((item) {
-          return pw.Padding(
-            padding: const pw.EdgeInsets.only(bottom: 5),
-            child: pw.Column(
-              crossAxisAlignment: pw.CrossAxisAlignment.start,
+      children: nfce.itens.map((item) {
+        return pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.start,
+          children: [
+            pw.Text(
+              '${item.codigo} ${item.descricao}',
+              style: const pw.TextStyle(fontSize: 8),
+            ),
+            pw.Row(
               children: [
-                pw.Text(
-                  item.descricao,
-                  style: const pw.TextStyle(fontSize: 8),
+                pw.Expanded(flex: 3, child: pw.SizedBox()),
+                pw.Expanded(
+                  child: pw.Text(item.quantidade.toStringAsFixed(2), style: const pw.TextStyle(fontSize: 7), textAlign: pw.TextAlign.center),
                 ),
-                pw.Row(
-                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                  children: [
-                    pw.Text(
-                      '${item.quantidade.toStringAsFixed(2)} ${item.unidade} x ${_formatarMoeda(item.valorUnitario)}',
-                      style: const pw.TextStyle(fontSize: 7),
-                    ),
-                    pw.Text(
-                      _formatarMoeda(item.valorTotal),
-                      style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold),
-                    ),
-                  ],
+                pw.Expanded(
+                  child: pw.Text(item.unidade, style: const pw.TextStyle(fontSize: 7), textAlign: pw.TextAlign.center),
+                ),
+                pw.Expanded(
+                  child: pw.Text(item.valorUnitario.toStringAsFixed(2), style: const pw.TextStyle(fontSize: 7), textAlign: pw.TextAlign.right),
+                ),
+                pw.Expanded(
+                  flex: 2,
+                  child: pw.Text(item.valorTotal.toStringAsFixed(2), style: const pw.TextStyle(fontSize: 8), textAlign: pw.TextAlign.right),
                 ),
               ],
             ),
-          );
-        }),
-      ],
+          ],
+        );
+      }).toList(),
     );
   }
 
   /// Constrói totais
-  static pw.Widget _buildTotal(NFCe nfce) {
-    return pw.Container(
-      padding: const pw.EdgeInsets.all(5),
-      decoration: pw.BoxDecoration(
-        border: pw.Border.all(),
-      ),
-      child: pw.Row(
-        mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-        children: [
-          pw.Text(
-            'TOTAL',
-            style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold),
-          ),
-          pw.Text(
-            _formatarMoeda(nfce.valorTotal),
-            style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold),
-          ),
-        ],
-      ),
+  static pw.Widget _buildTotalGeral(NFCe nfce) {
+    return pw.Column(
+      children: [
+        pw.Row(
+          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+          children: [
+            pw.Text('QTD. TOTAL DE ITENS', style: const pw.TextStyle(fontSize: 8)),
+            pw.Text(nfce.itens.length.toString(), style: const pw.TextStyle(fontSize: 8)),
+          ],
+        ),
+        pw.Row(
+          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+          children: [
+            pw.Text('VALOR DOS PRODUTOS', style: const pw.TextStyle(fontSize: 8)),
+            pw.Text(_formatarMoeda(nfce.valorTotal), style: const pw.TextStyle(fontSize: 8)),
+          ],
+        ),
+        pw.Row(
+          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+          children: [
+            pw.Text('VALOR TOTAL R\$', style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold)),
+            pw.Text(_formatarMoeda(nfce.valorTotal), style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold)),
+          ],
+        ),
+      ],
     );
   }
 
   /// Constrói formas de pagamento
-  static pw.Widget _buildPagamento(NFCe nfce) {
+  static pw.Widget _buildPagamentos(NFCe nfce) {
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
-        pw.Text(
-          'FORMA DE PAGAMENTO',
-          style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold),
+        pw.Row(
+          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+          children: [
+            pw.Text('FORMA DE PAGAMENTO', style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold)),
+            pw.Text('VALOR PAGO', style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold)),
+          ],
         ),
-        pw.SizedBox(height: 3),
         ...nfce.pagamentos.map((pag) {
           return pw.Row(
             mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
             children: [
-              pw.Text(
-                pag.tipoDescricao,
-                style: const pw.TextStyle(fontSize: 8),
-              ),
-              pw.Text(
-                _formatarMoeda(pag.valor),
-                style: const pw.TextStyle(fontSize: 8),
-              ),
+              pw.Text(pag.tipoDescricao.toUpperCase(), style: const pw.TextStyle(fontSize: 8)),
+              pw.Text(_formatarMoeda(pag.valor), style: const pw.TextStyle(fontSize: 8)),
             ],
           );
         }),
@@ -217,29 +232,66 @@ class DANFEService {
     );
   }
 
+  static pw.Widget _buildConsulta(NFCe nfce) {
+    return pw.Column(
+      children: [
+        pw.Text('CONSULTA PELA CHAVE DE ACESSO:', style: pw.TextStyle(fontSize: 7, fontWeight: pw.FontWeight.bold)),
+        pw.Text('www.nfe.fazenda.sp.gov.br', style: const pw.TextStyle(fontSize: 7)),
+        pw.SizedBox(height: 2),
+        pw.Text('CHAVE DE ACESSO', style: pw.TextStyle(fontSize: 7, fontWeight: pw.FontWeight.bold)),
+        pw.Text(
+          _formatarChaveAcesso(nfce.chaveAcesso ?? '0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000'),
+          style: const pw.TextStyle(fontSize: 7),
+          textAlign: pw.TextAlign.center,
+        ),
+      ],
+    );
+  }
+
+  static pw.Widget _buildConsumidor(NFCe nfce) {
+    return pw.Column(
+      children: [
+        pw.Text('CONSUMIDOR', style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold)),
+        pw.Text(
+          nfce.cpfCnpjConsumidor != null 
+            ? 'CNPJ/CPF: ${nfce.cpfCnpjConsumidor}' 
+            : 'NOME: ${nfce.nomeConsumidor ?? "NÃO IDENTIFICADO"}',
+          style: const pw.TextStyle(fontSize: 8),
+        ),
+      ],
+    );
+  }
+
+  static pw.Widget _buildDadosEmissao(NFCe nfce) {
+    return pw.Column(
+      children: [
+        pw.Text(
+          'Nº  Série ${nfce.serie}',
+          style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold),
+        ),
+        pw.Text(
+          '${_formatarData(nfce.dataEmissao)} - Via Consumidor',
+          style: const pw.TextStyle(fontSize: 8),
+        ),
+        pw.SizedBox(height: 2),
+        pw.Text('PROTOCOLO DE AUTORIZAÇÃO', style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold)),
+        pw.Text(
+          '${nfce.protocolo ?? "Aguardando..."} - ${_formatarData(nfce.dataEmissao)}',
+          style: const pw.TextStyle(fontSize: 8),
+        ),
+      ],
+    );
+  }
+
   /// Constrói QR Code
   static pw.Widget _buildQRCode(String qrCodeString) {
-    // TODO: Implementar renderização do QR Code no PDF
-    // Por enquanto, apenas texto
     return pw.Container(
-      padding: const pw.EdgeInsets.all(5),
-      decoration: pw.BoxDecoration(
-        border: pw.Border.all(),
-      ),
-      child: pw.Column(
-        children: [
-          pw.Text(
-            'CONSULTE PELA CHAVE DE ACESSO',
-            style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold),
-            textAlign: pw.TextAlign.center,
-          ),
-          pw.SizedBox(height: 5),
-          pw.Text(
-            qrCodeString,
-            style: const pw.TextStyle(fontSize: 6),
-            textAlign: pw.TextAlign.center,
-          ),
-        ],
+      alignment: pw.Alignment.center,
+      child: pw.BarcodeWidget(
+        barcode: pw.Barcode.qrCode(),
+        data: qrCodeString,
+        width: 100,
+        height: 100,
       ),
     );
   }
@@ -249,7 +301,12 @@ class DANFEService {
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.center,
       children: [
-        pw.Divider(),
+        pw.Text(
+          'Não permite aproveitamento de crédito de ICMS',
+          style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold),
+          textAlign: pw.TextAlign.center,
+        ),
+        pw.SizedBox(height: 5),
         pw.Text(
           'Documento Auxiliar da Nota Fiscal de Consumidor Eletrônica',
           style: const pw.TextStyle(fontSize: 7),
@@ -257,8 +314,8 @@ class DANFEService {
         ),
         pw.SizedBox(height: 3),
         pw.Text(
-          'Este documento não tem validade fiscal',
-          style: const pw.TextStyle(fontSize: 7),
+          'Esta nota foi emitida pelo Sistema Exodo',
+          style: const pw.TextStyle(fontSize: 7, fontStyle: pw.FontStyle.italic),
           textAlign: pw.TextAlign.center,
         ),
       ],

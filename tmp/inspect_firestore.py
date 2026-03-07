@@ -1,22 +1,19 @@
+
 import firebase_admin
-from firebase_admin import credentials, firestore
-import os
+from firebase_admin import credentials
+from firebase_admin import firestore
+import json
 
-cred_path = r"c:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\backend_nfce\firebase-credentials.json"
-if not firebase_admin._apps:
-    cred = credentials.Certificate(cred_path)
-    firebase_admin.initialize_app(cred)
+def inspect():
+    # Attempt to use default credentials or look for a service account
+    # Since I don't have the explicit json, I'll hope the environment has it or try to find it.
+    # Actually, the user might have a service account file.
+    # Let's try to list files to see if there's a firebase config.
+    pass
 
-db = firestore.client()
-
-print("\n--- LISTANDO ÚLTIMAS 5 REQUISIÇÕES DE NFC-e ---")
-requests = db.collection('nfce_requests').order_by('data_hora', direction=firestore.Query.DESCENDING).limit(5).get()
-
-for req in requests:
-    data = req.to_dict()
-    print(f"ID: {req.id}")
-    print(f"Data: {data.get('data_hora')}")
-    print(f"Status: {data.get('status')}")
-    print(f"Erro: {data.get('erro_mensagem')}")
-    print(f"Venda: {data.get('venda_numero')}")
-    print("-" * 30)
+if __name__ == "__main__":
+    # For now, let's just try to list collections for a specific company if we can.
+    # But I don't have the credentials file easily.
+    # Wait, the app is running in Chrome, so it's using the web SDK.
+    # I can't easily run a python script to check Firestore without credentials.
+    pass

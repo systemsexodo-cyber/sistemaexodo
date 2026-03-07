@@ -3888,12 +3888,20 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       final backendDisponivel = await NFCeServiceFactory.verificarBackend();
       if (!backendDisponivel) {
         debugPrint(
-          '>>> [VendaDireta] ⚠️ Backend não disponível, usando serviço local',
+          '>>> [VendaDireta] ❌ Backend/Bridge não disponível!',
         );
-        // Factory vai usar fallback automaticamente
+        if (mounted) Navigator.pop(context); // Fecha o loading
+        _mostrarErro(
+          'O Emissor NFC-e (Bridge) não está respondendo!\n\n'
+          'SOLUÇÃO:\n'
+          '1. Verifique se o programa ExodoNfceBridge.exe está aberto no seu computador.\n'
+          '2. Certifique-se de que o computador tem acesso à internet.\n'
+          '3. Tente fechar e abrir o Bridge novamente.',
+        );
+        return;
       } else {
         debugPrint(
-          '>>> [VendaDireta] ✓ Backend disponível, usando backend Python',
+          '>>> [VendaDireta] ✓ Bridge online, prosseguindo com emissão...',
         );
       }
 

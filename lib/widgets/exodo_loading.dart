@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'exodo_logo.dart';
 
@@ -19,6 +20,8 @@ class ExodoLoading extends StatefulWidget {
 
 class _ExodoLoadingState extends State<ExodoLoading>
     with SingleTickerProviderStateMixin {
+  bool _mostrarCancelar = false;
+  Timer? _timerCancelar;
   late AnimationController _controller;
   late Animation<double> _fadeAnimation;
 
@@ -37,11 +40,19 @@ class _ExodoLoadingState extends State<ExodoLoading>
       parent: _controller,
       curve: Curves.easeInOut,
     ));
+
+    // Mostrar botão de cancelar após 15 segundos
+    _timerCancelar = Timer(const Duration(seconds: 15), () {
+      if (mounted) {
+        setState(() => _mostrarCancelar = true);
+      }
+    });
   }
 
   @override
   void dispose() {
     _controller.dispose();
+    _timerCancelar?.cancel();
     super.dispose();
   }
 
@@ -113,6 +124,27 @@ class _ExodoLoadingState extends State<ExodoLoading>
               ),
               textAlign: TextAlign.center,
             ),
+            if (_mostrarCancelar) ...[
+              const SizedBox(height: 40),
+              ElevatedButton.icon(
+                onPressed: () => Navigator.pop(context),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.white10,
+                  foregroundColor: Colors.white70,
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                icon: const Icon(Icons.close, size: 20),
+                label: const Text('Cancelar e Voltar'),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'O processo parece estar demorando mais que o normal.',
+                style: TextStyle(color: Colors.white30, fontSize: 11),
+              ),
+            ],
           ],
         ),
       ),

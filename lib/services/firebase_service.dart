@@ -145,7 +145,7 @@ class FirebaseService {
         _applySmartPagination(_getSubCollection(empresaId, _subCollectionAberturasCaixa)),
         _applySmartPagination(_getSubCollection(empresaId, _subCollectionFechamentosCaixa)),
         _applySyncFilter(_getSubCollection(empresaId, _subCollectionMotoristas)),
-        _applySmartPagination(_getSubCollection(empresaId, _subCollectionAgendamentosServico)),
+        _applySyncFilter(_getSubCollection(empresaId, _subCollectionAgendamentosServico)),
         _applySmartPagination(_getSubCollection(empresaId, _subCollectionNotasEntrada)),
         _applySyncFilter(_getSubCollection(empresaId, _subCollectionFuncionarios)),
         _applySyncFilter(_getSubCollection(empresaId, _subCollectionTaxasEntrega)),

@@ -22,6 +22,7 @@ class _ConfiguracoesAgendaPageState extends State<ConfiguracoesAgendaPage> {
   bool _esconderValores = false;
   bool _modoSolicitacao = false;
   bool _permitirEscolhaProfissional = false;
+  bool _enviarValorWhatsApp = true;
   List<Map<String, dynamic>> _bairrosConfig = [];
   List<Map<String, dynamic>> _horariosIndisponiveis = [];
   bool _isLoading = false;
@@ -61,6 +62,7 @@ class _ConfiguracoesAgendaPageState extends State<ConfiguracoesAgendaPage> {
       _esconderValores = agendamentoConfig['esconderValores'] as bool? ?? false;
       _modoSolicitacao = agendamentoConfig['modoSolicitacao'] as bool? ?? false;
       _permitirEscolhaProfissional = agendamentoConfig['permitirEscolhaProfissional'] as bool? ?? false;
+      _enviarValorWhatsApp = agendamentoConfig['enviarValorWhatsApp'] as bool? ?? true;
       
       final bairrosData = (config['bairrosTaxiDogV2'] ?? agendamentoConfig['bairrosTaxiDogV2']) as List<dynamic>?;
       
@@ -116,6 +118,7 @@ class _ConfiguracoesAgendaPageState extends State<ConfiguracoesAgendaPage> {
       agendamentoConfig['esconderValores'] = _esconderValores;
        agendamentoConfig['modoSolicitacao'] = _modoSolicitacao;
       agendamentoConfig['permitirEscolhaProfissional'] = _permitirEscolhaProfissional;
+      agendamentoConfig['enviarValorWhatsApp'] = _enviarValorWhatsApp;
       agendamentoConfig['horarioAbertura'] = '${_horarioAbertura.hour.toString().padLeft(2, '0')}:${_horarioAbertura.minute.toString().padLeft(2, '0')}';
       agendamentoConfig['horarioFechamento'] = '${_horarioFechamento.hour.toString().padLeft(2, '0')}:${_horarioFechamento.minute.toString().padLeft(2, '0')}';
       agendamentoConfig['intervaloSlots'] = _intervaloSlots;
@@ -902,6 +905,46 @@ class _ConfiguracoesAgendaPageState extends State<ConfiguracoesAgendaPage> {
               const SizedBox(height: 8),
               const Text(
                 'Se ativado, os clientes não verão o preço dos serviços durante o agendamento.',
+                style: TextStyle(color: Colors.white60, fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        // Enviar Valor no WhatsApp
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.05),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                   Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(color: Colors.green.withOpacity(0.2), shape: BoxShape.circle),
+                    child: const Icon(Icons.chat_bubble_outline, color: Colors.greenAccent, size: 20),
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Text(
+                      'Enviar Valor no WhatsApp ao Copiar',
+                      style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  Switch(
+                    value: _enviarValorWhatsApp,
+                    onChanged: (v) => setState(() => _enviarValorWhatsApp = v),
+                    activeColor: Colors.greenAccent,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Se desativado, o valor dos serviços não será incluído no texto copiado para o WhatsApp.',
                 style: TextStyle(color: Colors.white60, fontSize: 12),
               ),
             ],

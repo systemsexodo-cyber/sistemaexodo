@@ -375,10 +375,6 @@ class DataService extends ChangeNotifier {
       }
       
       // Recarregar dados APENAS da nova empresa (isoladamente)
-      // Iniciar streams de sincronização em tempo real IMEDIATAMENTE (Otimizado para grandes volumes)
-      // Isso permite que os dados comecem a aparecer via Stream enquanto o carregamento pesado (get) ainda executa.
-      _iniciarStreamsTempoReal();
-      
       await iniciarSincronizacao(modoLeve: modoLeve);
     } else {
       print('>>> DataService: ⚠ Empresa não definida - dados não serão carregados');
@@ -389,15 +385,15 @@ class DataService extends ChangeNotifier {
     notifyListeners();
     print('>>> DataService: ✓ Troca de empresa concluída - dados isolados');
 
-  // Registrar listener de foco para Web (acordar o app se ficar em background)
-  if (kIsWeb) {
-    html_helper.onWindowFocus.listen((_) {
-      debugPrint('>>> [SISTEMA] Janela focada - Verificando conexões de Stream...');
-      if (_empresaIdAtual != null && _firebaseHabilitado) {
-        _iniciarStreamAgendamentos(); // Reiniciar para garantir dados frescos
-      }
-    });
-  }
+    // Registrar listener de foco para Web (acordar o app se ficar em background)
+    if (kIsWeb) {
+      html_helper.onWindowFocus.listen((_) {
+        debugPrint('>>> [SISTEMA] Janela focada - Verificando conexões de Stream...');
+        if (_empresaIdAtual != null && _firebaseHabilitado) {
+          _iniciarStreamAgendamentos(); // Reiniciar para garantir dados frescos
+        }
+      });
+    }
 
     // Iniciar timer de sincronização automática
     _reiniciarTimerSincronizacao();
@@ -534,10 +530,33 @@ class DataService extends ChangeNotifier {
 
     final timestamp = '${DateTime.now().hour}:${DateTime.now().minute}:${DateTime.now().second}';
     debugPrint('>>> [Sync] 📡 [$timestamp] Iniciando Stream Otimizado: agendamentos_servico');
+
+    // Diagnóstico: Se em 5 segundos nada vier do stream e a lista ainda estiver vazia,
+    // fazer um get() direto para verificar se há dados no Firebase
+    Future.delayed(const Duration(seconds: 5), () async {
+      if (_empresaIdAtual != null && _agendamentosServico.isEmpty) {
+        debugPrint('>>> [Sync] ⚠️ DIAGNÓSTICO: Stream não entregou agendamentos em 5s. Fazendo get() direto...');
+        try {
+          final count = await _firebaseService.contarAgendamentosPendentes(_empresaIdAtual!);
+          debugPrint('>>> [Sync] 🔎 Resultado direto do Firebase: $count agendamentos na coleção');
+          if (count > 0) {
+            debugPrint('>>> [Sync] ⚠️ ATENÇÃO: Há $count agendamentos no Firebase mas o Stream não os entregou!');
+            debugPrint('>>> [Sync] 🔄 Tentando recarregar via get() direto...');
+            // Forcá-los via carregamento leve
+            await _carregarDadosDoFirebase(modoLeve: true);
+          } else {
+            debugPrint('>>> [Sync] ℹ️ Nenhum agendamento no Firebase para empresa $_empresaIdAtual (coleção vazia)');
+          }
+        } catch (e) {
+          debugPrint('>>> [Sync] ❌ Erro no diagnóstico do stream: $e');
+        }
+      }
+    });
     
     _agendamentosSubscription = _firebaseService
         .getAgendamentosStream(_empresaIdAtual!)
         .listen((novosAgendamentos) {
+      debugPrint('>>> [Sync] 📥 Snapshot recebido: ${novosAgendamentos.length} agendamentos do Firebase');
       if (novosAgendamentos.isEmpty && _primeiraCargaAgendamentosRealizada) return;
 
       bool houveMudanca = false;
@@ -577,6 +596,8 @@ class DataService extends ChangeNotifier {
 
         if (_upsertAgendamentoLocal(agendamentoCompleto)) {
           houveMudanca = true;
+          debugPrint('>>> [Sync] ✅ Agendamento Local Atualizado: ${agendamentoCompleto.numero} (${agendamentoCompleto.id})');
+          
           if (_primeiraCargaAgendamentosRealizada && !idsRemotos.contains(agendamento.id)) {
              // Só toca se for novo REAL (não estava no snapshot anterior)
           }
@@ -589,6 +610,7 @@ class DataService extends ChangeNotifier {
 
       if (!_primeiraCargaAgendamentosRealizada) {
         _primeiraCargaAgendamentosRealizada = true;
+        debugPrint('>>> [Sync] ✅ Primeira carga de agendamentos concluída via Stream. Total: ${_agendamentosServico.length}');
       }
 
       if (temNovoAgendamento) {
@@ -598,6 +620,7 @@ class DataService extends ChangeNotifier {
       notifyListeners();
       
       if (houveMudanca) {
+        debugPrint('>>> [Sync] 🔔 Notificando UI: Mudança nos agendamentos (Total: ${_agendamentosServico.length})');
         _marcarSujo(LocalStorageService.keyAgendamentosServico);
       }
     }, onError: (e) {
@@ -862,12 +885,15 @@ class DataService extends ChangeNotifier {
     print('>>> ${_pedidos.length} pedidos carregados');
     print('>>> ${_vendasBalcao.length} vendas carregadas');
     print('>>> ${_trocasDevolucoes.length} trocas/devoluções carregadas');
+    print('>>> ${_agendamentosServico.length} agendamentos carregados');
     print('>>> Persistência: ${_persistenciaHabilitada ? "HABILITADA" : "DESABILITADA"}');
 
-    // SEMPRE iniciar o stream após carregar dados, se houver empresa selecionada
+    // SEMPRE iniciar os streams após carregar dados, se houver empresa selecionada
     if (_empresaIdAtual != null) {
-      debugPrint('>>> [DataService] ✅ Sincronização concluída, ativando Stream em Tempo Real...');
+      debugPrint('>>> [DataService] ✅ Sincronização concluída, ativando Streams em Tempo Real...');
       _iniciarStreamAgendamentos();
+      _iniciarStreamProdutos();
+      _iniciarStreamServicos();
     }
   }
 
@@ -3001,11 +3027,18 @@ class DataService extends ChangeNotifier {
     // A duração do serviço é mantida apenas para informação, sem bloquear outros agendamentos
 
     final agendamentoPrevio = agendamento.copyWith(
-    updatedAt: DateTime.now(),
-  );
+      updatedAt: DateTime.now(),
+    );
 
-  final agendamentoAtualizado = _vincularReferenciasAgendamento(agendamentoPrevio);
+    final itemAnterior = _agendamentosServico[index];
+    final agendamentoAtualizado = _vincularReferenciasAgendamento(agendamentoPrevio);
     _agendamentosServico[index] = agendamentoAtualizado;
+
+    // Se mudou de ativo para inativo (ex: Cancelou), tentar promover alguém da espera
+    if (itemAnterior.isAtivo && !agendamentoAtualizado.isAtivo) {
+       _promoverAgendamentoEmEspera(itemAnterior);
+    }
+
     notifyListeners();
     _marcarSujo(LocalStorageService.keyAgendamentosServico);
     
@@ -3050,6 +3083,12 @@ class DataService extends ChangeNotifier {
     );
     
     _agendamentosServico.removeWhere((a) => a.id == id);
+    
+    // Se o agendamento removido era ativo, tentar promover alguém da espera
+    if (agendamentoRemovido.isAtivo) {
+      await _promoverAgendamentoEmEspera(agendamentoRemovido);
+    }
+
     notifyListeners();
     _marcarSujo(LocalStorageService.keyAgendamentosServico);
     
@@ -3063,6 +3102,54 @@ class DataService extends ChangeNotifier {
         debugPrint('>>> [Agendamento] StackTrace: $stackTrace');
         _adicionarSincronizacaoPendente();
       }
+    }
+  }
+
+  /// Tenta promover um agendamento que está "Em Espera" para "Agendado"
+  /// após um agendamento conflitante ser removido ou cancelado
+  Future<void> _promoverAgendamentoEmEspera(AgendamentoServico agendamentoAntigo) async {
+    try {
+      // Procurar o primeiro agendamento em espera que conflite com o horário do que saiu
+      final emEspera = _agendamentosServico.where((a) => a.isEmEspera).toList();
+      
+      // Ordenar por data de criação para garantir que o primeiro que entrou na fila seja o primeiro a sair
+      emEspera.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      
+      AgendamentoServico? paraPromover;
+      for (var a in emEspera) {
+        if (a.temSobreposicaoHorario(agendamentoAntigo)) {
+          // Verificar se agora este agendamento não conflita com mais NINGUÉM que esteja ATIVO
+          bool aindaTemConflito = _agendamentosServico.any((ativo) => ativo.isAtivo && ativo.temSobreposicaoHorario(a));
+          if (!aindaTemConflito) {
+            paraPromover = a;
+            break;
+          }
+        }
+      }
+
+      if (paraPromover != null) {
+        debugPrint('>>> [Agenda] 🚀 Promovendo agendamento ${paraPromover.numero} da espera para Agendado');
+        final promovido = paraPromover.copyWith(
+          status: 'Agendado',
+          updatedAt: DateTime.now(),
+        );
+        
+        // Atualizar na lista local
+        final idx = _agendamentosServico.indexWhere((a) => a.id == promovido.id);
+        if (idx != -1) {
+          _agendamentosServico[idx] = promovido;
+        }
+
+        // Salvar no Firebase
+        if (_firebaseHabilitado && _empresaIdAtual != null) {
+          await _firebaseService.salvarAgendamentoServico(_empresaIdAtual!, promovido);
+        }
+        
+        // Notificar via WhatsApp que saiu da espera (opcional, mas bom)
+        _enviarNotificacaoWhatsAppAgendamento(promovido, isNovo: false);
+      }
+    } catch (e) {
+      debugPrint('>>> [Agenda] Erro ao promover agendamento: $e');
     }
   }
   
@@ -4299,11 +4386,14 @@ class DataService extends ChangeNotifier {
       return;
     }
     
-    // Otimização: No modo silencioso (que roda a cada 45s), não recarregar agendamentos, produtos e serviços
-    // se eles já estiverem sendo sincronizados via Stream. Isso reduz carga no Firebase e previne race conditions.
+    // Otimização: Só usar modo leve/silencioso se já fez a carga inicial completa pelo menos 1 vez
     final finalModoLeve = modoLeve || _isModoLeve;
-    final isSilentSync = _syncTimer != null && _syncTimer!.isActive;
+    // isSilentSync: só é verdadeiro se o timer periódico está ativo E já foi feita a primeira carga completa
+    final isSilentSync = _primeiraCargaAgendamentosRealizada &&
+        _syncTimer != null &&
+        _syncTimer!.isActive;
 
+    debugPrint('>>> [Firebase] 🔄 Iniciando carga (Modo Leve: $finalModoLeve, SilentSync: $isSilentSync, 1aCarga=${_primeiraCargaAgendamentosRealizada})');
     _syncEmAndamento = true;
     notifyListeners();
     
@@ -4338,17 +4428,18 @@ class DataService extends ChangeNotifier {
         dados = result;
       }
       
-      // Verificar se há dados no Firebase
+      // Verificar se há dados no Firebase - usando um critério amplo
       final temDados = dados['clientes']?.isNotEmpty == true ||
           dados['produtos']?.isNotEmpty == true ||
           dados['pedidos']?.isNotEmpty == true ||
           dados['agendamentos_servico']?.isNotEmpty == true ||
           dados['servicos']?.isNotEmpty == true ||
           dados['ordens_servico']?.isNotEmpty == true ||
-          dados['funcionarios']?.isNotEmpty == true;
+          dados['funcionarios']?.isNotEmpty == true ||
+          dados['taxas_entrega']?.isNotEmpty == true;
       
       if (!temDados) {
-        print('>>> ⚠ Firebase está vazio. Continuando com dados locais se existirem...');
+        debugPrint('>>> ⚠ Firebase retornou vazio para empresa $_empresaIdAtual. Continuando com dados locais...');
         return; // Retorna sem erro, mas sem dados
       }
 
@@ -4533,45 +4624,47 @@ class DataService extends ChangeNotifier {
       }
 
       // Carregar agendamentos de serviço - Otimizado: Pular se em sync silencioso e stream ativo
-      if (dados['agendamentos_servico'] != null && (!isSilentSync || _agendamentosSubscription == null)) {
-        final agendamentosRaw = dados['agendamentos_servico'] as List;
-        print('>>> [Agendamentos] 🔍 Encontrados ${agendamentosRaw.length} agendamentos no Firebase');
-        
-        if (agendamentosRaw.isNotEmpty) {
-          print('>>> [Agendamentos] 🔄 Processando agendamentos do Firebase...');
-          final novosAgendamentos = agendamentosRaw.map((map) {
-            try {
-              final agendamento = AgendamentoServico.fromMap(map as Map<String, dynamic>);
-              print('>>> [Agendamentos] Processando: ${agendamento.numero} (ID: ${agendamento.id})');
-              
-              return _vincularReferenciasAgendamento(agendamento);
-            } catch (e, stackTrace) {
-              print('>>> ❌ ERRO ao processar agendamento do Firebase: $e');
-              print('>>> StackTrace: $stackTrace');
-              print('>>> Dados do agendamento: $map');
-              return null;
+      final agendamentosNoFirebase = dados['agendamentos_servico'] as List?;
+      if (agendamentosNoFirebase != null) {
+        if (!isSilentSync || _agendamentosSubscription == null) {
+          print('>>> [Agendamentos] 🔍 Encontrados ${agendamentosNoFirebase.length} agendamentos no Firebase');
+          
+          if (agendamentosNoFirebase.isNotEmpty) {
+            print('>>> [Agendamentos] 🔄 Processando agendamentos do Firebase...');
+            final novosAgendamentos = agendamentosNoFirebase.map((map) {
+              try {
+                final agendamento = AgendamentoServico.fromMap(map as Map<String, dynamic>);
+                // print('>>> [Agendamentos] Processando: ${agendamento.numero} (ID: ${agendamento.id})');
+                
+                return _vincularReferenciasAgendamento(agendamento);
+              } catch (e, stackTrace) {
+                print('>>> ❌ ERRO ao processar agendamento do Firebase: $e');
+                print('>>> StackTrace: $stackTrace');
+                print('>>> Dados do agendamento: $map');
+                return null;
+              }
+            }).where((a) => a != null).cast<AgendamentoServico>().toList();
+          
+            print('>>> [Agendamentos] ✅ ${novosAgendamentos.length} agendamentos processados com sucesso');
+            
+            // Atualizar ou adicionar agendamentos (evitar duplicatas e limpar duplicatas históricas)
+            for (final agendamento in novosAgendamentos) {
+              _upsertAgendamentoLocal(agendamento);
             }
-          }).where((a) => a != null).cast<AgendamentoServico>().toList();
-        
-          print('>>> [Agendamentos] ✅ ${novosAgendamentos.length} agendamentos processados com sucesso');
-          
-          // Atualizar ou adicionar agendamentos (evitar duplicatas e limpar duplicatas históricas)
-          for (final agendamento in novosAgendamentos) {
-            _upsertAgendamentoLocal(agendamento);
+            
+            print('>>> [Agendamentos] ✅✅✅ CARREGAMENTO CONCLUÍDO! ✅✅✅');
+            print('>>> [Agendamentos]   - Total na lista: ${_agendamentosServico.length}');
+            
+            // Migrar agendamentos sem número válido
+            migrarAgendamentosSemNumero();
+          } else {
+            print('>>> [Agendamentos] ⚠️ Nenhum agendamento encontrado no Firebase para empresa $_empresaIdAtual');
           }
-          
-          print('>>> [Agendamentos] ✅✅✅ CARREGAMENTO CONCLUÍDO! ✅✅✅');
-          print('>>> [Agendamentos]   - Total na lista: ${_agendamentosServico.length}');
-          // notifyListeners() removido daqui, já existe um no finalmente do método
-
-          
-          // Migrar agendamentos sem número válido
-          migrarAgendamentosSemNumero();
         } else {
-          print('>>> [Agendamentos] ⚠️ Nenhum agendamento encontrado no Firebase para empresa $_empresaIdAtual');
+          print('>>> [Agendamentos] ⏭️ Pulo do processamento: Stream já ativa em modo silencioso');
         }
       } else {
-        print('>>> [Agendamentos] ⚠️ Campo agendamentos_servico é null no Firebase');
+        print('>>> [Agendamentos] ⚠️ Campo agendamentos_servico AUSENTE no retorno do Firebase');
       }
 
       // Carregar taxas de entrega - ISOLAMENTO: Apenas dados da empresa atual do Firebase

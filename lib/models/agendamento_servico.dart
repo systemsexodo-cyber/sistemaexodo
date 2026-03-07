@@ -110,8 +110,9 @@ class AgendamentoServico {
     return total;
   }
 
-  bool get isAtivo => status != 'Cancelado' && status != 'Aguardando Confirmação' && !excluido;
+  bool get isAtivo => status != 'Cancelado' && status != 'Aguardando Confirmação' && status != 'Em Espera' && !excluido;
   bool get isAguardandoConfirmacao => status == 'Aguardando Confirmação';
+  bool get isEmEspera => status == 'Em Espera';
   bool get isEmAndamento => status == 'Em Andamento';
   bool get isConcluido => status == 'Concluído';
   bool get isCancelado => status == 'Cancelado';
@@ -119,6 +120,20 @@ class AgendamentoServico {
   bool temConflito(AgendamentoServico outro) {
     if (id == outro.id) return false;
     if (!isAtivo || !outro.isAtivo) return false;
+    final outroTermino = outro.dataTermino;
+    final inicioDentro = (dataAgendamento.isAfter(outro.dataAgendamento) || dataAgendamento.isAtSameMomentAs(outro.dataAgendamento)) &&
+                        dataAgendamento.isBefore(outroTermino);
+    final terminoDentro = dataTermino.isAfter(outro.dataAgendamento) &&
+                         (dataTermino.isBefore(outroTermino) || dataTermino.isAtSameMomentAs(outroTermino));
+    final englobaCompleto = dataAgendamento.isBefore(outro.dataAgendamento) && dataTermino.isAfter(outroTermino);
+    return inicioDentro || terminoDentro || englobaCompleto;
+  }
+
+  /// Verifica conflito ignorando se está ativo (útil para fila de espera)
+  bool temSobreposicaoHorario(AgendamentoServico outro) {
+    if (id == outro.id) return false;
+    if (excluido || outro.excluido) return false;
+    
     final outroTermino = outro.dataTermino;
     final inicioDentro = (dataAgendamento.isAfter(outro.dataAgendamento) || dataAgendamento.isAtSameMomentAs(outro.dataAgendamento)) &&
                         dataAgendamento.isBefore(outroTermino);
