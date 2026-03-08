@@ -12,6 +12,7 @@ import 'adicionar_empresa_page.dart';
 import 'login_page.dart';
 import '../services/google_drive_service.dart';
 import '../services/bridge_management_service.dart';
+import 'google_drive_backup_page.dart';
 
 /// Página de gerenciamento de empresas
 class EmpresasPage extends StatefulWidget {
@@ -192,8 +193,10 @@ class _EmpresasPageState extends State<EmpresasPage> {
                 children: [
                   // Card de importação SEMPRE no topo (sempre visível)
                   _buildCardImportacao(context),
-                  // Card do Google Drive (Apenas Admin)
-                  _buildCardGoogleDrive(context),
+                  // Card do Google Drive - BACKUP (Azul)
+                  _buildCardGoogleDriveBackup(context),
+                  // NOVO: Card do Google Drive - RESTAURAR (Verde)
+                  _buildCardGoogleDriveRestore(context),
                   // NOVO: Card de Gerenciamento do Emissor NFC-e
                   if (podeAcessar)
                     _buildCardBridgeManagement(context),
@@ -671,7 +674,7 @@ class _EmpresasPageState extends State<EmpresasPage> {
     );
   }
 
-  Widget _buildCardGoogleDrive(BuildContext context) {
+  Widget _buildCardGoogleDriveBackup(BuildContext context) {
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       decoration: BoxDecoration(
@@ -681,17 +684,7 @@ class _EmpresasPageState extends State<EmpresasPage> {
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: Colors.blue,
-          width: 2,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.blue.withOpacity(0.3),
-            blurRadius: 10,
-            spreadRadius: 2,
-          ),
-        ],
+        border: Border.all(color: Colors.blue, width: 2),
       ),
       child: Material(
         color: Colors.transparent,
@@ -707,19 +700,8 @@ class _EmpresasPageState extends State<EmpresasPage> {
                   decoration: BoxDecoration(
                     color: Colors.blue,
                     borderRadius: BorderRadius.circular(14),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.blue.withOpacity(0.5),
-                        blurRadius: 8,
-                        spreadRadius: 1,
-                      ),
-                    ],
                   ),
-                  child: const Icon(
-                    Icons.cloud_upload,
-                    color: Colors.white,
-                    size: 36,
-                  ),
+                  child: const Icon(Icons.cloud_upload, color: Colors.white, size: 36),
                 ),
                 const SizedBox(width: 20),
                 const Expanded(
@@ -727,30 +709,85 @@ class _EmpresasPageState extends State<EmpresasPage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        '☁️ BACKUP GOOGLE DRIVE',
-                        style: TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
+                        '☁️ BACKUP GLOBAL DRIVE',
+                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
                       ),
                       SizedBox(height: 6),
                       Text(
-                        'Exportar todos os dados de TODAS as empresas para o seu Google Drive (2TB).',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.white70,
-                          height: 1.4,
-                        ),
+                        'Salvar o banco de dados de todas as empresas no Google Drive.',
+                        style: TextStyle(fontSize: 14, color: Colors.white70),
                       ),
                     ],
                   ),
                 ),
-                const Icon(
-                  Icons.arrow_forward_ios,
-                  color: Colors.white,
-                  size: 24,
+                const Icon(Icons.arrow_forward_ios, color: Colors.white, size: 20),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCardGoogleDriveRestore(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Colors.green.withOpacity(0.3), Colors.green.withOpacity(0.1)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.green, width: 2),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.green.withOpacity(0.2),
+            blurRadius: 8,
+            spreadRadius: 1,
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const GoogleDriveBackupPage()),
+            );
+          },
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: Colors.green,
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: const Icon(Icons.settings_backup_restore, color: Colors.white, size: 36),
                 ),
+                const SizedBox(width: 20),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '📥 RESTAURAR DADOS (CLOUDRIVER)',
+                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
+                      ),
+                      SizedBox(height: 6),
+                      Text(
+                        'Recuperar dados do Google Drive para o sistema (Individual ou Todas).',
+                        style: TextStyle(fontSize: 14, color: Colors.white70),
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.history, color: Colors.white, size: 24),
               ],
             ),
           ),

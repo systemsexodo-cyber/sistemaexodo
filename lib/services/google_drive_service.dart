@@ -3,12 +3,10 @@ import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:googleapis/drive/v3.dart' as drive;
 import 'package:googleapis_auth/googleapis_auth.dart' as auth;
+import 'package:googleapis_auth/auth_io.dart' as auth_io;
 import 'package:http/http.dart' as http;
-import 'package:archive/archive.dart';
-import 'package:path_provider/path_provider.dart';
 import 'firebase_service.dart';
 import '../models/empresa.dart';
-import 'data_service.dart';
 
 import 'dart:io';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -24,6 +22,7 @@ class GoogleDriveService {
     clientId: '767835275358-ar47lvn9uboh1b12s2tvqli7epq8ttu0.apps.googleusercontent.com',
     scopes: [
       drive.DriveApi.driveFileScope,
+      drive.DriveApi.driveReadonlyScope,
       drive.DriveApi.driveMetadataReadonlyScope,
     ],
   );
@@ -93,7 +92,9 @@ class GoogleDriveService {
       final credentials = auth.ServiceAccountCredentials.fromJson(accountJson);
       
       final scopes = [drive.DriveApi.driveFileScope];
-      final client = await auth.clientViaServiceAccount(credentials, scopes);
+      
+      // auth_io.clientViaServiceAccount só funciona fora da Web
+      final client = await auth_io.clientViaServiceAccount(credentials, scopes);
       
       _driveApi = drive.DriveApi(client);
       _isServiceAccount = true;
@@ -273,7 +274,8 @@ class GoogleDriveService {
     if (_driveApi == null) return null;
 
     // ID da pasta fornecido pelo usuário via Drive Link
-    const String folderIdFixa = '1tGm8ZxMuTWFfHaJyrx3VveYzYF_jpZcQ';
+    // ID da pasta fornecido pelo usuário via Drive Link (Nova pasta para backups de dados)
+    const String folderIdFixa = '1AYbr5aq_547-bmUo6UKsIhsUb-QADU8x';
     const String folderNameDefault = 'SistemaExodo_Backups';
     
     try {
@@ -300,7 +302,7 @@ class GoogleDriveService {
 
       // Criar nova pasta
       final folder = drive.File()
-        ..name = folderName
+        ..name = folderNameDefault
         ..mimeType = 'application/vnd.google-apps.folder';
 
       final createdFolder = await _driveApi!.files.create(folder);
@@ -338,6 +340,15 @@ class GoogleDriveService {
       final createdDailyFolder = await _driveApi!.files.create(dailyFolder);
       final dailyFolderId = createdDailyFolder.id!;
 
+      // 3. Salvar um índice do backup para facilitar a restauração
+      final String indexFileName = 'INDEX_BACKUP_$timestamp.txt';
+      final String indexContent = 'Backup realizado em: ${DateTime.now().toLocal()}\nEmpresas: ${empresas.map((e) => e.nomeExibicao).join(", ")}';
+      await salvarArquivo(
+        nomeArquivo: indexFileName,
+        conteudo: indexContent,
+        caminhoPasta: dailyFolderName,
+      );
+
       int empresasSucesso = 0;
       int empresasFalha = 0;
 
@@ -347,7 +358,8 @@ class GoogleDriveService {
           debugPrint('>>> [GoogleDrive] Exportando dados da empresa: ${empresa.nomeExibicao} (${empresa.id})');
           
           // Carregar todos os dados do Firebase para esta empresa
-          final dados = await FirebaseService.instance.carregarTudoDoFirebase(empresa.id);
+          final resultadoFirebase = await FirebaseService.instance.carregarTudoDoFirebase(empresa.id);
+          final dados = resultadoFirebase['data'] ?? resultadoFirebase; // Pega apenas os dados, ignora snapshots
           
           final jsonString = jsonEncode({
             'empresa': empresa.toMap(),
@@ -390,6 +402,173 @@ class GoogleDriveService {
       debugPrint('>>> [GoogleDrive] Erro geral no backup: $e');
       return {'sucesso': false, 'mensagem': 'Erro inesperado: $e'};
     }
+  }
+
+  /// Restaura os dados de uma empresa a partir de um arquivo de backup no Drive
+  Future<Map<String, dynamic>> restaurarBackup(String fileId) async {
+    if (_driveApi == null) {
+      final ok = await login();
+      if (!ok) return {'sucesso': false, 'mensagem': 'Login necessário'};
+    }
+
+    try {
+      debugPrint('>>> [GoogleDrive] 📥 Baixando backup ID: $fileId');
+      final drive.Media media = await _driveApi!.files.get(
+        fileId,
+        downloadOptions: drive.DownloadOptions.fullMedia,
+      ) as drive.Media;
+
+      final List<int> dataBytes = [];
+      await for (var chunk in media.stream) {
+        dataBytes.addAll(chunk);
+      }
+
+      final String jsonContent = utf8.decode(dataBytes);
+      final Map<String, dynamic> backupData = jsonDecode(jsonContent);
+
+      final Map<String, dynamic> empresaMap = backupData['empresa'];
+      final Map<String, dynamic> dadosMap = backupData['dados'];
+      final String empresaId = empresaMap['id'];
+
+      debugPrint('>>> [GoogleDrive] 🔄 Restaurando dados para empresa: ${empresaMap['nomeExibicao']}');
+
+      // Restaurar Empresa
+      final Empresa empresa = Empresa.fromMap(empresaMap);
+      await FirebaseService.instance.salvarEmpresa(empresa);
+
+      // Restaurar cada subcoleção de dados
+      int totalRestaurado = 0;
+      for (var entry in dadosMap.entries) {
+        final String colecao = entry.key;
+        final List<dynamic> itens = entry.value;
+
+        if (itens.isEmpty) continue;
+
+        debugPrint('>>> [GoogleDrive] 📦 Restaurando $colecao (${itens.length} itens)...');
+
+        // IMPORTANTE: O FirebaseService.salvarTudoNoFirebase espera listas de OBJETOS.
+        // Como o backup tem Maps, precisamos de um método no FirebaseService 
+        // que aceite Maps ou converter de volta. 
+        // Para ser seguro e rápido, usaremos uma nova função em lotes de Map.
+        await FirebaseService.instance.restaurarDadosEmLote(empresaId, colecao, itens);
+        totalRestaurado += itens.length;
+      }
+
+      return {
+        'sucesso': true,
+        'mensagem': 'Restauração concluída com sucesso!',
+        'detalhes': {'total_itens': totalRestaurado, 'empresa': empresa.nomeExibicao}
+      };
+    } catch (e) {
+      debugPrint('>>> [GoogleDrive] ❌ Erro na restauração: $e');
+      return {'sucesso': false, 'mensagem': 'Erro ao restaurar: $e'};
+    }
+  }
+
+  /// Lista arquivos e pastas de backup disponíveis na pasta fixa
+  Future<List<drive.File>> listarBackupsDisponiveis({String? empresaSlug, bool incluirPastas = true}) async {
+    if (_driveApi == null) {
+      debugPrint('>>> [GoogleDrive] Tentando login silencioso...');
+      await login(silencioso: true);
+    }
+    
+    if (_driveApi == null) {
+      debugPrint('>>> [GoogleDrive] Erro: DriveApi não inicializado (usuário não logado)');
+      return [];
+    }
+
+    try {
+      // Buscar todos os arquivos e pastas que contenham 'Backup' no nome
+      // Removida restrição de 'rootId' na query para ser mais abrangente caso a pasta tenha sido movida
+      String query = "trashed = false and name contains 'Backup'";
+      
+      if (empresaSlug != null && empresaSlug.isNotEmpty) {
+        // Filtrar pelo slug de forma flexível
+        query += " and name contains '$empresaSlug'";
+      }
+
+      debugPrint('>>> [GoogleDrive] 🔍 Buscando backups com query: $query');
+      final list = await _driveApi!.files.list(
+        q: query,
+        spaces: 'drive',
+        pageSize: 100,
+        $fields: "files(id, name, mimeType, createdTime, parents)",
+        orderBy: 'createdTime desc',
+        supportsAllDrives: true,
+        includeItemsFromAllDrives: true,
+      );
+
+      final results = list.files ?? [];
+      debugPrint('>>> [GoogleDrive] Encontrados ${results.length} itens.');
+      
+      return results;
+    } catch (e) {
+      debugPrint('>>> [GoogleDrive] Erro ao listar backups: $e');
+      // Repropagar erro para que a UI possa mostrar um snackbar
+      rethrow;
+    }
+  }
+
+  /// Restaura todos os backups contidos em uma pasta (Restauração Total)
+  Future<Map<String, dynamic>> restaurarTodosBackupsDePasta(String folderId) async {
+    if (_driveApi == null) await login();
+    if (_driveApi == null) return {'sucesso': false, 'mensagem': 'Login necessário'};
+
+    try {
+      debugPrint('>>> [GoogleDrive] 📥 Iniciando restauração total da pasta: $folderId');
+      
+      // Listar todos os arquivos dentro desta pasta
+      final list = await _driveApi!.files.list(
+        q: "'$folderId' in parents and mimeType != 'application/vnd.google-apps.folder' and trashed = false",
+        spaces: 'drive',
+      );
+
+      final files = list.files ?? [];
+      if (files.isEmpty) return {'sucesso': false, 'mensagem': 'Nenhum arquivo de backup encontrado nesta pasta.'};
+
+      int sucesso = 0;
+      int falha = 0;
+      List<String> empresasRestauradas = [];
+
+      for (var file in files) {
+        if (file.name?.endsWith('.json') ?? false) {
+          final res = await restaurarBackup(file.id!);
+          if (res['sucesso'] == true) {
+            sucesso++;
+            empresasRestauradas.add(res['detalhes']['empresa']);
+          } else {
+            falha++;
+          }
+        }
+      }
+
+      return {
+        'sucesso': true,
+        'mensagem': 'Processo de restauração total concluído.',
+        'detalhes': {
+          'total_arquivos': files.length,
+          'sucesso': sucesso,
+          'falha': falha,
+          'empresas': empresasRestauradas,
+        }
+      };
+    } catch (e) {
+      debugPrint('>>> [GoogleDrive] ❌ Erro na restauração total: $e');
+      return {'sucesso': false, 'mensagem': 'Erro ao processar pasta: $e'};
+    }
+  }
+
+  /// Tenta restaurar o backup mais recente de uma empresa específica
+  Future<Map<String, dynamic>> restaurarUltimoBackupEmpresa(String empresaSlug) async {
+    final backups = await listarBackupsDisponiveis(empresaSlug: empresaSlug);
+    
+    if (backups.isEmpty) {
+      return {'sucesso': false, 'mensagem': 'Nenhum backup encontrado para a empresa $empresaSlug'};
+    }
+
+    // O primeiro da lista é o mais recente devido ao orderBy: 'createdTime desc'
+    final ultimo = backups.first;
+    return await restaurarBackup(ultimo.id!);
   }
 }
 

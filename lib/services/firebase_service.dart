@@ -1538,5 +1538,41 @@ class FirebaseService {
       rethrow;
     }
   }
+  /// Restaura dados em lote a partir de uma lista de Maps (usado pelo backup do Google Drive)
+  Future<void> restaurarDadosEmLote(String empresaId, String colecao, List<dynamic> itens) async {
+    try {
+      if (itens.isEmpty) return;
+      
+      debugPrint('>>> [Firebase] 🔄 Restaurando $colecao em lote para empresa $empresaId (${itens.length} itens)');
+      
+      // Firestore permite no máximo 500 operações por lote (batch)
+      for (int i = 0; i < itens.length; i += 450) {
+        final batch = _firestore.batch();
+        final chunk = itens.sublist(i, (i + 450 > itens.length) ? itens.length : i + 450);
+        
+        for (var data in chunk) {
+          if (data is! Map<String, dynamic>) continue;
+          
+          final String? id = data['id'];
+          if (id == null || id.isEmpty) continue;
+          
+          final docRef = _getSubCollection(empresaId, colecao).doc(id);
+          batch.set(docRef, data);
+        }
+        
+        await batch.commit();
+        debugPrint('>>> [Firebase] ✅ Lote de $colecao processado: $i até ${i + chunk.length}');
+        
+        // Pequena pausa para evitar sobrecarga de rede/API
+        await Future.delayed(const Duration(milliseconds: 100));
+      }
+      
+      debugPrint('>>> [Firebase] ✅ Restauração de $colecao concluída!');
+    } catch (e, stackTrace) {
+      debugPrint('>>> [Firebase] ❌ Erro ao restaurar dados em lote: $e');
+      debugPrint('Stacktrace: $stackTrace');
+      rethrow;
+    }
+  }
 }
 
