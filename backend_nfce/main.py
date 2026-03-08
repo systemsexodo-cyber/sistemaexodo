@@ -103,6 +103,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Versão do Bridge
+BRIDGE_VERSION = "2.5"
+
 # Variáveis globais para rastreamento
 LAST_PROCESSED_COMPANY = {"cnpj": None, "nome": None, "timestamp": None}
 
@@ -135,15 +138,11 @@ load_identity()
 @app.on_event("startup")
 async def startup_event():
     log_message("="*40)
-    log_message("INICIANDO EMISSOR EXODO - MODO BACKGROUND")
+    log_message("UVICORN: SERVIDOR HTTP INICIADO")
     log_message("="*40)
     
     # Criar arquivo de status local
     update_local_status()
-    
-    # Iniciar Listener do Firebase (Modo Sem Link)
-    log_message("Iniciando Listener do Firebase (Modo Sem Link)...")
-    start_firebase_listener()
     
     # Auto-instalação no registro do Windows para iniciar com o PC
     try:
@@ -151,8 +150,7 @@ async def startup_event():
     except Exception as e:
         log_message(f"Falha na auto-instalação: {e}", "WARN")
     
-    log_message("="*40)
-    log_message("SISTEMA PRONTO PARA OPERAR")
+    log_message("UVICORN: Pronto para receber requisições na porta 8000")
     log_message("="*40)
 
 # Chave de segurança (DESATIVADA A PEDIDO - ACESSO TOTAL)
@@ -226,6 +224,7 @@ async def emitir(req: RequisicaoEmissao):
                 ps = get_pystray()
                 
                 menu_items = [
+                    ps.MenuItem(f"Versão: {BRIDGE_VERSION}", lambda: None, enabled=False),
                     ps.MenuItem(f"Empresa: {empresa_nome}", lambda: None, enabled=False),
                     ps.MenuItem(f"CNPJ: {cnpj}", lambda: None, enabled=False),
                     ps.Menu.SEPARATOR,
@@ -233,7 +232,7 @@ async def emitir(req: RequisicaoEmissao):
                     ps.MenuItem("Sair", lambda icon, item: quit_app(icon))
                 ]
                 GLOBAL_TRAY_ICON.menu = ps.Menu(*menu_items)
-                GLOBAL_TRAY_ICON.title = f"Exodo Bridge - {empresa_nome}"
+                GLOBAL_TRAY_ICON.title = f"Exodo Bridge v{BRIDGE_VERSION} - {empresa_nome}"
             except Exception as tray_err: 
                 print(f"[TRAY ERROR] {tray_err}")
 
@@ -293,6 +292,7 @@ def processar_requisicao_firebase(db, doc_id, data):
                 ps = get_pystray()
                 
                 menu_items = [
+                    ps.MenuItem(f"Versão: {BRIDGE_VERSION}", lambda: None, enabled=False),
                     ps.MenuItem(f"Empresa: {empresa_nome}", lambda: None, enabled=False),
                     ps.MenuItem(f"CNPJ: {cnpj}", lambda: None, enabled=False),
                     ps.Menu.SEPARATOR,
@@ -300,7 +300,7 @@ def processar_requisicao_firebase(db, doc_id, data):
                     ps.MenuItem("Sair", lambda icon, item: quit_app(icon))
                 ]
                 GLOBAL_TRAY_ICON.menu = ps.Menu(*menu_items)
-                GLOBAL_TRAY_ICON.title = f"Exodo Bridge - {empresa_nome}"
+                GLOBAL_TRAY_ICON.title = f"Exodo Bridge v{BRIDGE_VERSION} - {empresa_nome}"
             except: pass
 
         if resultado.get('status') == 'sucesso':
@@ -331,6 +331,7 @@ def processar_requisicao_firebase(db, doc_id, data):
 
 def processar_comando_remoto(db, doc_id, data):
     """Processa comandos recebidos via Firebase (update, restart, etc)"""
+    global LAST_PROCESSED_COMPANY
     try:
         comando = data.get('comando')
         target_pc = data.get('target_pc')
@@ -452,10 +453,31 @@ def processar_comando_remoto(db, doc_id, data):
             pc_name = platform.node()
             os_info = platform.platform()
             empresa = LAST_PROCESSED_COMPANY.get('nome') or "Não Identificada"
-            resultado = f"PC: {pc_name} | Empresa: {empresa} | Versão Bridge: 2.2 | OS: {os_info}"
+            resultado = f"PC: {pc_name} | Empresa: {empresa} | Versão Bridge: {BRIDGE_VERSION} | OS: {os_info}"
             sucesso = True
             notify_user("Sinal Recebido", "A máquina foi identificada remotamente pelo Admin!")
             log_message(f"[CMD] Identificação enviada: {resultado}")
+
+        elif comando == 'set_identity':
+            log_message("[CMD] Comando Vincular Empresa recebido.")
+            new_cnpj = data.get('cnpj')
+            new_nome = data.get('nome')
+            if new_cnpj and new_nome:
+                LAST_PROCESSED_COMPANY = {
+                    "cnpj": new_cnpj,
+                    "nome": new_nome,
+                    "timestamp": datetime.now().isoformat()
+                }
+                save_identity()
+                resultado = f"Este PC foi VINCULADO à empresa: {new_nome} ({new_cnpj})"
+                sucesso = True
+                notify_user("Vínculo Realizado", f"Este computador agora pertence à empresa: {new_nome}")
+                # Forçar atualização imediata no painel
+                _registrar_heartbeat(db)
+                log_message(f"[CMD] {resultado}")
+            else:
+                resultado = "Erro: CNPJ ou Nome da empresa não fornecidos para o vínculo."
+                sucesso = False
 
         doc_ref.update({
             'status': 'concluido',
@@ -592,7 +614,37 @@ def start_firebase_listener():
         
     except Exception as e:
         log_message(f"Falha ao iniciar Firebase Listener: {e}", "ERROR")
+        import traceback
+        log_message(traceback.format_exc(), "ERROR")
         FIREBASE_ACTIVE = False
+
+def kill_zombies():
+    """Mata outras instâncias do Bridge que possam estar travadas."""
+    try:
+        import os
+        import subprocess
+        my_pid = os.getpid()
+        exe_name = "ExodoNfceBridge.exe"
+        
+        # Obter lista de processos
+        cmd = ["tasklist", "/FI", f"IMAGENAME eq {exe_name}", "/FO", "CSV", "/NH"]
+        res = subprocess.run(cmd, capture_output=True, text=True, creationflags=0x08000000)
+        
+        if res.returncode == 0:
+            lines = res.stdout.strip().split('\n')
+            for line in lines:
+                if not line.strip(): continue
+                parts = line.split('","')
+                if len(parts) > 1:
+                    pid_str = parts[1].strip('"')
+                    try:
+                        pid = int(pid_str)
+                        if pid != my_pid:
+                            log_message(f"Limpando instância zumbi (PID {pid})...")
+                            subprocess.run(["taskkill", "/F", "/PID", str(pid)], creationflags=0x08000000)
+                    except: pass
+    except Exception as e:
+        print(f"Erro ao limpar zumbis: {e}")
 
 # --- UTILITÁRIOS ---
 LAST_HEARTBEAT_TS = time.time()
@@ -613,7 +665,7 @@ def _registrar_heartbeat(db):
             'online': True,
             'pc_name': pc_name,
             'last_seen': firestore.SERVER_TIMESTAMP,
-            'versao': '2.2',
+            'versao': BRIDGE_VERSION,
             'status_cpu': f"{platform.processor()}",
             'ultima_empresa': LAST_PROCESSED_COMPANY.get('nome'),
             'ultimo_cnpj': LAST_PROCESSED_COMPANY.get('cnpj'),
@@ -632,6 +684,7 @@ def update_local_status():
     status_file = os.path.join(base_path, "STATUS_BRIDGE.txt")
     with open(status_file, "w") as f:
         f.write("=== STATUS DO EMISSOR EXODO ===\n")
+        f.write(f"Versão: {BRIDGE_VERSION}\n")
         f.write(f"Última inicialização: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\n")
         f.write(f"Porta Local: 8000\n")
         f.write(f"Firebase: ATIVO\n")
@@ -651,15 +704,12 @@ def self_install():
     
     # 1. TENTAR TAREFA AGENDADA (Robusta - Reinicia se Fechar)
     try:
-        # Comando para criar tarefa que inicia no logon e tem privilégios altos se for admin
-        # /RL HIGHEST garante que ele rode como admin se o instalador for admin
-        # /F força a sobrescrever configurações antigas
-        
+        # 1.1 TAREFA DO BRIDGE (Início no Logon)
         # Remove versão antiga se houver
         subprocess.run(['schtasks', '/delete', '/tn', task_name, '/f'], 
                       capture_output=True, creationflags=0x08000000)
         
-        # Cria a nova tarefa
+        # Cria a nova tarefa para o Bridge
         cmd = [
             'schtasks', '/create', '/tn', task_name, 
             '/tr', f'"{exe_path}" --silent', 
@@ -669,13 +719,33 @@ def self_install():
         if is_admin():
             cmd += ['/rl', 'highest']
             
-        res = subprocess.run(cmd + ['/f'], capture_output=True, text=True, creationflags=0x08000000)
-        
-        if res.returncode == 0:
-            log_message(f"Proteção 'Auto-Restart' ativa via Tarefa Agendada: {task_name}")
-            return
+        subprocess.run(cmd + ['/f'], capture_output=True, text=True, creationflags=0x08000000)
+
+        # 1.2 TAREFA DO WATCHDOG (Monitoramento Ativo)
+        # O Watchdog deve estar na mesma pasta
+        watchdog_exe = os.path.join(os.path.dirname(exe_path), "ExodoNfceBridgeWatchdog.exe")
+        watchdog_task = "ExodoNfceBridgeWatchdog"
+
+        if os.path.exists(watchdog_exe):
+            # Remove antiga
+            subprocess.run(['schtasks', '/delete', '/tn', watchdog_task, '/f'], 
+                          capture_output=True, creationflags=0x08000000)
+            
+            # Cria tarefa que inicia o watchdog no logon
+            cmd_watch = [
+                'schtasks', '/create', '/tn', watchdog_task,
+                '/tr', f'"{watchdog_exe}"',
+                '/sc', 'onlogon'
+            ]
+            if is_admin(): cmd_watch += ['/rl', 'highest']
+            
+            subprocess.run(cmd_watch + ['/f'], capture_output=True, text=True, creationflags=0x08000000)
+            log_message(f"Proteção Watchdog instalada: {watchdog_task}")
+
+        log_message(f"Sistema de auto-inicialização configurado via Tarefas Agendadas.")
+        return
     except Exception as e:
-        log_message(f"Falha ao configurar Tarefa Agendada: {e}", "WARN")
+        log_message(f"Falha ao configurar Tarefas Agendadas: {e}", "WARN")
 
     # 2. FALLBACK: REGISTRO RUN (Apenas Início com Windows)
     try:
@@ -717,6 +787,7 @@ def setup_tray():
         cnpj = LAST_PROCESSED_COMPANY.get('cnpj') or "Aguardando..."
         
         menu_items = [
+            pystray.MenuItem(f"Versão: {BRIDGE_VERSION}", lambda: None, enabled=False),
             pystray.MenuItem(f"Exodo Bridge: {empresa_nome}", lambda: None, enabled=False),
             pystray.MenuItem(f"CNPJ: {cnpj}", lambda: None, enabled=False),
             pystray.Menu.SEPARATOR,
@@ -725,9 +796,9 @@ def setup_tray():
         ]
         icon.menu = pystray.Menu(*menu_items)
 
-    icon = pystray.Icon("exodo_bridge", image, "Exodo NFC-e Bridge")
+    icon = pystray.Icon("exodo_bridge", image, f"Exodo Bridge v{BRIDGE_VERSION}")
     icon.menu = pystray.Menu(
-        pystray.MenuItem("Exodo Bridge Rodando", lambda: None, enabled=False),
+        pystray.MenuItem(f"Exodo Bridge v{BRIDGE_VERSION}", lambda: None, enabled=False),
         pystray.MenuItem("Aguardando empresa...", lambda: None, enabled=False),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Reiniciar Serviço", lambda icon, item: restart_action_silent()),
@@ -736,7 +807,13 @@ def setup_tray():
     return icon
 
 def run_server():
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info", reload=False, workers=1)
+    try:
+        log_message("Iniciando Uvicorn...")
+        uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info", reload=False, workers=1)
+    except Exception as e:
+        log_message(f"ERRO CRÍTICO NO SERVIDOR HTTP: {e}", "ERROR")
+        # Se falhar a porta 8000, o sistema continuará funcionando via Firebase
+        # Não encerramos o app aqui.
 
 GLOBAL_TRAY_ICON = None
 
@@ -748,15 +825,30 @@ def notify_user(title, message):
         print(f"Erro notificação: {e}")
 
 if __name__ == "__main__":
-    # Tentar auto-instalação se for a primeira vez
+    log_message(">>> INICIO DO PROCESSO PRINCIPAL <<<")
+    
+    # 1. Limpar instâncias antigas para evitar conflitos de porta/listener
     if getattr(sys, 'frozen', False):
+        kill_zombies()
         self_install()
         
-    server_thread = threading.Thread(target=run_server, daemon=True)
+    # 2. Iniciar Firebase Listener IMEDIATAMENTE (Coração do sistema)
+    # Iniciamos antes do Uvicorn para garantir que funcione mesmo se a porta 8000 estiver ocupada
+    log_message("Iniciando serviços de nuvem (Firebase)...")
+    start_firebase_listener()
+    
+    # 3. Iniciar Servidor HTTP em Thread separada
+    server_thread = threading.Thread(target=run_server, daemon=True, name="UvicornThread")
     server_thread.start()
+    
+    # 4. Iniciar Interface de Bandeja (Loop Principal)
     try:
+        log_message("Iniciando interface da bandeja...")
         GLOBAL_TRAY_ICON = setup_tray()
         GLOBAL_TRAY_ICON.run()
     except Exception as e:
-        print(f"Erro Tray: {e}")
+        log_message(f"Erro fatal na interface da bandeja: {e}", "ERROR")
+        # Se a bandeja falhar, manter o processo vivo para os listeners continuarem
+        while True:
+            time.sleep(60)
         while True: time.sleep(1)

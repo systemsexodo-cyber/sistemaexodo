@@ -184,6 +184,35 @@ class _HomePageState extends State<HomePage> {
           actions: [
             const SyncStatusWidget(),
 
+            // Bridge Monitor Global
+            Consumer2<AuthService, DataService>(
+              builder: (context, authService, dataService, _) {
+                final bool isOnline = dataService.isEmpresaBridgeOnline(authService.empresaAtual?.cnpj);
+                final int totalBridges = dataService.bridgeOnlineCount;
+                if (totalBridges == 0 && !isOnline) return const SizedBox.shrink();
+                
+                return Tooltip(
+                  message: isOnline 
+                    ? 'Emissor NFC-e ONLINE' 
+                    : '$totalBridges terminal(is) detectado(s)',
+                  child: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: isOnline 
+                        ? Colors.green.withOpacity(0.1) 
+                        : Colors.orange.withOpacity(0.1),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      Icons.print,
+                      size: 20,
+                      color: isOnline ? Colors.green : Colors.orange,
+                    ),
+                  ),
+                );
+              },
+            ),
+
             IconButton(
               icon: Icon(
                 _currentPage == 0 ? Icons.dashboard : Icons.home,

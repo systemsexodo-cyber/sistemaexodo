@@ -394,6 +394,15 @@ class _EmpresasPageState extends State<EmpresasPage> {
     );
   }
 
+
+
+  Widget _buildBridgeAction_Divider() {
+    return Container(
+      height: 1,
+      color: Colors.white.withOpacity(0.05),
+    );
+  }
+
   void _mostrarDialogoGerenciamentoBridge(BuildContext context) {
     showDialog(
       context: context,
@@ -418,6 +427,17 @@ class _EmpresasPageState extends State<EmpresasPage> {
             const SizedBox(height: 20),
             _buildBridgeActionTile(
               context,
+              icon: Icons.play_arrow,
+              color: Colors.orange,
+              title: 'Iniciar Forçado (Watchdog)',
+              subtitle: 'Aciona o monitor para abrir o emissor se estiver fechado.',
+              onTap: () => _selecionarPCEDispararComando(context, 'start', 'Iniciar'),
+            ),
+            const SizedBox(height: 12),
+            _buildBridgeAction_Divider(),
+            const SizedBox(height: 12),
+            _buildBridgeActionTile(
+              context,
               icon: Icons.system_update,
               color: Colors.green,
               title: 'Atualizar Software (Git Pull)',
@@ -437,7 +457,7 @@ class _EmpresasPageState extends State<EmpresasPage> {
             _buildBridgeActionTile(
               context,
               icon: Icons.info_outline,
-              color: Colors.orange,
+              color: Colors.purple,
               title: 'Identificar Máquinas',
               subtitle: 'Solicita nome do PC e versão do Windows.',
               onTap: () => _selecionarPCEDispararComando(context, 'identify', 'Identificar'),
@@ -492,7 +512,7 @@ class _EmpresasPageState extends State<EmpresasPage> {
     );
   }
 
-  void _selecionarPCEDispararComando(BuildContext context, String comando, String acaoTitulo) {
+  void _selecionarPCEDispararComando(BuildContext context, String comando, String acaoTitulo, {Map<String, dynamic>? extraData}) {
     // Primeiro traz a UI com a lista de computadores
     showDialog(
       context: context,
@@ -505,7 +525,6 @@ class _EmpresasPageState extends State<EmpresasPage> {
           child: StreamBuilder<QuerySnapshot>(
             stream: FirebaseFirestore.instance
                 .collection('bridge_status')
-                .where('online', isEqualTo: true)
                 .snapshots(),
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
@@ -531,26 +550,61 @@ class _EmpresasPageState extends State<EmpresasPage> {
                     title: const Text('TODOS OS COMPUTADORES', style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold)),
                     onTap: () {
                       Navigator.pop(context); // Fecha popup
-                      _confirmarComandoBridge(context, comando, 'Deseja $acaoTitulo em TODOS os emissores simultaneamente?', targetPc: null);
+                      _confirmarComandoBridge(context, comando, 'Deseja $acaoTitulo em TODOS os emissores simultaneamente?', targetPc: null, extraData: extraData);
                     },
                   ),
                   const Divider(color: Colors.white24),
                   // Lista de Pcs Específicos
-                  ...docs.map((doc) {
-                    final data = doc.data() as Map<String, dynamic>;
-                    final pcName = data['pc_name'] ?? doc.id;
-                    final ultimaEmpresa = data['ultima_empresa'];
+                  ...docs.where((doc) => !doc.id.startsWith('watchdog_')).map((doc) {
+                    // Extração de dados segura e dinâmica para o Flutter Web
+                    final dynamic rawData = doc.data();
+                    final Map<dynamic, dynamic> data = (rawData is Map) ? rawData : {};
+                    final String pcName = (data['pc_name'] ?? doc.id).toString();
+                    final bool isOnline = data['online'] == true;
                     
+                    // Busca o watchdog de forma manual para evitar crashes de tipo
+                    bool watchdogOnline = false;
+                    for (var d in docs) {
+                      if (d.id == 'watchdog_$pcName') {
+                        final dynamic dRaw = d.data();
+                        if (dRaw is Map && dRaw['online'] == true) {
+                          watchdogOnline = true;
+                        }
+                        break;
+                      }
+                    }
+
                     return ListTile(
-                      leading: const Icon(Icons.desktop_windows, color: Colors.green),
-                      title: Text(pcName, style: const TextStyle(color: Colors.white)),
-                      subtitle: Text(
-                        ultimaEmpresa != null ? 'Online | $ultimaEmpresa' : 'Online',
-                        style: const TextStyle(color: Colors.green, fontSize: 12),
+                      leading: Icon(
+                        Icons.desktop_windows, 
+                        color: isOnline ? Colors.green : (watchdogOnline ? Colors.orange : Colors.white12)
                       ),
+                      title: Text(pcName, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+                      subtitle: Text(
+                        isOnline ? 'Bridge Online' : (watchdogOnline ? 'Proteção Ativa' : 'Offline total'),
+                        style: TextStyle(color: isOnline ? Colors.green : (watchdogOnline ? Colors.orange : Colors.white24), fontSize: 11),
+                      ),
+                      trailing: Icon(Icons.send, color: (isOnline || watchdogOnline) ? Colors.blue : Colors.white10, size: 16),
                       onTap: () {
+                        if (!watchdogOnline && comando == 'start') {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('❌ Comando "Iniciar" impossível: A Proteção (Watchdog) não está ativa neste PC. Inicie manualmente uma vez para instalar.'),
+                              backgroundColor: Colors.red,
+                              duration: Duration(seconds: 4),
+                            ),
+                          );
+                          return;
+                        }
+                        
+                        if (!isOnline && !watchdogOnline) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('⚠️ Este PC está totalmente offline.')),
+                          );
+                          return;
+                        }
                         Navigator.pop(context); // Fecha popup
-                        _confirmarComandoBridge(context, comando, 'Deseja $acaoTitulo APENAS no PC: $pcName?', targetPc: pcName);
+                        _confirmarComandoBridge(context, comando, 'Deseja $acaoTitulo no PC: $pcName?', targetPc: pcName, extraData: extraData);
                       },
                     );
                   }).toList(),
@@ -569,7 +623,7 @@ class _EmpresasPageState extends State<EmpresasPage> {
     );
   }
 
-  void _confirmarComandoBridge(BuildContext context, String comando, String pergunta, {String? targetPc}) {
+  void _confirmarComandoBridge(BuildContext context, String comando, String pergunta, {String? targetPc, Map<String, dynamic>? extraData}) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -585,19 +639,26 @@ class _EmpresasPageState extends State<EmpresasPage> {
             onPressed: () async {
               Navigator.pop(context); // Fecha confirmação
               try {
-                await BridgeManagementService.instance.enviarComando(comando, targetPc: targetPc);
+                debugPrint('>>> [BridgeManager] Enviando comando "$comando" para PC: ${targetPc ?? "Todos"}');
+                await BridgeManagementService.instance.enviarComando(comando, targetPc: targetPc, extraData: extraData);
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text('Comando "$comando" enviado com sucesso!'),
+                      content: Text('✅ Comando "$comando" enviado com sucesso!'),
                       backgroundColor: Colors.green,
                     ),
                   );
                 }
               } catch (e) {
+                debugPrint('>>> [BridgeManager] Erro ao enviar comando: $e');
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Erro: $e'), backgroundColor: Colors.red),
+                    SnackBar(
+                      content: Text('❌ Erro: $e'), 
+                      backgroundColor: Colors.red,
+                      duration: const Duration(seconds: 10),
+                      action: SnackBarAction(label: 'OK', textColor: Colors.white, onPressed: () {}),
+                    ),
                   );
                 }
               }
@@ -898,10 +959,38 @@ class _EmpresasPageState extends State<EmpresasPage> {
                               fontWeight: FontWeight.bold,
                               color: Colors.white,
                             ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
+                        ),
+                        // Bridge Status Badge
+                        Consumer<DataService>(
+                          builder: (context, dataService, _) {
+                            final bool isBridgeOnline = dataService.isEmpresaBridgeOnline(empresa.cnpj);
+                            if (!isBridgeOnline) return const SizedBox.shrink();
+                            
+                            return Container(
+                              margin: const EdgeInsets.only(left: 8),
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: Colors.green.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(color: Colors.green.withOpacity(0.3)),
+                              ),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.circle, color: Colors.green, size: 6),
+                                  SizedBox(width: 4),
+                                  Text('ONLINE', style: TextStyle(color: Colors.green, fontSize: 10, fontWeight: FontWeight.bold)),
+                                ],
+                              ),
+                            );
+                          },
                         ),
                         if (isEmpresaAtual)
                           Container(
+                            margin: const EdgeInsets.only(left: 8),
                             padding: const EdgeInsets.symmetric(
                               horizontal: 8,
                               vertical: 4,
@@ -1046,6 +1135,24 @@ class _EmpresasPageState extends State<EmpresasPage> {
                     _importarProdutosExcel(context);
                   } else if (value == 'excluir') {
                     _confirmarExclusao(context, empresa, authService);
+                  } else if (value == 'vincular_bridge') {
+                    _selecionarPCEDispararComando(
+                      context, 
+                      'set_identity', 
+                      'Vincular Computador',
+                      extraData: {
+                        'cnpj': empresa.cnpj,
+                        'nome': empresa.nomeExibicao,
+                      }
+                    );
+                  } else if (value == 'reiniciar_bridge') {
+                    _selecionarPCEDispararComando(
+                      context, 
+                      'restart', 
+                      'Reiniciar Emissor',
+                    );
+                  } else if (value == 'outros_bridge') {
+                    _mostrarDialogoGerenciamentoBridge(context);
                   }
                 },
                 itemBuilder: (context) {
@@ -1097,6 +1204,40 @@ class _EmpresasPageState extends State<EmpresasPage> {
                           ],
                         ),
                       ),
+                    
+                    // Opção de Vínculo do Bridge (Apenas ADMIN "user")
+                    if (isUsuarioMaster) ...[
+                      const PopupMenuItem(
+                        value: 'reiniciar_bridge',
+                        child: Row(
+                          children: [
+                            Icon(Icons.restart_alt, color: Colors.blue, size: 20),
+                            SizedBox(width: 12),
+                            Text('Reiniciar Emissor', style: TextStyle(color: Colors.blue)),
+                          ],
+                        ),
+                      ),
+                      const PopupMenuItem(
+                        value: 'vincular_bridge',
+                        child: Row(
+                          children: [
+                            Icon(Icons.settings_remote, color: Colors.orange, size: 20),
+                            SizedBox(width: 12),
+                            Text('Vincular Bridge', style: TextStyle(color: Colors.orange)),
+                          ],
+                        ),
+                      ),
+                      const PopupMenuItem(
+                        value: 'outros_bridge',
+                        child: Row(
+                          children: [
+                            Icon(Icons.more_horiz, color: Colors.white70, size: 20),
+                            SizedBox(width: 12),
+                            Text('Outros Comandos'),
+                          ],
+                        ),
+                      ),
+                    ],
                   ];
                 },
               ),

@@ -716,3 +716,370 @@ NameError: name 'quit_app' is not defined
 2026-03-05 20:49:58,268 [INFO] [CMD] Iniciando Processo de Atualização...
 2026-03-05 20:49:58,306 [INFO] [CMD] Git detectado. Tentando atualização via Git...
 2026-03-05 20:50:01,370 [INFO] [CMD] Atualização via Git concluída com sucesso.
+2026-03-07 11:40:00,570 [INFO] Proteção básica ativa no Registro: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\backend_nfce\ExodoNfceBridge.exe
+2026-03-07 11:48:20,460 [INFO] Proteção básica ativa no Registro: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\backend_nfce\ExodoNfceBridge.exe
+2026-03-07 12:04:36,608 [INFO] Proteção Watchdog instalada: ExodoNfceBridgeWatchdog
+2026-03-07 12:04:36,608 [INFO] Sistema de auto-inicialização configurado via Tarefas Agendadas.
+2026-03-07 12:06:54,314 [INFO] Proteção Watchdog instalada: ExodoNfceBridgeWatchdog
+2026-03-07 12:06:54,334 [INFO] Sistema de auto-inicialização configurado via Tarefas Agendadas.
+2026-03-07 12:06:54,390 [INFO] Proteção Watchdog instalada: ExodoNfceBridgeWatchdog
+2026-03-07 12:06:54,406 [INFO] Sistema de auto-inicialização configurado via Tarefas Agendadas.
+2026-03-07 12:06:54,397 [INFO] Proteção Watchdog instalada: ExodoNfceBridgeWatchdog
+2026-03-07 12:06:54,412 [INFO] Sistema de auto-inicialização configurado via Tarefas Agendadas.
+2026-03-07 12:06:54,394 [INFO] Proteção Watchdog instalada: ExodoNfceBridgeWatchdog
+2026-03-07 12:06:54,412 [INFO] Sistema de auto-inicialização configurado via Tarefas Agendadas.
+2026-03-07 12:06:54,535 [INFO] Proteção Watchdog instalada: ExodoNfceBridgeWatchdog
+2026-03-07 12:06:54,550 [INFO] Sistema de auto-inicialização configurado via Tarefas Agendadas.
+2026-03-07 12:06:54,539 [INFO] Proteção Watchdog instalada: ExodoNfceBridgeWatchdog
+2026-03-07 12:06:54,554 [INFO] Sistema de auto-inicialização configurado via Tarefas Agendadas.
+2026-03-07 12:06:54,549 [INFO] Proteção Watchdog instalada: ExodoNfceBridgeWatchdog
+2026-03-07 12:06:54,562 [INFO] Sistema de auto-inicialização configurado via Tarefas Agendadas.
+2026-03-07 12:06:54,575 [INFO] Proteção Watchdog instalada: ExodoNfceBridgeWatchdog
+2026-03-07 12:06:54,592 [INFO] Sistema de auto-inicialização configurado via Tarefas Agendadas.
+2026-03-07 12:06:54,582 [INFO] Proteção Watchdog instalada: ExodoNfceBridgeWatchdog
+2026-03-07 12:06:54,579 [INFO] Proteção Watchdog instalada: ExodoNfceBridgeWatchdog
+2026-03-07 12:06:54,596 [INFO] Sistema de auto-inicialização configurado via Tarefas Agendadas.
+2026-03-07 12:06:54,592 [INFO] Proteção Watchdog instalada: ExodoNfceBridgeWatchdog
+2026-03-07 12:06:54,609 [INFO] Sistema de auto-inicialização configurado via Tarefas Agendadas.
+2026-03-07 12:06:54,634 [INFO] Proteção Watchdog instalada: ExodoNfceBridgeWatchdog
+2026-03-07 12:06:54,649 [INFO] Sistema de auto-inicialização configurado via Tarefas Agendadas.
+2026-03-07 13:32:09,539 [INFO] Proteção Watchdog instalada: ExodoNfceBridgeWatchdog
+2026-03-07 13:32:09,539 [INFO] Sistema de auto-inicialização configurado via Tarefas Agendadas.
+2026-03-07 13:33:10,095 [INFO] Proteção Watchdog instalada: ExodoNfceBridgeWatchdog
+2026-03-07 13:33:10,095 [INFO] Sistema de auto-inicialização configurado via Tarefas Agendadas.
+2026-03-07 13:33:30,430 [INFO] Proteção Watchdog instalada: ExodoNfceBridgeWatchdog
+2026-03-07 13:33:30,430 [INFO] Sistema de auto-inicialização configurado via Tarefas Agendadas.
+2026-03-07 13:33:51,145 [INFO] Proteção Watchdog instalada: ExodoNfceBridgeWatchdog
+2026-03-07 13:33:51,145 [INFO] Sistema de auto-inicialização configurado via Tarefas Agendadas.
+2026-03-07 13:34:07,369 [INFO] Proteção Watchdog instalada: ExodoNfceBridgeWatchdog
+2026-03-07 13:34:07,369 [INFO] Sistema de auto-inicialização configurado via Tarefas Agendadas.
+2026-03-07 13:34:26,920 [INFO] Proteção Watchdog instalada: ExodoNfceBridgeWatchdog
+2026-03-07 13:34:26,921 [INFO] Sistema de auto-inicialização configurado via Tarefas Agendadas.
+2026-03-07 13:44:19,241 [INFO] Proteção Watchdog instalada: ExodoNfceBridgeWatchdog
+2026-03-07 13:44:19,241 [INFO] Sistema de auto-inicialização configurado via Tarefas Agendadas.
+2026-03-07 16:36:03,401 [INFO] Proteção Watchdog instalada: ExodoNfceBridgeWatchdog
+2026-03-07 16:36:03,402 [INFO] Sistema de auto-inicialização configurado via Tarefas Agendadas.
+2026-03-07 18:29:22,283 [INFO] Proteção Watchdog instalada: ExodoNfceBridgeWatchdog
+2026-03-07 18:29:22,284 [INFO] Sistema de auto-inicialização configurado via Tarefas Agendadas.
+2026-03-07 18:32:37,273 [INFO] Proteção Watchdog instalada: ExodoNfceBridgeWatchdog
+2026-03-07 18:32:37,273 [INFO] Sistema de auto-inicialização configurado via Tarefas Agendadas.
+2026-03-07 18:34:17,816 [INFO] >>> INICIO DO PROCESSO PRINCIPAL <<<
+2026-03-07 18:34:17,816 [INFO] Iniciando serviços de nuvem (Firebase)...
+2026-03-07 18:34:17,924 [INFO] Firebase Listener ativo!
+2026-03-07 18:34:19,116 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:34:19,775 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:34:19,779 [INFO] Listener de Comandos Remotos ativo!
+2026-03-07 18:34:19,780 [INFO] Iniciando Uvicorn...
+2026-03-07 18:34:19,780 [INFO] Iniciando interface da bandeja...
+2026-03-07 18:34:19,913 [INFO] ========================================
+2026-03-07 18:34:19,916 [INFO] UVICORN: SERVIDOR HTTP INICIADO
+2026-03-07 18:34:19,929 [INFO] ========================================
+2026-03-07 18:34:19,935 [INFO] UVICORN: Pronto para receber requisições na porta 8000
+2026-03-07 18:34:19,943 [INFO] ========================================
+2026-03-07 18:34:20,226 [INFO] [CMD] Comando Vincular Empresa recebido.
+2026-03-07 18:34:21,011 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:34:21,018 [INFO] [CMD] Este PC foi VINCULADO à empresa: É O BICHO PETSHOP (04.829.400/0001-65)
+2026-03-07 18:34:21,020 [INFO] [CMD] Comando Vincular Empresa recebido.
+2026-03-07 18:34:21,914 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:34:21,914 [INFO] [CMD] Este PC foi VINCULADO à empresa: É O BICHO PETSHOP (04.829.400/0001-65)
+2026-03-07 18:34:24,910 [INFO] Proteção Watchdog instalada: ExodoNfceBridgeWatchdog
+2026-03-07 18:34:24,910 [INFO] Sistema de auto-inicialização configurado via Tarefas Agendadas.
+2026-03-07 18:35:19,314 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:36:19,525 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:37:20,432 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:38:21,380 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:39:22,318 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:40:23,223 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:41:24,118 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:41:40,649 [INFO] >>> INICIO DO PROCESSO PRINCIPAL <<<
+2026-03-07 18:41:40,744 [INFO] Limpando instância zumbi (PID 6520)...
+2026-03-07 18:41:40,978 [INFO] Proteção Watchdog instalada: ExodoNfceBridgeWatchdog
+2026-03-07 18:41:40,978 [INFO] Sistema de auto-inicialização configurado via Tarefas Agendadas.
+2026-03-07 18:41:40,978 [INFO] Iniciando serviços de nuvem (Firebase)...
+2026-03-07 18:41:41,058 [INFO] Firebase Listener ativo!
+2026-03-07 18:41:42,850 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:41:42,873 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:41:42,878 [INFO] Listener de Comandos Remotos ativo!
+2026-03-07 18:41:42,880 [INFO] Iniciando Uvicorn...
+2026-03-07 18:41:42,881 [INFO] Iniciando interface da bandeja...
+2026-03-07 18:41:42,882 [ERROR] ERRO CRÍTICO NO SERVIDOR HTTP: Unable to configure formatter 'default'
+2026-03-07 18:42:06,312 [ERROR] An error occurred when calling message handler
+Traceback (most recent call last):
+  File "C:\Users\USER\AppData\Roaming\Python\Python312\site-packages\pystray\_win32.py", line 412, in _dispatcher
+    return int(icon._message_handlers.get(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\USER\AppData\Roaming\Python\Python312\site-packages\pystray\_win32.py", line 224, in _on_notify
+    descriptors[index - 1](self)
+  File "C:\Users\USER\AppData\Roaming\Python\Python312\site-packages\pystray\_base.py", line 328, in inner
+    callback(self)
+  File "C:\Users\USER\AppData\Roaming\Python\Python312\site-packages\pystray\_base.py", line 453, in __call__
+    return self._action(icon, self)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\backend_nfce\main.py", line 295, in <lambda>
+    ps.MenuItem(f"Versão: {BRIDGE_VERSION}", lambda: None, enabled=False),
+                                          ^^^^^^^^
+NameError: name 'quit_app' is not defined
+2026-03-07 18:42:12,519 [ERROR] An error occurred when calling message handler
+Traceback (most recent call last):
+  File "C:\Users\USER\AppData\Roaming\Python\Python312\site-packages\pystray\_win32.py", line 412, in _dispatcher
+    return int(icon._message_handlers.get(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\USER\AppData\Roaming\Python\Python312\site-packages\pystray\_win32.py", line 224, in _on_notify
+    descriptors[index - 1](self)
+  File "C:\Users\USER\AppData\Roaming\Python\Python312\site-packages\pystray\_base.py", line 328, in inner
+    callback(self)
+  File "C:\Users\USER\AppData\Roaming\Python\Python312\site-packages\pystray\_base.py", line 453, in __call__
+    return self._action(icon, self)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\backend_nfce\main.py", line 295, in <lambda>
+    ps.MenuItem(f"Versão: {BRIDGE_VERSION}", lambda: None, enabled=False),
+                                          ^^^^^^^^
+NameError: name 'quit_app' is not defined
+2026-03-07 18:42:17,545 [ERROR] An error occurred when calling message handler
+Traceback (most recent call last):
+  File "C:\Users\USER\AppData\Roaming\Python\Python312\site-packages\pystray\_win32.py", line 412, in _dispatcher
+    return int(icon._message_handlers.get(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\USER\AppData\Roaming\Python\Python312\site-packages\pystray\_win32.py", line 224, in _on_notify
+    descriptors[index - 1](self)
+  File "C:\Users\USER\AppData\Roaming\Python\Python312\site-packages\pystray\_base.py", line 328, in inner
+    callback(self)
+  File "C:\Users\USER\AppData\Roaming\Python\Python312\site-packages\pystray\_base.py", line 453, in __call__
+    return self._action(icon, self)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\backend_nfce\main.py", line 295, in <lambda>
+    ps.MenuItem(f"Versão: {BRIDGE_VERSION}", lambda: None, enabled=False),
+                                          ^^^^^^^^
+NameError: name 'quit_app' is not defined
+2026-03-07 18:42:21,931 [INFO] >>> INICIO DO PROCESSO PRINCIPAL <<<
+2026-03-07 18:42:21,932 [INFO] Iniciando serviços de nuvem (Firebase)...
+2026-03-07 18:42:22,004 [INFO] Firebase Listener ativo!
+2026-03-07 18:42:23,711 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:42:23,717 [INFO] Listener de Comandos Remotos ativo!
+2026-03-07 18:42:23,718 [INFO] Iniciando Uvicorn...
+2026-03-07 18:42:23,720 [INFO] Iniciando interface da bandeja...
+2026-03-07 18:42:23,798 [INFO] ========================================
+2026-03-07 18:42:23,804 [INFO] UVICORN: SERVIDOR HTTP INICIADO
+2026-03-07 18:42:23,805 [INFO] ========================================
+2026-03-07 18:42:23,807 [INFO] UVICORN: Pronto para receber requisições na porta 8000
+2026-03-07 18:42:23,807 [INFO] ========================================
+2026-03-07 18:42:23,822 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:42:40,471 [INFO] >>> INICIO DO PROCESSO PRINCIPAL <<<
+2026-03-07 18:42:40,563 [INFO] Limpando instância zumbi (PID 7208)...
+2026-03-07 18:42:40,807 [INFO] Proteção Watchdog instalada: ExodoNfceBridgeWatchdog
+2026-03-07 18:42:40,807 [INFO] Sistema de auto-inicialização configurado via Tarefas Agendadas.
+2026-03-07 18:42:40,808 [INFO] Iniciando serviços de nuvem (Firebase)...
+2026-03-07 18:42:40,898 [INFO] Firebase Listener ativo!
+2026-03-07 18:42:42,554 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:42:42,573 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:42:42,575 [INFO] Listener de Comandos Remotos ativo!
+2026-03-07 18:42:42,576 [INFO] Iniciando Uvicorn...
+2026-03-07 18:42:42,576 [INFO] Iniciando interface da bandeja...
+2026-03-07 18:42:42,577 [ERROR] ERRO CRÍTICO NO SERVIDOR HTTP: Unable to configure formatter 'default'
+2026-03-07 18:43:24,033 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:43:42,768 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:44:24,959 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:44:43,660 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:45:25,164 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:45:43,883 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:46:25,375 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:47:25,723 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:48:26,627 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:49:25,957 [INFO] >>> INICIO DO PROCESSO PRINCIPAL <<<
+2026-03-07 18:49:26,053 [INFO] Limpando instância zumbi (PID 11136)...
+2026-03-07 18:49:26,274 [INFO] Proteção Watchdog instalada: ExodoNfceBridgeWatchdog
+2026-03-07 18:49:26,274 [INFO] Sistema de auto-inicialização configurado via Tarefas Agendadas.
+2026-03-07 18:49:26,274 [INFO] Iniciando serviços de nuvem (Firebase)...
+2026-03-07 18:49:26,346 [INFO] Firebase Listener ativo!
+2026-03-07 18:49:27,458 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:49:27,460 [INFO] Listener de Comandos Remotos ativo!
+2026-03-07 18:49:27,461 [INFO] Iniciando Uvicorn...
+2026-03-07 18:49:27,461 [INFO] Iniciando interface da bandeja...
+2026-03-07 18:49:27,462 [ERROR] ERRO CRÍTICO NO SERVIDOR HTTP: Unable to configure formatter 'default'
+2026-03-07 18:49:27,545 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:49:28,090 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:50:28,458 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:50:28,490 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:51:28,685 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:51:28,703 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:52:28,901 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:52:28,923 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:53:29,128 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:53:29,275 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:54:29,368 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:54:29,484 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:55:29,732 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:55:30,392 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:56:29,955 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:56:30,610 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:57:30,173 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:57:30,834 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:58:31,102 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:58:31,745 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:59:31,454 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 18:59:31,963 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:00:32,365 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:00:32,878 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:01:33,240 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:01:33,285 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:02:33,459 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:02:33,500 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:03:33,676 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:03:33,717 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:04:33,900 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:04:33,934 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:05:34,152 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:05:34,171 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:06:34,379 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:06:34,396 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:07:34,611 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:07:34,630 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:08:34,889 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:08:34,970 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:09:35,098 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:09:35,178 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:10:35,329 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:10:35,497 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:11:35,571 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:11:35,762 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:12:35,789 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:12:35,986 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:13:36,018 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:13:36,213 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:14:36,954 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:14:37,144 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:15:37,861 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:15:38,052 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:16:38,082 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:16:38,284 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:17:38,300 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:17:38,499 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:18:38,537 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:18:38,717 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:19:38,763 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:19:38,936 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:20:38,986 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:20:39,153 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:21:39,200 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:21:39,371 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:22:39,453 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:22:39,586 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:23:39,674 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:23:39,818 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:24:39,904 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:24:40,034 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:25:40,803 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:25:40,948 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:26:41,741 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:26:41,867 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:27:42,005 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:27:42,178 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:28:42,243 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:28:42,479 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:29:42,471 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:29:42,711 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:30:42,778 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:30:43,028 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:31:43,011 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:31:43,267 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:32:43,362 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:32:43,496 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:33:43,574 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:33:43,712 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:34:44,479 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:34:44,637 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:35:44,710 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:35:44,849 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:36:44,930 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:36:45,095 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:37:45,148 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:37:45,324 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:38:45,550 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:38:45,928 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:39:45,779 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:39:46,148 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:40:45,998 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:40:46,377 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:41:46,916 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:41:47,306 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:42:47,157 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:42:48,231 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:43:47,379 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:43:48,444 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:44:47,671 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:44:48,675 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:45:48,481 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:45:48,900 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:46:49,370 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:46:49,817 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:47:49,605 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:47:50,042 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:48:49,841 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:48:50,258 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:49:50,065 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:49:50,682 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:50:50,283 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:50:50,905 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:51:50,507 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:51:51,131 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:52:50,765 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:52:51,344 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:53:51,000 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:53:51,559 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:54:51,217 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:54:51,760 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:55:51,433 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:55:51,975 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:56:51,649 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:56:52,195 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:57:51,860 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:57:52,415 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:58:52,064 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:58:52,641 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:59:52,276 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 19:59:52,852 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:00:53,214 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:00:53,768 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:01:53,437 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:01:54,005 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:02:53,654 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:02:54,931 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:03:54,578 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:03:55,948 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:04:55,377 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:04:56,856 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:05:55,618 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:05:57,782 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:06:55,840 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:06:58,003 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:07:56,077 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:07:58,919 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:08:56,301 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:08:59,148 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:09:56,621 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:09:59,369 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:10:56,842 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:10:59,600 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:11:57,738 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:11:59,817 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:12:57,979 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:13:00,058 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:13:58,193 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:14:00,292 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:14:59,106 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:15:01,210 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:15:59,337 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:16:01,426 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:16:59,552 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:17:02,343 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:18:00,458 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:18:02,701 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:19:00,716 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:19:02,923 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:20:00,935 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:20:03,145 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:21:01,166 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:21:03,395 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:22:05,947 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:22:06,750 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-07 20:23:14,817 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7

@@ -7075,11 +7075,43 @@ class _PdvPageState extends State<PdvPage> {
                               fontSize: 24,
                             ),
                           ),
-                          Text(
-                            pedido.clienteNome ?? 'Sem cliente',
-                            style: TextStyle(
-                              color: Colors.white.withOpacity(0.7),
-                              fontSize: 16,
+                          GestureDetector(
+                            onTap: () {
+                              if (pedido.clienteId != null) {
+                                final cliente = dataService.clientes
+                                    .where((c) => c.id == pedido.clienteId)
+                                    .firstOrNull;
+                                if (cliente != null) {
+                                  _editarCliente(dataService, cliente);
+                                } else {
+                                  _editarNomeClienteVendaSalva(pedido, dataService);
+                                }
+                              } else if (pedido.clienteNome != null) {
+                                _editarNomeClienteVendaSalva(pedido, dataService);
+                              }
+                            },
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    pedido.clienteNome ?? 'Sem cliente',
+                                    style: TextStyle(
+                                      color: Colors.white.withOpacity(0.7),
+                                      fontSize: 16,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                if (pedido.clienteNome != null) ...[
+                                  const SizedBox(width: 6),
+                                  Icon(
+                                    Icons.edit,
+                                    size: 15,
+                                    color: Colors.orangeAccent.withOpacity(0.7),
+                                  ),
+                                ],
+                              ],
                             ),
                           ),
                         ],

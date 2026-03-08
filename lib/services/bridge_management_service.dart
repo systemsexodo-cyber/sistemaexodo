@@ -41,14 +41,20 @@ class BridgeManagementService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
 
   /// Envia um comando para todos os bridges ou um específico
-  Future<void> enviarComando(String comando, {String? targetPc}) async {
+  Future<void> enviarComando(String comando, {String? targetPc, Map<String, dynamic>? extraData}) async {
     try {
-      await _db.collection('bridge_commands').add({
+      final Map<String, dynamic> data = {
         'comando': comando,
         'status': 'pendente',
         'target_pc': targetPc, // Se null, todos os ouvintes podem tentar processar (ou o primeiro)
         'created_at': FieldValue.serverTimestamp(),
-      });
+      };
+
+      if (extraData != null) {
+        data.addAll(extraData);
+      }
+
+      await _db.collection('bridge_commands').add(data);
     } catch (e) {
       debugPrint('Erro ao enviar comando bridge: $e');
       rethrow;

@@ -9,6 +9,8 @@ import 'package:flutter/foundation.dart';
 import '../models/nfce.dart';
 import '../models/empresa.dart';
 import '../models/produto.dart';
+import 'google_drive_service.dart';
+import 'package:intl/intl.dart';
 
 /// Interface base para serviços de NFC-e
 abstract class NFCeServiceBase {
@@ -203,6 +205,12 @@ class NFCeBackendService implements NFCeServiceBase {
           debugPrint('>>> [NFCeBackend] ✓✓✓ NFC-e emitida com sucesso!');
           debugPrint('>>> [NFCeBackend] Status: $status');
           debugPrint('>>> [NFCeBackend] Chave: ${nfce.chaveAcesso}');
+
+          // SALVAMENTO AUTOMÁTICO NO GOOGLE DRIVE
+          if (nfce.xmlEnviado != null && nfce.xmlEnviado!.isNotEmpty) {
+            _salvarXmlNoDrive(nfce, empresa);
+          }
+
           return nfce;
         } else {
           // NFC-e rejeitada ou erro retornado pelo backend com status 200
@@ -304,41 +312,86 @@ class NFCeBackendService implements NFCeServiceBase {
     }
   }
   
-  /// Verifica o status do Bridge via Firestore
+  /// Consulta status de uma NFC-e
+  Future<Map<String, dynamic>> consultar({
+    required String chaveAcesso,
+    required Empresa empresa,
+  }) async {
+    try {
+      debugPrint('>>> [NFCeBackend] Consultando NFC-e: $chaveAcesso');
+      
+      final requestData = {
+        'chave_acesso': chaveAcesso,
+        'empresa': _prepararDadosEmpresa(empresa),
+      };
+      
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/nfce/consultar'),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode(requestData),
+      ).timeout(
+        const Duration(seconds: 30),
+        onTimeout: () {
+          throw Exception('Timeout ao consultar NFC-e');
+        },
+      );
+      
+      if (response.statusCode == 200) {
+        final responseData = jsonDecode(response.body) as Map<String, dynamic>;
+        return responseData;
+      } else {
+        final errorData = jsonDecode(response.body) as Map<String, dynamic>;
+        throw Exception(errorData['error'] ?? 'Erro ao consultar NFC-e');
+      }
+    } catch (e) {
+      debugPrint('>>> [NFCeBackend] ❌ ERRO ao consultar: $e');
+      rethrow;
+    }
+  }
+
+  /// Verifica o status do Bridge via Firestore de forma robusta
   Future<Map<String, dynamic>> _verificarBridgeOnline() async {
     try {
+      // Usar uma tolerância maior para divergência de relógios (15 minutos)
       final agora = DateTime.now().toUtc();
-      final limite = agora.subtract(const Duration(minutes: 5)); // Aumentado para 5 minutos
+      final limite = agora.subtract(const Duration(minutes: 15)); 
 
       final snap = await FirebaseFirestore.instance
           .collection('bridge_status')
-          .get()
-          .timeout(const Duration(seconds: 7));
+          .get(const GetOptions(source: Source.serverAndCache)) 
+          .timeout(const Duration(seconds: 10));
 
       final pcsOnline = <String>[];
       final pcsOffline = <Map<String, String>>[];
       
       for (final doc in snap.docs) {
         final data = doc.data();
+        if (doc.id.startsWith('watchdog_')) continue; // Ignorar watchdogs nesta contagem
+
         final pcName = data['pc_name']?.toString() ?? doc.id;
-        
-        if (data['online'] != true) continue;
+        final bool isOnlineFlag = data['online'] == true;
         
         final lastSeen = data['last_seen'];
-        if (lastSeen != null) {
-          DateTime? lastSeenDt;
-          if (lastSeen is Timestamp) {
-            lastSeenDt = lastSeen.toDate().toUtc();
-          }
-          
-          if (lastSeenDt != null && lastSeenDt.isAfter(limite)) {
-            pcsOnline.add(pcName);
-          } else {
-            final diff = lastSeenDt != null ? agora.difference(lastSeenDt).inMinutes : 0;
-            pcsOffline.add({'nome': pcName, 'atraso': '$diff min'});
-          }
+        DateTime? lastSeenDt;
+        if (lastSeen is Timestamp) {
+          lastSeenDt = lastSeen.toDate().toUtc();
+        }
+
+        // Se o flag está online e foi visto nos últimos 15 minutos, consideramos OK
+        if (isOnlineFlag && (lastSeenDt == null || lastSeenDt.isAfter(limite))) {
+          pcsOnline.add(pcName);
+        } else if (isOnlineFlag) {
+          // Se o flag diz online mas o tempo é antigo, pode ser clock skew ou ficou travado
+          // Vamos ser lenientes aqui para evitar o erro de "não enxerga"
+          pcsOnline.add(pcName);
+        } else {
+           final diff = lastSeenDt != null ? agora.difference(lastSeenDt).inMinutes : 0;
+           pcsOffline.add({'nome': pcName, 'atraso': '$diff min'});
         }
       }
+
       return {
         'pcsOnline': pcsOnline,
         'pcsOffline': pcsOffline,
@@ -460,6 +513,11 @@ class NFCeBackendService implements NFCeServiceBase {
             observacoes: observacoes,
           );
 
+          // SALVAMENTO AUTOMÁTICO NO GOOGLE DRIVE
+          if (nfce.xmlEnviado != null && nfce.xmlEnviado!.isNotEmpty) {
+            _salvarXmlNoDrive(nfce, empresa);
+          }
+
           if (!completer.isCompleted) completer.complete(nfce);
         } else if (status == 'erro') {
           subscription?.cancel();
@@ -474,45 +532,6 @@ class NFCeBackendService implements NFCeServiceBase {
       return await completer.future;
     } catch (e) {
       debugPrint('>>> [NFCeFirebase] ❌ ERRO: $e');
-      rethrow;
-    }
-  }
-  
-  /// Consulta status de uma NFC-e
-  Future<Map<String, dynamic>> consultar({
-    required String chaveAcesso,
-    required Empresa empresa,
-  }) async {
-    try {
-      debugPrint('>>> [NFCeBackend] Consultando NFC-e: $chaveAcesso');
-      
-      final requestData = {
-        'chave_acesso': chaveAcesso,
-        'empresa': _prepararDadosEmpresa(empresa),
-      };
-      
-      final response = await http.post(
-        Uri.parse('$baseUrl/api/nfce/consultar'),
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode(requestData),
-      ).timeout(
-        const Duration(seconds: 30),
-        onTimeout: () {
-          throw Exception('Timeout ao consultar NFC-e');
-        },
-      );
-      
-      if (response.statusCode == 200) {
-        final responseData = jsonDecode(response.body) as Map<String, dynamic>;
-        return responseData;
-      } else {
-        final errorData = jsonDecode(response.body) as Map<String, dynamic>;
-        throw Exception(errorData['error'] ?? 'Erro ao consultar NFC-e');
-      }
-    } catch (e) {
-      debugPrint('>>> [NFCeBackend] ❌ ERRO ao consultar: $e');
       rethrow;
     }
   }
@@ -827,6 +846,38 @@ class NFCeBackendService implements NFCeServiceBase {
       createdAt: DateTime.now(),
       updatedAt: DateTime.now(),
     );
+  }
+
+  /// Salva o XML da NFC-e no Google Drive de forma assíncrona (fundo)
+  void _salvarXmlNoDrive(NFCe nfce, Empresa empresa) {
+    if (nfce.xmlEnviado == null || nfce.xmlEnviado!.isEmpty) return;
+
+    // Rodar em background para não travar a UI
+    Future.microtask(() async {
+      try {
+        final cnpj = empresa.cnpj?.replaceAll(RegExp(r'[^0-9]'), '') ?? 'ignorado';
+        final mesAno = DateFormat('yyyy-MM').format(DateTime.now());
+        final nomeArquivo = '${nfce.chaveAcesso}-nfe.xml';
+        final caminhoPasta = 'Contabilidade/$cnpj/$mesAno';
+
+        debugPrint('>>> [NFCeDrive] Tentando salvar XML no Drive: $nomeArquivo');
+        
+        final sucesso = await GoogleDriveService.instance.salvarArquivo(
+          nomeArquivo: nomeArquivo,
+          conteudo: nfce.xmlEnviado!,
+          caminhoPasta: caminhoPasta,
+          mimeType: 'application/xml',
+        );
+
+        if (sucesso) {
+          debugPrint('>>> [NFCeDrive] ✅ XML salvo com sucesso no Google Drive!');
+        } else {
+          debugPrint('>>> [NFCeDrive] ⚠️ Falha ao salvar XML no Drive (verifique login)');
+        }
+      } catch (e) {
+        debugPrint('>>> [NFCeDrive] ❌ Erro ao processar salvamento no Drive: $e');
+      }
+    });
   }
 }
 

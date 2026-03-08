@@ -15,6 +15,7 @@ tmp_ret = collect_all('pynfe')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
+# --- Bridge Analysis ---
 a = Analysis(
     ['main.py'],
     pathex=['..\\backend_pynfe', '..', '.'],
@@ -28,15 +29,55 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
-pyz = PYZ(a.pure)
+pyz_a = PYZ(a.pure)
 
-exe = EXE(
-    pyz,
+# --- Watchdog Analysis ---
+w = Analysis(
+    ['watchdog.py'],
+    pathex=['..\\backend_pynfe', '..', '.'],
+    binaries=binaries,
+    datas=datas,
+    hiddenimports=hiddenimports,
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=[],
+    noarchive=False,
+    optimize=0,
+)
+pyz_w = PYZ(w.pure)
+
+# --- Bridge EXE ---
+exe_bridge = EXE(
+    pyz_a,
     a.scripts,
     a.binaries,
     a.datas,
     [],
     name='ExodoNfceBridge',
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    runtime_tmpdir=None,
+    console=False,
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+    icon=['..\\exodo_logo.ico'],
+)
+
+# --- Watchdog EXE ---
+exe_watchdog = EXE(
+    pyz_w,
+    w.scripts,
+    w.binaries,
+    w.datas,
+    [],
+    name='ExodoNfceBridgeWatchdog',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

@@ -601,6 +601,7 @@ def emitir_nfce_pynfe(req):
         if not id_token_db: 
             id_token_db = "1"
             
+        qr_code_url = ""
         if csc_db and id_token_db:
             try:
                 # Limpar CSC (remover espaços e quebras de linha) e IdToken
@@ -619,10 +620,11 @@ def emitir_nfce_pynfe(req):
                 qrcode_gen = SerializacaoQrcode()
                 # O nosso monkeypatch já cuida de inserir o infNFeSupl corretamente no XML assinado
                 # Se CSC for inválido, o pynfe/SEFAZ vai reclamar do HASH, mas pelo menos a tag QR Code vai existir
-                xml_assinado = qrcode_gen.gerar_qrcode(
+                xml_assinado, qr_code_url = qrcode_gen.gerar_qrcode(
                     token=id_token_limpo,
                     csc=csc_limpo,
-                    xml=xml_assinado
+                    xml=xml_assinado,
+                    return_qr=True
                 )
                 print(f"[OK] QR Code gerado com Token ID {id_token_limpo}")
             except Exception as e:
@@ -703,6 +705,7 @@ def emitir_nfce_pynfe(req):
                 "numero": numero_nf_limpo,
                 "serie": nota_fiscal.serie,
                 "xml": xml_final,
+                "qrCode": qr_code_url,
                 "mensagem": "NFC-e Autorizada com Sucesso!"
             }
         else:
@@ -749,6 +752,7 @@ def emitir_nfce_pynfe(req):
                                     "numero": numero_nf_limpo,
                                     "serie": nota_fiscal.serie,
                                     "xml": xml_final,
+                                    "qrCode": qr_code_url,
                                     "mensagem": "NFC-e Autorizada!"
                                 }
                             else:

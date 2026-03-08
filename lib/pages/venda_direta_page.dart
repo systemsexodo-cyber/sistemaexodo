@@ -1706,6 +1706,31 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     );
   }
 
+  void _editarCliente(DataService dataService, Cliente cliente) async {
+    final resultado = await Navigator.push<Cliente>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ClienteDetalhesPage(cliente: cliente),
+      ),
+    );
+
+    if (resultado != null) {
+      setState(() {
+        _clienteSelecionado = resultado;
+      });
+      _salvarClienteSelecionado();
+    } else {
+      // Pode ter sido excluído, verifica se ainda existe
+      final existe = dataService.clientes.any((c) => c.id == cliente.id);
+      if (!existe) {
+        setState(() {
+          _clienteSelecionado = null;
+        });
+        _salvarClienteSelecionado();
+      }
+    }
+  }
+
   void _abrirHistoricoVendas() {
     Navigator.push(
       context,
@@ -4994,28 +5019,19 @@ o padrão padrão (sem opções avançadas).
               return KeyEventResult.handled;
             }
           }
-          
-          // Navegação dentro do grid
-          if (!_focoNoCarrinho && !_focoNasCategorias) {
+          // Navegação dentro do grid (quando já está navegando nele)
+          if (!_focoNoCarrinho && !_focoNasCategorias && _gridSelectedIndex >= 0) {
             final maxItems = _termoBusca.isNotEmpty
                 ? _buscarItens(dataService).length
                 : (_categoriaAtiva != null
                     ? _getProdutosPorCategoria(dataService).length
                     : 0);
 
-            if (maxItems > 0) {
-              if (_gridSelectedIndex < 0) {
-                // Se nada selecionado, foca no primeiro item em vez de ir pro carrinho
-                setState(() => _gridSelectedIndex = 0);
-                return KeyEventResult.handled;
-              } else if (_gridSelectedIndex < maxItems - 1) {
-                // Move para o próximo item
-                setState(() => _gridSelectedIndex++);
-                return KeyEventResult.handled;
-              }
+            if (_gridSelectedIndex < maxItems - 1) {
+              setState(() => _gridSelectedIndex++);
+              return KeyEventResult.handled;
             }
-
-            // Se chegou no último item (ou não há itens) e há itens no carrinho, vai pro carrinho
+            // Fim do grid sem mais items: ir para o carrinho
             if (_carrinho.isNotEmpty) {
               setState(() {
                 _focoNoCarrinho = true;
@@ -5024,6 +5040,12 @@ o padrão padrão (sem opções avançadas).
               });
               return KeyEventResult.handled;
             }
+          }
+
+          // Fora do grid/carrinho/categorias (“modo lançar novo item”): seta → incrementa QTD
+          if (!_focoNoCarrinho && !_focoNasCategorias && _gridSelectedIndex < 0) {
+            setState(() => _quantidadeDigitada++);
+            return KeyEventResult.handled;
           }
         }
 
@@ -5042,12 +5064,12 @@ o padrão padrão (sem opções avançadas).
               return KeyEventResult.handled;
             }
           }
-          // Navegação lateral esquerda no grid
+          // Navegação lateral esquerda no grid (quando já está navegando nele)
           if (!_focoNoCarrinho && !_focoNasCategorias && _gridSelectedIndex > 0) {
             setState(() => _gridSelectedIndex--);
             return KeyEventResult.handled;
           } else if (!_focoNoCarrinho && !_focoNasCategorias && _gridSelectedIndex == 0) {
-            // Se estiver no primeiro item, volta para categorias
+            // Primeiro item do grid: volta para categorias
             setState(() {
               _gridSelectedIndex = -1;
               _focoNasCategorias = true;
@@ -5056,8 +5078,8 @@ o padrão padrão (sem opções avançadas).
             return KeyEventResult.handled;
           }
 
-          // Se estiver no carrinho ou no grid (index 0), seta esquerda volta para a busca/categorias
-          if (_focoNoCarrinho || (!_focoNasCategorias && _gridSelectedIndex < 0)) {
+          // Estando no carrinho: seta esquerda volta para busca
+          if (_focoNoCarrinho) {
             _buscaFocusNode.requestFocus();
             setState(() {
               _focoNoCarrinho = false;
@@ -5066,6 +5088,12 @@ o padrão padrão (sem opções avançadas).
               _gridSelectedIndex = -1;
               _categoriaSelectedIndex = -1;
             });
+            return KeyEventResult.handled;
+          }
+
+          // Fora do grid/carrinho/categorias (“modo lançar novo item”): seta ← decrementa QTD
+          if (!_focoNoCarrinho && !_focoNasCategorias && _gridSelectedIndex < 0 && _quantidadeDigitada > 1) {
+            setState(() => _quantidadeDigitada--);
             return KeyEventResult.handled;
           }
         }
@@ -5169,6 +5197,15 @@ o padrão padrão (sem opções avançadas).
         // Delete/Backspace - Remover do carrinho
         if (key == LogicalKeyboardKey.delete ||
             key == LogicalKeyboardKey.backspace) {
+          // Shift + Del → limpar TODO o carrinho
+          final shiftPressed = HardwareKeyboard.instance.isShiftPressed;
+          if (key == LogicalKeyboardKey.delete && shiftPressed) {
+            if (_carrinho.isNotEmpty) {
+              _limparCarrinho();
+            }
+            return KeyEventResult.handled;
+          }
+          // Del normal → remover item selecionado no carrinho
           if (_focoNoCarrinho &&
               _cartSelectedIndex >= 0 &&
               _cartSelectedIndex < _carrinho.length) {
@@ -6157,6 +6194,7 @@ o padrão padrão (sem opções avançadas).
           _buildItemLegenda('ENTER', 'ADICIONAR'),
           _buildItemLegenda('+', 'QUANTIDADE'),
           _buildItemLegenda('DEL', 'REMOVER'),
+          _buildItemLegenda('⇧+DEL', 'LIMPAR TUDO'),
           _buildItemLegenda('F8', 'SALVAR'),
           _buildItemLegenda('F9', 'RECEBER', isPrimary: true),
         ],
@@ -7064,6 +7102,20 @@ o padrão padrão (sem opções avançadas).
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
+                          const SizedBox(width: 8),
+                          // Botão EDITAR
+                          GestureDetector(
+                            onTap: () {
+                              final dataService = Provider.of<DataService>(context, listen: false);
+                               _editarCliente(dataService, _clienteSelecionado!);
+                            },
+                            child: Icon(
+                              Icons.edit,
+                              color: Colors.orangeAccent.withOpacity(0.7),
+                              size: 14,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
                           GestureDetector(
                             onTap: () {
                               setState(() => _clienteSelecionado = null);
@@ -8511,6 +8563,25 @@ class _SeletorClienteWidgetState extends State<_SeletorClienteWidget> {
                     ],
                   ),
                 ),
+                // Botão Editar
+                IconButton(
+                  icon: const Icon(Icons.edit, color: Colors.white54, size: 20),
+                  onPressed: () async {
+                    final resultado = await Navigator.push<Cliente>(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => ClienteDetalhesPage(cliente: cliente),
+                      ),
+                    );
+                    if (resultado != null && mounted) {
+                      // Se o cliente foi editado, atualizar na lista (via dataService)
+                      // O dataService já é atualizado dentro da ClienteDetalhesPage
+                      // Mas talvez precisemos forçar um refresh aqui se não for via Provider
+                      setState(() {});
+                    }
+                  },
+                  tooltip: 'Editar cliente',
+                ),
                 // Indicador de seleção
                 if (isSelected)
                   const Icon(
@@ -8556,6 +8627,7 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
   final _formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
   final _formatoData = DateFormat('dd/MM/yyyy');
   final FocusNode _focusNode = FocusNode();
+  int _selectedPaymentIndex = -1; // índice do pagamento selecionado na lista
 
   @override
   void initState() {
@@ -9028,6 +9100,7 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
     double valorSugerido, {
     PagamentoPedido? pagamentoExistente,
   }) {
+    final valorFocusNode = FocusNode();
     final valorController = TextEditingController(
       text: valorSugerido.toStringAsFixed(2),
     );
@@ -9209,6 +9282,20 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
                 }
               }
 
+              // Seta direita: preenche o campo valor com o valor sugerido e foca nele
+              if (key == LogicalKeyboardKey.arrowRight) {
+                setDialogState(() {
+                  valorController.text = valorSugerido.toStringAsFixed(2);
+                  valorController.selection = TextSelection.fromPosition(
+                    TextPosition(offset: valorController.text.length),
+                  );
+                  if (isDinheiro) calcularTroco();
+                });
+                valorFocusNode.requestFocus();
+                return KeyEventResult.handled;
+              }
+
+
               return KeyEventResult.ignored;
             },
             child: AlertDialog(
@@ -9251,7 +9338,8 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
                     const SizedBox(height: 6),
                     TextField(
                       controller: valorController,
-                      autofocus: true,
+                      focusNode: valorFocusNode,
+                      autofocus: false,
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 20,
@@ -9984,10 +10072,69 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
           return KeyEventResult.handled;
         }
 
-        // ENTER para finalizar se houver pagamentos
-        if (key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.numpadEnter) {
+        // Navegar lista de pagamentos com ↑/↓
+        if (key == LogicalKeyboardKey.arrowDown) {
           if (_pagamentos.isNotEmpty) {
+            setState(() {
+              _selectedPaymentIndex =
+                  (_selectedPaymentIndex + 1).clamp(0, _pagamentos.length - 1);
+            });
+          }
+          return KeyEventResult.handled;
+        }
+        if (key == LogicalKeyboardKey.arrowUp) {
+          if (_pagamentos.isNotEmpty) {
+            setState(() {
+              if (_selectedPaymentIndex <= 0) {
+                _selectedPaymentIndex = -1; // volta ao estado sem seleção
+              } else {
+                _selectedPaymentIndex--;
+              }
+            });
+          }
+          return KeyEventResult.handled;
+        }
+
+        // DEL: remove o pagamento selecionado
+        if (key == LogicalKeyboardKey.delete) {
+          if (_selectedPaymentIndex >= 0 && _selectedPaymentIndex < _pagamentos.length) {
+            _removerPagamento(_selectedPaymentIndex);
+            setState(() {
+              if (_pagamentos.isEmpty) {
+                _selectedPaymentIndex = -1;
+              } else {
+                _selectedPaymentIndex =
+                    _selectedPaymentIndex.clamp(0, _pagamentos.length - 1);
+              }
+            });
+          }
+          return KeyEventResult.handled;
+        }
+
+        // ENTER para finalizar se houver pagamentos E valor completo
+        if (key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.numpadEnter) {
+          if (_pagamentos.isNotEmpty && _pagamentoCompleto) {
             widget.onConfirmar(_pagamentos);
+          } else if (_pagamentos.isNotEmpty && !_pagamentoCompleto) {
+            // Avisar que falta valor
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Row(
+                  children: [
+                    const Icon(Icons.warning_amber, color: Colors.white),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'Faltam ${_formatoMoeda.format(_valorRestante)} para cobrir o total da venda',
+                      ),
+                    ),
+                  ],
+                ),
+                backgroundColor: Colors.orange.shade800,
+                behavior: SnackBarBehavior.floating,
+                duration: const Duration(seconds: 3),
+              ),
+            );
           }
           return KeyEventResult.handled;
         }
@@ -10200,69 +10347,81 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
                       itemCount: _pagamentos.length,
                       itemBuilder: (context, index) {
                         final pagamento = _pagamentos[index];
-                        return Container(
-                          margin: const EdgeInsets.only(bottom: 8),
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.05),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Row(
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.all(8),
-                                decoration: BoxDecoration(
-                                  color: _getCorTipo(
-                                    pagamento.tipo,
-                                  ).withOpacity(0.2),
-                                  borderRadius: BorderRadius.circular(8),
+                        final isSelected = index == _selectedPaymentIndex;
+                        return GestureDetector(
+                          onTap: () => setState(() => _selectedPaymentIndex = index),
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 150),
+                            margin: const EdgeInsets.only(bottom: 8),
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: isSelected
+                                  ? Colors.orange.withOpacity(0.12)
+                                  : Colors.white.withOpacity(0.05),
+                              borderRadius: BorderRadius.circular(12),
+                              border: isSelected
+                                  ? Border.all(color: Colors.orange, width: 1.5)
+                                  : null,
+                            ),
+                            child: Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    color: _getCorTipo(
+                                      pagamento.tipo,
+                                    ).withOpacity(0.2),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Icon(
+                                    _getIconeTipo(pagamento.tipo),
+                                    color: _getCorTipo(pagamento.tipo),
+                                    size: 18,
+                                  ),
                                 ),
-                                child: Icon(
-                                  _getIconeTipo(pagamento.tipo),
-                                  color: _getCorTipo(pagamento.tipo),
-                                  size: 18,
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      pagamento.tipo.nome,
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                    if (pagamento.isParcela)
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
                                       Text(
-                                        'Parcela ${pagamento.numeroParcela}/${pagamento.parcelas}',
+                                        pagamento.tipo.nome,
                                         style: TextStyle(
-                                          color: Colors.white.withOpacity(0.5),
-                                          fontSize: 11,
+                                          color: isSelected ? Colors.orange : Colors.white,
+                                          fontWeight: FontWeight.w500,
                                         ),
                                       ),
-                                  ],
+                                      if (pagamento.isParcela)
+                                        Text(
+                                          'Parcela ${pagamento.numeroParcela}/${pagamento.parcelas}',
+                                          style: TextStyle(
+                                            color: Colors.white.withOpacity(0.5),
+                                            fontSize: 11,
+                                          ),
+                                        ),
+                                    ],
+                                  ),
                                 ),
-                              ),
-                              Text(
-                                _formatoMoeda.format(pagamento.valor),
-                                style: TextStyle(
-                                  color: _getCorTipo(pagamento.tipo),
-                                  fontWeight: FontWeight.bold,
+                                Text(
+                                  _formatoMoeda.format(pagamento.valor),
+                                  style: TextStyle(
+                                    color: isSelected ? Colors.orange : _getCorTipo(pagamento.tipo),
+                                    fontWeight: FontWeight.bold,
+                                  ),
                                 ),
-                              ),
-                              const SizedBox(width: 8),
-                              GestureDetector(
-                                onTap: () => _removerPagamento(index),
-                                child: Icon(
-                                  Icons.close,
-                                  color: Colors.white.withOpacity(0.3),
-                                  size: 18,
+                                const SizedBox(width: 8),
+                                GestureDetector(
+                                  onTap: () => _removerPagamento(index),
+                                  child: Icon(
+                                    Icons.close,
+                                    color: isSelected
+                                        ? Colors.orange.withOpacity(0.8)
+                                        : Colors.white.withOpacity(0.3),
+                                    size: 18,
+                                  ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         );
                       },
@@ -10300,17 +10459,17 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
                 ),
                 const SizedBox(height: 10),
                 // Botão Finalizar
-                SizedBox(
+                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
-                    onPressed: _pagamentos.isEmpty
+                    onPressed: (_pagamentos.isEmpty || !_pagamentoCompleto)
                         ? null
                         : () => widget.onConfirmar(_pagamentos),
                     icon: const Icon(Icons.check_circle, size: 24),
                     label: Text(
                       _pagamentoCompleto
                           ? 'FINALIZAR VENDA'
-                          : 'FINALIZAR (${_formatoMoeda.format(_valorRestante)} pendente)',
+                          : 'FALTA ${_formatoMoeda.format(_valorRestante)}',
                       style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
@@ -10319,7 +10478,7 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
                     style: ElevatedButton.styleFrom(
                       backgroundColor: _pagamentoCompleto
                           ? Colors.green
-                          : Colors.orange,
+                          : Colors.red.shade800,
                       foregroundColor: Colors.white,
                       disabledBackgroundColor: Colors.grey.withOpacity(0.3),
                       padding: const EdgeInsets.symmetric(vertical: 16),

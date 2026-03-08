@@ -64,6 +64,23 @@ class DataService extends ChangeNotifier {
   final List<LinkVendedor> _linksVendedores = [];
   final List<ComissaoVendedor> _comissoesVendedores = [];
   
+  // Monitor de Bridge (NFC-e)
+  List<Map<String, dynamic>> _bridgesStatus = [];
+  StreamSubscription? _bridgeSubscription;
+  
+  List<Map<String, dynamic>> get bridgesStatus => _bridgesStatus;
+  int get bridgeOnlineCount => _bridgesStatus.where((b) => b['online'] == true && !b['id'].toString().startsWith('watchdog_')).length;
+
+  /// Verifica se existe algum bridge online para um CNPJ específico
+  bool isEmpresaBridgeOnline(String? cnpj) {
+    if (cnpj == null || cnpj.isEmpty) return false;
+    final cnpjLimpo = cnpj.replaceAll(RegExp(r'[^0-9]'), '');
+    return _bridgesStatus.any((b) {
+      final bCnpj = b['ultimo_cnpj']?.toString().replaceAll(RegExp(r'[^0-9]'), '') ?? '';
+      return b['online'] == true && bCnpj == cnpjLimpo;
+    });
+  }
+  
   // Getters públicos
   List<AgendamentoServico> get agendamentos => agendamentosServico;
 
@@ -163,12 +180,14 @@ class DataService extends ChangeNotifier {
     _produtosSubscription?.cancel();
     _servicosSubscription?.cancel();
     _empresaSubscription?.cancel();
+    _bridgeSubscription?.cancel();
     
     _syncTimer = null;
     _agendamentosSubscription = null;
     _produtosSubscription = null;
     _servicosSubscription = null;
     _empresaSubscription = null;
+    _bridgeSubscription = null;
   }
   String get instanceId => _instanceId;
   bool get firebaseHabilitado => _firebaseHabilitado;
@@ -394,6 +413,9 @@ class DataService extends ChangeNotifier {
         }
       });
     }
+
+    // Iniciar monitor de Bridge NFC-e
+    _reiniciarMonitorBridge();
 
     // Iniciar timer de sincronização automática
     _reiniciarTimerSincronizacao();
@@ -6006,10 +6028,34 @@ class DataService extends ChangeNotifier {
       }
     } catch (e) {
       debugPrint('>>> [DataService] Erro ao carregar mais vendas: $e');
-    } finally {
+    }
+    finally {
       _carregandoMaisVendas = false;
       notifyListeners();
     }
+  }
+
+  void _reiniciarMonitorBridge() {
+    _bridgeSubscription?.cancel();
+    debugPrint('>>> [BridgeMonitor] 📡 Iniciando monitor de presença global...');
+    
+    _bridgeSubscription = FirebaseFirestore.instance
+        .collection('bridge_status')
+        .snapshots()
+        .listen((snapshot) {
+      _bridgesStatus = snapshot.docs.map((doc) {
+        final data = doc.data();
+        return {
+          'id': doc.id,
+          ...data,
+        };
+      }).toList();
+      
+      debugPrint('>>> [BridgeMonitor] 🖥️ Status atualizado: $bridgeOnlineCount terminais online.');
+      notifyListeners();
+    }, onError: (e) {
+      debugPrint('>>> [BridgeMonitor] ❌ Erro: $e');
+    });
   }
 }
 
