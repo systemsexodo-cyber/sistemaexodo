@@ -112,6 +112,7 @@ class NFCeItem {
   final double valorTotal;
   final String? origem;
   final String? csosn;
+  final String? icmsCst;
   final double? icmsAliquota;
 
   NFCeItem({
@@ -126,6 +127,7 @@ class NFCeItem {
     required this.valorTotal,
     this.origem,
     this.csosn,
+    this.icmsCst,
     this.icmsAliquota,
   });
 
@@ -142,6 +144,7 @@ class NFCeItem {
       valorTotal: (map['valorTotal'] as num?)?.toDouble() ?? 0.0,
       origem: map['origem'],
       csosn: map['csosn'],
+      icmsCst: map['icmsCst'],
       icmsAliquota: (map['icmsAliquota'] as num?)?.toDouble(),
     );
   }
@@ -159,6 +162,7 @@ class NFCeItem {
       'valorTotal': valorTotal,
       'origem': origem,
       'csosn': csosn,
+      'icmsCst': icmsCst,
       'icmsAliquota': icmsAliquota,
     };
   }

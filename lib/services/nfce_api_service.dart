@@ -115,14 +115,19 @@ class NFCeApiService {
       itens.add({
         'codigo_produto': produto.codigo ?? produto.id,
         'descricao': produto.nome,
-        'ncm': produto.ncm ?? '00000000',
-        'cfop': produto.cfop ?? '5102',
+        'ncm': produto.ncm?.replaceAll(RegExp(r'[^0-9]'), '') ?? '00000000',
+        
+        String cfopFinal = produto.cfop?.replaceAll(RegExp(r'[^0-9]'), '') ?? '5102';
+        if ((produto.csosn == '500' || produto.icmsCst == '60') && (cfopFinal == '5102' || cfopFinal == '5101')) {
+          cfopFinal = '5405';
+        }
+        'cfop': cfopFinal,
         'unidade_comercial': produto.unidade,
         'quantidade_comercial': quantidade.toStringAsFixed(3),
         'valor_unitario_comercial': valorUnitario.toStringAsFixed(2),
         'valor_total': valorTotalItem.toStringAsFixed(2),
         'icms_origem': produto.origem ?? '0',
-        'icms_situacao_tributaria': produto.csosn ?? produto.icmsCst ?? '102',
+        'icms_situacao_tributaria': (empresa.crt == 3) ? (produto.icmsCst ?? '00') : (produto.csosn ?? '102'),
         'icms_aliquota': (produto.icmsAliquota ?? 0).toStringAsFixed(2),
         if (produto.codigoBarras != null)
           'codigo_barras_comercial': produto.codigoBarras,

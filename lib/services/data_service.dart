@@ -2533,6 +2533,7 @@ class DataService extends ChangeNotifier {
       if (!_firebaseHabilitado) debugPrint('>>> [NotaEntrada] Motivo: Firebase NÃO está habilitado');
       if (_empresaIdAtual == null) debugPrint('>>> [NotaEntrada] Motivo: Empresa NÃO está selecionada');
     }
+    _sincronizarNotasComDrive();
   }
 
   void updateNotaEntrada(NotaEntrada nota) {
@@ -5567,6 +5568,7 @@ class DataService extends ChangeNotifier {
         _adicionarSincronizacaoPendente();
       });
     }
+    _sincronizarNotasComDrive();
   }
 
   /// Atualiza uma NFC-e existente

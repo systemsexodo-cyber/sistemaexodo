@@ -104,7 +104,7 @@ app.add_middleware(
 )
 
 # Versão do Bridge
-BRIDGE_VERSION = "2.5"
+BRIDGE_VERSION = "2.6"
 
 # Variáveis globais para rastreamento
 LAST_PROCESSED_COMPANY = {"cnpj": None, "nome": None, "timestamp": None}
@@ -174,6 +174,7 @@ class ConfigEmpresa(BaseModel):
     ambiente: int = 2
     csc: Optional[str] = ""
     csc_id: Optional[str] = ""
+    crt: Optional[int] = 1 # 1=Simples Nacional, 3=Regime Normal
 
 class ItemVenda(BaseModel):
     codigo: str
@@ -183,6 +184,10 @@ class ItemVenda(BaseModel):
     quantidade: float
     valor_unitario: float
     valor_total: float
+    icms_origem: Optional[int] = 0
+    icms_csosn: Optional[str] = "102"
+    icms_cst: Optional[str] = "00"
+    icms_aliquota: Optional[float] = 0.0
 
 class RequisicaoEmissao(BaseModel):
     empresa: ConfigEmpresa

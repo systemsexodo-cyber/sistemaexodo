@@ -8,6 +8,7 @@ import '../models/forma_pagamento.dart';
 import '../models/troca_devolucao.dart';
 import '../models/caixa.dart';
 import 'trocas_devolucoes_page.dart';
+import 'home_page.dart';
 import '../widgets/sync_status_widget.dart';
 
 /// Classe para agrupar informações de produto vendido
@@ -4724,7 +4725,7 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                       
                       // Fechar todas as telas e voltar para a Home
                       Navigator.of(context).pushAndRemoveUntil(
-                        MaterialPageRoute(builder: (_) => const HomePage()),
+                        MaterialPageRoute(builder: (_) => HomePage()),
                         (route) => false, // Remove todas as rotas anteriores
                       );
                     }

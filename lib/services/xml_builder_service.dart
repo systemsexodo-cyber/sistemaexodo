@@ -170,7 +170,12 @@ class XMLBuilderService {
           }
           builder.element('xProd', nest: produto.nome);
           builder.element('NCM', nest: produto.ncm ?? '00000000');
-          builder.element('CFOP', nest: produto.cfop ?? '5102');
+          
+          String cfopFinal = produto.cfop ?? '5102';
+          if ((produto.csosn == '500' || produto.icmsCst == '60') && (cfopFinal == '5102' || cfopFinal == '5101')) {
+            cfopFinal = '5405';
+          }
+          builder.element('CFOP', nest: cfopFinal);
           builder.element('uCom', nest: produto.unidade);
           builder.element('qCom', nest: quantidade.toStringAsFixed(4));
           builder.element('vUnCom', nest: produto.preco.toStringAsFixed(4));
@@ -193,10 +198,11 @@ class XMLBuilderService {
   void _buildImposto(xml.XmlBuilder builder, Produto produto) {
     builder.element('ICMS', nest: () {
       if (produto.csosn != null) {
-        // Simples Nacional
-        builder.element('ICMSSN102', nest: () {
+        // Simples Nacional - O nome da tag depende do CSOSN (ex: ICMSSN102, ICMSSN900, etc)
+        final String tagCSOSN = 'ICMSSN${produto.csosn}';
+        builder.element(tagCSOSN, nest: () {
           builder.element('orig', nest: produto.origem ?? '0');
-          builder.element('CSOSN', nest: produto.csosn ?? '102');
+          builder.element('CSOSN', nest: produto.csosn);
         });
       } else {
         // Regime Normal

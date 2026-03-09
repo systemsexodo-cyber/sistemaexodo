@@ -730,6 +730,7 @@ class NFCeBackendService implements NFCeServiceBase {
       'senhaCertificado': empresa.senhaCertificado ?? '',
       'ambiente': (empresa.ambienteHomologacao ?? true) ? 2 : 1,
       'codigo_municipio': empresa.codigoIBGE ?? '',
+      'crt': empresa.crt ?? 1, // 1 = Simples Nacional, 3 = Normal
       'configuracoes': configuracoes,
     };
     
@@ -756,19 +757,34 @@ class NFCeBackendService implements NFCeServiceBase {
       final valorUnitario = produto.precoAtual; // Usa preço atual (com promoção se houver)
       final valorTotal = quantidade * valorUnitario;
       
+      // Inteligência Fiscal: Auto-correção de CFOP para ST
+      String cfopFinal = produto.cfop?.replaceAll(RegExp(r'[^0-9]'), '') ?? '5102';
+      final csosnFinal = produto.csosn ?? '102';
+      final cstFinal = produto.icmsCst ?? '00';
+      
+      // Se CSOSN 500 ou CST 60 (ST), o CFOP deve ser 5405 para venda interna
+      if ((csosnFinal == '500' || cstFinal == '60') && (cfopFinal == '5102' || cfopFinal == '5101')) {
+        cfopFinal = '5405';
+      }
+
       return {
         'codigo': produto.codigo ?? produto.id,
         'descricao': produto.nome,
-        'ncm': produto.ncm ?? '00000000',
-        'cfop': produto.cfop ?? '5102',
+        'ncm': produto.ncm?.replaceAll(RegExp(r'[^0-9]'), '') ?? '00000000',
+        'cfop': cfopFinal,
         'unidade': produto.unidade ?? 'UN',
         'quantidade': quantidade,
         'valor_unitario': valorUnitario,
         'valor_total': valorTotal,
-        'icms': {
-          'cst': '00',
-          'aliquota': 18.0,
-        },
+        // Campos fiscais achatados para o backend Python
+        'icms_origem': int.tryParse(produto.origem ?? '0') ?? 0,
+        'icms_csosn': (empresa.crt == null || empresa.crt != 3) ? (produto.csosn ?? '102') : null,
+        'icms_cst': (empresa.crt == 3) ? (produto.icmsCst ?? '00') : null,
+        'icms_aliquota': produto.icmsAliquota ?? (empresa.crt == 3 ? 18.0 : 0.0),
+        'pis_cst': produto.pisCst ?? '07',
+        'pis_aliquota': produto.pisAliquota ?? 0.0,
+        'cofins_cst': produto.cofinsCst ?? '07',
+        'cofins_aliquota': produto.cofinsAliquota ?? 0.0,
       };
     }).toList();
     
@@ -829,19 +845,26 @@ class NFCeBackendService implements NFCeServiceBase {
       final valorUnitario = produto.precoAtual; // Usa preço atual (com promoção se houver)
       final valorTotalItem = quantidade * valorUnitario;
       
+      // Aplicar mesma inteligência na criação do objeto local
+      String cfopFinal = produto.cfop ?? '5102';
+      if ((produto.csosn == '500' || produto.icmsCst == '60') && (cfopFinal == '5102' || cfopFinal == '5101')) {
+        cfopFinal = '5405';
+      }
+
       return NFCeItem(
         produtoId: produto.id,
         codigo: produto.codigo ?? produto.id,
         descricao: produto.nome,
         ncm: produto.ncm ?? '00000000',
-        cfop: produto.cfop ?? '5102',
+        cfop: cfopFinal,
         unidade: produto.unidade ?? 'UN',
         quantidade: quantidade,
         valorUnitario: valorUnitario,
         valorTotal: valorTotalItem,
         origem: produto.origem ?? '0',
-        csosn: '102', // Simples Nacional sem tributação
-        icmsAliquota: 0.0,
+        csosn: produto.csosn ?? '102',
+        icmsCst: produto.icmsCst,
+        icmsAliquota: produto.icmsAliquota ?? 0.0,
       );
     }).toList();
     

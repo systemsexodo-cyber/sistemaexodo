@@ -464,7 +464,7 @@ def emitir_nfce_pynfe(req):
             razao_social=razao_limpa,
             nome_fantasia=emp.nome_fantasia,
             inscricao_estadual=emp.inscricao_estadual,
-            codigo_de_regime_tributario='1', # 1=Simples Nacional
+            codigo_de_regime_tributario=str(emp.crt or '1'), # Usa o CRT vindo da requisição
             endereco_logradouro=emp.logradouro,
             endereco_numero=str(emp.numero),
             endereco_bairro=emp.bairro,
@@ -531,7 +531,7 @@ def emitir_nfce_pynfe(req):
                 descricao = 'NOTA FISCAL EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL'
             
             # No pynfe 0.6.5 use adicionar_produto_servico diretamente da NotaFiscal
-            nota_fiscal.adicionar_produto_servico(
+            p_nfe = nota_fiscal.adicionar_produto_servico(
                 codigo=item.codigo,
                 descricao=descricao,
                 ncm=item.ncm,
@@ -545,9 +545,17 @@ def emitir_nfce_pynfe(req):
                 valor_unitario_tributavel=Decimal(str(item.valor_unitario)).quantize(Decimal('0.0000001')),
                 ean='SEM GTIN',
                 ean_tributavel='SEM GTIN',
-                icms_origem=0,
-                icms_modalidade='102'
+                icms_origem=item.icms_origem or 0,
+                icms_modalidade=item.icms_cst if str(emp.crt) == '3' else item.icms_csosn
             )
+            
+            # Garantir CSOSN ou CST explicitamente (Monkeypatch do pynfe)
+            if str(emp.crt) == '3':
+                p_nfe.icms_cst = item.icms_cst or '00'
+                p_nfe.icms_aliquota = Decimal(str(item.icms_aliquota or 0.0))
+            else:
+                p_nfe.icms_csosn = item.icms_csosn or '102'
+                p_nfe.icms_aliquota = Decimal('0.00')
 
         # Assinatura
         assinatura = AssinaturaA1(caminho_cert, senha_cert)
