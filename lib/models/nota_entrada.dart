@@ -88,6 +88,7 @@ class NotaEntrada {
   final double? valorTotal; // Valor total da nota
   final String? serie; // Série da nota
   final String? modelo; // Modelo da nota (55 = NFe)
+  final String? xmlOriginal; // Conteúdo bruto do XML para backup
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -107,6 +108,7 @@ class NotaEntrada {
     this.valorTotal,
     this.serie,
     this.modelo,
+    this.xmlOriginal,
     DateTime? createdAt,
     DateTime? updatedAt,
   })  : createdAt = createdAt ?? DateTime.now(),
@@ -138,6 +140,7 @@ class NotaEntrada {
       valorTotal: map['valorTotal'] != null ? (map['valorTotal'] as num).toDouble() : null,
       serie: map['serie'],
       modelo: map['modelo'],
+      xmlOriginal: map['xmlOriginal'],
       createdAt: map['createdAt'] != null ? DateTime.parse(map['createdAt']) : DateTime.now(),
       updatedAt: map['updatedAt'] != null ? DateTime.parse(map['updatedAt']) : DateTime.now(),
     );
@@ -160,6 +163,7 @@ class NotaEntrada {
       'valorTotal': valorTotal,
       'serie': serie,
       'modelo': modelo,
+      'xmlOriginal': xmlOriginal,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
     };
@@ -181,6 +185,7 @@ class NotaEntrada {
     double? valorTotal,
     String? serie,
     String? modelo,
+    String? xmlOriginal,
   }) {
     return NotaEntrada(
       id: id ?? this.id,
@@ -198,6 +203,7 @@ class NotaEntrada {
       valorTotal: valorTotal ?? this.valorTotal,
       serie: serie ?? this.serie,
       modelo: modelo ?? this.modelo,
+      xmlOriginal: xmlOriginal ?? this.xmlOriginal,
     );
   }
 

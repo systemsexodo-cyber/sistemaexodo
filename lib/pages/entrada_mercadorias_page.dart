@@ -11,6 +11,8 @@ import '../services/codigo_service.dart';
 import '../services/grupos_manager.dart';
 import '../theme.dart';
 import 'package:intl/intl.dart';
+import '../services/google_drive_service.dart';
+import '../services/auth_service.dart';
 import '../widgets/sync_status_widget.dart';
 
 class EntradaMercadoriasPage extends StatefulWidget {
@@ -34,6 +36,7 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
   int _abaAtiva = 0; // 0 = Itens, 1 = Notas
   String? _notaRascunhoId; // ID da nota rascunho atual
   String? _numeroNotaReal; // Número real da nota fiscal (do XML)
+  String? _xmlRawContent; // Conteúdo bruto do XML para backup
   
   // Filtros e busca para aba de Notas
   final TextEditingController _buscaNotasController = TextEditingController();
@@ -608,9 +611,16 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
         setState(() {
           _carregando = false;
           _modo = 'xml';
+          _xmlRawContent = xmlString; // Salvar conteúdo bruto
         });
         
         print('>>> Estado atualizado, _itens.length = ${_itens.length}');
+
+        // Tentar salvar no Google Drive se identificado
+        if (_chaveNFe != null && _xmlRawContent != null) {
+          final authService = Provider.of<AuthService>(context, listen: false);
+          _salvarXmlNoDrive(_chaveNFe!, _xmlRawContent!, _dataEmissao, authService);
+        }
 
         // Mostrar mensagens apropriadas
         if (_itens.isEmpty) {
@@ -1510,6 +1520,29 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
       _abaAtiva = 1; // Ir para a aba de notas para ver a nota processada
       _busca = ''; // Limpar busca
       _buscaController.clear(); // Limpar campo de busca
+    });
+  }
+
+  /// Salva o XML da nota de entrada no Google Drive de forma assíncrona
+  void _salvarXmlNoDrive(String chave, String xml, DateTime? emissao, AuthService auth) {
+    if (auth.empresaAtual == null) return;
+    
+    Future.microtask(() async {
+      try {
+        debugPrint('>>> [EntradaDrive] Tentando organizar XML no Drive: $chave');
+        final sucesso = await GoogleDriveService.instance.salvarNotaXml(
+          empresa: auth.empresaAtual!,
+          tipoNota: 'Entrada',
+          chaveAcesso: chave,
+          conteudoXml: xml,
+          dataEmissao: emissao,
+        );
+        if (sucesso) {
+          debugPrint('>>> [EntradaDrive] ✅ XML de entrada organizado com sucesso!');
+        }
+      } catch (e) {
+        debugPrint('>>> [EntradaDrive] ❌ Erro ao salvar XML: $e');
+      }
     });
   }
 

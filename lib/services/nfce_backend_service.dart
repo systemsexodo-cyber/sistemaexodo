@@ -886,24 +886,20 @@ class NFCeBackendService implements NFCeServiceBase {
     // Rodar em background para não travar a UI
     Future.microtask(() async {
       try {
-        final cnpj = empresa.cnpj?.replaceAll(RegExp(r'[^0-9]'), '') ?? 'ignorado';
-        final mesAno = DateFormat('yyyy-MM').format(DateTime.now());
-        final nomeArquivo = '${nfce.chaveAcesso}-nfe.xml';
-        final caminhoPasta = 'Contabilidade/$cnpj/$mesAno';
-
-        debugPrint('>>> [NFCeDrive] Tentando salvar XML no Drive: $nomeArquivo');
+        debugPrint('>>> [NFCeDrive] Tentando salvar XML no Drive: ${nfce.chaveAcesso}');
         
-        final sucesso = await GoogleDriveService.instance.salvarArquivo(
-          nomeArquivo: nomeArquivo,
-          conteudo: nfce.xmlEnviado!,
-          caminhoPasta: caminhoPasta,
-          mimeType: 'application/xml',
+        final sucesso = await GoogleDriveService.instance.salvarNotaXml(
+          empresa: empresa,
+          tipoNota: 'NFCe',
+          chaveAcesso: nfce.chaveAcesso ?? nfce.id,
+          conteudoXml: nfce.xmlEnviado!,
+          dataEmissao: nfce.dataEmissao,
         );
 
         if (sucesso) {
-          debugPrint('>>> [NFCeDrive] ✅ XML salvo com sucesso no Google Drive!');
+          debugPrint('>>> [NFCeDrive] ✅ XML organizado com sucesso no Google Drive!');
         } else {
-          debugPrint('>>> [NFCeDrive] ⚠️ Falha ao salvar XML no Drive (verifique login)');
+          debugPrint('>>> [NFCeDrive] ⚠️ Falha ao organizar XML no Drive (verifique login)');
         }
       } catch (e) {
         debugPrint('>>> [NFCeDrive] ❌ Erro ao processar salvamento no Drive: $e');

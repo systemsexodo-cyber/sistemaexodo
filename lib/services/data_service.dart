@@ -26,6 +26,7 @@ import 'package:sistema_exodo_novo/services/firebase_service.dart';
 import 'package:sistema_exodo_novo/services/sync_queue_service.dart';
 import 'package:sistema_exodo_novo/services/whatsapp_service.dart';
 import 'package:sistema_exodo_novo/models/empresa.dart';
+import 'package:sistema_exodo_novo/services/google_drive_service.dart';
 import 'package:uuid/uuid.dart';
 
 import 'package:audioplayers/audioplayers.dart';
@@ -63,6 +64,10 @@ class DataService extends ChangeNotifier {
   final List<MesaComanda> _mesasComandas = [];
   final List<LinkVendedor> _linksVendedores = [];
   final List<ComissaoVendedor> _comissoesVendedores = [];
+  
+  // Controle de sincronização Google Drive
+  final Set<String> _notasSincronizadasDrive = {};
+  bool _syncDriveEmAndamento = false;
   
   // Monitor de Bridge (NFC-e)
   List<Map<String, dynamic>> _bridgesStatus = [];
@@ -126,6 +131,15 @@ class DataService extends ChangeNotifier {
   List<SangriaCaixa> get sangrias => _sangrias;
   List<SuprimentoCaixa> get suprimentos => _suprimentos;
   List<NotaEntrada> get notasEntrada => _notasEntrada;
+  List<NFCe> get nfces => _nfces;
+
+  /// Retorna as NFC-es autorizadas em um período específico
+  List<NFCe> getNfcesPorPeriodo(DateTime inicio, DateTime fim) {
+    return _nfces.where((n) {
+      if (n.status != 'autorizada') return false;
+      return n.dataEmissao.isAfter(inicio) && n.dataEmissao.isBefore(fim);
+    }).toList();
+  }
 
   /// Última abertura de caixa que ainda não possui fechamento
   AberturaCaixa? get aberturaCaixaAtual {
@@ -1597,7 +1611,6 @@ class DataService extends ChangeNotifier {
     final ids = <String>{};
     return _agendamentosServico.where((a) => ids.add(a.id)).toList();
   }
-  List<NFCe> get nfces => _nfces;
   List<LinkVendedor> get linksVendedores => _linksVendedores;
   List<ComissaoVendedor> get comissoesVendedores => _comissoesVendedores;
 
@@ -4733,11 +4746,27 @@ class DataService extends ChangeNotifier {
         print('>>> ✓ Nenhuma comissão de vendedor encontrada no Firebase para empresa $_empresaIdAtual');
       }
 
+      // Carregar NFC-es - ISOLAMENTO: Apenas dados da empresa atual do Firebase
+      if (dados['nfces'] != null && dados['nfces'].isNotEmpty) {
+        final novasNfces = (dados['nfces'] as List)
+            .map((map) => NFCe.fromMap(map as Map<String, dynamic>))
+            .toList();
+        // ISOLAMENTO: Firebase já filtra por empresaId
+        _nfces.clear();
+        _nfces.addAll(novasNfces);
+        print('>>> ✓ ${novasNfces.length} NFC-es carregadas do Firebase para empresa $_empresaIdAtual (isoladas)');
+      } else {
+        print('>>> ✓ Nenhuma NFC-e encontrada no Firebase para empresa $_empresaIdAtual');
+      }
+
       // NOTA: Removido o salvamento forçado aqui para evitar loops de carregamento/salvamento
       // await _salvarTodosDados();
       _ultimaSincronizacaoSucesso = DateTime.now();
       _ultimoErroSync = null; // Limpar erro anterior em caso de sucesso
       debugPrint('>>> [Sync] ✅ Sincronização concluída com sucesso às ${_ultimaSincronizacaoSucesso.toString()}');
+      
+      // Iniciar sincronização silenciosa com Google Drive em background
+      _sincronizarNotasComDrive();
       
     } catch (e, stackTrace) {
       _ultimoErroSync = e.toString();
@@ -4843,6 +4872,16 @@ class DataService extends ChangeNotifier {
         _atualizarListaInPlace(_tiposServico, novos);
         print('>>> ✓ ${novos.length} serviços carregados do localStorage');
       }
+
+      // Carregar NFC-es
+      final nfcesMap = await _storage.carregarLista(_getChaveComEmpresa(LocalStorageService.keyNFCes));
+      if (nfcesMap.isNotEmpty) {
+        final novos = nfcesMap.map((map) => NFCe.fromMap(map)).toList();
+        _atualizarListaInPlace(_nfces, novos);
+        print('>>> ✓ ${novos.length} NFC-es carregadas do localStorage');
+      }
+
+      print('>>> SUCESSO: Todos os dados da empresa $_empresaIdAtual carregados do localStorage');
 
       // Carregar pedidos - NÃO LIMPAR, apenas adicionar/atualizar
       final pedidosMap = await _storage.carregarLista(_getChaveComEmpresa(LocalStorageService.keyPedidos));
@@ -5181,21 +5220,7 @@ class DataService extends ChangeNotifier {
         print('>>> ✓ ${novasContas.length} contas a pagar carregadas (total: ${_contasPagar.length})');
       }
 
-      // Carregar NFC-e - NÃO LIMPAR, apenas adicionar/atualizar
-      final nfcesMap = await _storage.carregarLista(_getChaveComEmpresa(LocalStorageService.keyNFCes));
-      if (nfcesMap.isNotEmpty) {
-        final novasNFCes = nfcesMap.map((map) => NFCe.fromMap(map)).toList();
-        // Atualizar ou adicionar NFC-es (evitar duplicatas)
-        for (final nfce in novasNFCes) {
-          final index = _nfces.indexWhere((n) => n.id == nfce.id);
-          if (index >= 0) {
-            _nfces[index] = nfce; // Atualizar existente
-          } else {
-            _nfces.add(nfce); // Adicionar nova
-          }
-        }
-        print('>>> ✓ ${novasNFCes.length} NFC-e carregadas (total: ${_nfces.length})');
-      }
+      // NFC-es já foram carregadas no início do método _carregarDadosSalvos
 
       print('>>> ✓ Todos os dados salvos foram carregados');
     } catch (e) {
@@ -6056,6 +6081,87 @@ class DataService extends ChangeNotifier {
     }, onError: (e) {
       debugPrint('>>> [BridgeMonitor] ❌ Erro: $e');
     });
+  }
+
+  /// Sincroniza notas fiscais com o Google Drive de forma automática e silenciosa
+  Future<void> _sincronizarNotasComDrive() async {
+    if (_empresaAtual == null) return;
+    
+    // Evitar múltiplas execuções simultâneas
+    if (_syncDriveEmAndamento) return;
+    _syncDriveEmAndamento = true;
+
+    try {
+      debugPrint('>>> [SyncDrive] ☁️ Iniciando sincronização automática com Drive...');
+      final driveService = GoogleDriveService.instance;
+      
+      // Só tenta se estiver logado ou puder logar silenciosamente
+      if (driveService.driveApi == null) {
+        final ok = await driveService.login(silencioso: true);
+        if (!ok) {
+          debugPrint('>>> [SyncDrive] ⏭️ Sincronização Drive pulada: Usuário não logado no Google');
+          _syncDriveEmAndamento = false;
+          return;
+        }
+      }
+
+      final agora = DateTime.now();
+      final trintaDiasAtras = agora.subtract(const Duration(days: 30));
+
+      // 1. Sincronizar NFC-es Autorizadas recentes
+      final nfcesExportar = _nfces.where((n) {
+        return n.status == 'autorizada' && 
+               n.dataEmissao.isAfter(trintaDiasAtras) &&
+               !_notasSincronizadasDrive.contains(n.id);
+      }).toList();
+
+      if (nfcesExportar.isNotEmpty) {
+        debugPrint('>>> [SyncDrive] 📄 Processando ${nfcesExportar.length} NFC-es para o Drive...');
+        for (final nfce in nfcesExportar) {
+          if (nfce.xmlEnviado != null && nfce.xmlEnviado!.isNotEmpty) {
+            final ok = await driveService.salvarNotaXml(
+              empresa: _empresaAtual!,
+              tipoNota: 'NFCe',
+              chaveAcesso: nfce.chaveAcesso ?? nfce.id,
+              conteudoXml: nfce.xmlEnviado!,
+              dataEmissao: nfce.dataEmissao,
+            );
+            if (ok) _notasSincronizadasDrive.add(nfce.id);
+            // Pequeno delay para não sobrecarregar
+            await Future.delayed(const Duration(milliseconds: 300));
+          }
+        }
+      }
+
+      // 2. Sincronizar Notas de Entrada recentes
+      final entradasExportar = _notasEntrada.where((n) {
+        if (n.dataEmissao == null) return false;
+        return n.dataEmissao!.isAfter(trintaDiasAtras) &&
+               !_notasSincronizadasDrive.contains(n.id);
+      }).toList();
+
+      if (entradasExportar.isNotEmpty) {
+        debugPrint('>>> [SyncDrive] 📦 Processando ${entradasExportar.length} Notas de Entrada para o Drive...');
+        for (final nota in entradasExportar) {
+          if (nota.xmlOriginal != null && nota.xmlOriginal!.isNotEmpty) {
+            final ok = await driveService.salvarNotaXml(
+              empresa: _empresaAtual!,
+              tipoNota: 'Entrada',
+              chaveAcesso: nota.chaveNFe ?? nota.id,
+              conteudoXml: nota.xmlOriginal!,
+              dataEmissao: nota.dataEmissao,
+            );
+            if (ok) _notasSincronizadasDrive.add(nota.id);
+            await Future.delayed(const Duration(milliseconds: 300));
+          }
+        }
+      }
+      debugPrint('>>> [SyncDrive] ✅ Sincronização automática com Drive concluída.');
+    } catch (e) {
+      debugPrint('>>> [SyncDrive] ⚠️ Erro silencioso na sincronização: $e');
+    } finally {
+      _syncDriveEmAndamento = false;
+    }
   }
 }
 

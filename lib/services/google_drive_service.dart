@@ -11,6 +11,7 @@ import '../models/empresa.dart';
 import 'dart:io';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:path/path.dart' as p;
+import 'package:intl/intl.dart';
 
 class GoogleDriveService {
   static final GoogleDriveService instance = GoogleDriveService._();
@@ -32,6 +33,7 @@ class GoogleDriveService {
   bool _isServiceAccount = false;
 
   bool get isServiceAccount => _isServiceAccount;
+  drive.DriveApi? get driveApi => _driveApi;
 
   Future<bool> login({bool silencioso = false}) async {
     try {
@@ -210,6 +212,34 @@ class GoogleDriveService {
       }
     }
     return currentParentId;
+  }
+
+  /// Salva uma nota fiscal (XML) no Google Drive com organização contábil:
+  /// Contabilidade / CNPJ / ANO / MES / TIPO_NOTA / ARQUIVO.xml
+  Future<bool> salvarNotaXml({
+    required Empresa empresa,
+    required String tipoNota, // "NFCe", "NFe", "Entrada"
+    required String chaveAcesso,
+    required String conteudoXml,
+    DateTime? dataEmissao,
+  }) async {
+    final data = dataEmissao ?? DateTime.now();
+    final cnpj = empresa.cnpj?.replaceAll(RegExp(r'[^0-9]'), '') ?? '00000000000000';
+    final ano = DateFormat('yyyy').format(data);
+    final mes = DateFormat('MM').format(data);
+    
+    // Caminho organizado: Contabilidade / [CNPJ] / [ANO] / [MES] / [TIPO]
+    final caminhoPasta = 'Contabilidade/$cnpj/$ano/$mes/$tipoNota';
+    final nomeArquivo = '$chaveAcesso.xml';
+
+    debugPrint('>>> [GoogleDrive] Organizando nota no Drive: $caminhoPasta/$nomeArquivo');
+
+    return await salvarArquivo(
+      nomeArquivo: nomeArquivo,
+      conteudo: conteudoXml,
+      caminhoPasta: caminhoPasta,
+      mimeType: 'application/xml',
+    );
   }
 
   /// Salva um conteúdo (XML ou Texto) no Google Drive em uma pasta específica

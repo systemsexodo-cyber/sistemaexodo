@@ -8,7 +8,6 @@ import '../models/forma_pagamento.dart';
 import '../models/troca_devolucao.dart';
 import '../models/caixa.dart';
 import 'trocas_devolucoes_page.dart';
-import 'home_page.dart';
 import '../widgets/sync_status_widget.dart';
 
 /// Classe para agrupar informações de produto vendido
