@@ -904,8 +904,8 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                 ),
                 subtitle: Text(
                   _habilitaTaxiDog
-                      ? 'Cliente pode agendar com Taxi Dog'
-                      : 'Opções de Taxi Dog ocultas no agendamento',
+                      ? 'Cliente pode agendar com Taxi Dog no agendamento online'
+                      : 'Opções de Taxi Dog ocultas no agendamento online',
                   style: TextStyle(color: Colors.white.withOpacity(0.5)),
                 ),
                 value: _habilitaTaxiDog,

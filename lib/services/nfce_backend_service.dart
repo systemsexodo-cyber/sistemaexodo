@@ -24,6 +24,7 @@ abstract class NFCeServiceBase {
     String? nomeConsumidor,
     String? observacoes,
     bool ambienteHomologacao = true,
+    int? serie,
   });
 }
 
@@ -75,6 +76,7 @@ class NFCeBackendService implements NFCeServiceBase {
     String? nomeConsumidor,
     String? observacoes,
     bool ambienteHomologacao = true,
+    int? serie,
   }) async {
     try {
       debugPrint('>>> [NFCeBackend] Iniciando emissão via backend Python (PyNFe)...');
@@ -100,6 +102,7 @@ class NFCeBackendService implements NFCeServiceBase {
           nomeConsumidor: nomeConsumidor,
           observacoes: observacoes,
           ambienteHomologacao: ambienteHomologacao,
+          serie: serie,
         );
       }
 
@@ -115,9 +118,9 @@ class NFCeBackendService implements NFCeServiceBase {
           pagamentos: pagamentos,
           valorTotal: valorTotal,
           cpfCnpjConsumidor: cpfCnpjConsumidor,
-          nomeConsumidor: nomeConsumidor,
           observacoes: observacoes,
           ambienteHomologacao: ambienteHomologacao,
+          serie: serie,
         );
       } catch (e) {
         throw Exception('Erro ao preparar dados para emissão: $e');
@@ -421,10 +424,12 @@ class NFCeBackendService implements NFCeServiceBase {
     String? nomeConsumidor,
     String? observacoes,
     bool ambienteHomologacao = true,
+    int? serie,
   }) async {
     try {
       debugPrint('>>> [NFCeFirebase] VERSÃO DO CÓDIGO: FIX_REMOVIDO_OFFLINE_v1');
       debugPrint('>>> [NFCeFirebase] Iniciando emissão via FIRESTORE LISTENER...');
+      debugPrint('>>> [NFCeFirebase] Série customizada: ${serie ?? "não informada (usará padrão)"}');
 
       // ── VERIFICAÇÃO DE PRESENÇA ──────────────────────────────────────────
       debugPrint('>>> [NFCeFirebase] Verificando se o Bridge está rodando...');
@@ -450,6 +455,7 @@ class NFCeBackendService implements NFCeServiceBase {
         nomeConsumidor: nomeConsumidor,
         observacoes: observacoes,
         ambienteHomologacao: ambienteHomologacao,
+        serie: serie,
       );
 
       // Adicionar metadados
@@ -742,6 +748,7 @@ class NFCeBackendService implements NFCeServiceBase {
     String? nomeConsumidor,
     String? observacoes,
     bool ambienteHomologacao = true,
+    int? serie,
   }) {
     // Preparar produtos
     final produtosData = produtos.map((produto) {
@@ -782,6 +789,14 @@ class NFCeBackendService implements NFCeServiceBase {
       consumidorData['nome'] = nomeConsumidor;
     }
     
+    // Determinar série
+    int serieFinal = 1;
+    if (serie != null) {
+      serieFinal = serie;
+    } else if (empresa.serieNFCe != null && empresa.serieNFCe!.isNotEmpty) {
+      serieFinal = int.tryParse(empresa.serieNFCe!) ?? 1;
+    }
+
     return {
       'empresa': _prepararDadosEmpresa(empresa),
       'itens': produtosData, // Nome correto para o backend
@@ -791,7 +806,7 @@ class NFCeBackendService implements NFCeServiceBase {
       if (consumidorData.containsKey('cpf')) 'cpf_consumidor': consumidorData['cpf'],
       if (consumidorData.containsKey('nome')) 'nome_consumidor': consumidorData['nome'],
       'observacoes': observacoes ?? '',
-      'serie': int.tryParse(empresa.serieNFCe ?? '1') ?? 1,
+      'serie': serieFinal,
       'numero': null, // Será gerado pelo backend Python
     };
   }

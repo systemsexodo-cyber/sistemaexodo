@@ -14,6 +14,7 @@ class Usuario {
   final Set<String>? permissoesPersonalizadas; // Permissões adicionais concedidas
   final Set<String>? permissoesNegadas; // Permissões removidas do padrão
   final List<String>? telasOcultas; // Telas que o usuário não pode ver/acessar
+  final int serieNfce; // Série da NFC-e (cada usuário pode ter a sua)
   final DateTime createdAt;
   final DateTime updatedAt;
   final DateTime? ultimoAcesso;
@@ -33,6 +34,7 @@ class Usuario {
     this.permissoesPersonalizadas,
     this.permissoesNegadas,
     this.telasOcultas,
+    this.serieNfce = 1,
     required this.createdAt,
     required this.updatedAt,
     this.ultimoAcesso,
@@ -54,6 +56,7 @@ class Usuario {
     Set<String>? permissoesPersonalizadas,
     Set<String>? permissoesNegadas,
     List<String>? telasOcultas,
+    int? serieNfce,
     DateTime? createdAt,
     DateTime? updatedAt,
     DateTime? ultimoAcesso,
@@ -73,6 +76,7 @@ class Usuario {
       permissoesPersonalizadas: permissoesPersonalizadas ?? this.permissoesPersonalizadas,
       permissoesNegadas: permissoesNegadas ?? this.permissoesNegadas,
       telasOcultas: telasOcultas ?? this.telasOcultas,
+      serieNfce: serieNfce ?? this.serieNfce,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       ultimoAcesso: ultimoAcesso ?? this.ultimoAcesso,
@@ -110,6 +114,7 @@ class Usuario {
       updatedAt: map['updatedAt'] != null
           ? DateTime.parse(map['updatedAt'])
           : DateTime.now(),
+      serieNfce: map['serieNfce'] ?? 1,
       ultimoAcesso: map['ultimoAcesso'] != null
           ? DateTime.parse(map['ultimoAcesso'])
           : null,
@@ -131,6 +136,7 @@ class Usuario {
       'isMaster': isMaster,
       'permissoesPersonalizadas': permissoesPersonalizadas?.toList(),
       'permissoesNegadas': permissoesNegadas?.toList(),
+      'serieNfce': serieNfce,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
       'ultimoAcesso': ultimoAcesso?.toIso8601String(),

@@ -41,6 +41,9 @@ class AgendamentoServico {
   final bool travado;
   final String? funcionarioId;
   final String? funcionarioNome;
+  final bool recorrente;
+  final bool isPago;
+  final String? pagamentoInfo;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -78,6 +81,9 @@ class AgendamentoServico {
     this.travado = false,
     this.funcionarioId,
     this.funcionarioNome,
+    this.recorrente = false,
+    this.isPago = false,
+    this.pagamentoInfo,
     List<ItemMaterial>? materiais,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -180,6 +186,9 @@ class AgendamentoServico {
     bool? travado,
     String? funcionarioId,
     String? funcionarioNome,
+    bool? recorrente,
+    bool? isPago,
+    String? pagamentoInfo,
   }) {
     return AgendamentoServico(
       id: id ?? this.id,
@@ -218,6 +227,9 @@ class AgendamentoServico {
       travado: travado ?? this.travado,
       funcionarioId: funcionarioId ?? this.funcionarioId,
       funcionarioNome: funcionarioNome ?? this.funcionarioNome,
+      recorrente: recorrente ?? this.recorrente,
+      isPago: isPago ?? this.isPago,
+      pagamentoInfo: pagamentoInfo ?? this.pagamentoInfo,
     );
   }
 
@@ -252,6 +264,9 @@ class AgendamentoServico {
       'travado': travado,
       'funcionarioId': funcionarioId,
       'funcionarioNome': funcionarioNome,
+      'recorrente': recorrente,
+      'isPago': isPago,
+      'pagamentoInfo': pagamentoInfo,
       'pet': pet?.toMap(),
       'servico': servico?.toMap(),
       'servicos': servicos.map((s) => s.toMap()).toList(),
@@ -307,6 +322,9 @@ class AgendamentoServico {
       travado: (map['travado'] as bool?) ?? false,
       funcionarioId: map['funcionarioId']?.toString(),
       funcionarioNome: map['funcionarioNome']?.toString(),
+      recorrente: (map['recorrente'] as bool?) ?? false,
+      isPago: (map['isPago'] as bool?) ?? false,
+      pagamentoInfo: map['pagamentoInfo']?.toString(),
       pet: map['pet'] != null ? Pet.fromMap(Map<String, dynamic>.from(map['pet'])) : null,
       servico: map['servico'] != null ? Servico.fromMap(Map<String, dynamic>.from(map['servico'])) : null,
       servicos: map['servicos'] != null 

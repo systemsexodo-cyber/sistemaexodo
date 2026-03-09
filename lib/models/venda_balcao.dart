@@ -96,6 +96,7 @@ class VendaBalcao {
   final String? clienteId;
   final String? clienteNome;
   final String? clienteTelefone;
+  final String? clienteCpfCnpj;
   final List<ItemVendaBalcao> itens;
   final TipoPagamento tipoPagamento;
   final double valorTotal;
@@ -113,6 +114,7 @@ class VendaBalcao {
     this.clienteId,
     this.clienteNome,
     this.clienteTelefone,
+    this.clienteCpfCnpj,
     required this.itens,
     required this.tipoPagamento,
     required this.valorTotal,
@@ -141,6 +143,7 @@ class VendaBalcao {
       clienteId: map['clienteId'],
       clienteNome: map['clienteNome'],
       clienteTelefone: map['clienteTelefone'],
+      clienteCpfCnpj: map['clienteCpfCnpj'],
       itens: (map['itens'] as List<dynamic>? ?? [])
           .map((i) => ItemVendaBalcao.fromMap(i as Map<String, dynamic>))
           .toList(),
@@ -168,6 +171,7 @@ class VendaBalcao {
       'clienteId': clienteId,
       'clienteNome': clienteNome,
       'clienteTelefone': clienteTelefone,
+      'clienteCpfCnpj': clienteCpfCnpj,
       'itens': itens.map((i) => i.toMap()).toList(),
       'tipoPagamento': tipoPagamento.name,
       'valorTotal': valorTotal,
@@ -188,6 +192,7 @@ class VendaBalcao {
     String? clienteId,
     String? clienteNome,
     String? clienteTelefone,
+    String? clienteCpfCnpj,
     List<ItemVendaBalcao>? itens,
     TipoPagamento? tipoPagamento,
     double? valorTotal,
@@ -205,6 +210,7 @@ class VendaBalcao {
       clienteId: clienteId ?? this.clienteId,
       clienteNome: clienteNome ?? this.clienteNome,
       clienteTelefone: clienteTelefone ?? this.clienteTelefone,
+      clienteCpfCnpj: clienteCpfCnpj ?? this.clienteCpfCnpj,
       itens: itens ?? this.itens,
       tipoPagamento: tipoPagamento ?? this.tipoPagamento,
       valorTotal: valorTotal ?? this.valorTotal,

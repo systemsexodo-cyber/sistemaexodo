@@ -118,6 +118,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       []; // Pagamentos do pedido sendo editado
   double _descontoTotal = 0.0; // Desconto total da venda (R$)
   String? _observacoesVenda; // Observações da venda
+  String? _cpfNfce; // CPF/CNPJ para a NFC-e (consumidor não identificado)
+  String? _nomeNfce; // Nome para a NFC-e (consumidor não identificado)
   int _gridSelectedIndex = -1;
   int _cartSelectedIndex = -1;
   int _categoriaSelectedIndex = -1;
@@ -128,6 +130,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   final LocalStorageService _storage = LocalStorageService();
   static const String _keyCarrinhoPDV = 'exodo_carrinho_pdv';
   static const String _keyClientePDV = 'exodo_cliente_pdv';
+  static const String _keyCpfNfcePDV = 'exodo_cpf_nfce_pdv';
+  static const String _keyNomeNfcePDV = 'exodo_nome_nfce_pdv';
   static const String _keyDescontoTotalPDV = 'exodo_desconto_total_pdv';
 
   @override
@@ -427,6 +431,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       _quantidadeDigitada = 1;
       _termoBusca = '';
       _pedidoOriginal = null;
+      _cpfNfce = null;
+      _nomeNfce = null;
     });
     _buscaController.clear();
     // Limpar storage persistente
@@ -1705,6 +1711,110 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     );
   }
 
+  void _abrirIdentificacaoConsumidor() {
+    final controllerCpf = TextEditingController(text: _cpfNfce);
+    final controllerNome = TextEditingController(text: _nomeNfce);
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            const Icon(Icons.badge_outlined, color: Colors.blueAccent),
+            const SizedBox(width: 10),
+            const Text(
+              'Identificar Consumidor',
+              style: TextStyle(color: Colors.white),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Identifique o cliente para a NFC-e sem necessidade de cadastro completo.',
+              style: TextStyle(color: Colors.white54, fontSize: 13),
+            ),
+            const SizedBox(height: 20),
+            TextField(
+              controller: controllerCpf,
+              autofocus: true,
+              style: const TextStyle(color: Colors.white),
+              decoration: InputDecoration(
+                labelText: 'CPF/CNPJ na Nota',
+                labelStyle: const TextStyle(color: Colors.white54),
+                prefixIcon: const Icon(Icons.badge, color: Colors.white54),
+                filled: true,
+                fillColor: Colors.white.withOpacity(0.05),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+              keyboardType: TextInputType.number,
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: controllerNome,
+              style: const TextStyle(color: Colors.white),
+              decoration: InputDecoration(
+                labelText: 'Nome do Consumidor',
+                labelStyle: const TextStyle(color: Colors.white54),
+                prefixIcon: const Icon(Icons.person_outline, color: Colors.white54),
+                filled: true,
+                fillColor: Colors.white.withOpacity(0.05),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+              textCapitalization: TextCapitalization.words,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('CANCELAR', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              setState(() {
+                _cpfNfce = controllerCpf.text.trim();
+                _nomeNfce = controllerNome.text.trim();
+                
+                // Se identificou o consumidor, remove qualquer cliente selecionado
+                // para não haver conflito de IDENTIFICAÇÃO vs CADASTRO
+                if ((_cpfNfce?.isNotEmpty == true || _nomeNfce?.isNotEmpty == true) && _clienteSelecionado != null) {
+                   _clienteSelecionado = null;
+                }
+              });
+              Navigator.pop(context);
+              
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(_cpfNfce?.isNotEmpty == true 
+                    ? 'Consumidor identificado: $_cpfNfce'
+                    : 'Identificação removida'),
+                  backgroundColor: Colors.blueAccent,
+                  duration: const Duration(seconds: 2),
+                ),
+              );
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blueAccent,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            child: const Text('CONFIRMAR'),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _editarCliente(DataService dataService, Cliente cliente) async {
     final resultado = await Navigator.push<Cliente>(
       context,
@@ -2939,6 +3049,13 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         totalCarrinho: _totalCarrinho,
         pagamentosIniciais: _pagamentosSalvos,
         cliente: _clienteSelecionado,
+        cpfCnpjInicial: _cpfNfce,
+        nomeInicial: _nomeNfce,
+        onDadosConsumidorChanged: (cpf, nome) {
+          _cpfNfce = cpf;
+          _nomeNfce = nome;
+          // Não precisa dar setState aqui porque o modal já se gerencia
+        },
         onConfirmar: (listaPagamentos) {
           Navigator.pop(context);
           _concluirVendaComPagamentos(dataService, listaPagamentos);
@@ -3066,8 +3183,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       numero: numero,
       dataVenda: DateTime.now(),
       clienteId: _clienteSelecionado?.id,
-      clienteNome: _clienteSelecionado?.nome,
+      clienteNome: _clienteSelecionado?.nome ?? _nomeNfce,
       clienteTelefone: _clienteSelecionado?.telefone,
+      clienteCpfCnpj: _clienteSelecionado?.cpfCnpj ?? _cpfNfce,
       itens: itensVenda,
       tipoPagamento: tipoPagamentoVenda,
       valorTotal: _totalCarrinho,
@@ -3751,14 +3869,17 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         _limparCarrinhoSalvo();
       }
     },
-    onEmitirNFCe: () => _emitirNFCe(vendaBalcao),
+    onEmitirNFCe: () => _emitirNFCe(
+      vendaBalcao,
+      cpfCnpjOverride: _cpfNfce ?? vendaBalcao.clienteCpfCnpj,
+      nomeOverride: _nomeNfce ?? vendaBalcao.clienteNome,
+    ),
   );
 
   // O carrinho e cliente serão limpos quando o popup for fechado (onDismiss)
 }
 
-  /// Emite NFC-e para uma venda
-  Future<void> _emitirNFCe(VendaBalcao vendaBalcao) async {
+  Future<void> _emitirNFCe(VendaBalcao vendaBalcao, {String? cpfCnpjOverride, String? nomeOverride}) async {
     try {
       // Obter empresa atual
       final authService = Provider.of<AuthService>(context, listen: false);
@@ -3940,16 +4061,21 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         '>>> [VendaDireta] Ambiente: ${ambienteHomologacao ? "Homologação" : "Produção"}',
       );
 
+      // Obter usuário atual
+      final usuario = authService.usuarioAtual;
+      final serieUsuario = usuario?.serieNfce;
+
       final nfce = await nfceService.emitir(
         empresa: empresa,
         produtos: produtos,
         quantidades: quantidades,
         pagamentos: pagamentos,
         valorTotal: vendaBalcao.valorTotal,
-        cpfCnpjConsumidor: null,
-        nomeConsumidor: vendaBalcao.clienteNome,
+        cpfCnpjConsumidor: cpfCnpjOverride ?? vendaBalcao.clienteCpfCnpj,
+        nomeConsumidor: nomeOverride ?? vendaBalcao.clienteNome,
         observacoes: vendaBalcao.observacoes,
         ambienteHomologacao: ambienteHomologacao,
+        serie: serieUsuario,
       );
 
       // Salvar NFC-e no DataService
@@ -4048,9 +4174,111 @@ o padrão padrão (sem opções avançadas).
         }
 
         debugPrint('>>> [NFCe] Mensagem de erro final: $mensagemErro');
-        _mostrarErro(mensagemErro);
+        _mostrarErroEmissaoNfce(vendaBalcao, mensagemErro);
       }
     }
+  }
+
+  void _mostrarErroEmissaoNfce(VendaBalcao venda, String erro) {
+    if (!mounted) return;
+
+    final controllerCpf = TextEditingController(text: venda.clienteCpfCnpj);
+    final controllerNome = TextEditingController(text: venda.clienteNome);
+
+    showDialog(
+      context: context,
+      barrierColor: Colors.black.withOpacity(0.85),
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            const Icon(Icons.error_outline, color: Colors.redAccent),
+            const SizedBox(width: 10),
+            const Text('Erro na NFC-e', style: TextStyle(color: Colors.white)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.redAccent.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.redAccent.withOpacity(0.3)),
+              ),
+              child: Text(
+                erro,
+                style: const TextStyle(color: Colors.redAccent, fontSize: 13),
+              ),
+            ),
+            const SizedBox(height: 20),
+            const Text(
+              'Corrija os dados abaixo para reemitir:',
+              style: TextStyle(color: Colors.white70, fontSize: 14),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: controllerCpf,
+              decoration: const InputDecoration(
+                labelText: 'CPF/CNPJ do Consumidor',
+                labelStyle: TextStyle(color: Colors.white54),
+                prefixIcon: Icon(Icons.badge_outlined, color: Colors.blueAccent),
+                filled: true,
+                fillColor: Colors.white10,
+              ),
+              style: const TextStyle(color: Colors.white),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controllerNome,
+              decoration: const InputDecoration(
+                labelText: 'Nome do Consumidor',
+                labelStyle: TextStyle(color: Colors.white54),
+                prefixIcon: Icon(Icons.person_outline, color: Colors.blueAccent),
+                filled: true,
+                fillColor: Colors.white10,
+              ),
+              style: const TextStyle(color: Colors.white),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('CANCELAR', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton.icon(
+            onPressed: () {
+              Navigator.pop(context);
+              // Salvar novos dados na venda (para persistência local)
+              final vendaAtualizada = venda.copyWith(
+                clienteCpfCnpj: controllerCpf.text.trim(),
+                clienteNome: controllerNome.text.trim(),
+              );
+              
+              // Atualizar no banco para que as mudanças persistam mesmo se falhar de novo
+              final dataService = Provider.of<DataService>(context, listen: false);
+              dataService.updateVendaBalcao(vendaAtualizada);
+
+              _emitirNFCe(
+                vendaAtualizada, 
+                cpfCnpjOverride: controllerCpf.text.trim(),
+                nomeOverride: controllerNome.text.trim()
+              );
+            },
+            icon: const Icon(Icons.refresh),
+            label: const Text('CORRIGIR E REEMITIR'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orange,
+              foregroundColor: Colors.white,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   void _mostrarErro(String mensagem) {
@@ -4934,6 +5162,12 @@ o padrão padrão (sem opções avançadas).
         // Tecla F6 - Selecionar Cliente
         if (key == LogicalKeyboardKey.f6) {
           _selecionarCliente(dataService);
+          return KeyEventResult.handled;
+        }
+
+        // Tecla F7 - Identificar Consumidor (NFC-e)
+        if (key == LogicalKeyboardKey.f7) {
+          _abrirIdentificacaoConsumidor();
           return KeyEventResult.handled;
         }
 
@@ -6187,6 +6421,7 @@ o padrão padrão (sem opções avançadas).
           _buildItemLegenda('SETAS', 'NAVEGAR'),
           _buildItemLegenda('F2', 'BUSCA'),
           _buildItemLegenda('F6', 'CLIENTE'),
+          _buildItemLegenda('F7', 'IDENTIFICAR'),
           _buildItemLegenda('F4', 'CATEGORIAS'),
           _buildItemLegenda('SHIFT', 'CARRINHO'),
           _buildItemLegenda('CTRL', 'CONFERIR'),
@@ -8606,6 +8841,9 @@ class _DialogPagamentoPDV extends StatefulWidget {
   final Function(List<PagamentoPedido>) onConfirmar;
   final Function(List<PagamentoPedido>) onSalvarPendente;
   final Cliente? cliente; // Cliente para validar limite de crédito
+  final String? cpfCnpjInicial; 
+  final String? nomeInicial;
+  final Function(String?, String?) onDadosConsumidorChanged;
 
   const _DialogPagamentoPDV({
     required this.subtotal,
@@ -8615,6 +8853,9 @@ class _DialogPagamentoPDV extends StatefulWidget {
     required this.onConfirmar,
     required this.onSalvarPendente,
     this.cliente,
+    this.cpfCnpjInicial,
+    this.nomeInicial,
+    required this.onDadosConsumidorChanged,
   });
 
   @override
@@ -8627,17 +8868,23 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
   final _formatoData = DateFormat('dd/MM/yyyy');
   final FocusNode _focusNode = FocusNode();
   int _selectedPaymentIndex = -1; // índice do pagamento selecionado na lista
+  late TextEditingController _cpfController;
+  late TextEditingController _nomeController;
 
   @override
   void initState() {
     super.initState();
     _pagamentos = List.from(widget.pagamentosIniciais);
+    _cpfController = TextEditingController(text: widget.cpfCnpjInicial);
+    _nomeController = TextEditingController(text: widget.nomeInicial);
     _focusNode.requestFocus();
   }
 
   @override
   void dispose() {
     _focusNode.dispose();
+    _cpfController.dispose();
+    _nomeController.dispose();
     super.dispose();
   }
 
@@ -10283,6 +10530,114 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
                       );
                     }).toList(),
                   ),
+
+                  const SizedBox(height: 10),
+
+                  // Identificação do Consumidor para NFC-e
+                  if (widget.cliente == null) ...[
+                    const Divider(color: Colors.white10, height: 32),
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.badge_outlined,
+                          color: Colors.blueAccent.withOpacity(0.8),
+                          size: 16,
+                        ),
+                        const SizedBox(width: 8),
+                        const Text(
+                          'IDENTIFICAÇÃO PARA NFC-E (OPCIONAL)',
+                          style: TextStyle(
+                            color: Colors.white54,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 1,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          flex: 2,
+                          child: TextField(
+                            controller: _cpfController,
+                            style: const TextStyle(color: Colors.white, fontSize: 13),
+                            decoration: InputDecoration(
+                              hintText: 'CPF/CNPJ na Nota',
+                              hintStyle: TextStyle(
+                                color: Colors.white.withOpacity(0.2),
+                              ),
+                              prefixIcon: Icon(
+                                Icons.badge,
+                                size: 16,
+                                color: Colors.white.withOpacity(0.3),
+                              ),
+                              filled: true,
+                              fillColor: Colors.black26,
+                              isDense: true,
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 12,
+                              ),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10),
+                                borderSide: BorderSide.none,
+                              ),
+                            ),
+                            keyboardType: TextInputType.number,
+                            onChanged: (val) => widget.onDadosConsumidorChanged(
+                              val,
+                              _nomeController.text,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          flex: 3,
+                          child: TextField(
+                            controller: _nomeController,
+                            style: const TextStyle(color: Colors.white, fontSize: 13),
+                            decoration: InputDecoration(
+                              hintText: 'Nome do Consumidor',
+                              hintStyle: TextStyle(
+                                color: Colors.white.withOpacity(0.2),
+                              ),
+                              prefixIcon: Icon(
+                                Icons.person_outline,
+                                size: 16,
+                                color: Colors.white.withOpacity(0.3),
+                              ),
+                              filled: true,
+                              fillColor: Colors.black26,
+                              isDense: true,
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 12,
+                              ),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10),
+                                borderSide: BorderSide.none,
+                              ),
+                            ),
+                            onChanged: (val) => widget.onDadosConsumidorChanged(
+                              _cpfController.text,
+                              val,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Pressione F9 ou clique em Finalizar para concluir com estes dados.',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.3),
+                        fontSize: 9,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  ],
 
                   const SizedBox(height: 20),
 

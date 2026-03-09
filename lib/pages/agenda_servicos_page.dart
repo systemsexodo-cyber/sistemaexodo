@@ -786,11 +786,12 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
     // 1. Tentar identificar por nome do serviço de forma normalizada
     final nomeServico = (agendamento.servico?.nome ?? agendamento.servicoNome ?? '').toLowerCase().trim();
     
-    if (nomeServico == 'banho' || nomeServico.contains('banho ') || nomeServico.startsWith('banho')) { // Ex: "Banho", "Banho e Tosa" (inicia com banho)
-       // Se for exatamente "banho" ou começar com banho, podemos agrupar se o usuário preferir, 
-       // mas se for "Banho e Tosa", talvez seja melhor categorizar como preferir.
-       // Seguindo a lógica atual de agendamento_publico_page:
-       if (nomeServico.contains('banho')) return 'Banho';
+    if (nomeServico.contains('banho') && nomeServico.contains('tosa')) {
+       return 'Banho e Tosa';
+    }
+    
+    if (nomeServico == 'banho' || nomeServico.contains('banho ') || nomeServico.startsWith('banho')) { 
+       return 'Banho';
     }
     
     if (nomeServico == 'vacina' || nomeServico.contains('vacinar')) return 'Vacina';
@@ -819,6 +820,9 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
     
     if (_isAgendamentoVacina(agendamento) || textoCompleto.contains('vacina')) {
       return 'Vacina';
+    } else if ((textoCompleto.contains('banho') || textoCompleto.contains('bath')) && 
+               (textoCompleto.contains('tosa') || textoCompleto.contains('grooming'))) {
+      return 'Banho e Tosa';
     } else if (textoCompleto.contains('banho') || textoCompleto.contains('bath')) {
       return 'Banho';
     } else if (textoCompleto.contains('tosa') || textoCompleto.contains('grooming')) {
@@ -835,6 +839,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
     switch (tipo) {
       case 'Vacina':
         return Icons.vaccines;
+      case 'Banho e Tosa':
       case 'Banho':
         return Icons.shower;
       case 'Tosa':
@@ -1763,11 +1768,18 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                 color: corStatus.withOpacity(0.15),
                                 borderRadius: BorderRadius.circular(8),
                               ),
-                              child: Icon(
-                                agendamento.travado && agendamento.status == 'Cancelado' ? Icons.block : iconeServico, 
-                                color: corStatus, 
-                                size: 18
-                              ),
+                              child: agendamento.travado && agendamento.status == 'Cancelado' 
+                                ? Icon(Icons.block, color: corStatus, size: 18)
+                                : tipoServico == 'Banho e Tosa'
+                                    ? Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(Icons.shower, color: corStatus, size: 16),
+                                          const SizedBox(width: 2),
+                                          Icon(Icons.content_cut, color: corStatus, size: 16),
+                                        ],
+                                      )
+                                    : Icon(iconeServico, color: corStatus, size: 18),
                             ),
                             const SizedBox(width: 10),
                             // Nome do serviço e tipo
@@ -1847,6 +1859,58 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                               fontSize: 9,
                                               fontWeight: FontWeight.bold,
                                             ),
+                                          ),
+                                        ),
+                                      ],
+                                      if (agendamento.recorrente) ...[
+                                        const SizedBox(width: 6),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                          decoration: BoxDecoration(
+                                            color: Colors.blueAccent.withOpacity(0.2),
+                                            borderRadius: BorderRadius.circular(4),
+                                            border: Border.all(color: Colors.blueAccent.withOpacity(0.5)),
+                                          ),
+                                          child: const Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Icon(Icons.repeat, color: Colors.blueAccent, size: 10),
+                                              SizedBox(width: 4),
+                                              Text(
+                                                'RECORRENTE',
+                                                style: TextStyle(
+                                                  color: Colors.blueAccent,
+                                                  fontSize: 9,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                      if (agendamento.isPago) ...[
+                                        const SizedBox(width: 6),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                          decoration: BoxDecoration(
+                                            color: Colors.green.withOpacity(0.2),
+                                            borderRadius: BorderRadius.circular(4),
+                                            border: Border.all(color: Colors.green.withOpacity(0.5)),
+                                          ),
+                                          child: const Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Icon(Icons.check_circle_outline, color: Colors.green, size: 10),
+                                              SizedBox(width: 4),
+                                              Text(
+                                                'PAGO',
+                                                style: TextStyle(
+                                                  color: Colors.green,
+                                                  fontSize: 9,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              ),
+                                            ],
                                           ),
                                         ),
                                       ],
@@ -3998,6 +4062,10 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
     TimeOfDay horaAgendamento = dataHoraPreSelecionada != null 
         ? TimeOfDay.fromDateTime(dataHoraPreSelecionada)
         : TimeOfDay.now();
+    bool recorrente = false;
+    int semanasRecorrencia = 1;
+    bool isPago = false;
+    final pagamentoInfoController = TextEditingController();
     int duracaoMinutos = 60;
     final duracaoController = TextEditingController(text: '60');
     final observacoesController = TextEditingController();
@@ -4149,6 +4217,21 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                         ),
                       ),
+                    ),
+                    const SizedBox(width: 8),
+                    TextButton.icon(
+                      onPressed: () => _mostrarDialogCadastroRapidoServico(context, dataService, (novoServico) {
+                        setState(() {
+                          if (!servicosSelecionados.any((s) => s.id == novoServico.id)) {
+                            servicosSelecionados.add(novoServico);
+                            // Recalcular duração
+                            duracaoMinutos = servicosSelecionados.fold(0, (sum, item) => sum + (item.duracaoPadraoMinutos ?? 0));
+                          }
+                          duracaoController.text = duracaoMinutos.toString();
+                        });
+                      }),
+                      icon: const Icon(Icons.add, size: 18, color: Colors.blueAccent),
+                      label: const Text('Novo Serviço', style: TextStyle(color: Colors.blueAccent, fontSize: 12)),
                     ),
                   ],
                 ),
@@ -4806,8 +4889,8 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                   ],
                 const SizedBox(height: 16),
               ],
-                // Tipo de Entrega — só aparece se o cliente tiver habilitaTaxiDog ativado
-                if (clienteSelecionado?.habilitaTaxiDog == true) ...[
+                // Tipo de Entrega — sempre disponível na agenda local (habilitaTaxiDog só se aplica ao online)
+                if (clienteSelecionado != null) ...[
                   const SizedBox(height: 16),
                   Container(
                     padding: const EdgeInsets.all(12),
@@ -5118,6 +5201,75 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                   ),
                   maxLines: 3,
                 ),
+                const SizedBox(height: 16),
+                // --- SEÇÃO DE RECORRÊNCIA E PAGAMENTO ---
+                Row(
+                  children: [
+                    Expanded(
+                      child: CheckboxListTile(
+                        title: const Text('Recorrente', style: TextStyle(color: Colors.white, fontSize: 13)),
+                        subtitle: const Text('Sim / Não', style: TextStyle(color: Colors.white38, fontSize: 11)),
+                        value: recorrente,
+                        onChanged: (val) => setState(() => recorrente = val ?? false),
+                        activeColor: Colors.blueAccent,
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        controlAffinity: ListTileControlAffinity.leading,
+                      ),
+                    ),
+                    Expanded(
+                      child: CheckboxListTile(
+                        title: const Text('Já foi Pago', style: TextStyle(color: Colors.white, fontSize: 13)),
+                        subtitle: const Text('Marcar como pago', style: TextStyle(color: Colors.white38, fontSize: 11)),
+                        value: isPago,
+                        onChanged: (val) => setState(() => isPago = val ?? false),
+                        activeColor: Colors.green,
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        controlAffinity: ListTileControlAffinity.leading,
+                      ),
+                    ),
+                  ],
+                ),
+                if (recorrente) ...[
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      const Text('Repetir por:', style: TextStyle(color: Colors.white70, fontSize: 13)),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: DropdownButtonFormField<int>(
+                          value: semanasRecorrencia,
+                          dropdownColor: const Color(0xFF1E1E2E),
+                          style: const TextStyle(color: Colors.white, fontSize: 13),
+                          decoration: InputDecoration(
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                          items: [1, 2, 4, 8, 12].map((w) => DropdownMenuItem(
+                            value: w,
+                            child: Text('$w ${w == 1 ? 'semana' : 'semanas'}'),
+                          )).toList(),
+                          onChanged: (val) => setState(() => semanasRecorrencia = val ?? 1),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+                if (isPago) ...[
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: pagamentoInfoController,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    decoration: InputDecoration(
+                      labelText: 'Info de Pagamento (Ex: PIX, Cartão...)',
+                      labelStyle: const TextStyle(color: Colors.white70),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      filled: true,
+                      fillColor: Colors.white.withOpacity(0.05),
+                    ),
+                  ),
+                ],
                   ],
                 ), // Column
               ), // SingleChildScrollView
@@ -5189,59 +5341,74 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                   int vacinasAgendadas = 0;
                   final timestamp = DateTime.now().microsecondsSinceEpoch;
                   
-                  // 1. Gerar agendamentos principais
-                  for (final pet in loopList) {
-                    // Verificar conflito para fila de espera automática
-                    final tempAgd = AgendamentoServico(
-                      id: 'temp',
-                      numero: '',
-                      dataAgendamento: dataHoraCompleta,
-                      duracaoMinutos: duracaoMinutos,
-                    );
+                  // 1. Gerar agendamentos principais (com loop de semanas para recorrência)
+                  final numSemanas = recorrente ? semanasRecorrencia : 1;
+                  for (int w = 0; w < numSemanas; w++) {
+                    final dataSemana = dataHoraCompleta.add(Duration(days: 7 * w));
                     
-                    bool temConflitoAtivo = dataService.agendamentosServico.any((a) => a.isAtivo && a.temSobreposicaoHorario(tempAgd));
+                    // Validar se essa semana específica está bloqueada
+                    if (w > 0 && _isHorarioBloqueado(dataSemana, duracaoMinutos, dataService)) {
+                      continue; // Pula essa semana se houver bloqueio
+                    }
 
-                    final novoAgendamento = AgendamentoServico(
-                      id: '${timestamp}_${pet?.id ?? 'sem_pet'}_$agendamentosCriados',
-                      numero: '', 
-                      servicoId: servicosSelecionados.isNotEmpty ? servicosSelecionados.first.id : null,
-                      servico: servicosSelecionados.isNotEmpty ? servicosSelecionados.first : null,
-                      servicosIds: servicosSelecionados.map((s) => s.id).toList(),
-                      servicos: servicosSelecionados,
-                      clienteId: clienteSelecionado?.id,
-                      cliente: clienteSelecionado, 
-                      petId: pet?.id,
-                      pet: pet,
-                      dataAgendamento: dataHoraCompleta,
-                      duracaoMinutos: duracaoMinutos,
-                      intervaloMinutos: servicosSelecionados.fold<int>(0, (int max, s) => (s.intervaloMinutos ?? 0) > max ? (s.intervaloMinutos ?? 0) : max),
-                      observacoes: observacoesController.text.trim().isEmpty
-                          ? null
-                          : observacoesController.text.trim(),
-                      status: temConflitoAtivo ? 'Em Espera' : 'Agendado',
-                      tipoEntrega: tipoEntrega,
-                      valorTaxiDog: valorTaxiDogPorPet,
-                      bairroEntrega: bairroEntregaController.text.isNotEmpty ? bairroEntregaController.text.trim() : null,
-                      endereco: enderecoController.text.isNotEmpty ? enderecoController.text.trim() : null,
-                      numeroEndereco: numeroEnderecoController.text.isNotEmpty ? numeroEnderecoController.text.trim() : null,
-                      complemento: complementoEnderecoController.text.isNotEmpty ? complementoEnderecoController.text.trim() : null,
-                      pontoReferencia: pontoReferenciaController.text.isNotEmpty ? pontoReferenciaController.text.trim() : null,
-                      materiais: List.from(materiaisAgendamento),
-                      funcionarioId: funcionarioSelecionadoId,
-                      funcionarioNome: funcionarioSelecionadoNome,
-                    );
-                    
-                    agendamentosParaSalvar.add(novoAgendamento);
-                    agendamentosCriados++;
-                    if (novoAgendamento.status == 'Em Espera') agendamentosEmEspera++;
+                    for (final pet in loopList) {
+                      // Verificar conflito para fila de espera automática
+                      final tempAgd = AgendamentoServico(
+                        id: 'temp',
+                        numero: '',
+                        dataAgendamento: dataSemana,
+                        duracaoMinutos: duracaoMinutos,
+                      );
+                      
+                      bool temConflitoAtivo = dataService.agendamentosServico.any((a) => a.isAtivo && a.temSobreposicaoHorario(tempAgd));
 
-                    // 2. Gerar agendamentos de vacina para cada pet
-                    for (final material in materiaisAgendamento) {
-                      if (material.isVacina) {
-                        final agdVaci = _gerarAgendamentoVacina(material, clienteSelecionado, pet);
-                        if (agdVaci != null) {
-                          agendamentosParaSalvar.add(agdVaci);
-                          vacinasAgendadas++;
+                      final novoAgendamento = AgendamentoServico(
+                        id: '${timestamp}_${pet?.id ?? 'sem_pet'}_${agendamentosCriados}_$w',
+                        numero: '', 
+                        servicoId: servicosSelecionados.isNotEmpty ? servicosSelecionados.first.id : null,
+                        servico: servicosSelecionados.isNotEmpty ? servicosSelecionados.first : null,
+                        servicosIds: servicosSelecionados.map((s) => s.id).toList(),
+                        servicos: servicosSelecionados,
+                        clienteId: clienteSelecionado?.id,
+                        cliente: clienteSelecionado, 
+                        petId: pet?.id,
+                        pet: pet,
+                        dataAgendamento: dataSemana,
+                        duracaoMinutos: duracaoMinutos,
+                        intervaloMinutos: servicosSelecionados.fold<int>(0, (int max, s) => (s.intervaloMinutos ?? 0) > max ? (s.intervaloMinutos ?? 0) : max),
+                        observacoes: observacoesController.text.trim().isEmpty
+                            ? null
+                            : observacoesController.text.trim(),
+                        status: temConflitoAtivo ? 'Em Espera' : 'Agendado',
+                        tipoEntrega: tipoEntrega,
+                        valorTaxiDog: valorTaxiDogPorPet,
+                        bairroEntrega: bairroEntregaController.text.isNotEmpty ? bairroEntregaController.text.trim() : null,
+                        endereco: enderecoController.text.isNotEmpty ? enderecoController.text.trim() : null,
+                        numeroEndereco: numeroEnderecoController.text.isNotEmpty ? numeroEnderecoController.text.trim() : null,
+                        complemento: complementoEnderecoController.text.isNotEmpty ? complementoEnderecoController.text.trim() : null,
+                        pontoReferencia: pontoReferenciaController.text.isNotEmpty ? pontoReferenciaController.text.trim() : null,
+                        materiais: List.from(materiaisAgendamento),
+                        funcionarioId: funcionarioSelecionadoId,
+                        funcionarioNome: funcionarioSelecionadoNome,
+                        recorrente: recorrente,
+                        isPago: isPago,
+                        pagamentoInfo: isPago ? pagamentoInfoController.text.trim() : null,
+                      );
+                      
+                      agendamentosParaSalvar.add(novoAgendamento);
+                      agendamentosCriados++;
+                      if (novoAgendamento.status == 'Em Espera') agendamentosEmEspera++;
+
+                      // 2. Gerar agendamentos de vacina para cada pet (apenas na primeira semana)
+                      if (w == 0) {
+                        for (final material in materiaisAgendamento) {
+                          if (material.isVacina) {
+                            final agdVaci = _gerarAgendamentoVacina(material, clienteSelecionado, pet);
+                            if (agdVaci != null) {
+                              agendamentosParaSalvar.add(agdVaci);
+                              vacinasAgendadas++;
+                            }
+                          }
                         }
                       }
                     }
@@ -5364,6 +5531,10 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
     final pontoReferenciaController = TextEditingController(text: agendamento.pontoReferencia ?? agendamento.cliente?.pontoReferencia ?? '');
     String? funcionarioSelecionadoId = agendamento.funcionarioId;
     String? funcionarioSelecionadoNome = agendamento.funcionarioNome;
+    bool recorrente = agendamento.recorrente;
+    int semanasRecorrencia = 1;
+    bool isPago = agendamento.isPago;
+    final pagamentoInfoController = TextEditingController(text: agendamento.pagamentoInfo ?? '');
     
     showDialog(
       context: context,
@@ -5408,30 +5579,50 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                     )).toList(),
                   ),
                 const SizedBox(height: 12),
-                ElevatedButton.icon(
-                  onPressed: () async {
-                    final selected = await showDialog<Servico>(
-                      context: context,
-                      builder: (context) => _SeletorServicoDialog(dataService: dataService),
-                    );
-                    if (selected != null) {
-                      setStateDialog(() {
-                        if (!servicosSelecionados.any((s) => s.id == selected.id)) {
-                          servicosSelecionados.add(selected);
-                          duracaoMinutos = servicosSelecionados.fold(0, (sum, item) => sum + (item.duracaoPadraoMinutos ?? 0));
-                        }
-                        duracaoController.text = duracaoMinutos.toString();
-                      });
-                    }
-                  },
-                  icon: const Icon(Icons.add, size: 16),
-                  label: const Text('Adicionar Serviço'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blueAccent.withOpacity(0.1),
-                    foregroundColor: Colors.blueAccent,
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: () async {
+                          final selected = await showDialog<Servico>(
+                            context: context,
+                            builder: (context) => _SeletorServicoDialog(dataService: dataService),
+                          );
+                          if (selected != null) {
+                            setStateDialog(() {
+                              if (!servicosSelecionados.any((s) => s.id == selected.id)) {
+                                servicosSelecionados.add(selected);
+                                duracaoMinutos = servicosSelecionados.fold(0, (sum, item) => sum + (item.duracaoPadraoMinutos ?? 0));
+                              }
+                              duracaoController.text = duracaoMinutos.toString();
+                            });
+                          }
+                        },
+                        icon: const Icon(Icons.add, size: 16),
+                        label: const Text('Adicionar Serviço'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.blueAccent.withOpacity(0.1),
+                          foregroundColor: Colors.blueAccent,
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    TextButton.icon(
+                      onPressed: () => _mostrarDialogCadastroRapidoServico(context, dataService, (novoServico) {
+                        setStateDialog(() {
+                          if (!servicosSelecionados.any((s) => s.id == novoServico.id)) {
+                            servicosSelecionados.add(novoServico);
+                            duracaoMinutos = servicosSelecionados.fold(0, (sum, item) => sum + (item.duracaoPadraoMinutos ?? 0));
+                          }
+                          duracaoController.text = duracaoMinutos.toString();
+                        });
+                      }),
+                      icon: const Icon(Icons.add, size: 18, color: Colors.blueAccent),
+                      label: const Text('Novo Serviço', style: TextStyle(color: Colors.blueAccent, fontSize: 12)),
+                    ),
+                  ],
                 ),
 
                 if (servicosSelecionados.isNotEmpty) ...[
@@ -6155,6 +6346,75 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                   style: const TextStyle(color: Colors.white),
                   maxLines: 4,
                 ),
+                const SizedBox(height: 16),
+                // --- SEÇÃO DE RECORRÊNCIA E PAGAMENTO ---
+                Row(
+                  children: [
+                    Expanded(
+                      child: CheckboxListTile(
+                        title: const Text('Recorrente', style: TextStyle(color: Colors.white, fontSize: 13)),
+                        subtitle: const Text('Sim / Não', style: TextStyle(color: Colors.white38, fontSize: 11)),
+                        value: recorrente,
+                        onChanged: (val) => setStateDialog(() => recorrente = val ?? false),
+                        activeColor: Colors.blueAccent,
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        controlAffinity: ListTileControlAffinity.leading,
+                      ),
+                    ),
+                    Expanded(
+                      child: CheckboxListTile(
+                        title: const Text('Já foi Pago', style: TextStyle(color: Colors.white, fontSize: 13)),
+                        subtitle: const Text('Marcar como pago', style: TextStyle(color: Colors.white38, fontSize: 11)),
+                        value: isPago,
+                        onChanged: (val) => setStateDialog(() => isPago = val ?? false),
+                        activeColor: Colors.green,
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        controlAffinity: ListTileControlAffinity.leading,
+                      ),
+                    ),
+                  ],
+                ),
+                if (recorrente) ...[
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      const Text('Repetir por:', style: TextStyle(color: Colors.white70, fontSize: 13)),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: DropdownButtonFormField<int>(
+                          value: semanasRecorrencia,
+                          dropdownColor: const Color(0xFF1E1E2E),
+                          style: const TextStyle(color: Colors.white, fontSize: 13),
+                          decoration: InputDecoration(
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                          items: [1, 2, 4, 8, 12].map((w) => DropdownMenuItem(
+                            value: w,
+                            child: Text('$w ${w == 1 ? 'semana' : 'semanas'}'),
+                          )).toList(),
+                          onChanged: (val) => setStateDialog(() => semanasRecorrencia = val ?? 1),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+                if (isPago) ...[
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: pagamentoInfoController,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    decoration: InputDecoration(
+                      labelText: 'Info de Pagamento (Ex: PIX, Cartão...)',
+                      labelStyle: const TextStyle(color: Colors.white70),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      filled: true,
+                      fillColor: Colors.white.withOpacity(0.05),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -6210,45 +6470,64 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                   }
 
                   // Primeiro pet (ou null) atualiza o agendamento existente
-                  final primeiroPet = petsParaAgendar.isNotEmpty ? petsParaAgendar.first : null;
+                   final primeiroPet = petsParaAgendar.isNotEmpty ? petsParaAgendar.first : null;
 
-                  await dataService.updateAgendamentoServico(
-                    agendamento.copyWith(
-                      servicoId: servicosSelecionados.isNotEmpty ? servicosSelecionados.first.id : null,
-                      servico: servicosSelecionados.isNotEmpty ? servicosSelecionados.first : null,
-                      servicosIds: servicosSelecionados.map((s) => s.id).toList(),
-                      servicos: servicosSelecionados,
-                      clienteId: clienteSelecionado?.id,
-                      petId: primeiroPet?.id,
-                      pet: primeiroPet,
-                      dataAgendamento: dataHoraCompleta,
-                      duracaoMinutos: duracaoMinutos,
-                      intervaloMinutos: servicosSelecionados.fold<int>(0, (int max, s) => (s.intervaloMinutos ?? 0) > max ? (s.intervaloMinutos ?? 0) : max),
-                      observacoes: observacoesController.text.trim().isEmpty
-                          ? null
-                          : observacoesController.text.trim(),
-                      tipoEntrega: tipoEntrega,
-                      valorTaxiDog: valorTaxiDogPorPet,
-                      bairroEntrega: bairroEntregaController.text.isNotEmpty ? bairroEntregaController.text.trim() : null,
-                      endereco: enderecoController.text.isNotEmpty ? enderecoController.text.trim() : null,
-                      numeroEndereco: numeroEnderecoController.text.isNotEmpty ? numeroEnderecoController.text.trim() : null,
-                      complemento: complementoEnderecoController.text.isNotEmpty ? complementoEnderecoController.text.trim() : null,
-                      pontoReferencia: pontoReferenciaController.text.isNotEmpty ? pontoReferenciaController.text.trim() : null,
-                      funcionarioId: funcionarioSelecionadoId,
-                      funcionarioNome: funcionarioSelecionadoNome,
-                      updatedAt: DateTime.now(),
-                    ),
-                  );
-
-                  // Para cada pet adicional, criar novo agendamento
+                   // Para cada pet adicional, criar novo agendamento
                   int agendamentosCriados = 0;
-                  if (petsParaAgendar.length > 1) {
+                  final numSemanas = recorrente ? semanasRecorrencia : 1;
+
+                  for (int w = 0; w < numSemanas; w++) {
+                    final dataSemana = dataHoraCompleta.add(Duration(days: 7 * w));
+                    
+                    // Validar se essa semana específica está bloqueada (apenas para novas, ignorando a primeira se for o próprio agendamento sendo editado)
+                    if (w > 0 && _isHorarioBloqueado(dataSemana, duracaoMinutos, dataService)) {
+                      continue; 
+                    }
+
+                    if (w == 0) {
+                      // Atualiza o agendamento atual na primeira semana
+                      await dataService.updateAgendamentoServico(
+                        agendamento.copyWith(
+                          servicoId: servicosSelecionados.isNotEmpty ? servicosSelecionados.first.id : null,
+                          servico: servicosSelecionados.isNotEmpty ? servicosSelecionados.first : null,
+                          servicosIds: servicosSelecionados.map((s) => s.id).toList(),
+                          servicos: servicosSelecionados,
+                          clienteId: clienteSelecionado?.id,
+                          petId: primeiroPet?.id,
+                          pet: primeiroPet,
+                          dataAgendamento: dataSemana,
+                          duracaoMinutos: duracaoMinutos,
+                          intervaloMinutos: servicosSelecionados.fold<int>(0, (int max, s) => (s.intervaloMinutos ?? 0) > max ? (s.intervaloMinutos ?? 0) : max),
+                          observacoes: observacoesController.text.trim().isEmpty
+                              ? null
+                              : observacoesController.text.trim(),
+                          tipoEntrega: tipoEntrega,
+                          valorTaxiDog: valorTaxiDogPorPet,
+                          bairroEntrega: bairroEntregaController.text.isNotEmpty ? bairroEntregaController.text.trim() : null,
+                          endereco: enderecoController.text.isNotEmpty ? enderecoController.text.trim() : null,
+                          numeroEndereco: numeroEnderecoController.text.isNotEmpty ? numeroEnderecoController.text.trim() : null,
+                          complemento: complementoEnderecoController.text.isNotEmpty ? complementoEnderecoController.text.trim() : null,
+                          pontoReferencia: pontoReferenciaController.text.isNotEmpty ? pontoReferenciaController.text.trim() : null,
+                          funcionarioId: funcionarioSelecionadoId,
+                          funcionarioNome: funcionarioSelecionadoNome,
+                          recorrente: recorrente,
+                          isPago: isPago,
+                          pagamentoInfo: isPago ? pagamentoInfoController.text.trim() : null,
+                          updatedAt: DateTime.now(),
+                        ),
+                      );
+                    }
+
+                    // Se w > 0 ou se houver múltiplos pets, criar novos agendamentos
                     final timestamp = DateTime.now().microsecondsSinceEpoch;
-                    for (int i = 1; i < petsParaAgendar.length; i++) {
+                    for (int i = 0; i < petsParaAgendar.length; i++) {
+                      // Se for a primeira semana e o primeiro pet, já atualizamos acima
+                      if (w == 0 && i == 0) continue;
+                      
                       final petExtra = petsParaAgendar[i];
                       final novoAgendamento = AgendamentoServico(
-                        id: '${timestamp}_${petExtra.id}_$i',
-                        numero: '', // Será gerado automaticamente
+                        id: '${timestamp}_${petExtra.id}_${w}_$i',
+                        numero: '', 
                         servicoId: servicosSelecionados.isNotEmpty ? servicosSelecionados.first.id : null,
                         servico: servicosSelecionados.isNotEmpty ? servicosSelecionados.first : null,
                         servicosIds: servicosSelecionados.map((s) => s.id).toList(),
@@ -6256,7 +6535,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                         clienteId: clienteSelecionado?.id,
                         petId: petExtra.id,
                         pet: petExtra,
-                        dataAgendamento: dataHoraCompleta,
+                        dataAgendamento: dataSemana,
                         duracaoMinutos: duracaoMinutos,
                         intervaloMinutos: servicosSelecionados.isNotEmpty ? (servicosSelecionados.first.intervaloMinutos ?? 0) : 0,
                         observacoes: observacoesController.text.trim().isEmpty
@@ -6272,6 +6551,9 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                         pontoReferencia: pontoReferenciaController.text.isNotEmpty ? pontoReferenciaController.text.trim() : null,
                         funcionarioId: funcionarioSelecionadoId,
                         funcionarioNome: funcionarioSelecionadoNome,
+                        recorrente: recorrente,
+                        isPago: isPago,
+                        pagamentoInfo: isPago ? pagamentoInfoController.text.trim() : null,
                       );
                       await dataService.addAgendamentoServico(novoAgendamento);
                       agendamentosCriados++;

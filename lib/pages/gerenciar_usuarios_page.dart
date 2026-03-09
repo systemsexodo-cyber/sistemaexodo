@@ -392,6 +392,7 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
     final emailController = TextEditingController();
     final senhaController = TextEditingController();
     final telefoneController = TextEditingController();
+    final serieController = TextEditingController(text: '1');
     TipoUsuario tipoSelecionado = TipoUsuario.operador;
 
     showDialog(
@@ -528,6 +529,30 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
                       }
                     },
                   ),
+                  const SizedBox(height: 16),
+                  TextFormField(
+                    controller: serieController,
+                    decoration: const InputDecoration(
+                      labelText: 'Série NFC-e (padrão: 1)',
+                      labelStyle: TextStyle(color: Colors.white70),
+                      enabledBorder: UnderlineInputBorder(
+                        borderSide: BorderSide(color: Colors.white30),
+                      ),
+                      focusedBorder: UnderlineInputBorder(
+                        borderSide: BorderSide(color: Colors.blueAccent),
+                      ),
+                    ),
+                    style: const TextStyle(color: Colors.white),
+                    keyboardType: TextInputType.number,
+                    validator: (value) {
+                      if (value != null && value.isNotEmpty) {
+                        if (int.tryParse(value) == null) {
+                          return 'Apenas números';
+                        }
+                      }
+                      return null;
+                    },
+                  ),
                 ],
               ),
             ),
@@ -555,6 +580,7 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
                     tipo: tipoSelecionado,
                     empresaId: widget.empresa.id,
                     ativo: true,
+                    serieNfce: int.tryParse(serieController.text) ?? 1,
                     createdAt: agora,
                     updatedAt: agora,
                   );
@@ -608,6 +634,7 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
                     tipo: tipoSelecionado,
                     empresaId: widget.empresa.id,
                     ativo: true,
+                    serieNfce: int.tryParse(serieController.text) ?? 1,
                     createdAt: agora,
                     updatedAt: agora,
                   );
@@ -658,6 +685,7 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
     final emailController = TextEditingController(text: usuario.email);
     final senhaController = TextEditingController();
     final telefoneController = TextEditingController(text: usuario.telefone ?? '');
+    final serieController = TextEditingController(text: usuario.serieNfce.toString());
     TipoUsuario tipoSelecionado = usuario.tipo;
 
     showDialog(
@@ -793,6 +821,30 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
                       }
                     },
                   ),
+                  const SizedBox(height: 16),
+                  TextFormField(
+                    controller: serieController,
+                    decoration: const InputDecoration(
+                      labelText: 'Série NFC-e',
+                      labelStyle: TextStyle(color: Colors.white70),
+                      enabledBorder: UnderlineInputBorder(
+                        borderSide: BorderSide(color: Colors.white30),
+                      ),
+                      focusedBorder: UnderlineInputBorder(
+                        borderSide: BorderSide(color: Colors.blueAccent),
+                      ),
+                    ),
+                    style: const TextStyle(color: Colors.white),
+                    keyboardType: TextInputType.number,
+                    validator: (value) {
+                      if (value != null && value.isNotEmpty) {
+                        if (int.tryParse(value) == null) {
+                          return 'Apenas números';
+                        }
+                      }
+                      return null;
+                    },
+                  ),
                   const SizedBox(height: 24),
                   // Botão para gerenciar permissões
                   ElevatedButton.icon(
@@ -840,6 +892,7 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
                         ? null
                         : telefoneController.text.trim(),
                     tipo: tipoSelecionado,
+                    serieNfce: int.tryParse(serieController.text) ?? 1,
                     updatedAt: DateTime.now(),
                   );
 
