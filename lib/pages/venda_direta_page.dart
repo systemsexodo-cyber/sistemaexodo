@@ -1342,9 +1342,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       }
     }
 
-    // Buscar serviços (só por nome e se não houver categoria de produto ativa)
+    // Buscar serviços (sempre, independente da categoria de produto ativa)
     for (final servico in dataService.servicos) {
-      if (_categoriaAtiva != null) break; // Serviços não têm categoria ou têm categoria diferente
 
       final nome = servico.nome.toLowerCase();
 

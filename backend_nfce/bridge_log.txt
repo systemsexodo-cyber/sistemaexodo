@@ -1123,3 +1123,97 @@ NameError: name 'quit_app' is not defined
 2026-03-08 09:55:48,567 [INFO] Iniciando interface da bandeja...
 2026-03-08 09:55:48,567 [ERROR] ERRO CRÍTICO NO SERVIDOR HTTP: Unable to configure formatter 'default'
 2026-03-08 09:55:48,585 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-08 09:56:48,808 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-08 09:57:49,040 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-08 09:58:49,950 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-08 09:59:50,861 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-08 10:00:51,095 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-08 10:01:51,339 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-08 10:02:51,569 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-08 10:03:51,784 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-08 10:04:52,026 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-08 10:05:52,253 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-08 10:06:52,474 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-08 10:07:52,713 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-08 10:08:52,927 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-08 10:09:53,147 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-08 10:10:53,380 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-08 10:11:53,612 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-08 10:12:53,833 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-08 10:13:54,132 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-08 10:14:54,363 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 07:28:16,393 [INFO] >>> INICIO DO PROCESSO PRINCIPAL <<<
+2026-03-09 07:28:16,718 [INFO] Limpando instância zumbi (PID 4684)...
+2026-03-09 07:28:16,986 [INFO] Proteção Watchdog instalada: ExodoNfceBridgeWatchdog
+2026-03-09 07:28:16,987 [INFO] Sistema de auto-inicialização configurado via Tarefas Agendadas.
+2026-03-09 07:28:16,987 [INFO] Iniciando serviços de nuvem (Firebase)...
+2026-03-09 07:28:17,061 [INFO] Firebase Listener ativo!
+2026-03-09 07:28:19,248 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 07:28:19,251 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 07:28:19,336 [INFO] Listener de Comandos Remotos ativo!
+2026-03-09 07:28:19,447 [INFO] Iniciando Uvicorn...
+2026-03-09 07:28:19,453 [INFO] Iniciando interface da bandeja...
+2026-03-09 07:28:19,468 [ERROR] ERRO CRÍTICO NO SERVIDOR HTTP: Unable to configure formatter 'default'
+2026-03-09 07:29:19,502 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 07:30:19,756 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 07:31:20,000 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 07:32:20,256 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 07:33:20,500 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 07:35:45,582 [INFO] >>> INICIO DO PROCESSO PRINCIPAL <<<
+2026-03-09 07:35:45,661 [INFO] Limpando instância zumbi (PID 10488)...
+2026-03-09 07:35:45,873 [INFO] Proteção Watchdog instalada: ExodoNfceBridgeWatchdog
+2026-03-09 07:35:45,873 [INFO] Sistema de auto-inicialização configurado via Tarefas Agendadas.
+2026-03-09 07:35:45,873 [INFO] Iniciando serviços de nuvem (Firebase)...
+2026-03-09 07:35:45,946 [INFO] Firebase Listener ativo!
+2026-03-09 07:35:47,066 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 07:35:47,666 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 07:35:47,672 [INFO] Listener de Comandos Remotos ativo!
+2026-03-09 07:35:47,675 [INFO] Iniciando Uvicorn...
+2026-03-09 07:35:47,675 [INFO] Iniciando interface da bandeja...
+2026-03-09 07:35:47,676 [ERROR] ERRO CRÍTICO NO SERVIDOR HTTP: Unable to configure formatter 'default'
+2026-03-09 07:36:47,507 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 07:37:47,760 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 07:38:48,014 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 07:39:48,261 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 07:40:48,492 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 07:41:48,726 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 07:42:48,973 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 07:43:49,204 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 07:44:49,593 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 07:45:49,923 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 07:46:50,171 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 07:47:50,406 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 07:48:50,641 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 07:49:50,862 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 07:50:51,109 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 07:51:51,371 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 07:52:51,598 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 07:53:51,837 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 07:54:52,068 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 07:55:52,307 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 07:56:52,650 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 07:57:52,908 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 07:58:53,145 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 07:59:53,380 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 08:00:53,613 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 08:01:53,855 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 08:02:54,077 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 08:03:54,326 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 08:04:54,568 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 08:05:54,819 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 08:06:55,054 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 08:07:55,340 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 08:08:55,590 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 08:09:55,881 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 08:10:56,132 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 08:11:56,515 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 08:12:56,765 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 08:13:57,023 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 08:14:57,248 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 08:15:57,489 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 08:16:57,724 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 08:17:57,950 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 08:18:58,232 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 08:19:58,482 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 08:20:58,718 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7
+2026-03-09 08:21:59,005 [INFO] Sinal de vida (Heartbeat) enviado com sucesso: DESKTOP-HF8TOM7

@@ -80,10 +80,16 @@ class NFCeBackendService implements NFCeServiceBase {
       debugPrint('>>> [NFCeBackend] Iniciando emissão via backend Python (PyNFe)...');
       
       // Se não houver baseUrl válida ou se for solicitado explicitamente, usar Firebase
-      final bool usarFirebase = baseUrl.isEmpty || baseUrl.contains('firebase') || (empresa.configuracoes?['usarFirebaseBridge'] == true);
+      // No Web App, forçar Firebase se a URL for HTTP (evitar erro de Mixed Content)
+      final bool isWebHttp = kIsWeb && (baseUrl.startsWith('http://') || baseUrl.contains('localhost'));
+      
+      final bool usarFirebase = baseUrl.isEmpty || 
+          baseUrl.contains('firebase') || 
+          isWebHttp ||
+          (empresa.configuracoes?['usarFirebaseBridge'] == true);
       
       if (usarFirebase) {
-        debugPrint('>>> [NFCeBackend] Detectado modo FIREBASE (Sem Link).');
+        debugPrint('>>> [NFCeBackend] Detectado modo FIREBASE (Relay/Sem Link). IsWebHttp: $isWebHttp');
         return await emitirViaFirebase(
           empresa: empresa,
           produtos: produtos,
@@ -97,7 +103,7 @@ class NFCeBackendService implements NFCeServiceBase {
         );
       }
 
-      debugPrint('>>> [NFCeBackend] URL: $baseUrl/api/nfce/emitir');
+      debugPrint('>>> [NFCeBackend] URL: $baseUrl/emitir');
       
       // Preparar dados para o backend
       late final Map<String, dynamic> requestData;
@@ -577,24 +583,34 @@ class NFCeBackendService implements NFCeServiceBase {
   
   /// Verifica se o backend está disponível
   Future<bool> verificarConexao() async {
+    bool httpOk = false;
     try {
-      // Se tiver URL configurada, verificar via HTTP
-      if (baseUrl.isNotEmpty && !baseUrl.contains('firebase')) {
+      // No Web App, URLs HTTP falham por Mixed Content. Vamos pular o check HTTP se for o caso.
+      final bool pularHttp = kIsWeb && (baseUrl.startsWith('http://') || baseUrl.contains('localhost'));
+
+      // Se tiver URL configurada e segura (ou permitida), verificar via HTTP primeiro
+      if (baseUrl.isNotEmpty && !baseUrl.contains('firebase') && !pularHttp) {
         final response = await http.get(
           Uri.parse('$baseUrl/health'),
         ).timeout(
-          const Duration(seconds: 5),
+          const Duration(seconds: 3),
           onTimeout: () => throw Exception('Timeout'),
         );
-        return response.statusCode == 200;
+        httpOk = response.statusCode == 200;
       }
-      
-      // Se não tiver URL ou for modo Firebase, verificar via Firestore
+    } catch (e) {
+      debugPrint('>>> [NFCeBackend] HTTP Health Check falhou (esperado no Web): $e');
+    }
+
+    if (httpOk) return true;
+    
+    // Fallback: Se não tiver URL ou HTTP falhar, verificar via Firestore (Modo Relay)
+    try {
       final status = await _verificarBridgeOnline();
       final pcsOnline = (status['pcsOnline'] as List?) ?? [];
       return pcsOnline.isNotEmpty;
     } catch (e) {
-      debugPrint('>>> [NFCeBackend] Backend não disponível: $e');
+      debugPrint('>>> [NFCeBackend] Firestore Bridge Check falhou: $e');
       return false;
     }
   }
