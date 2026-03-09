@@ -104,6 +104,15 @@ class NFCeFocusService {
           // Converter produtos para NFCeItem
           final itens = produtos.map((p) {
             final qtd = quantidades[p.id] ?? 1.0;
+            
+            String cfopFinal = p.cfop?.replaceAll(RegExp(r'[^0-9]'), '') ?? '5102';
+            final csosnRaw = p.csosn?.replaceAll(RegExp(r'[^0-9]'), '') ?? '';
+            final cstRaw = p.icmsCst?.replaceAll(RegExp(r'[^0-9]'), '') ?? '';
+            
+            if ((csosnRaw == '500' || cstRaw == '60') && (cfopFinal == '5102' || cfopFinal == '5101')) {
+              cfopFinal = '5405';
+            }
+
             return NFCeItem(
               produtoId: p.id,
               codigo: p.codigo ?? p.id,
@@ -112,11 +121,6 @@ class NFCeFocusService {
               valorUnitario: p.precoAtual,
               valorTotal: p.precoAtual * qtd,
               ncm: p.ncm?.replaceAll(RegExp(r'[^0-9]'), '') ?? '00000000',
-              
-              String cfopFinal = p.cfop?.replaceAll(RegExp(r'[^0-9]'), '') ?? '5102';
-              if ((p.csosn == '500' || p.icmsCst == '60') && (cfopFinal == '5102' || cfopFinal == '5101')) {
-                cfopFinal = '5405';
-              }
               cfop: cfopFinal,
               unidade: p.unidade,
               origem: p.origem ?? '0',

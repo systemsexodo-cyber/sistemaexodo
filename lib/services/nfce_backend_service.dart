@@ -759,8 +759,8 @@ class NFCeBackendService implements NFCeServiceBase {
       
       // Inteligência Fiscal: Auto-correção de CFOP para ST
       String cfopFinal = produto.cfop?.replaceAll(RegExp(r'[^0-9]'), '') ?? '5102';
-      final csosnFinal = produto.csosn ?? '102';
-      final cstFinal = produto.icmsCst ?? '00';
+      final csosnFinal = (produto.csosn?.replaceAll(RegExp(r'[^0-9]'), '') ?? '102');
+      final cstFinal = (produto.icmsCst?.replaceAll(RegExp(r'[^0-9]'), '') ?? '00');
       
       // Se CSOSN 500 ou CST 60 (ST), o CFOP deve ser 5405 para venda interna
       if ((csosnFinal == '500' || cstFinal == '60') && (cfopFinal == '5102' || cfopFinal == '5101')) {

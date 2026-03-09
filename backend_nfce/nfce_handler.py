@@ -530,12 +530,23 @@ def emitir_nfce_pynfe(req):
             if is_homologacao and i == 0:
                 descricao = 'NOTA FISCAL EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL'
             
+            # Inteligência Fiscal: Auto-correção de CFOP para ST (Double Check no Backend)
+            cfop_atual = str(item.cfop or '5102').replace('.', '').strip()
+            csosn_atual = str(item.icms_csosn or '102').strip()
+            cst_atual = str(item.icms_cst or '00').strip()
+            
+            if (csosn_atual == '500' or cst_atual == '60') and (cfop_atual in ['5101', '5102']):
+                cfop_final = '5405'
+                print(f">>> [FISCAL] Corrigindo CFOP item {item.codigo}: {cfop_atual} -> {cfop_final} (ST detectada)")
+            else:
+                cfop_final = cfop_atual
+
             # No pynfe 0.6.5 use adicionar_produto_servico diretamente da NotaFiscal
             p_nfe = nota_fiscal.adicionar_produto_servico(
                 codigo=item.codigo,
                 descricao=descricao,
                 ncm=item.ncm,
-                cfop=item.cfop,
+                cfop=cfop_final,
                 unidade_comercial='UN',
                 quantidade_comercial=Decimal(str(item.quantidade)).quantize(Decimal('0.0001')),
                 valor_unitario_comercial=Decimal(str(item.valor_unitario)).quantize(Decimal('0.0000001')),
@@ -551,10 +562,10 @@ def emitir_nfce_pynfe(req):
             
             # Garantir CSOSN ou CST explicitamente (Monkeypatch do pynfe)
             if str(emp.crt) == '3':
-                p_nfe.icms_cst = item.icms_cst or '00'
+                p_nfe.icms_cst = cst_atual or '00'
                 p_nfe.icms_aliquota = Decimal(str(item.icms_aliquota or 0.0))
             else:
-                p_nfe.icms_csosn = item.icms_csosn or '102'
+                p_nfe.icms_csosn = csosn_atual or '102'
                 p_nfe.icms_aliquota = Decimal('0.00')
 
         # Assinatura

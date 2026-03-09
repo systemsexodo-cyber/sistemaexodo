@@ -112,17 +112,20 @@ class NFCeApiService {
       final valorUnitario = produto.precoAtual;
       final valorTotalItem = valorUnitario * quantidade;
 
+      String cfopFinal = produto.cfop?.replaceAll(RegExp(r'[^0-9]'), '') ?? '5102';
+      final csosnRaw = produto.csosn?.replaceAll(RegExp(r'[^0-9]'), '') ?? '';
+      final cstRaw = produto.icmsCst?.replaceAll(RegExp(r'[^0-9]'), '') ?? '';
+      
+      if ((csosnRaw == '500' || cstRaw == '60') && (cfopFinal == '5102' || cfopFinal == '5101')) {
+        cfopFinal = '5405';
+      }
+
       itens.add({
         'codigo_produto': produto.codigo ?? produto.id,
         'descricao': produto.nome,
         'ncm': produto.ncm?.replaceAll(RegExp(r'[^0-9]'), '') ?? '00000000',
-        
-        String cfopFinal = produto.cfop?.replaceAll(RegExp(r'[^0-9]'), '') ?? '5102';
-        if ((produto.csosn == '500' || produto.icmsCst == '60') && (cfopFinal == '5102' || cfopFinal == '5101')) {
-          cfopFinal = '5405';
-        }
         'cfop': cfopFinal,
-        'unidade_comercial': produto.unidade,
+        'unidade_comercial': produto.unidade ?? 'UN',
         'quantidade_comercial': quantidade.toStringAsFixed(3),
         'valor_unitario_comercial': valorUnitario.toStringAsFixed(2),
         'valor_total': valorTotalItem.toStringAsFixed(2),
