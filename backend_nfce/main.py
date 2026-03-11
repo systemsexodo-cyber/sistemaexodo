@@ -104,7 +104,7 @@ app.add_middleware(
 )
 
 # Versão do Bridge
-BRIDGE_VERSION = "2.7"
+BRIDGE_VERSION = "2.8"
 
 # Variáveis globais para rastreamento
 LAST_PROCESSED_COMPANY = {"cnpj": None, "nome": None, "timestamp": None}
@@ -247,6 +247,22 @@ async def emitir(req: RequisicaoEmissao):
         tb = traceback.format_exc()
         print(f"[HTTP ERRO] {e}\n{tb}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/nfce/cancelar")
+async def cancelar_nfce_endpoint(req: Request):
+    from nfce_handler import cancelar_nfce_pynfe
+    try:
+        data = await req.json()
+        resultado = cancelar_nfce_pynfe(data)
+        
+        # O aplicativo Flutter espera os mesmos formatos (success=True/False)
+        return resultado
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        print(f"[HTTP ERRO CANCELAMENTO] {e}\n{tb}")
+        # Retornar 200 com success=False para tratar graciosamente no front
+        return {"success": False, "error": str(e), "traceback": tb}
 
 @app.get("/")
 @app.get("/health")

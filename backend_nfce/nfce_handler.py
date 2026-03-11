@@ -839,3 +839,95 @@ def salvar_xml_local(cnpj, chave, xml_content):
         return None
             
 
+
+def cancelar_nfce_pynfe(req_dict):
+    try:
+        from pynfe.entidades.evento import EventoCancelarNota
+        from pynfe.processamento.serializacao import SerializacaoXML
+        from pynfe.processamento.assinatura import AssinaturaA1
+        from pynfe.processamento.comunicacao import ComunicacaoSefaz
+        
+        chave_acesso = req_dict.get('chave_acesso')
+        protocolo = req_dict.get('protocolo')
+        justificativa = req_dict.get('justificativa', 'Cancelamento por erro de emissao')
+        empresa_data = req_dict.get('empresa', {})
+        
+        print(f'>>> [CANCELAMENTO] Iniciando para a chave: {chave_acesso}')
+        
+        cert_data = base64.b64decode(empresa_data.get('certificado_base64', ''))
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.pfx') as tmp_cert:
+            tmp_cert.write(cert_data)
+            caminho_cert = tmp_cert.name
+            
+        try:
+            senha_cert = empresa_data.get('senha_certificado', '')
+            is_homologacao = empresa_data.get('ambiente_homologacao', True)
+            uf = empresa_data.get('uf', 'SP')
+            
+            con = ComunicacaoSefaz(uf=uf, certificado=caminho_cert, certificado_senha=senha_cert, homologacao=is_homologacao)
+            
+            if not protocolo:
+                print('>>> [PyNFe] Protocolo não fornecido, consultando nota...')
+                resp_cons = con.consulta_nota(modelo='nfce', chave=chave_acesso)
+                if resp_cons.status_code == 200:
+                    try:
+                        root = etree.fromstring(resp_cons.text.encode('utf-8'))
+                        ns = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
+                        inf_prot = root.xpath('//ns:infProt', namespaces=ns)
+                        if inf_prot:
+                            protocolo = inf_prot[0].xpath('ns:nProt', namespaces=ns)[0].text
+                            print(f'>>> [PyNFe] Protocolo obtido: {protocolo}')
+                    except Exception as e_cons:
+                        print(f'Erro extraindo protocolo: {e_cons}')
+            
+            if not protocolo:
+                return {'success': False, 'error': 'Protocolo de autorização não encontrado. A nota pode não estar autorizada.'}
+                
+            e = EventoCancelarNota()
+            e.chave = chave_acesso
+            e.protocolo = protocolo
+            e.justificativa = justificativa
+            e.data_emissao = datetime.now()
+            e.uf = uf
+            e.cnpj = str(empresa_data.get('cnpj', '')).replace('.', '').replace('/', '').replace('-', '').replace(' ', '')
+            
+            serializador = SerializacaoXML(None, homologacao=is_homologacao)
+            xml_evento = serializador.serializar_evento(e)
+            
+            assinador = AssinaturaA1(caminho_cert, senha_cert)
+            xml_assinado = assinador.assinar(xml_evento)
+            
+            resp = con.evento(modelo='nfce', evento=xml_assinado)
+            if resp.status_code == 200:
+                xml_text = resp.text
+                if xml_text.startswith('<?xml'):
+                    xml_text = xml_text[xml_text.find('?>')+2:].strip()
+                root = etree.fromstring(xml_text.encode('utf-8'))
+                ns = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
+                inf_evento = root.xpath('//ns:infEvento', namespaces=ns)
+                
+                if inf_evento:
+                    inf = inf_evento[0]
+                    cStat = inf.xpath('ns:cStat', namespaces=ns)
+                    cStat = cStat[0].text if cStat else ''
+                    xMotivo = inf.xpath('ns:xMotivo', namespaces=ns)
+                    xMotivo = xMotivo[0].text if xMotivo else ''
+                    return {
+                        'success': cStat == '135',
+                        'data': {'cStat': cStat, 'xMotivo': xMotivo},
+                        'error': xMotivo if cStat != '135' else None
+                    }
+                else:
+                    return {'success': False, 'error': 'Resposta SEFAZ não contém infEvento', 'details': xml_text[:500]}
+            else:
+                return {'success': False, 'error': f'Erro HTTP {resp.status_code}', 'details': resp.text[:500]}
+        finally:
+            if os.path.exists(caminho_cert):
+                try: os.remove(caminho_cert)
+                except: pass
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        print(f'[ERRO CANCELAMENTO] {tb}')
+        return {'success': False, 'error': str(e), 'traceback': tb}
+
