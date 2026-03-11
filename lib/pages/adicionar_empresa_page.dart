@@ -60,7 +60,16 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
   String? _certificadoWindowsThumbprint; // Thumbprint do certificado do Windows
   bool _ambienteHomologacao = true; // Padrão: homologação
   final _bridgeNfceUrlController = TextEditingController(text: 'http://localhost:8000');
+
   final _bridgeNfceKeyController = TextEditingController();
+  
+  // Customizações de Impressão NFC-e
+
+  final _nfceMargemEsquerdaController = TextEditingController(text: '5.0');
+  final _nfceLarguraBobinaController = TextEditingController(text: '80.0');
+  final _nfceMargemDireitaController = TextEditingController(text: '15.0');
+  final _nfceFonteEscalaController = TextEditingController(text: '1.0');
+
   
   Color _corPrimaria = Colors.blueAccent;
   Color _corSecundaria = Colors.blue;
@@ -138,8 +147,15 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
     _cscIdTokenController.text = empresa.cscIdToken ?? '';
     _serieNFCeController.text = empresa.serieNFCe ?? '1';
     _ambienteHomologacao = empresa.ambienteHomologacao ?? true;
+
     _bridgeNfceUrlController.text = empresa.configuracoes?['bridgeNfceUrl'] as String? ?? 'http://localhost:8000';
     _bridgeNfceKeyController.text = empresa.configuracoes?['bridgeNfceKey'] as String? ?? '';
+
+    _nfceMargemEsquerdaController.text = empresa.configuracoes?['nfceMargemEsquerda']?.toString() ?? '5.0';
+    _nfceLarguraBobinaController.text = empresa.configuracoes?['nfceLarguraBobina']?.toString() ?? '80.0';
+    _nfceMargemDireitaController.text = empresa.configuracoes?['nfceMargemDireita']?.toString() ?? '15.0';
+    _nfceFonteEscalaController.text = empresa.configuracoes?['nfceFonteEscala']?.toString() ?? '1.0';
+
     
     // Converter cores hex para Color
     if (empresa.corPrimaria != null && empresa.corPrimaria!.isNotEmpty) {
@@ -187,8 +203,15 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
     _whatsappApiUrlController.dispose();
     _whatsappApiKeyController.dispose();
     _whatsappInstanceNameController.dispose();
+
     _bridgeNfceUrlController.dispose();
     _bridgeNfceKeyController.dispose();
+
+    _nfceMargemEsquerdaController.dispose();
+    _nfceLarguraBobinaController.dispose();
+    _nfceMargemDireitaController.dispose();
+    _nfceFonteEscalaController.dispose();
+
     super.dispose();
   }
 
@@ -301,6 +324,11 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
           'certificadoWindowsSubject': _certificadoDigitalNome,
         'bridgeNfceUrl': _bridgeNfceUrlController.text.trim(),
         'bridgeNfceKey': _bridgeNfceKeyController.text.trim(),
+
+        'nfceMargemEsquerda': double.tryParse(_nfceMargemEsquerdaController.text.trim()) ?? 5.0,
+        'nfceLarguraBobina': double.tryParse(_nfceLarguraBobinaController.text.trim()) ?? 80.0,
+        'nfceMargemDireita': double.tryParse(_nfceMargemDireitaController.text.trim()) ?? 15.0,
+        'nfceFonteEscala': double.tryParse(_nfceFonteEscalaController.text.trim()) ?? 1.0,
       },
     );
 
@@ -581,6 +609,50 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                 icon: Icons.vpn_key,
                 hintText: 'ID Token do CSC fornecido pela SEFAZ',
                 helperText: 'Identificador do token CSC',
+              ),
+              const SizedBox(height: 16),
+              const SizedBox(height: 16),
+              _buildSectionTitle('Ajustes de Impressão (NFC-e Térmica)'),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildTextField(
+                      controller: _nfceMargemEsquerdaController,
+                      label: 'Margem Esq. (mm)',
+                      icon: Icons.format_align_left,
+                      hintText: '5.0',
+                      keyboardType: TextInputType.number,
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: _buildTextField(
+                      controller: _nfceMargemDireitaController,
+                      label: 'Margem Dir. (mm)',
+                      icon: Icons.format_align_right,
+                      hintText: '15.0',
+                      keyboardType: TextInputType.number,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              _buildTextField(
+                controller: _nfceLarguraBobinaController,
+                label: 'Largura da Bobina (mm)',
+                icon: Icons.print,
+                hintText: '80.0 ou 58.0',
+                helperText: 'A largura do papel da sua impressora. Geralmente 80.0 (maiorinha) ou 58.0 (pequena/maquininha).',
+                keyboardType: TextInputType.number,
+              ),
+              const SizedBox(height: 16),
+              _buildTextField(
+                controller: _nfceFonteEscalaController,
+                label: 'Escala da Fonte (Padrão: 1.0)',
+                icon: Icons.format_size,
+                hintText: '1.0',
+                helperText: 'Ex: 0.8 para diminuir 20%, 1.2 para aumentar 20%',
+                keyboardType: TextInputType.number,
               ),
               const SizedBox(height: 16),
               // Série da NFC-e

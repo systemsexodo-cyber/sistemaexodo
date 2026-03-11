@@ -106,7 +106,11 @@ class NFCeBackendService implements NFCeServiceBase {
         );
       }
 
-      debugPrint('>>> [NFCeBackend] URL: $baseUrl/emitir');
+      // Tentar a rota principal /emitir
+      final uriEmitir = Uri.parse('$baseUrl/emitir');
+      final uriEmitirAntiga = Uri.parse('$baseUrl/emitir_nfce');
+      
+      debugPrint('>>> [NFCeBackend] Tentando URL: $uriEmitir');
       
       // Preparar dados para o backend
       late final Map<String, dynamic> requestData;
@@ -160,20 +164,34 @@ class NFCeBackendService implements NFCeServiceBase {
       // Obter chave de API das configurações da empresa
       final apiKey = empresa.configuracoes?['bridgeNfceKey'] as String? ?? '';
       
-      // Fazer requisição HTTP
-      final response = await http.post(
-        Uri.parse('$baseUrl/emitir'), // Nota: O novo backend usa /emitir e não /api/nfce/emitir
-        headers: {
-          'Content-Type': 'application/json',
-          if (apiKey.isNotEmpty) 'X-Api-Key': apiKey,
-        },
-        body: jsonEncode(requestData),
-      ).timeout(
-        const Duration(seconds: 120),
-        onTimeout: () {
-          throw Exception('Timeout ao comunicar com o Emissor NFC-e (120s). Verifique se o programa está aberto e se o link/IP está correto.');
-        },
-      );
+      late http.Response response;
+      try {
+        // Tenta a rota /emitir (Padrão v2.6+)
+        response = await http.post(
+          uriEmitir,
+          headers: {
+            'Content-Type': 'application/json',
+            if (apiKey.isNotEmpty) 'X-Api-Key': apiKey,
+          },
+          body: jsonEncode(requestData),
+        ).timeout(const Duration(seconds: 15));
+      } catch (e) {
+        debugPrint('>>> [NFCeBackend] Falha na rota /emitir, tentando /emitir_nfce...');
+        // Fallback para /emitir_nfce (Versões antigas)
+        response = await http.post(
+          uriEmitirAntiga,
+          headers: {
+            'Content-Type': 'application/json',
+            if (apiKey.isNotEmpty) 'X-Api-Key': apiKey,
+          },
+          body: jsonEncode(requestData),
+        ).timeout(
+          const Duration(seconds: 105),
+          onTimeout: () {
+            throw Exception('Timeout ao comunicar com o Emissor NFC-e (120s). Verifique se o programa está aberto e se o link/IP está correto.');
+          },
+        );
+      }
       
       debugPrint('>>> [NFCeBackend] Status: ${response.statusCode}');
       debugPrint('>>> [NFCeBackend] Response: ${response.body}');

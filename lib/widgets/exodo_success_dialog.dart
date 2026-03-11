@@ -158,51 +158,7 @@ class ExodoSuccessDialog extends StatelessWidget {
 
                       const SizedBox(height: 24),
 
-                      // QR Code com Container Estilizado
-                      if (nfce.qrCode != null && nfce.qrCode!.isNotEmpty) ...[
-                        Container(
-                          padding: const EdgeInsets.all(20),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(24),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.15),
-                                blurRadius: 20,
-                                offset: const Offset(0, 10),
-                              ),
-                            ],
-                          ),
-                          child: Column(
-                            children: [
-                              QrImageView(
-                                data: nfce.qrCode!,
-                                version: QrVersions.auto,
-                                size: 180.0,
-                                eyeStyle: const QrEyeStyle(
-                                  eyeShape: QrEyeShape.square,
-                                  color: Color(0xFF1E1E2E),
-                                ),
-                                dataModuleStyle: const QrDataModuleStyle(
-                                  dataModuleShape: QrDataModuleShape.square,
-                                  color: Color(0xFF1E1E2E),
-                                ),
-                              ),
-                              const SizedBox(height: 12),
-                              const Text(
-                                'ESCANEAR PARA CONSULTA',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: Color(0xFF1E1E2E),
-                                  fontWeight: FontWeight.w900,
-                                  letterSpacing: 1.2,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 24),
-                      ],
+
                       
                       // Infos Técnicas em Expansion Tiles
                       _buildTechnicalInfo(context),

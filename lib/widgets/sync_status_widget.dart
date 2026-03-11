@@ -9,6 +9,7 @@ class SyncStatusWidget extends StatelessWidget {
   Widget build(BuildContext context) {
     return Consumer<DataService>(
       builder: (context, service, _) {
+        final isOffline = service.isOffline;
         final temErro = service.ultimoErroSync != null;
 
         return Row(
@@ -16,18 +17,18 @@ class SyncStatusWidget extends StatelessWidget {
           children: [
             // Indicador de Sincronização
             Tooltip(
-              message: temErro ? 'Erro: ${service.ultimoErroSync}' : service.getSyncStatusText,
+              message: isOffline ? 'Internet desconectada. Modo Offline.' : (temErro ? 'Erro: ${service.ultimoErroSync}' : service.getSyncStatusText),
               child: Container(
                 margin: const EdgeInsets.symmetric(vertical: 8),
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 decoration: BoxDecoration(
-                  color: temErro ? Colors.red.withOpacity(0.1) : Colors.white.withOpacity(0.05),
+                  color: isOffline ? Colors.orange.withOpacity(0.1) : (temErro ? Colors.red.withOpacity(0.1) : Colors.white.withOpacity(0.05)),
                   borderRadius: BorderRadius.circular(20),
-                  border: temErro ? Border.all(color: Colors.red.withOpacity(0.3)) : null,
+                  border: isOffline ? Border.all(color: Colors.orange.withOpacity(0.3)) : (temErro ? Border.all(color: Colors.red.withOpacity(0.3)) : null),
                 ),
                 child: Row(
                   children: [
-                    if (service.syncEmAndamento)
+                    if (!isOffline && service.syncEmAndamento)
                       const SizedBox(
                         width: 12,
                         height: 12,
@@ -38,19 +39,21 @@ class SyncStatusWidget extends StatelessWidget {
                       )
                     else
                       Icon(
-                        temErro ? Icons.cloud_off : Icons.cloud_done,
-                        color: temErro 
-                            ? Colors.red 
-                            : (service.ultimaSincronizacaoSucesso != null ? Colors.green : Colors.grey),
+                        isOffline ? Icons.wifi_off : (temErro ? Icons.cloud_off : Icons.cloud_done),
+                        color: isOffline 
+                            ? Colors.orange
+                            : (temErro 
+                                ? Colors.red 
+                                : (service.ultimaSincronizacaoSucesso != null ? Colors.green : Colors.grey)),
                         size: 16,
                       ),
                     const SizedBox(width: 8),
                     Text(
-                      temErro ? 'V2 - Erro na sincronização' : 'V2 - ${service.getSyncStatusText}',
+                      isOffline ? 'MODO OFFLINE' : (temErro ? 'Erro na sincronização' : service.getSyncStatusText),
                       style: TextStyle(
-                        color: temErro ? Colors.redAccent : Colors.white.withOpacity(0.6),
+                        color: isOffline ? Colors.orangeAccent : (temErro ? Colors.redAccent : Colors.white.withOpacity(0.6)),
                         fontSize: 10,
-                        fontWeight: temErro ? FontWeight.bold : FontWeight.normal,
+                        fontWeight: isOffline ? FontWeight.w900 : (temErro ? FontWeight.bold : FontWeight.normal),
                       ),
                     ),
                   ],

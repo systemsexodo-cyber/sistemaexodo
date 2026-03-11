@@ -23,6 +23,7 @@ import 'package:sistema_exodo_novo/models/link_vendedor.dart';
 import 'package:sistema_exodo_novo/models/comissao_vendedor.dart';
 import 'package:sistema_exodo_novo/services/local_storage_service.dart';
 import 'package:sistema_exodo_novo/services/firebase_service.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:sistema_exodo_novo/services/sync_queue_service.dart';
 import 'package:sistema_exodo_novo/services/whatsapp_service.dart';
 import 'package:sistema_exodo_novo/models/empresa.dart';
@@ -308,6 +309,9 @@ class DataService extends ChangeNotifier {
   String? get ultimoErroSync => _ultimoErroSync;
   String get mensagemLoading => _mensagemLoading;
   bool get isModoLeve => _isModoLeve;
+  
+  bool _isOffline = false;
+  bool get isOffline => _isOffline;
 
   /// Retorna uma mensagem amigável sobre o status da sincronização
   String get getSyncStatusText {
@@ -736,6 +740,39 @@ class DataService extends ChangeNotifier {
     // Não carregar dados fictícios no construtor
     // Eles serão carregados apenas se não houver dados salvos
     print('>>> DataService criado com instanceId: $_instanceId');
+    _initConnectivity();
+  }
+
+  void _initConnectivity() {
+    Connectivity().onConnectivityChanged.listen((List<ConnectivityResult> results) {
+      bool offline = true;
+      for (var res in results) {
+        if (res != ConnectivityResult.none) {
+          offline = false;
+        }
+      }
+      
+      // Default to online if empty
+      if (results.isEmpty) offline = false; 
+
+      if (_isOffline != offline) {
+        _isOffline = offline;
+        debugPrint('>>> [DataService] Status da conexão alterado: Offline = $_isOffline');
+        notifyListeners();
+      }
+    });
+    
+    Connectivity().checkConnectivity().then((List<ConnectivityResult> results) {
+       bool offline = true;
+       for (var res in results) {
+         if (res != ConnectivityResult.none) {
+           offline = false;
+         }
+       }
+       if (results.isEmpty) offline = false;
+       _isOffline = offline;
+       notifyListeners();
+    });
   }
 
   Future<void> iniciarSincronizacao({bool modoLeve = false}) async {

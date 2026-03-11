@@ -104,7 +104,7 @@ app.add_middleware(
 )
 
 # Versão do Bridge
-BRIDGE_VERSION = "2.6"
+BRIDGE_VERSION = "2.7"
 
 # Variáveis globais para rastreamento
 LAST_PROCESSED_COMPANY = {"cnpj": None, "nome": None, "timestamp": None}
@@ -506,17 +506,26 @@ def start_firebase_listener():
     
     if getattr(sys, 'frozen', False):
         base_path = os.path.dirname(sys.executable)
+        meipass = getattr(sys, '_MEIPASS', base_path)
+        possiveis = [
+            os.path.join(base_path, "firebase-credentials.json"),
+            os.path.join(meipass, "firebase-credentials.json"),
+            os.path.join(base_path, "..", "firebase-credentials.json"),
+            "firebase-credentials.json"
+        ]
     else:
         base_path = os.path.dirname(os.path.abspath(__file__))
+        possiveis = [os.path.join(base_path, "firebase-credentials.json"), "firebase-credentials.json"]
     
-    cred_file = os.path.join(base_path, "firebase-credentials.json")
-    status_file = os.path.join(base_path, "STATUS_BRIDGE.txt")
-    
-    if not os.path.exists(cred_file):
-        cred_file = "firebase-credentials.json"
-        if not os.path.exists(cred_file):
-            print(f"[ERRO] firebase-credentials.json não encontrado.")
-            return
+    cred_file = None
+    for p in possiveis:
+        if os.path.exists(p):
+            cred_file = p
+            break
+            
+    if not cred_file:
+        log_message("[ERRO] firebase-credentials.json não encontrado em nenhum dos diretórios esperados.", "ERROR")
+        return
             
     try:
         try:
@@ -814,7 +823,30 @@ def setup_tray():
 def run_server():
     try:
         log_message("Iniciando Uvicorn...")
-        uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info", reload=False, workers=1)
+        # Usa dict padrão para contornar bug do PyInstaller com formatadores do Uvicorn
+        LOGGING_CONFIG = {
+            "version": 1,
+            "disable_existing_loggers": False,
+            "formatters": {
+                "default": {
+                    "()": "logging.Formatter",
+                    "fmt": "%(levelname)s: %(message)s",
+                },
+            },
+            "handlers": {
+                "default": {
+                    "formatter": "default",
+                    "class": "logging.StreamHandler",
+                    "stream": "ext://sys.stderr",
+                },
+            },
+            "loggers": {
+                "uvicorn": {"handlers": ["default"], "level": "INFO"},
+                "uvicorn.error": {"handlers": ["default"], "level": "INFO"},
+                "uvicorn.access": {"handlers": ["default"], "level": "INFO"},
+            },
+        }
+        uvicorn.run(app, host="0.0.0.0", port=8000, log_config=LOGGING_CONFIG, reload=False, workers=1)
     except Exception as e:
         log_message(f"ERRO CRÍTICO NO SERVIDOR HTTP: {e}", "ERROR")
         # Se falhar a porta 8000, o sistema continuará funcionando via Firebase

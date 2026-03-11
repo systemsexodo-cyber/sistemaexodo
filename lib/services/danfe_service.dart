@@ -19,47 +19,58 @@ class DANFEService {
     required Empresa empresa,
   }) async {
     try {
+      final double margemEsq = (double.tryParse(empresa.configuracoes?['nfceMargemEsquerda']?.toString() ?? '5.0') ?? 5.0) * 2.83465;
+      final double margemDir = (double.tryParse(empresa.configuracoes?['nfceMargemDireita']?.toString() ?? '15.0') ?? 15.0) * 2.83465;
+      final double escalaFonte = double.tryParse(empresa.configuracoes?['nfceFonteEscala']?.toString() ?? '1.0') ?? 1.0;
+      final double larguraBobina = double.tryParse(empresa.configuracoes?['nfceLarguraBobina']?.toString() ?? '80.0') ?? 80.0;
+
       final pdf = pw.Document();
 
       pdf.addPage(
         pw.Page(
-          pageFormat: const PdfPageFormat(80 * 2.83465, 400 * 2.83465), // 80mm x 400mm (térmica)
-          margin: const pw.EdgeInsets.all(5),
+          pageFormat: PdfPageFormat(larguraBobina * 2.83465, double.infinity, marginAll: 0), // Altura infinita ajustável
+          margin: pw.EdgeInsets.only(left: margemEsq, right: margemDir, top: 0, bottom: 0),
           build: (pw.Context context) {
-            return pw.Column(
-              crossAxisAlignment: pw.CrossAxisAlignment.center,
-              children: [
-                _buildCabecalho(empresa),
+            return pw.Align(
+              alignment: pw.Alignment.topCenter,
+              child: pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.center,
+                mainAxisSize: pw.MainAxisSize.min, // Impede a coluna de esticar
+                mainAxisAlignment: pw.MainAxisAlignment.start,
+                children: [
+                pw.SizedBox(height: 5),
+                _buildCabecalho(empresa, escalaFonte),
                 _divider(),
                 pw.Text(
                   'DETALHE DA VENDA',
-                  style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold),
+                  style: pw.TextStyle(fontSize: 7.5 * escalaFonte, fontWeight: pw.FontWeight.bold),
                 ),
-                _buildCabecalhoItens(),
-                _buildItens(nfce),
+                _buildCabecalhoItens(escalaFonte),
+                _buildItens(nfce, escalaFonte),
                 _divider(),
-                _buildTotalGeral(nfce),
+                _buildTotalGeral(nfce, escalaFonte),
                 _divider(),
-                _buildPagamentos(nfce),
+                _buildPagamentos(nfce, escalaFonte),
                 _divider(),
-                _buildConsulta(nfce),
+                _buildConsulta(nfce, escalaFonte),
                 _divider(),
-                _buildConsumidor(nfce),
+                _buildConsumidor(nfce, escalaFonte),
                 _divider(),
-                _buildDadosEmissao(nfce),
+                _buildDadosEmissao(nfce, escalaFonte),
                 _divider(),
                 if (nfce.qrCode != null && nfce.qrCode!.isNotEmpty) ...[
                   pw.Text(
                     'Consulta via leitor de QR Code',
-                    style: const pw.TextStyle(fontSize: 8),
+                    style: pw.TextStyle(fontSize: 6.5 * escalaFonte),
                   ),
-                  pw.SizedBox(height: 5),
-                  _buildQRCode(nfce.qrCode!),
+                  pw.SizedBox(height: 2),
+                  _buildQRCode(nfce.qrCode!, escalaFonte),
                 ],
-                pw.SizedBox(height: 10),
-                _buildRodape(empresa),
+                pw.SizedBox(height: 3),
+                _buildRodape(empresa, escalaFonte),
               ],
-            );
+              ), // end Column
+            ); // end Align
           },
         ),
       );
@@ -72,71 +83,68 @@ class DANFEService {
 
   static pw.Widget _divider() {
     return pw.Padding(
-      padding: const pw.EdgeInsets.symmetric(vertical: 2),
-      child: pw.Text(
-        '------------------------------------------------------------',
-        style: const pw.TextStyle(fontSize: 8),
-      ),
+      padding: const pw.EdgeInsets.symmetric(vertical: 1.5),
+      child: pw.Divider(color: PdfColors.grey700, thickness: 0.5, borderStyle: pw.BorderStyle.dashed),
     );
   }
 
   /// Constrói cabeçalho do DANFE
-  static pw.Widget _buildCabecalho(Empresa empresa) {
+  static pw.Widget _buildCabecalho(Empresa empresa, double escala) {
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.center,
       children: [
         pw.Text(
           empresa.nomeExibicao.toUpperCase(),
-          style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold),
+          style: pw.TextStyle(fontSize: 9.5 * escala, fontWeight: pw.FontWeight.bold),
           textAlign: pw.TextAlign.center,
         ),
         if (empresa.cnpj != null)
           pw.Text(
             'CNPJ: ${_formatarCNPJ(empresa.cnpj!)}',
-            style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold),
+            style: pw.TextStyle(fontSize: 5.5 * escala, fontWeight: pw.FontWeight.bold),
             textAlign: pw.TextAlign.center,
           ),
         if (empresa.inscricaoEstadual != null)
           pw.Text(
              'I.E.: ${empresa.inscricaoEstadual}',
-             style: const pw.TextStyle(fontSize: 8),
+             style: pw.TextStyle(fontSize: 6.5 * escala),
           ),
         if (empresa.enderecoCompleto.isNotEmpty)
           pw.Text(
             empresa.enderecoCompleto,
-            style: const pw.TextStyle(fontSize: 7),
+            style: pw.TextStyle(fontSize: 5.5 * escala),
             textAlign: pw.TextAlign.center,
           ),
         if (empresa.telefone != null && empresa.telefone != '')
           pw.Text(
             'Fone: ${empresa.telefone}',
-            style: const pw.TextStyle(fontSize: 8),
+            style: pw.TextStyle(fontSize: 6.5 * escala),
           ),
       ],
     );
   }
 
-  static pw.Widget _buildCabecalhoItens() {
+  static pw.Widget _buildCabecalhoItens(double escala) {
     return pw.Padding(
       padding: const pw.EdgeInsets.only(top: 5),
       child: pw.Row(
         children: [
           pw.Expanded(
             flex: 3,
-            child: pw.Text('CÓDIGO DESCRIÇÃO', style: pw.TextStyle(fontSize: 7, fontWeight: pw.FontWeight.bold)),
+            child: pw.Text('CÓDIGO DESCRIÇÃO', style: pw.TextStyle(fontSize: 5.5 * escala, fontWeight: pw.FontWeight.bold)),
           ),
           pw.Expanded(
-            child: pw.Text('QTD', style: pw.TextStyle(fontSize: 7, fontWeight: pw.FontWeight.bold), textAlign: pw.TextAlign.center),
+            child: pw.Text('QTD', style: pw.TextStyle(fontSize: 5.5 * escala, fontWeight: pw.FontWeight.bold), textAlign: pw.TextAlign.center),
           ),
           pw.Expanded(
-            child: pw.Text('UN', style: pw.TextStyle(fontSize: 7, fontWeight: pw.FontWeight.bold), textAlign: pw.TextAlign.center),
+            child: pw.Text('UN', style: pw.TextStyle(fontSize: 5.5 * escala, fontWeight: pw.FontWeight.bold), textAlign: pw.TextAlign.center),
           ),
           pw.Expanded(
-            child: pw.Text('V.UN', style: pw.TextStyle(fontSize: 7, fontWeight: pw.FontWeight.bold), textAlign: pw.TextAlign.right),
+            child: pw.Text('V.UN', style: pw.TextStyle(fontSize: 5.5 * escala, fontWeight: pw.FontWeight.bold), textAlign: pw.TextAlign.right),
           ),
           pw.Expanded(
             flex: 2,
-            child: pw.Text('V.TOT', style: pw.TextStyle(fontSize: 7, fontWeight: pw.FontWeight.bold), textAlign: pw.TextAlign.right),
+            child: pw.Text('V.TOT', style: pw.TextStyle(fontSize: 5.5 * escala, fontWeight: pw.FontWeight.bold), textAlign: pw.TextAlign.right),
           ),
         ],
       ),
@@ -144,7 +152,7 @@ class DANFEService {
   }
 
   /// Constrói itens da NFC-e
-  static pw.Widget _buildItens(NFCe nfce) {
+  static pw.Widget _buildItens(NFCe nfce, double escala) {
     return pw.Column(
       children: nfce.itens.map((item) {
         return pw.Column(
@@ -152,23 +160,23 @@ class DANFEService {
           children: [
             pw.Text(
               '${item.codigo} ${item.descricao}',
-              style: const pw.TextStyle(fontSize: 8),
+              style: pw.TextStyle(fontSize: 6.5 * escala),
             ),
             pw.Row(
               children: [
                 pw.Expanded(flex: 3, child: pw.SizedBox()),
                 pw.Expanded(
-                  child: pw.Text(item.quantidade.toStringAsFixed(2), style: const pw.TextStyle(fontSize: 7), textAlign: pw.TextAlign.center),
+                  child: pw.Text(item.quantidade.toStringAsFixed(2), style: pw.TextStyle(fontSize: 5.5 * escala), textAlign: pw.TextAlign.center),
                 ),
                 pw.Expanded(
-                  child: pw.Text(item.unidade, style: const pw.TextStyle(fontSize: 7), textAlign: pw.TextAlign.center),
+                  child: pw.Text(item.unidade, style: pw.TextStyle(fontSize: 5.5 * escala), textAlign: pw.TextAlign.center),
                 ),
                 pw.Expanded(
-                  child: pw.Text(item.valorUnitario.toStringAsFixed(2), style: const pw.TextStyle(fontSize: 7), textAlign: pw.TextAlign.right),
+                  child: pw.Text(item.valorUnitario.toStringAsFixed(2), style: pw.TextStyle(fontSize: 5.5 * escala), textAlign: pw.TextAlign.right),
                 ),
                 pw.Expanded(
                   flex: 2,
-                  child: pw.Text(item.valorTotal.toStringAsFixed(2), style: const pw.TextStyle(fontSize: 8), textAlign: pw.TextAlign.right),
+                  child: pw.Text(item.valorTotal.toStringAsFixed(2), style: pw.TextStyle(fontSize: 6.5 * escala), textAlign: pw.TextAlign.right),
                 ),
               ],
             ),
@@ -179,28 +187,28 @@ class DANFEService {
   }
 
   /// Constrói totais
-  static pw.Widget _buildTotalGeral(NFCe nfce) {
+  static pw.Widget _buildTotalGeral(NFCe nfce, double escala) {
     return pw.Column(
       children: [
         pw.Row(
           mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
           children: [
-            pw.Text('QTD. TOTAL DE ITENS', style: const pw.TextStyle(fontSize: 8)),
-            pw.Text(nfce.itens.length.toString(), style: const pw.TextStyle(fontSize: 8)),
+            pw.Text('QTD. TOTAL DE ITENS', style: pw.TextStyle(fontSize: 6.5 * escala)),
+            pw.Text(nfce.itens.length.toString(), style: pw.TextStyle(fontSize: 6.5 * escala)),
           ],
         ),
         pw.Row(
           mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
           children: [
-            pw.Text('VALOR DOS PRODUTOS', style: const pw.TextStyle(fontSize: 8)),
-            pw.Text(_formatarMoeda(nfce.valorTotal), style: const pw.TextStyle(fontSize: 8)),
+            pw.Text('VALOR DOS PRODUTOS', style: pw.TextStyle(fontSize: 6.5 * escala)),
+            pw.Text(_formatarMoeda(nfce.valorTotal), style: pw.TextStyle(fontSize: 6.5 * escala)),
           ],
         ),
         pw.Row(
           mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
           children: [
-            pw.Text('VALOR TOTAL R\$', style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold)),
-            pw.Text(_formatarMoeda(nfce.valorTotal), style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold)),
+            pw.Text('VALOR TOTAL R\$', style: pw.TextStyle(fontSize: 7.5 * escala, fontWeight: pw.FontWeight.bold)),
+            pw.Text(_formatarMoeda(nfce.valorTotal), style: pw.TextStyle(fontSize: 7.5 * escala, fontWeight: pw.FontWeight.bold)),
           ],
         ),
       ],
@@ -208,23 +216,23 @@ class DANFEService {
   }
 
   /// Constrói formas de pagamento
-  static pw.Widget _buildPagamentos(NFCe nfce) {
+  static pw.Widget _buildPagamentos(NFCe nfce, double escala) {
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
         pw.Row(
           mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
           children: [
-            pw.Text('FORMA DE PAGAMENTO', style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold)),
-            pw.Text('VALOR PAGO', style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold)),
+            pw.Text('FORMA DE PAGAMENTO', style: pw.TextStyle(fontSize: 6.5 * escala, fontWeight: pw.FontWeight.bold)),
+            pw.Text('VALOR PAGO', style: pw.TextStyle(fontSize: 6.5 * escala, fontWeight: pw.FontWeight.bold)),
           ],
         ),
         ...nfce.pagamentos.map((pag) {
           return pw.Row(
             mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
             children: [
-              pw.Text(pag.tipoDescricao.toUpperCase(), style: const pw.TextStyle(fontSize: 8)),
-              pw.Text(_formatarMoeda(pag.valor), style: const pw.TextStyle(fontSize: 8)),
+              pw.Text(pag.tipoDescricao.toUpperCase(), style: pw.TextStyle(fontSize: 6.5 * escala)),
+              pw.Text(_formatarMoeda(pag.valor), style: pw.TextStyle(fontSize: 6.5 * escala)),
             ],
           );
         }),
@@ -232,59 +240,59 @@ class DANFEService {
     );
   }
 
-  static pw.Widget _buildConsulta(NFCe nfce) {
+  static pw.Widget _buildConsulta(NFCe nfce, double escala) {
     return pw.Column(
       children: [
-        pw.Text('CONSULTA PELA CHAVE DE ACESSO:', style: pw.TextStyle(fontSize: 7, fontWeight: pw.FontWeight.bold)),
-        pw.Text('www.nfe.fazenda.sp.gov.br', style: const pw.TextStyle(fontSize: 7)),
+        pw.Text('CONSULTA PELA CHAVE DE ACESSO:', style: pw.TextStyle(fontSize: 5.5 * escala, fontWeight: pw.FontWeight.bold)),
+        pw.Text('www.nfe.fazenda.sp.gov.br', style: pw.TextStyle(fontSize: 5.5 * escala)),
         pw.SizedBox(height: 2),
-        pw.Text('CHAVE DE ACESSO', style: pw.TextStyle(fontSize: 7, fontWeight: pw.FontWeight.bold)),
+        pw.Text('CHAVE DE ACESSO', style: pw.TextStyle(fontSize: 5.5 * escala, fontWeight: pw.FontWeight.bold)),
         pw.Text(
           _formatarChaveAcesso(nfce.chaveAcesso ?? '0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000'),
-          style: const pw.TextStyle(fontSize: 7),
+          style: pw.TextStyle(fontSize: 5.5 * escala),
           textAlign: pw.TextAlign.center,
         ),
       ],
     );
   }
 
-  static pw.Widget _buildConsumidor(NFCe nfce) {
+  static pw.Widget _buildConsumidor(NFCe nfce, double escala) {
     return pw.Column(
       children: [
-        pw.Text('CONSUMIDOR', style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold)),
+        pw.Text('CONSUMIDOR', style: pw.TextStyle(fontSize: 6.5 * escala, fontWeight: pw.FontWeight.bold)),
         pw.Text(
           nfce.cpfCnpjConsumidor != null 
             ? 'CNPJ/CPF: ${nfce.cpfCnpjConsumidor}' 
             : 'NOME: ${nfce.nomeConsumidor ?? "NÃO IDENTIFICADO"}',
-          style: const pw.TextStyle(fontSize: 8),
+          style: pw.TextStyle(fontSize: 6.5 * escala),
         ),
       ],
     );
   }
 
-  static pw.Widget _buildDadosEmissao(NFCe nfce) {
+  static pw.Widget _buildDadosEmissao(NFCe nfce, double escala) {
     return pw.Column(
       children: [
         pw.Text(
           'Nº  Série ${nfce.serie}',
-          style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold),
+          style: pw.TextStyle(fontSize: 7.5 * escala, fontWeight: pw.FontWeight.bold),
         ),
         pw.Text(
           '${_formatarData(nfce.dataEmissao)} - Via Consumidor',
-          style: const pw.TextStyle(fontSize: 8),
+          style: pw.TextStyle(fontSize: 6.5 * escala),
         ),
         pw.SizedBox(height: 2),
-        pw.Text('PROTOCOLO DE AUTORIZAÇÃO', style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold)),
+        pw.Text('PROTOCOLO DE AUTORIZAÇÃO', style: pw.TextStyle(fontSize: 6.5 * escala, fontWeight: pw.FontWeight.bold)),
         pw.Text(
           '${nfce.protocolo ?? "Aguardando..."} - ${_formatarData(nfce.dataEmissao)}',
-          style: const pw.TextStyle(fontSize: 8),
+          style: pw.TextStyle(fontSize: 6.5 * escala),
         ),
       ],
     );
   }
 
   /// Constrói QR Code
-  static pw.Widget _buildQRCode(String qrCodeString) {
+  static pw.Widget _buildQRCode(String qrCodeString, double escala) {
     return pw.Container(
       alignment: pw.Alignment.center,
       child: pw.BarcodeWidget(
@@ -297,25 +305,25 @@ class DANFEService {
   }
 
   /// Constrói rodapé
-  static pw.Widget _buildRodape(Empresa empresa) {
+  static pw.Widget _buildRodape(Empresa empresa, double escala) {
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.center,
       children: [
         pw.Text(
           'Não permite aproveitamento de crédito de ICMS',
-          style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold),
+          style: pw.TextStyle(fontSize: 6.5 * escala, fontWeight: pw.FontWeight.bold),
           textAlign: pw.TextAlign.center,
         ),
-        pw.SizedBox(height: 5),
+        pw.SizedBox(height: 2),
         pw.Text(
           'Documento Auxiliar da Nota Fiscal de Consumidor Eletrônica',
-          style: const pw.TextStyle(fontSize: 7),
+          style: pw.TextStyle(fontSize: 5.5 * escala),
           textAlign: pw.TextAlign.center,
         ),
         pw.SizedBox(height: 3),
         pw.Text(
           'Esta nota foi emitida pelo Sistema Exodo',
-          style: const pw.TextStyle(fontSize: 7, fontStyle: pw.FontStyle.italic),
+          style: pw.TextStyle(fontSize: 5.5 * escala, fontStyle: pw.FontStyle.italic),
           textAlign: pw.TextAlign.center,
         ),
       ],

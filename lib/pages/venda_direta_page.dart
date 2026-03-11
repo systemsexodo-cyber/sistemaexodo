@@ -22,6 +22,7 @@ import 'cliente_detalhes_page.dart';
 import 'pdv_page.dart';
 import 'home_page.dart';
 import '../theme.dart';
+import '../widgets/historico_nfce_pdv_dialog.dart';
 import '../services/auth_service.dart';
 import '../services/nfce_service_factory.dart';
 import '../services/nfce_service.dart';
@@ -1838,6 +1839,17 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         _salvarClienteSelecionado();
       }
     }
+  }
+
+  void _abrirHistoricoNFCe() {
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final empresa = authService.empresaAtual;
+    if (empresa == null) return;
+    
+    showDialog(
+      context: context,
+      builder: (context) => HistoricoNFCePDVDialog(empresa: empresa),
+    );
   }
 
   void _abrirHistoricoVendas() {
@@ -6058,6 +6070,32 @@ o padrão padrão (sem opções avançadas).
                   const SizedBox(width: 8),
                   const Text(
                     'Histórico',
+                    style: TextStyle(color: Colors.white70, fontSize: 14),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          // Botão NFC-es Pendentes e Emitidas
+          GestureDetector(
+            onTap: () => _abrirHistoricoNFCe(),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1E1E2E),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.receipt_long,
+                    color: Colors.cyanAccent.withOpacity(0.8),
+                    size: 24,
+                  ),
+                  const SizedBox(width: 8),
+                  const Text(
+                    'NFC-es',
                     style: TextStyle(color: Colors.white70, fontSize: 14),
                   ),
                 ],
