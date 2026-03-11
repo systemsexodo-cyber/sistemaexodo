@@ -28,6 +28,12 @@ abstract class NFCeServiceBase {
     bool ambienteHomologacao = true,
     int? serie,
   });
+
+  Future<Map<String, dynamic>> cancelarNFCe({
+    required NFCe nfce,
+    required Empresa empresa,
+    String? justificativa,
+  });
 }
 
 class NFCeBackendService implements NFCeServiceBase {
@@ -618,7 +624,122 @@ class NFCeBackendService implements NFCeServiceBase {
       rethrow;
     }
   }
-  
+
+  /// Cancela uma NFC-e autorizada
+  @override
+  Future<Map<String, dynamic>> cancelarNFCe({
+    required NFCe nfce,
+    required Empresa empresa,
+    String? justificativa,
+  }) async {
+    try {
+      if (baseUrl.isEmpty) {
+        return {
+          'success': false,
+          'message': 'Configuração do Bridge (Link) não encontrada. O cancelamento requer o Bridge.',
+        };
+      }
+
+      debugPrint('>>> [NFCeBackend] Cancelando NFC-e: ${nfce.numero}');
+      
+      final apiKey = empresa.configuracoes?['bridgeNfceKey'] as String? ?? '';
+      
+      // Obter certificado de múltiplas fontes para garantir compatibilidade
+      String? certBytes = empresa.configuracoes?['certificadoDigitalBytes'];
+      if (certBytes == null || certBytes.isEmpty) {
+        if (empresa.certificadoDigitalUrl != null && empresa.certificadoDigitalUrl!.isNotEmpty) {
+           final url = empresa.certificadoDigitalUrl!;
+           if (url.startsWith('base64:')) {
+             certBytes = url.replaceFirst('base64:', '');
+           }
+        }
+      }
+      
+      final requestData = {
+        'chave_acesso': nfce.chaveAcesso,
+        'protocolo': nfce.protocolo,
+        'justificativa': justificativa ?? 'Cancelamento por erro de emissao ou devolucao de mercadoria',
+        'empresa': {
+          'razao_social': empresa.razaoSocial,
+          'cnpj': empresa.cnpj,
+          'inscricao_estadual': empresa.inscricaoEstadual,
+          'certificado_base64': certBytes ?? '',
+          'senha_certificado': empresa.configuracoes?['certificadoDigitalSenha'] ?? empresa.senhaCertificado ?? '',
+          'uf': empresa.estado ?? 'SP',
+          'ambiente_homologacao': empresa.configuracoes?['nfceAmbiente'] == '2',
+        }
+      };
+      
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/nfce/cancelar'),
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Api-Key': apiKey,
+        },
+        body: jsonEncode(requestData),
+      ).timeout(
+        const Duration(seconds: 45),
+        onTimeout: () {
+          throw TimeoutException('O servidor demorou muito para responder (Timeout). Verifique se o Bridge está rodando e se há conexão com a internet.');
+        },
+      );
+      
+      debugPrint('>>> [NFCeBackend] Status: ${response.statusCode}');
+      
+      if (response.body.isEmpty) {
+        return {
+          'success': false,
+          'message': 'Erro ao conectar com o Bridge: Resposta vazia do servidor (Status: ${response.statusCode}).',
+        };
+      }
+
+      dynamic decoded;
+      try {
+        decoded = jsonDecode(response.body);
+      } catch (e) {
+        return {
+          'success': false,
+          'message': 'Erro ao processar resposta do servidor (Status: ${response.statusCode}).',
+          'details': 'O servidor retornou um formato inválido. Conteúdo: ${response.body.length > 100 ? response.body.substring(0, 100) + "..." : response.body}',
+        };
+      }
+      
+      if (response.statusCode == 200 && decoded['success'] == true) {
+        debugPrint('>>> [NFCeBackend] ✅ NFC-e cancelada com sucesso na SEFAZ.');
+        
+        // Atualizar status no Firestore
+        await FirebaseFirestore.instance
+            .collection('empresas')
+            .doc(empresa.id)
+            .collection('nfces')
+            .doc(nfce.id)
+            .update({
+          'status': 'cancelada',
+          'updatedAt': DateTime.now().toIso8601String(),
+        });
+        
+        return {
+          'success': true,
+          'message': decoded['data']?['xMotivo'] ?? 'NFC-e cancelada com sucesso.',
+          'data': decoded['data'],
+        };
+      } else {
+        debugPrint('>>> [NFCeBackend] ❌ Erro ao cancelar: ${decoded['error']}');
+        return {
+          'success': false,
+          'message': decoded['error'] ?? 'Erro ao cancelar NFC-e.',
+          'details': decoded['details'],
+        };
+      }
+    } catch (e) {
+      debugPrint('>>> [NFCeBackend] ❌ ERRO ao cancelar: $e');
+      return {
+        'success': false,
+        'message': 'Erro ao conectar com o Bridge: $e',
+      };
+    }
+  }
+
   /// Verifica se o backend está disponível
   Future<bool> verificarConexao() async {
     bool httpOk = false;

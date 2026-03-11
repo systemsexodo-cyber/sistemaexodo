@@ -409,6 +409,36 @@ def consultar_nfce():
             'error': str(e)
         }), 500
 
+@app.route('/api/nfce/cancelar', methods=['POST'])
+def cancelar_nfce():
+    """Cancela uma NFC-e autorizada"""
+    try:
+        data = request.get_json(silent=True)
+        if not data:
+            return jsonify({
+                'success': False, 
+                'error': 'Dados não fornecidos ou JSON inválido',
+                'raw_data': request.get_data().decode('utf-8', errors='ignore')
+            }), 400
+            
+        print(f'>>> [API] Recebida solicitação de cancelamento: {data.get("chave_acesso")}')
+        
+        if not nfce_service:
+            return jsonify({'success': False, 'error': 'Serviço NFCe não inicializado (nfce_service = None)'}), 503
+            
+        resultado = nfce_service.cancelar_nfce(data)
+        
+        # Garantir que resultado é serializável ou converter para dict básico
+        if not isinstance(resultado, dict):
+             resultado = {'success': False, 'error': f'Resultado do serviço inválido: {type(resultado)}'}
+             
+        return jsonify(resultado), 200 if resultado.get('success') else 500
+    except Exception as e:
+        import traceback
+        print(f'>>> [API] ❌ Erro ao processar cancelamento: {e}')
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e), 'traceback': traceback.format_exc()}), 500
+
 @app.route('/api/certificado/validar', methods=['POST'])
 def validar_certificado():
     """

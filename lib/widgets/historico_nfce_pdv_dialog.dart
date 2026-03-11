@@ -4,6 +4,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/empresa.dart';
 import '../models/nfce.dart';
 import '../services/data_service.dart';
+import '../services/nfce_service_factory.dart';
+import '../services/nfce_backend_service.dart';
+import '../services/danfe_service.dart';
 import 'package:intl/intl.dart';
 
 class HistoricoNFCePDVDialog extends StatefulWidget {
@@ -239,8 +242,31 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                                     if (nfce.pagamentos.isNotEmpty)
                                       Text('Pagamento: ${nfce.pagamentos.map((p) => p.tipoDescricao).join(", ")}', style: const TextStyle(color: Colors.white70, fontSize: 12)),
                                     Text('Status: ${nfce.status?.toUpperCase()}', style: TextStyle(color: isAutorizada ? Colors.green : (isErro ? Colors.redAccent : Colors.orange), fontWeight: FontWeight.bold)),
-                                    if (isErro && nfce.xmlRetorno != null)
+                                    if (nfce.status?.toUpperCase() == 'ERRO' && nfce.xmlRetorno != null)
                                       Text('${nfce.xmlRetorno}', style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
+                                    
+                                    if (isAutorizada || nfce.status == 'cancelada')
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 8),
+                                        child: Row(
+                                          children: [
+                                            if (isAutorizada)
+                                              TextButton.icon(
+                                                onPressed: () => _confirmarCancelamento(context, nfce),
+                                                icon: const Icon(Icons.cancel, color: Colors.redAccent, size: 18),
+                                                label: const Text('CANCELAR', style: TextStyle(color: Colors.redAccent, fontSize: 11)),
+                                                style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 0)),
+                                              ),
+                                            const SizedBox(width: 8),
+                                            TextButton.icon(
+                                              onPressed: () => _reimprimir(context, nfce),
+                                              icon: const Icon(Icons.print, color: Colors.blueAccent, size: 18),
+                                              label: const Text('REIMPRIMIR', style: TextStyle(color: Colors.blueAccent, fontSize: 11)),
+                                              style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 0)),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
                                   ],
                                 ),
                               ),
@@ -256,6 +282,117 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  void _confirmarCancelamento(BuildContext context, NFCe nfce) async {
+    final justificativaController = TextEditingController(text: 'Cancelamento por erro de emissao ou devolucao de mercadoria');
+    
+    final bool? confirmar = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E1E),
+        title: const Text('Confirmar Cancelamento', style: TextStyle(color: Colors.white)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Deseja realmente cancelar esta NFC-e na SEFAZ?', style: TextStyle(color: Colors.white70)),
+            const SizedBox(height: 16),
+            TextField(
+              controller: justificativaController,
+              style: const TextStyle(color: Colors.white),
+              maxLines: 2,
+              decoration: const InputDecoration(
+                labelText: 'Justificativa (mín. 15 caracteres)',
+                labelStyle: TextStyle(color: Colors.white54),
+                enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('VOLTAR', style: TextStyle(color: Colors.white54)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              if (justificativaController.text.length < 15) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('A justificativa deve ter pelo menos 15 caracteres.')));
+                return;
+              }
+              Navigator.pop(context, true);
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+            child: const Text('CONFIRMAR CANCELAMENTO'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmar == true) {
+      _cancelarNFCe(nfce, justificativaController.text);
+    }
+  }
+
+  void _cancelarNFCe(NFCe nfce, String justificativa) async {
+    setState(() => _isLoading = true);
+    try {
+      final nfceService = NFCeServiceFactory.criar();
+      
+      if (nfceService is! NFCeBackendService) {
+         throw Exception('O cancelamento só está disponível no modo Bridge (Python).');
+      }
+
+      final resultado = await nfceService.cancelarNFCe(
+        nfce: nfce,
+        empresa: widget.empresa,
+        justificativa: justificativa,
+      );
+
+      if (resultado['success'] == true) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(resultado['message'] ?? 'Nota cancelada com sucesso.')));
+        _loadData(); // Recarregar lista
+      } else {
+        if (!mounted) return;
+        _mostrarErro('Erro ao cancelar: ${resultado['message']}');
+      }
+    } catch (e) {
+      if (!mounted) return;
+      _mostrarErro('Falha técnica: $e');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  void _reimprimir(BuildContext context, NFCe nfce) async {
+    try {
+      await DANFEService.imprimir(
+        nfce: nfce,
+        empresa: widget.empresa,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao imprimir: $e')));
+    }
+  }
+
+  void _mostrarErro(String msg) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E1E),
+        title: const Text('Atenção', style: TextStyle(color: Colors.white)),
+        content: Text(msg, style: const TextStyle(color: Colors.white70)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK', style: TextStyle(color: Colors.white)),
+          ),
+        ],
       ),
     );
   }
