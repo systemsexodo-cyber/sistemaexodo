@@ -23,6 +23,8 @@ abstract class NFCeServiceBase {
     String? cpfCnpjConsumidor,
     String? nomeConsumidor,
     String? observacoes,
+    String? vendaId,
+    String? vendaNumero,
     bool ambienteHomologacao = true,
     int? serie,
   });
@@ -75,6 +77,8 @@ class NFCeBackendService implements NFCeServiceBase {
     String? cpfCnpjConsumidor,
     String? nomeConsumidor,
     String? observacoes,
+    String? vendaId,
+    String? vendaNumero,
     bool ambienteHomologacao = true,
     int? serie,
   }) async {
@@ -101,6 +105,8 @@ class NFCeBackendService implements NFCeServiceBase {
           cpfCnpjConsumidor: cpfCnpjConsumidor,
           nomeConsumidor: nomeConsumidor,
           observacoes: observacoes,
+          vendaId: vendaId,
+          vendaNumero: vendaNumero,
           ambienteHomologacao: ambienteHomologacao,
           serie: serie,
         );
@@ -125,6 +131,8 @@ class NFCeBackendService implements NFCeServiceBase {
           observacoes: observacoes,
           ambienteHomologacao: ambienteHomologacao,
           serie: serie,
+          vendaId: vendaId,
+          vendaNumero: vendaNumero,
         );
       } catch (e) {
         throw Exception('Erro ao preparar dados para emissão: $e');
@@ -227,6 +235,8 @@ class NFCeBackendService implements NFCeServiceBase {
             cpfCnpjConsumidor: cpfCnpjConsumidor,
             nomeConsumidor: nomeConsumidor,
             observacoes: observacoes,
+            vendaId: vendaId,
+            vendaNumero: vendaNumero,
           );
           
           debugPrint('>>> [NFCeBackend] ✓✓✓ NFC-e emitida com sucesso!');
@@ -430,8 +440,6 @@ class NFCeBackendService implements NFCeServiceBase {
     }
   }
 
-  /// Emite uma NFC-e via Firebase Firestore (Listener no PC)
-  /// Isso elimina a necessidade de Túneis SSH ou URLs públicas
   Future<NFCe> emitirViaFirebase({
     required Empresa empresa,
     required List<Produto> produtos,
@@ -441,6 +449,8 @@ class NFCeBackendService implements NFCeServiceBase {
     String? cpfCnpjConsumidor,
     String? nomeConsumidor,
     String? observacoes,
+    String? vendaId,
+    String? vendaNumero,
     bool ambienteHomologacao = true,
     int? serie,
   }) async {
@@ -474,6 +484,8 @@ class NFCeBackendService implements NFCeServiceBase {
         observacoes: observacoes,
         ambienteHomologacao: ambienteHomologacao,
         serie: serie,
+        vendaId: vendaId,
+        vendaNumero: vendaNumero,
       );
 
       // Adicionar metadados
@@ -541,6 +553,8 @@ class NFCeBackendService implements NFCeServiceBase {
             cpfCnpjConsumidor: cpfCnpjConsumidor,
             nomeConsumidor: nomeConsumidor,
             observacoes: observacoes,
+            vendaId: vendaId,
+            vendaNumero: vendaNumero,
           );
 
           // SALVAMENTO AUTOMÁTICO NO GOOGLE DRIVE
@@ -768,6 +782,8 @@ class NFCeBackendService implements NFCeServiceBase {
     String? observacoes,
     bool ambienteHomologacao = true,
     int? serie,
+    String? vendaId,
+    String? vendaNumero,
   }) {
     // Preparar produtos
     final produtosData = produtos.map((produto) {
@@ -842,6 +858,9 @@ class NFCeBackendService implements NFCeServiceBase {
       'observacoes': observacoes ?? '',
       'serie': serieFinal,
       'numero': null, // Será gerado pelo backend Python
+      'venda_id': vendaId,
+      'venda_numero_str': vendaNumero,
+      'venda_numero': int.tryParse(vendaNumero?.replaceAll(RegExp(r'[^\d]'), '') ?? ''),
     };
   }
   
@@ -856,6 +875,8 @@ class NFCeBackendService implements NFCeServiceBase {
     String? cpfCnpjConsumidor,
     String? nomeConsumidor,
     String? observacoes,
+    String? vendaId,
+    String? vendaNumero,
   }) {
     // Criar itens da NFC-e a partir dos produtos
     final itens = produtos.map((produto) {
@@ -915,6 +936,8 @@ class NFCeBackendService implements NFCeServiceBase {
       pagamentos: pagamentos,
       cpfCnpjConsumidor: cpfCnpjConsumidor,
       nomeConsumidor: nomeConsumidor,
+      vendaId: vendaId ?? data['venda_id']?.toString(),
+      vendaNumero: vendaNumero ?? data['venda_numero']?.toString(),
       createdAt: DateTime.now(),
       updatedAt: DateTime.now(),
     );

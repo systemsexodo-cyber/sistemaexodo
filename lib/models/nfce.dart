@@ -16,6 +16,8 @@ class NFCe {
   final String? xmlEnviado;
   final String? xmlRetorno;
   final String? qrCode;
+  final String? vendaId;
+  final String? vendaNumero;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -36,6 +38,8 @@ class NFCe {
     this.xmlEnviado,
     this.xmlRetorno,
     this.qrCode,
+    this.vendaId,
+    this.vendaNumero,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -66,6 +70,8 @@ class NFCe {
       xmlEnviado: map['xmlEnviado'],
       xmlRetorno: map['xmlRetorno'],
       qrCode: map['qrCode'],
+      vendaId: map['vendaId'],
+      vendaNumero: map['vendaNumero'],
       createdAt: map['createdAt'] != null
           ? DateTime.parse(map['createdAt'])
           : DateTime.now(),
@@ -93,6 +99,8 @@ class NFCe {
       'xmlEnviado': xmlEnviado,
       'xmlRetorno': xmlRetorno,
       'qrCode': qrCode,
+      'vendaId': vendaId,
+      'vendaNumero': vendaNumero,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
     };

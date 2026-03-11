@@ -4086,6 +4086,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         cpfCnpjConsumidor: cpfCnpjOverride ?? vendaBalcao.clienteCpfCnpj,
         nomeConsumidor: nomeOverride ?? vendaBalcao.clienteNome,
         observacoes: vendaBalcao.observacoes,
+        vendaId: vendaBalcao.id,
+        vendaNumero: vendaBalcao.numero,
         ambienteHomologacao: ambienteHomologacao,
         serie: serieUsuario,
       );
