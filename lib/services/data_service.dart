@@ -171,6 +171,7 @@ class DataService extends ChangeNotifier {
   StreamSubscription? _produtosSubscription;
   StreamSubscription? _servicosSubscription;
   StreamSubscription? _empresaSubscription;
+  StreamSubscription? _windowFocusSubscription;
   
   // Status de Sincronização
   DateTime? _ultimaSincronizacaoSucesso;
@@ -196,6 +197,7 @@ class DataService extends ChangeNotifier {
     _servicosSubscription?.cancel();
     _empresaSubscription?.cancel();
     _bridgeSubscription?.cancel();
+    _windowFocusSubscription?.cancel();
     
     _syncTimer = null;
     _agendamentosSubscription = null;
@@ -203,6 +205,7 @@ class DataService extends ChangeNotifier {
     _servicosSubscription = null;
     _empresaSubscription = null;
     _bridgeSubscription = null;
+    _windowFocusSubscription = null;
   }
   String get instanceId => _instanceId;
   bool get firebaseHabilitado => _firebaseHabilitado;
@@ -424,12 +427,23 @@ class DataService extends ChangeNotifier {
 
     // Registrar listener de foco para Web (acordar o app se ficar em background)
     if (kIsWeb) {
-      html_helper.onWindowFocus.listen((_) {
-        debugPrint('>>> [SISTEMA] Janela focada - Verificando conexões de Stream...');
-        if (_empresaIdAtual != null && _firebaseHabilitado) {
-          _iniciarStreamAgendamentos(); // Reiniciar para garantir dados frescos
-        }
-      });
+      try {
+        _windowFocusSubscription?.cancel();
+        _windowFocusSubscription = html_helper.onWindowFocus.listen((_) {
+          debugPrint('>>> [SISTEMA] Janela focada - Verificando conexões de Stream...');
+          try {
+            if (_empresaIdAtual != null && _firebaseHabilitado) {
+              _iniciarStreamAgendamentos(); // Reiniciar para garantir dados frescos
+            }
+          } catch (e) {
+            debugPrint('>>> [SISTEMA] Erro no listener de foco: $e');
+          }
+        }, onError: (e) {
+          debugPrint('>>> [SISTEMA] Erro no stream de foco: $e');
+        });
+      } catch (e) {
+        debugPrint('>>> [SISTEMA] Erro ao registrar listener de foco: $e');
+      }
     }
 
     // Iniciar monitor de Bridge NFC-e
@@ -2167,12 +2181,12 @@ class DataService extends ChangeNotifier {
     }
   }
 
-  void updateContaPagar(ContaPagar conta) {
+  Future<void> updateContaPagar(ContaPagar conta) async {
     final index = _contasPagar.indexWhere((c) => c.id == conta.id);
     if (index != -1) {
       _contasPagar[index] = conta;
       notifyListeners();
-      _salvarAutomaticamente();
+      _salvarAutomaticamente(); // Geralmente é um Future que não esperamos aqui ou aguardamos
       // Salvar imediatamente no Firebase
       if (_firebaseHabilitado && _empresaIdAtual != null) {
         _firebaseService.salvarContaPagar(_empresaIdAtual!, conta).catchError((e) {
@@ -4308,6 +4322,42 @@ class DataService extends ChangeNotifier {
     return 'AGD-${proximoNumero.toString().padLeft(4, '0')}';
   }
 
+  /// Calcula o próximo número de NFC-e com base no maior número já emitido
+  int getProximoNumeroNfce() {
+    final Set<int> numerosExistentes = {};
+
+    // 1. Verificar na lista de NFC-es sincronizadas (Firestore)
+    // Considerar as que foram autorizadas, sucesso ou canceladas (o número já foi usado)
+    for (final nfce in _nfces) {
+      if (nfce.numero != null && 
+          (nfce.status == 'autorizada' || nfce.status == 'sucesso' || nfce.status == 'cancelada')) {
+        final numInt = int.tryParse(nfce.numero!);
+        if (numInt != null) {
+          numerosExistentes.add(numInt);
+        }
+      }
+    }
+
+    // 2. Verificar se há um número inicial configurado nas configurações da empresa
+    int proximoNumero = 1;
+    if (empresaAtual?.configuracoes != null) {
+      final numInicial = empresaAtual!.configuracoes!['ultimo_numero_nfce'];
+      if (numInicial != null) {
+        proximoNumero = (int.tryParse(numInicial.toString()) ?? 0) + 1;
+      }
+    }
+
+    // 3. Se temos números já emitidos, o próximo é o maior + 1
+    if (numerosExistentes.isNotEmpty) {
+      final maiorDessaLista = numerosExistentes.reduce((a, b) => a > b ? a : b);
+      if (maiorDessaLista >= proximoNumero) {
+        proximoNumero = maiorDessaLista + 1;
+      }
+    }
+
+    return proximoNumero;
+  }
+
   // Migra agendamentos antigos que não têm número válido
   void migrarAgendamentosSemNumero() {
     bool houveMudanca = false;
@@ -4380,27 +4430,14 @@ class DataService extends ChangeNotifier {
 
   /// Busca uma venda pelo número - retorna a venda atual do DataService
   VendaBalcao? getVendaPorNumero(String numero) {
-    print(
-      '>>> getVendaPorNumero("$numero") - buscando em ${_vendasBalcao.length} vendas',
-    );
-    for (final v in _vendasBalcao) {
-      print(
-        '>>>   Comparando "$numero" com "${v.numero}" = ${numero == v.numero}',
-      );
-      if (v.numero == numero) {
-        print('>>> ENCONTROU! valorTotal=${v.valorTotal}');
-        for (final i in v.itens) {
-          if (i.quantidadeTrocada > 0) {
-            print(
-              '>>>   Item ${i.nome}: trocada=${i.quantidadeTrocada}, por=${i.trocadoPor}',
-            );
-          }
-        }
-        return v;
-      }
+    if (numero.isEmpty) return null;
+    
+    try {
+      // Busca direta otimizada sem prints de depuração
+      return _vendasBalcao.firstWhere((v) => v.numero == numero);
+    } catch (_) {
+      return null;
     }
-    print('>>> NÃO encontrou venda com numero "$numero"');
-    return null;
   }
 
   // ============ Dados Ficticios Motoristas ============
@@ -5596,6 +5633,34 @@ class DataService extends ChangeNotifier {
   /// Adiciona uma NFC-e
   Future<void> adicionarNFCe(NFCe nfce) async {
     _nfces.add(nfce);
+
+    // Atualizar o contador de último número da empresa se for maior E se a nota foi autorizada ou cancelada
+    final asSucesso = ['autorizada', 'sucesso', 'cancelada'].contains(nfce.status?.toLowerCase());
+    if (asSucesso && nfce.numero != null && empresaAtual != null) {
+      final nfceNumInt = int.tryParse(nfce.numero!) ?? 0;
+      final ultimoNum = int.tryParse(empresaAtual!.configuracoes?['ultimo_numero_nfce']?.toString() ?? '0') ?? 0;
+      
+      if (nfceNumInt > ultimoNum) {
+        final novasConfigs = Map<String, dynamic>.from(empresaAtual!.configuracoes ?? {});
+        novasConfigs['ultimo_numero_nfce'] = nfceNumInt.toString();
+        
+        final empresaAtualizada = empresaAtual!.copyWith(
+          configuracoes: novasConfigs,
+          updatedAt: DateTime.now(),
+        );
+        
+        // Atualiza localmente
+        setEmpresaAtual(empresaAtualizada);
+        
+        // Salvar no Firebase também
+        if (_firebaseHabilitado) {
+          _firebaseService.salvarEmpresa(empresaAtualizada).catchError((e) {
+             debugPrint('>>> Erro ao atualizar número da NFC-e na empresa: $e');
+          });
+        }
+      }
+    }
+
     notifyListeners();
     _marcarSujo(LocalStorageService.keyNFCes);
     // Salvar imediatamente no Firebase
@@ -5615,6 +5680,34 @@ class DataService extends ChangeNotifier {
       throw Exception('NFC-e não encontrada: ${nfce.id}');
     }
     _nfces[index] = nfce;
+    
+    // Atualizar o contador de último número da empresa se for maior E se a nota foi autorizada ou cancelada
+    final asSucesso = ['autorizada', 'sucesso', 'cancelada'].contains(nfce.status?.toLowerCase());
+    if (asSucesso && nfce.numero != null && empresaAtual != null) {
+      final nfceNumInt = int.tryParse(nfce.numero!) ?? 0;
+      final ultimoNum = int.tryParse(empresaAtual!.configuracoes?['ultimo_numero_nfce']?.toString() ?? '0') ?? 0;
+      
+      if (nfceNumInt > ultimoNum) {
+        final novasConfigs = Map<String, dynamic>.from(empresaAtual!.configuracoes ?? {});
+        novasConfigs['ultimo_numero_nfce'] = nfceNumInt.toString();
+        
+        final empresaAtualizada = empresaAtual!.copyWith(
+          configuracoes: novasConfigs,
+          updatedAt: DateTime.now(),
+        );
+        
+        // Atualiza localmente
+        setEmpresaAtual(empresaAtualizada);
+        
+        // Salvar no Firebase também
+        if (_firebaseHabilitado) {
+          _firebaseService.salvarEmpresa(empresaAtualizada).catchError((e) {
+             debugPrint('>>> Erro ao atualizar número da NFC-e na empresa: $e');
+          });
+        }
+      }
+    }
+
     notifyListeners();
     _salvarAutomaticamente();
     // Salvar imediatamente no Firebase

@@ -515,6 +515,11 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                         if (n == 'banho' || n == 'tosa' || n == 'vacina') return false;
                         // Não mostrar serviços poluídos com Taxi Dog ou Entrega no nome
                         if (n.contains('taxi dog') || n.contains('entrega')) return false;
+                        
+                        if (!isModuloPet && (n.contains('pet') || n.contains('vacina') || n.contains('banho') || n.contains('tosa') || n.contains('taxi dog'))) {
+                          return false;
+                        }
+
                         return true;
                       })
                       .map((servico) {
@@ -783,7 +788,35 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
   }
 
   String _getTipoServico(AgendamentoServico agendamento, {DataService? dataService}) {
-    // 1. Tentar identificar por nome do serviço de forma normalizada
+    // 1. Prioridade máxima: Status pendente para chip laranja
+    if (agendamento.status == 'Aguardando Confirmação') {
+       return 'Pendente';
+    }
+
+    final ds = dataService ?? Provider.of<DataService>(context, listen: false);
+    final isModuloPet = ds.empresaAtual?.moduloPet ?? false;
+
+    // 2. Se for um serviço cadastrado e não for um dos básicos acima, retornar nome original para chip dinâmico
+    if (agendamento.servico != null) {
+      final n = agendamento.servico!.nome;
+      final nl = n.toLowerCase();
+
+      if (!isModuloPet && (nl.contains('vacina') || nl.contains('banho') || nl.contains('tosa') || nl.contains('pet') || nl.contains('taxi dog'))) {
+        return 'Serviço';
+      }
+
+      // Se for um dos básicos em qualquer case, retornar Capitalizado
+      if (nl == 'banho') return 'Banho';
+      if (nl == 'tosa') return 'Tosa';
+      if (nl == 'vacina') return 'Vacina';
+      return n;
+    }
+    
+    if (!isModuloPet) {
+      return 'Serviço';
+    }
+    
+    // 3. Tentar identificar por nome do serviço de forma normalizada
     final nomeServico = (agendamento.servico?.nome ?? agendamento.servicoNome ?? '').toLowerCase().trim();
     
     if (nomeServico.contains('banho') && nomeServico.contains('tosa')) {
@@ -797,24 +830,6 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
     if (nomeServico == 'vacina' || nomeServico.contains('vacinar')) return 'Vacina';
     if (nomeServico == 'tosa' && !nomeServico.contains('comp')) return 'Tosa'; // Apenas "Tosa" simples
     
-    // 2. Se for um serviço cadastrado e não for um dos básicos acima, retornar nome original para chip dinâmico
-    if (agendamento.servico != null) {
-      final n = agendamento.servico!.nome;
-      final nl = n.toLowerCase();
-      // Se for um dos básicos em qualquer case, retornar Capitalizado
-      if (nl == 'banho') return 'Banho';
-      if (nl == 'tosa') return 'Tosa';
-      if (nl == 'vacina') return 'Vacina';
-      return n;
-    }
-    
-    final ds = dataService ?? Provider.of<DataService>(context, listen: false);
-    final isModuloPet = ds.empresaAtual?.moduloPet ?? false;
-    
-    if (!isModuloPet) {
-      return 'Serviço';
-    }
-
     final observacoes = agendamento.observacoes?.toLowerCase() ?? '';
     final textoCompleto = '$nomeServico $observacoes';
     
@@ -867,6 +882,19 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
     }
     
     var agendamentos = dataService.getAgendamentosPorPeriodo(inicio, fim);
+    
+    final isModuloPet = dataService.empresaAtual?.moduloPet ?? false;
+
+    // Filtro Mestre: Ocultar agendamentos de pet se moduloPet estiver desativado
+    if (!isModuloPet) {
+      agendamentos = agendamentos.where((a) {
+        final nome = (a.servico?.nome ?? a.servicoNome ?? '').toLowerCase();
+        final obs = (a.observacoes ?? '').toLowerCase();
+        if (nome.contains('pet') || nome.contains('taxi dog') || nome.contains('banho') || nome.contains('tosa') || nome.contains('vacina') || nome.contains('entrega do animal')) return false;
+        if (obs.contains('taxi dog') || obs.contains('banho e tosa') || obs.contains('vacina')) return false;
+        return true;
+      }).toList();
+    }
     
     // Filtro Mestre: Mostrar ou não pendentes
     if (!(_mostrarPendentes ?? true)) {

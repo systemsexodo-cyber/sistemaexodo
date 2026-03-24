@@ -212,12 +212,12 @@ class ItemHistorico {
   factory ItemHistorico.fromSangria(SangriaCaixa sangria) {
     return ItemHistorico(
       id: sangria.id,
-      numero: 'SANGRIA-${sangria.id.substring(0, 8)}',
+      numero: 'PAGTO-${sangria.id.substring(0, 8)}',
       data: sangria.data,
       clienteNome: sangria.responsavel,
       valorTotal: -sangria.valor, // Valor negativo para sangria
       tipoPagamento: null,
-      tipo: 'Sangria',
+      tipo: 'Pagamento',
       isSangria: true,
       motivoSangriaSuprimento: sangria.motivo,
     );
@@ -226,12 +226,12 @@ class ItemHistorico {
   factory ItemHistorico.fromSuprimento(SuprimentoCaixa suprimento) {
     return ItemHistorico(
       id: suprimento.id,
-      numero: 'SUPRIMENTO-${suprimento.id.substring(0, 8)}',
+      numero: 'ENTRADA-${suprimento.id.substring(0, 8)}',
       data: suprimento.data,
       clienteNome: suprimento.responsavel,
       valorTotal: suprimento.valor, // Valor positivo para suprimento
       tipoPagamento: null,
-      tipo: 'Suprimento',
+      tipo: 'Entrada',
       isSuprimento: true,
       motivoSangriaSuprimento: suprimento.motivo,
     );
@@ -610,22 +610,24 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
 
   Widget _buildCampoBusca() {
     return Container(
-      margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+      height: 44, // Altura fixa e menor
       decoration: BoxDecoration(
         color: const Color(0xFF1E1E2E),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white.withOpacity(0.1)),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white10),
       ),
       child: TextField(
         controller: _buscaController,
-        style: const TextStyle(color: Colors.white),
+        style: const TextStyle(color: Colors.white, fontSize: 13),
         decoration: InputDecoration(
-          hintText: '🔍 Buscar por cliente, número, produto, valor...',
-          hintStyle: TextStyle(color: Colors.white.withOpacity(0.4)),
-          prefixIcon: Icon(Icons.search, color: Colors.white.withOpacity(0.5)),
+          hintText: 'Buscar por cliente, número, produto, valor...',
+          hintStyle: TextStyle(color: Colors.white24, fontSize: 13),
+          prefixIcon: const Icon(Icons.search, color: Colors.white24, size: 18),
           suffixIcon: _termoBusca.isNotEmpty
               ? IconButton(
-                  icon: const Icon(Icons.clear, color: Colors.white54),
+                  padding: EdgeInsets.zero,
+                  icon: const Icon(Icons.clear, color: Colors.white54, size: 16),
                   onPressed: () {
                     setState(() {
                       _buscaController.clear();
@@ -635,10 +637,7 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                 )
               : null,
           border: InputBorder.none,
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 16,
-            vertical: 14,
-          ),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         ),
         onChanged: (value) {
           setState(() {
@@ -661,226 +660,110 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
 
     // Agrupar por origem (EXCLUINDO VENDAS CANCELADAS)
     final vendasDiretas = itens.where((i) => !i.isCancelada && i.tipo == 'Venda Direta').length;
-    final vendasPrazo = itens.where((i) => !i.isCancelada && i.tipo == 'Venda a Prazo').length;
     final pedidos = itens.where((i) => !i.isCancelada && i.tipo == 'Pedido').length;
     final totalVendasDiretas = itens
         .where((i) => !i.isCancelada && i.tipo == 'Venda Direta')
-        .fold(0.0, (sum, i) => sum + i.valorTotal);
-    final totalVendasPrazo = itens
-        .where((i) => !i.isCancelada && i.tipo == 'Venda a Prazo')
         .fold(0.0, (sum, i) => sum + i.valorTotal);
     final totalPedidos = itens
         .where((i) => !i.isCancelada && i.tipo == 'Pedido')
         .fold(0.0, (sum, i) => sum + i.valorTotal);
 
     return Container(
-      margin: const EdgeInsets.all(16),
-      padding: const EdgeInsets.all(20),
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Colors.green.withOpacity(0.2), Colors.blue.withOpacity(0.1)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.green.withOpacity(0.3)),
+        color: const Color(0xFF1E1E2E),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withOpacity(0.05)),
       ),
       child: Column(
         children: [
-          // Período selecionado
           Row(
-            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              GestureDetector(
-                onTap: () => _selecionarData(true),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 8,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(
-                        Icons.calendar_today,
-                        color: Colors.white70,
-                        size: 16,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        '${_formatoData.format(_dataInicio)} ${_formatoHora.format(_dataInicio)}',
-                        style: const TextStyle(color: Colors.white),
-                      ),
-                    ],
-                  ),
+              // Seletor de data compacto
+              Expanded(
+                flex: 3,
+                child: Row(
+                  children: [
+                    _buildCompactDateSelector(true),
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 6),
+                      child: Text('→', style: TextStyle(color: Colors.white24)),
+                    ),
+                    _buildCompactDateSelector(false),
+                  ],
                 ),
               ),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 12),
-                child: Text('até', style: TextStyle(color: Colors.white54)),
-              ),
-              GestureDetector(
-                onTap: () => _selecionarData(false),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 8,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(
-                        Icons.calendar_today,
-                        color: Colors.white70,
-                        size: 16,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        '${_formatoData.format(_dataFim)} ${_formatoHora.format(_dataFim)}',
-                        style: const TextStyle(color: Colors.white),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
+              const SizedBox(width: 8),
+              // Totais compactos
+              _buildCompactStat('VENDAS', '$quantidade', Colors.lightBlueAccent),
+              const SizedBox(width: 16),
+              _buildCompactStat('TOTAL', _formatoMoeda.format(total), Colors.greenAccent),
             ],
           ),
-          const SizedBox(height: 20),
-          // Total e quantidade
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              Column(
-                children: [
-                  const Text(
-                    'TOTAL DO PERÍODO',
-                    style: TextStyle(
-                      color: Colors.white54,
-                      fontSize: 12,
-                      letterSpacing: 1,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    _formatoMoeda.format(total),
-                    style: const TextStyle(
-                      color: Colors.greenAccent,
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
-              ),
-              Container(width: 1, height: 50, color: Colors.white24),
-              Column(
-                children: [
-                  const Text(
-                    'VENDAS',
-                    style: TextStyle(
-                      color: Colors.white54,
-                      fontSize: 12,
-                      letterSpacing: 1,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '$quantidade',
-                    style: const TextStyle(
-                      color: Colors.lightBlueAccent,
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-          // Resumo por origem (Venda Direta, Venda a Prazo, Pedido)
-          if (vendasDiretas > 0 || vendasPrazo > 0 || pedidos > 0) ...[
-            const SizedBox(height: 16),
-            const Divider(color: Colors.white24),
-            const SizedBox(height: 12),
+          if (vendasDiretas > 0 || pedidos > 0 || porTipoPagamento.isNotEmpty) ...[
+            const Divider(color: Colors.white10, height: 20),
             Wrap(
-              spacing: 12,
-              runSpacing: 8,
-              alignment: WrapAlignment.center,
+              spacing: 8,
+              runSpacing: 6,
               children: [
-                if (vendasDiretas > 0)
-                  _buildResumoOrigem(
-                    'Venda Direta',
-                    vendasDiretas,
-                    totalVendasDiretas,
-                    Colors.greenAccent,
-                    Icons.point_of_sale,
-                  ),
-                if (vendasPrazo > 0)
-                  _buildResumoOrigem(
-                    'Venda a Prazo',
-                    vendasPrazo,
-                    totalVendasPrazo,
-                    Colors.cyan,
-                    Icons.schedule_send,
-                  ),
-                if (pedidos > 0)
-                  _buildResumoOrigem(
-                    'Pedidos',
-                    pedidos,
-                    totalPedidos,
-                    Colors.orangeAccent,
-                    Icons.receipt_long,
-                  ),
+                if (vendasDiretas > 0) _buildMiniTag('VD: $vendasDiretas', Colors.greenAccent),
+                if (pedidos > 0) _buildMiniTag('PED: $pedidos', Colors.orangeAccent),
+                ...porTipoPagamento.entries.map((entry) => 
+                  _buildMiniTag('${entry.key.nome.split(' ').first}: ${_formatoMoeda.format(entry.value)}', Colors.white38)
+                ),
               ],
-            ),
-          ],
-          // Totais por tipo de pagamento
-          if (porTipoPagamento.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            const Divider(color: Colors.white24),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 16,
-              runSpacing: 8,
-              alignment: WrapAlignment.center,
-              children: porTipoPagamento.entries.map((entry) {
-                return Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.05),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        _getIconeTipo(entry.key),
-                        color: Colors.white54,
-                        size: 16,
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        '${entry.key.nome}: ${_formatoMoeda.format(entry.value)}',
-                        style: const TextStyle(
-                          color: Colors.white70,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              }).toList(),
             ),
           ],
         ],
       ),
+    );
+  }
+
+  Widget _buildCompactDateSelector(bool isInicio) {
+    final data = isInicio ? _dataInicio : _dataFim;
+    return GestureDetector(
+      onTap: () => _selecionarData(isInicio),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.05),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.calendar_today, size: 12, color: Colors.white54),
+            const SizedBox(width: 6),
+            Text(
+              '${_formatoData.format(data)} ${_formatoHora.format(data)}',
+              style: const TextStyle(color: Colors.white70, fontSize: 11),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCompactStat(String label, String value, Color color) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Text(label, style: const TextStyle(color: Colors.white24, fontSize: 9, letterSpacing: 0.5)),
+        Text(value, style: TextStyle(color: color, fontSize: 16, fontWeight: FontWeight.bold)),
+      ],
+    );
+  }
+
+  Widget _buildMiniTag(String text, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: color.withOpacity(0.2)),
+      ),
+      child: Text(text, style: TextStyle(color: color.withOpacity(0.8), fontSize: 10, fontWeight: FontWeight.bold)),
     );
   }
 
@@ -3435,6 +3318,19 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
       final dataService = Provider.of<DataService>(context, listen: false);
 
       // Criar lista de caixas com seus períodos (abertura até fechamento)
+      // Pré-filtragem global para evitar O(N^2) no processamento de caixas
+      // Aumenta a performance DRASTICAMENTE em períodos longos
+      final DateTime dataInicioLimite = _dataInicio.subtract(const Duration(days: 1));
+      final DateTime dataFimLimite = _dataFim.add(const Duration(days: 1));
+      
+      final vendasGlobal = dataService.vendasBalcao.where((v) => 
+          v.dataVenda.isAfter(dataInicioLimite) && v.dataVenda.isBefore(dataFimLimite)).toList();
+      
+      final pedidosGlobal = dataService.pedidos.where((p) => 
+          p.dataPedido.isAfter(dataInicioLimite) && p.dataPedido.isBefore(dataFimLimite)).toList();
+          
+      final setNumerosVendasGlobal = vendasGlobal.map((v) => v.numero).toSet();
+
       final List<Map<String, dynamic>> caixas = [];
 
       for (final abertura in dataService.aberturasCaixa) {
@@ -3473,15 +3369,15 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
       // Buscar vendas DIRETAMENTE do DataService usando o período do caixa
       // Não usar itensHistorico que já está filtrado pelo período selecionado pelo usuário
       
-      // Vendas balcão do período do caixa
-      final vendasBalcaoDoCaixa = dataService.vendasBalcao.where((v) {
+      // Vendas balcão do período do caixa (usando lista pré-filtrada)
+      final vendasBalcaoDoCaixa = vendasGlobal.where((v) {
         if (v.isCancelada) return false;
         return v.dataVenda.compareTo(dataInicioCaixa) >= 0 && 
                v.dataVenda.compareTo(dataFimCaixa) <= 0;
       }).toList();
 
-      // Pedidos recebidos no período do caixa
-      final pedidosDoCaixa = dataService.pedidos.where((p) {
+      // Pedidos recebidos no período do caixa (usando lista pré-filtrada)
+      final pedidosDoCaixa = pedidosGlobal.where((p) {
         if (p.status.toLowerCase() == 'cancelado') return false;
         // Verificar se tem algum pagamento recebido no período do caixa
         return p.pagamentos.any((pag) {
@@ -3558,15 +3454,14 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
 
       // Vendas canceladas do período do caixa (considerando horário)
       // Incluir tanto pedidos quanto vendas diretas canceladas
-      final pedidosCancelados = dataService.pedidos.where((p) {
+      // Vendas canceladas do período do caixa (usando listas pré-filtradas)
+      final pedidosCancelados = pedidosGlobal.where((p) {
         if (p.status.toLowerCase() != 'cancelado') return false;
-        // Comparar considerando data e horário (incluindo os limites)
         return p.dataPedido.compareTo(dataInicioCaixa) >= 0 && 
                p.dataPedido.compareTo(dataFimCaixa) <= 0;
       }).toList();
 
-      // Vendas diretas canceladas do período do caixa
-      final vendasCanceladas = dataService.vendasBalcao.where((v) {
+      final vendasCanceladas = vendasGlobal.where((v) {
         if (!v.isCancelada) return false;
         return v.dataVenda.compareTo(dataInicioCaixa) >= 0 && 
                v.dataVenda.compareTo(dataFimCaixa) <= 0;
@@ -3575,9 +3470,8 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
       double totalCanceladas = 0.0;
       // Contabilizar apenas pedidos cancelados que não são vendas diretas
       for (final pedido in pedidosCancelados) {
-        // Verificar se não é uma venda direta (não tem número de venda balcão)
-        final temVendaBalcao = dataService.vendasBalcao.any((v) => v.numero == pedido.numero);
-        if (!temVendaBalcao) {
+        // Verificar se não é uma venda direta (uso do Set para O(1))
+        if (!setNumerosVendasGlobal.contains(pedido.numero)) {
           totalCanceladas += pedido.totalGeral;
         }
       }
@@ -3589,6 +3483,8 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
       // Sangrias e Suprimentos do caixa
       double totalSangrias = 0.0;
       double totalSuprimentos = 0.0;
+      final List<SangriaCaixa> listaSangrias = [];
+      final List<SuprimentoCaixa> listaSuprimentos = [];
       
       // Buscar sangrias do caixa atual (não apenas do fechamento)
       final sangriasCaixaAtual = dataService.getSangriasCaixaAtual();
@@ -3597,6 +3493,7 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
         if (sangria.data.compareTo(dataInicioCaixa) >= 0 && 
             sangria.data.compareTo(dataFimCaixa) <= 0) {
           totalSangrias += sangria.valor;
+          listaSangrias.add(sangria);
         }
       }
       
@@ -3607,6 +3504,7 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
         if (suprimento.data.compareTo(dataInicioCaixa) >= 0 && 
             suprimento.data.compareTo(dataFimCaixa) <= 0) {
           totalSuprimentos += suprimento.valor;
+          listaSuprimentos.add(suprimento);
         }
       }
       
@@ -3614,37 +3512,17 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
       if (fechamento != null) {
         for (final sangria in fechamento.sangrias) {
           totalSangrias += sangria.valor;
+          listaSangrias.add(sangria);
         }
         for (final suprimento in fechamento.suprimentos) {
           totalSuprimentos += suprimento.valor;
+          listaSuprimentos.add(suprimento);
         }
       }
       
-      // Adicionar sangrias ao porTipo como valor negativo (para aparecer na lista)
-      // Separar sangrias de outros valores sem classificação
-      if (totalSangrias > 0) {
-        final valorSemClassificacao = porTipo[null] ?? 0;
-        // Remover temporariamente para adicionar sangrias separadamente
-        porTipo.remove(null);
-        // Adicionar sangrias como valor negativo (será exibido como "Sangria" em vermelho)
-        porTipo[null] = -totalSangrias;
-        // Se havia valor sem classificação, adicionar de volta
-        if (valorSemClassificacao > 0) {
-          // Adicionar como uma nova entrada (mas não podemos ter duas chaves null)
-          // Vamos adicionar ao valor negativo (será tratado na exibição)
-          porTipo[null] = valorSemClassificacao - totalSangrias;
-        }
-      }
-      
-      // Adicionar suprimentos ao porTipo como valor positivo
-      if (totalSuprimentos > 0) {
-        final valorAtual = porTipo[null] ?? 0;
-        // Se o valor atual é negativo (sangrias), adicionar suprimentos
-        if (valorAtual < 0) {
-          porTipo[null] = valorAtual + totalSuprimentos;
-        } else {
-          porTipo[null] = valorAtual + totalSuprimentos;
-        }
+      // Adicionar suprimentos ao porTipo se não houver classificação
+      if (totalSuprimentos > 0 && porTipo[null] == null) {
+        porTipo[null] = totalSuprimentos;
       }
 
       // Total líquido do caixa
@@ -3678,6 +3556,8 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
             'totalSangrias': totalSangrias,
             'totalSuprimentos': totalSuprimentos,
             'totalLiquido': totalLiquido,
+            'listaSangrias': listaSangrias,
+            'listaSuprimentos': listaSuprimentos,
           });
         } catch (e) {
           print('>>> Erro ao processar caixa ${abertura.numero}: $e');
@@ -3770,6 +3650,9 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                         final totalSangrias = caixa['totalSangrias'] as double;
                         final totalSuprimentos = caixa['totalSuprimentos'] as double;
                         final totalLiquido = caixa['totalLiquido'] as double;
+                        final totalVendas = caixa['totalVendas'] as double;
+                        final listaSangrias = caixa['listaSangrias'] as List<SangriaCaixa>;
+                        final listaSuprimentos = caixa['listaSuprimentos'] as List<SuprimentoCaixa>;
 
                         return Card(
                           margin: const EdgeInsets.only(bottom: 12),
@@ -3943,20 +3826,28 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                                       crossAxisAlignment: CrossAxisAlignment.end,
                                       children: [
                                         Text(
-                                          'Total do Caixa',
-                                          style: TextStyle(
-                                            color: Colors.white.withOpacity(0.6),
+                                          'Total Vendas: ${_formatoMoeda.format(totalVendas)}',
+                                          style: const TextStyle(
+                                            color: Colors.white70,
                                             fontSize: 11,
+                                            fontWeight: FontWeight.w500,
                                           ),
                                         ),
-                                        const SizedBox(height: 2),
+                                        const SizedBox(height: 6),
+                                        Text(
+                                          'Saldo Líquido',
+                                          style: TextStyle(
+                                            color: Colors.white.withOpacity(0.5),
+                                            fontSize: 10,
+                                          ),
+                                        ),
                                         Text(
                                           _formatoMoeda.format(totalLiquido),
                                           style: TextStyle(
                                             color: totalLiquido >= 0 
                                                 ? Colors.greenAccent 
                                                 : Colors.redAccent,
-                                            fontSize: 16,
+                                            fontSize: 18,
                                             fontWeight: FontWeight.bold,
                                           ),
                                         ),
@@ -4066,83 +3957,79 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                                   const SizedBox(height: 8),
                                 ],
                                 // Tipos de pagamento, sangrias e suprimentos
-                                if (porTipo.isNotEmpty) ...[
+                                if (porTipo.isNotEmpty || listaSangrias.isNotEmpty || listaSuprimentos.isNotEmpty) ...[
                                   Wrap(
                                     spacing: 8,
                                     runSpacing: 8,
-                                    children: porTipo.entries.map((entry) {
-                                      final tipo = entry.key;
-                                      final valor = entry.value;
+                                    children: [
+                                      // Formas de pagamento
+                                      ...porTipo.entries.map((entry) {
+                                        final tipo = entry.key;
+                                        final valor = entry.value;
+                                        if (tipo == null) return const SizedBox.shrink();
 
-                                      IconData icone;
-                                      String label;
-                                      Color corTexto;
-                                      Color corFundo;
-
-                                      if (tipo != null) {
-                                        icone = _getIconeTipo(tipo);
-                                        label = tipo.nome;
-                                        corTexto = Colors.white70;
-                                        corFundo = Colors.white.withOpacity(0.05);
-                                      } else {
-                                        // Verificar se é sangria (valor negativo) ou suprimento (valor positivo)
-                                        if (valor < 0) {
-                                          // É uma sangria
-                                          icone = Icons.remove_circle;
-                                          label = 'Sangria';
-                                          corTexto = Colors.redAccent;
-                                          corFundo = Colors.red.withOpacity(0.2);
-                                        } else if (valor > 0) {
-                                          // Pode ser suprimento ou sem classificação
-                                          // Verificar se há suprimentos
-                                          if (totalSuprimentos > 0 && (valor - totalSuprimentos).abs() < 0.01) {
-                                            icone = Icons.add_circle;
-                                            label = 'Suprimento';
-                                            corTexto = Colors.greenAccent;
-                                            corFundo = Colors.green.withOpacity(0.2);
-                                          } else {
-                                            icone = Icons.help_outline;
-                                            label = 'Sem classificação';
-                                            corTexto = Colors.white70;
-                                            corFundo = Colors.white.withOpacity(0.05);
-                                          }
-                                        } else {
-                                          icone = Icons.help_outline;
-                                          label = 'Sem classificação';
-                                          corTexto = Colors.white70;
-                                          corFundo = Colors.white.withOpacity(0.05);
-                                        }
-                                      }
-
-                                      return Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 10,
-                                          vertical: 6,
-                                        ),
+                                        return Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                          decoration: BoxDecoration(
+                                            color: Colors.white.withOpacity(0.05),
+                                            borderRadius: BorderRadius.circular(8),
+                                          ),
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Icon(_getIconeTipo(tipo), color: Colors.white70, size: 16),
+                                              const SizedBox(width: 6),
+                                              Text(
+                                                '${tipo.nome}: ${_formatoMoeda.format(valor)}',
+                                                style: const TextStyle(color: Colors.white70, fontSize: 12),
+                                              ),
+                                            ],
+                                          ),
+                                        );
+                                      }),
+                                      
+                                      // Pagamentos (Sangrias)
+                                      ...listaSangrias.map((sangria) => Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                                         decoration: BoxDecoration(
-                                          color: corFundo,
+                                          color: Colors.red.withOpacity(0.1),
                                           borderRadius: BorderRadius.circular(8),
-                                          border: tipo == null && valor < 0
-                                              ? Border.all(color: Colors.redAccent.withOpacity(0.5), width: 1)
-                                              : null,
+                                          border: Border.all(color: Colors.redAccent.withOpacity(0.3)),
                                         ),
                                         child: Row(
                                           mainAxisSize: MainAxisSize.min,
                                           children: [
-                                            Icon(icone, color: corTexto, size: 16),
+                                            const Icon(Icons.remove_circle, color: Colors.redAccent, size: 16),
                                             const SizedBox(width: 6),
                                             Text(
-                                              '$label: ${_formatoMoeda.format(valor.abs())}',
-                                              style: TextStyle(
-                                                color: corTexto,
-                                                fontSize: 12,
-                                                fontWeight: tipo == null && valor < 0 ? FontWeight.bold : FontWeight.normal,
-                                              ),
+                                              'Pagto (${sangria.motivo}): ${_formatoMoeda.format(sangria.valor)}',
+                                              style: const TextStyle(color: Colors.redAccent, fontSize: 12, fontWeight: FontWeight.bold),
                                             ),
                                           ],
                                         ),
-                                      );
-                                    }).toList(),
+                                      )),
+
+                                      // Suprimentos (Entradas)
+                                      ...listaSuprimentos.map((suprimento) => Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                        decoration: BoxDecoration(
+                                          color: Colors.green.withOpacity(0.1),
+                                          borderRadius: BorderRadius.circular(8),
+                                          border: Border.all(color: Colors.greenAccent.withOpacity(0.3)),
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            const Icon(Icons.add_circle, color: Colors.greenAccent, size: 16),
+                                            const SizedBox(width: 6),
+                                            Text(
+                                              'Entrada (${suprimento.motivo}): ${_formatoMoeda.format(suprimento.valor)}',
+                                              style: const TextStyle(color: Colors.greenAccent, fontSize: 12),
+                                            ),
+                                          ],
+                                        ),
+                                      )),
+                                    ],
                                   ),
                                 ],
                               ],
@@ -4203,8 +4090,14 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
         .where((i) => !i.isCancelada && i.tipoPagamento == TipoPagamento.cartaoCredito)
         .fold(0.0, (sum, i) => sum + i.valorTotal);
 
-    // Valor esperado em dinheiro = valor inicial + vendas em dinheiro
-    final valorEsperadoDinheiro = abertura.valorInicial + totalDinheiro;
+    // Calcular pagamentos (sangrias) e suprimentos do caixa atual
+    final sangrias = dataService.getSangriasCaixaAtual();
+    final suprimentos = dataService.getSuprimentosCaixaAtual();
+    final totalSangrias = sangrias.fold(0.0, (sum, s) => sum + s.valor);
+    final totalSuprimentos = suprimentos.fold(0.0, (sum, s) => sum + s.valor);
+
+    // Valor esperado em dinheiro = valor inicial + vendas em dinheiro - sangrias + suprimentos
+    final valorEsperadoDinheiro = abertura.valorInicial + totalDinheiro - totalSangrias + totalSuprimentos;
 
     // Controllers para valores reais informados
     final controllerDinheiro = TextEditingController(
@@ -4275,6 +4168,9 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
             final totalEsperado = valorEsperadoDinheiro + totalPix + totalDebito + totalCredito;
             final totalReal = valorRealDinheiro + valorRealPix + valorRealDebito + valorRealCredito;
             final diferenca = totalReal - totalEsperado;
+
+            // Recalcular diferencia baseada no valor esperado individual se necessário
+            // O totalEsperado já inclui sangrias e suprimentos no valorEsperadoDinheiro
 
             return AlertDialog(
               backgroundColor: const Color(0xFF1E1E2E),
@@ -4353,14 +4249,41 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                             ),
                           ),
                           const SizedBox(height: 8),
-                          // Valor de abertura separado
                           _buildLinhaValor('💰 Valor de Abertura', abertura.valorInicial, _formatoMoeda),
-                          _buildLinhaValor('💰 Vendas em Dinheiro', totalDinheiro, _formatoMoeda),
-                          _buildLinhaValor('💰 Total Dinheiro', valorEsperadoDinheiro, _formatoMoeda, isTotal: false),
+                          InkWell(
+                            onTap: () => _mostrarDetalhesVendasPorTipo(context, itensHistorico, TipoPagamento.dinheiro, _formatoMoeda),
+                            borderRadius: BorderRadius.circular(4),
+                            child: _buildLinhaValor('💰 Vendas em Dinheiro', totalDinheiro, _formatoMoeda),
+                          ),
+                          if (totalSangrias > 0)
+                            InkWell(
+                              onTap: () => _mostrarDetalhesMovimentacoes(context, sangrias, suprimentos, _formatoMoeda),
+                              borderRadius: BorderRadius.circular(4),
+                              child: _buildLinhaValor('➖ Pagamentos (Saídas)', -totalSangrias, _formatoMoeda, cor: Colors.orangeAccent),
+                            ),
+                          if (totalSuprimentos > 0)
+                            InkWell(
+                              onTap: () => _mostrarDetalhesMovimentacoes(context, sangrias, suprimentos, _formatoMoeda),
+                              borderRadius: BorderRadius.circular(4),
+                              child: _buildLinhaValor('➕ Entradas (Reforço)', totalSuprimentos, _formatoMoeda, cor: Colors.blueAccent),
+                            ),
+                          _buildLinhaValor('💰 Total Dinheiro Esperado', valorEsperadoDinheiro, _formatoMoeda, isTotal: false),
                           const SizedBox(height: 4),
-                          _buildLinhaValor('📱 PIX', totalPix, _formatoMoeda),
-                          _buildLinhaValor('💳 Débito', totalDebito, _formatoMoeda),
-                          _buildLinhaValor('💳 Crédito', totalCredito, _formatoMoeda),
+                          InkWell(
+                            onTap: () => _mostrarDetalhesVendasPorTipo(context, itensHistorico, TipoPagamento.pix, _formatoMoeda),
+                            borderRadius: BorderRadius.circular(4),
+                            child: _buildLinhaValor('📱 PIX', totalPix, _formatoMoeda),
+                          ),
+                          InkWell(
+                            onTap: () => _mostrarDetalhesVendasPorTipo(context, itensHistorico, TipoPagamento.cartaoDebito, _formatoMoeda),
+                            borderRadius: BorderRadius.circular(4),
+                            child: _buildLinhaValor('💳 Débito', totalDebito, _formatoMoeda),
+                          ),
+                          InkWell(
+                            onTap: () => _mostrarDetalhesVendasPorTipo(context, itensHistorico, TipoPagamento.cartaoCredito, _formatoMoeda),
+                            borderRadius: BorderRadius.circular(4),
+                            child: _buildLinhaValor('💳 Crédito', totalCredito, _formatoMoeda),
+                          ),
                           const Divider(),
                           _buildLinhaValor('TOTAL ESPERADO', totalEsperado, _formatoMoeda, isTotal: true),
                         ],
@@ -4379,7 +4302,7 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                       decoration: InputDecoration(
                         labelText: '💰 Dinheiro (Abertura + Vendas)',
                         prefixText: 'R\$ ',
-                        helperText: 'Abertura: ${_formatoMoeda.format(abertura.valorInicial)} + Vendas: ${_formatoMoeda.format(totalDinheiro)} = ${_formatoMoeda.format(valorEsperadoDinheiro)}',
+                        helperText: 'Abertura: ${_formatoMoeda.format(abertura.valorInicial)} + Vendas: ${_formatoMoeda.format(totalDinheiro)} - Pagos: ${_formatoMoeda.format(totalSangrias)} + Entr: ${_formatoMoeda.format(totalSuprimentos)} = ${_formatoMoeda.format(valorEsperadoDinheiro)}',
                         helperMaxLines: 2,
                         suffixText: _formatoMoeda.format(valorEsperadoDinheiro),
                         suffixStyle: TextStyle(
@@ -5044,6 +4967,164 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
       case TipoPagamento.outro:
         return Icons.more_horiz;
     }
+  }
+
+  void _mostrarDetalhesVendasPorTipo(
+    BuildContext context,
+    List<ItemHistorico> itens,
+    TipoPagamento tipo,
+    NumberFormat formato,
+  ) {
+    final vendasTipo = itens.where((i) => !i.isCancelada && i.tipoPagamento == tipo).toList();
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+        title: Row(
+          children: [
+            Icon(_getIconeTipo(tipo), color: Colors.blueAccent),
+            const SizedBox(width: 12),
+            Text('Vendas: ${tipo.nome}', style: const TextStyle(color: Colors.white)),
+          ],
+        ),
+        content: SizedBox(
+          width: 400,
+          child: vendasTipo.isEmpty
+              ? const Padding(
+                  padding: EdgeInsets.all(20),
+                  child: Text('Nenhuma venda registrada para esta forma de pagamento.', style: const TextStyle(color: Colors.white54), textAlign: TextAlign.center),
+                )
+              : SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ...vendasTipo.map((item) => ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        leading: Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: Colors.blue.withOpacity(0.1),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(_getIconeTipo(tipo), color: Colors.blueAccent, size: 16),
+                        ),
+                        title: Text(item.numero, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+                        subtitle: Text(item.clienteNome ?? 'Cliente não informado', style: const TextStyle(color: Colors.white54, fontSize: 11)),
+                        trailing: Text(formato.format(item.valorTotal), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                      )),
+                      const Divider(color: Colors.white10),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text('TOTAL:', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.bold)),
+                            Text(formato.format(vendasTipo.fold(0.0, (sum, i) => sum + i.valorTotal)), 
+                                 style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 16)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('FECHAR', style: TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _mostrarDetalhesMovimentacoes(
+    BuildContext context,
+    List<SangriaCaixa> sangrias,
+    List<SuprimentoCaixa> suprimentos,
+    NumberFormat formato,
+  ) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+        title: const Row(
+          children: [
+            Icon(Icons.list_alt, color: Colors.blueAccent),
+            SizedBox(width: 12),
+            Text('Detalhes do Caixa', style: TextStyle(color: Colors.white)),
+          ],
+        ),
+        content: SizedBox(
+          width: 400,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (sangrias.isNotEmpty) ...[
+                  const Text('PAGAMENTOS (SAÍDAS)', 
+                    style: TextStyle(color: Colors.orangeAccent, fontWeight: FontWeight.bold, fontSize: 12, letterSpacing: 1)),
+                  const Divider(color: Colors.white10),
+                  ...sangrias.map((s) => ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    leading: Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: Colors.red.withOpacity(0.1),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.remove_circle, color: Colors.redAccent, size: 16),
+                    ),
+                    title: Text(s.motivo, style: const TextStyle(color: Colors.white, fontSize: 14)),
+                    subtitle: s.responsavel != null 
+                        ? Text('Responsável: ${s.responsavel}', style: const TextStyle(color: Colors.white54, fontSize: 11)) 
+                        : null,
+                    trailing: Text(formato.format(s.valor), 
+                      style: const TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
+                  )),
+                  const SizedBox(height: 16),
+                ],
+                if (suprimentos.isNotEmpty) ...[
+                  const Text('ENTRADAS (SUPRIMENTOS)', 
+                    style: TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.bold, fontSize: 12, letterSpacing: 1)),
+                  const Divider(color: Colors.white10),
+                  ...suprimentos.map((s) => ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    leading: Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: Colors.green.withOpacity(0.1),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.add_circle, color: Colors.greenAccent, size: 16),
+                    ),
+                    title: Text(s.motivo, style: const TextStyle(color: Colors.white, fontSize: 14)),
+                    subtitle: s.responsavel != null 
+                        ? Text('Responsável: ${s.responsavel}', style: const TextStyle(color: Colors.white54, fontSize: 11)) 
+                        : null,
+                    trailing: Text(formato.format(s.valor), 
+                      style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold)),
+                  )),
+                ],
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('FECHAR', style: TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildLoadingPaginacao() {

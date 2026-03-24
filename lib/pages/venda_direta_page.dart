@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
+import '../models/conta_pagar.dart';
 import '../services/data_service.dart';
 import '../services/local_storage_service.dart';
 import '../models/produto.dart';
@@ -28,12 +29,15 @@ import '../services/nfce_service_factory.dart';
 import '../services/nfce_service.dart';
 import '../models/nfce.dart';
 import '../models/carrinho_item.dart';
+import '../models/mesa_comanda.dart';
 import '../widgets/exodo_logo.dart';
 import '../widgets/exodo_loading.dart';
 import '../widgets/exodo_error_dialog.dart';
 import '../widgets/exodo_success_dialog.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import '../widgets/sync_status_widget.dart';
+import 'cozinha_mesas_funcionario_page.dart';
+import 'cozinha_bar_page.dart';
 
 
 /// Item no carrinho da venda direta
@@ -127,6 +131,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   bool _focoNoCarrinho = false; // false = grid de produtos, true = carrinho
   bool _focoNasCategorias = false;
   final FocusNode _atalhosFocusNode = FocusNode();
+  MesaComanda? _mesaComandaVinculada; // Mesa ou Comanda vinculada à venda atual
 
   final LocalStorageService _storage = LocalStorageService();
   static const String _keyCarrinhoPDV = 'exodo_carrinho_pdv';
@@ -434,6 +439,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       _pedidoOriginal = null;
       _cpfNfce = null;
       _nomeNfce = null;
+      _mesaComandaVinculada = null;
     });
     _buscaController.clear();
     // Limpar storage persistente
@@ -486,6 +492,27 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       });
     }
 
+    // SICRONIZAÇÃO COM COMANDA/MESA (se houver vínculo)
+    if (_mesaComandaVinculada != null) {
+      final dataService = Provider.of<DataService>(context, listen: false);
+      final newItemMc = ItemMesaComanda(
+        id: const Uuid().v4(),
+        itemId: id,
+        nome: nome,
+        quantidade: _quantidadeDigitada,
+        preco: preco,
+        isServico: isServico,
+        status: StatusItem.pendente,
+        usuarioCriou: Provider.of<AuthService>(context, listen: false).usuarioAtual?.nome ?? 'PDV',
+      );
+
+      _mesaComandaVinculada = _mesaComandaVinculada!.copyWith(
+        itens: [..._mesaComandaVinculada!.itens, newItemMc],
+        updatedAt: DateTime.now(),
+      );
+      dataService.updateMesaComanda(_mesaComandaVinculada!);
+    }
+
     // Mostrar notificação inteligente
     final int quantidadeAtual = jaExistia
         ? _carrinho[index].quantidade
@@ -524,13 +551,93 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         _carrinho.removeAt(index);
       }
     });
+
+    // SICRONIZAÇÃO COM COMANDA/MESA (se houver vínculo)
+    if (_mesaComandaVinculada != null) {
+      final dataService = Provider.of<DataService>(context, listen: false);
+      // Se o item foi removido do carrinho, o index pode ser inválido.
+      // Precisamos garantir que o item ainda existe no carrinho antes de tentar acessá-lo.
+      // Se o item foi removido, a lógica de remoção já deve ter sido tratada em _removerItem.
+      // Aqui, estamos tratando apenas a alteração de quantidade de um item existente.
+      if (index >= 0 && index < _carrinho.length) {
+        final itemCarrinho = _carrinho[index];
+
+        if (delta > 0) {
+          // Se aumentou, adiciona novo lançamento na comanda
+          final newItemMc = ItemMesaComanda(
+            id: const Uuid().v4(),
+            itemId: itemCarrinho.id,
+            nome: itemCarrinho.nome,
+            quantidade: delta,
+            preco: itemCarrinho.preco,
+            isServico: itemCarrinho.isServico,
+            status: StatusItem.pendente,
+            usuarioCriou: Provider.of<AuthService>(context, listen: false).usuarioAtual?.nome ?? 'PDV',
+          );
+
+          _mesaComandaVinculada = _mesaComandaVinculada!.copyWith(
+            itens: [..._mesaComandaVinculada!.itens, newItemMc],
+            updatedAt: DateTime.now(),
+          );
+        } else {
+          // Se diminuiu, temos que "cancelar" um item da comanda
+          final itensMc = List<ItemMesaComanda>.from(_mesaComandaVinculada!.itens);
+          final itemParaCancelarIndex = itensMc.lastIndexWhere(
+            (i) => i.itemId == itemCarrinho.id && i.status != StatusItem.cancelado
+          );
+
+          if (itemParaCancelarIndex != -1) {
+             final itemParaCanc = itensMc[itemParaCancelarIndex];
+             if (itemParaCanc.quantidade > (delta * -1)) {
+                itensMc[itemParaCancelarIndex] = itemParaCanc.copyWith(
+                  quantidade: itemParaCanc.quantidade + delta, // delta é negativo
+                  usuarioModificou: Provider.of<AuthService>(context, listen: false).usuarioAtual?.nome ?? 'PDV',
+                  dataModificacao: DateTime.now(),
+                );
+             } else {
+                itensMc[itemParaCancelarIndex] = itemParaCanc.copyWith(
+                  status: StatusItem.cancelado,
+                  usuarioModificou: Provider.of<AuthService>(context, listen: false).usuarioAtual?.nome ?? 'PDV',
+                  dataModificacao: DateTime.now(),
+                  acaoRealizada: 'Cancelado via PDV',
+                );
+             }
+             _mesaComandaVinculada = _mesaComandaVinculada!.copyWith(itens: itensMc);
+          }
+        }
+        dataService.updateMesaComanda(_mesaComandaVinculada!);
+      }
+    }
+
     // Salvar carrinho automaticamente
     _salvarCarrinho();
   }
 
   void _removerItem(int index) {
     setState(() {
+      final itemRemovido = _carrinho[index];
       _carrinho.removeAt(index);
+      
+      // SICRONIZAÇÃO COM COMANDA/MESA (se houver vínculo)
+      if (_mesaComandaVinculada != null) {
+        final dataService = Provider.of<DataService>(context, listen: false);
+        final itensMc = List<ItemMesaComanda>.from(_mesaComandaVinculada!.itens);
+        
+        // Cancela TODOS os lançamentos desse item que não estejam cancelados
+        for (var i = 0; i < itensMc.length; i++) {
+          if (itensMc[i].itemId == itemRemovido.id && itensMc[i].status != StatusItem.cancelado) {
+            itensMc[i] = itensMc[i].copyWith(
+              status: StatusItem.cancelado,
+              usuarioModificou: Provider.of<AuthService>(context, listen: false).usuarioAtual?.nome ?? 'PDV',
+              dataModificacao: DateTime.now(),
+              acaoRealizada: 'Removido via PDV',
+            );
+          }
+        }
+        
+        _mesaComandaVinculada = _mesaComandaVinculada!.copyWith(itens: itensMc);
+        dataService.updateMesaComanda(_mesaComandaVinculada!);
+      }
     });
     // Salvar carrinho automaticamente
     _salvarCarrinho();
@@ -1205,7 +1312,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         continue;
       }
 
-      final nome = produto.nome.toLowerCase();
+      final nome = produto.nome.toLowerCase().trim();
       final codigo = (produto.codigo ?? '').trim();
       final codigoLower = codigo.toLowerCase();
       final codigoBarras = (produto.codigoBarras ?? '').trim();
@@ -1352,7 +1459,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     // Buscar serviços (sempre, independente da categoria de produto ativa)
     for (final servico in dataService.servicos) {
 
-      final nome = servico.nome.toLowerCase();
+      final nome = servico.nome.toLowerCase().trim();
 
       // Match exato
       if (nome == buscaLower) {
@@ -1412,8 +1519,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         final bCodigoExato = bCodigo == buscaLower || bCodigo == _termoBusca;
         if (aCodigoExato != bCodigoExato) return aCodigoExato ? -1 : 1;
 
-        final aNomeExato = aNome == buscaLower;
-        final bNomeExato = bNome == buscaLower;
+        final aNomeExato = aNome.trim() == buscaLower;
+        final bNomeExato = bNome.trim() == buscaLower;
         if (aNomeExato != bNomeExato) return aNomeExato ? -1 : 1;
 
         // Depois nomes que começam
@@ -1429,8 +1536,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         final aNome = servicoA.nome.toLowerCase();
         final bNome = servicoB.nome.toLowerCase();
 
-        final aNomeExato = aNome == buscaLower;
-        final bNomeExato = bNome == buscaLower;
+        final aNomeExato = aNome.trim() == buscaLower;
+        final bNomeExato = bNome.trim() == buscaLower;
         if (aNomeExato != bNomeExato) return aNomeExato ? -1 : 1;
 
         final aNomeComeca = aNome.startsWith(buscaLower);
@@ -1712,106 +1819,741 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     );
   }
 
-  void _abrirIdentificacaoConsumidor() {
-    final controllerCpf = TextEditingController(text: _cpfNfce);
-    final controllerNome = TextEditingController(text: _nomeNfce);
+  void _abrirLancamentoDespesa() {
+    final descricaoController = TextEditingController();
+    final valorController = TextEditingController();
+    final responsavelController = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+
+    // Estados do diálogo
+    int abaAtiva = 0; // 0: Novo Lançamento, 1: Contas Pendentes
+    String tipoLancamento = 'Dinheiro do Caixa'; // 'Dinheiro do Caixa' ou 'Contas a Pagar'
+    String statusContaPagar = 'Pendente'; // 'Pendente' ou 'Pago'
+    bool tirarDoCaixaSePago = true;
+    DateTime dataVencimentoSelecionada = DateTime.now();
 
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1E1E2E),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Row(
-          children: [
-            const Icon(Icons.badge_outlined, color: Colors.blueAccent),
-            const SizedBox(width: 10),
-            const Text(
-              'Identificar Consumidor',
-              style: TextStyle(color: Colors.white),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final dataService = Provider.of<DataService>(context, listen: false);
+          
+          return AlertDialog(
+            backgroundColor: const Color(0xFF1E1E2E),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            contentPadding: EdgeInsets.zero,
+            title: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.redAccent.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(
+                      abaAtiva == 0 ? Icons.money_off : Icons.receipt_long, 
+                      color: Colors.redAccent
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    abaAtiva == 0 ? 'Lançar Despesa' : 'Contas Pendentes',
+                    style: const TextStyle(color: Colors.white, fontSize: 20),
+                  ),
+                ],
+              ),
             ),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
+            content: SizedBox(
+              width: 500,
+              height: 550,
+              child: Column(
+                children: [
+                  // Tabs
+                  Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 20),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.05),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: InkWell(
+                            onTap: () => setDialogState(() => abaAtiva = 0),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              decoration: BoxDecoration(
+                                color: abaAtiva == 0 ? Colors.blueAccent : Colors.transparent,
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: const Center(
+                                child: Text(
+                                  'NOVO LANÇAMENTO',
+                                  style: TextStyle(
+                                    color: Colors.white, 
+                                    fontSize: 12, 
+                                    fontWeight: FontWeight.bold
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          child: InkWell(
+                            onTap: () => setDialogState(() => abaAtiva = 1),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              decoration: BoxDecoration(
+                                color: abaAtiva == 1 ? Colors.blueAccent : Colors.transparent,
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: const Center(
+                                child: Text(
+                                  'CONTAS PENDENTES',
+                                  style: TextStyle(
+                                    color: Colors.white, 
+                                    fontSize: 12, 
+                                    fontWeight: FontWeight.bold
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  
+                  Expanded(
+                    child: abaAtiva == 0 
+                      ? _buildFormNovoLancamento(
+                          formKey, 
+                          descricaoController, 
+                          valorController, 
+                          responsavelController, 
+                          tipoLancamento, 
+                          statusContaPagar, 
+                          tirarDoCaixaSePago,
+                          dataVencimentoSelecionada,
+                          (tipo) => setDialogState(() => tipoLancamento = tipo),
+                          (status) => setDialogState(() => statusContaPagar = status),
+                          (v) => setDialogState(() => tirarDoCaixaSePago = v),
+                          (data) => setDialogState(() => dataVencimentoSelecionada = data),
+                        )
+                      : _buildListaContasPendentes(dataService, setDialogState),
+                  ),
+                ],
+              ),
+            ),
+            actionsPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('FECHAR', style: TextStyle(color: Colors.white54)),
+              ),
+              if (abaAtiva == 0) ...[
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: () async {
+                    if (!formKey.currentState!.validate()) return;
+                    
+                    final valor = double.parse(valorController.text.replaceAll(',', '.'));
+                    final descricao = descricaoController.text.trim();
+                    final responsavel = responsavelController.text.trim();
+                    
+                    try {
+                      if (tipoLancamento == 'Dinheiro do Caixa') {
+                        if (dataService.aberturaCaixaAtual == null) {
+                          throw Exception('O caixa precisa estar aberto para pagar com dinheiro do dia.');
+                        }
+                        await dataService.registrarSangria(
+                          valor: valor,
+                          motivo: descricao,
+                          responsavel: responsavel.isNotEmpty ? responsavel : null,
+                        );
+                      } else {
+                        final novaConta = ContaPagar(
+                          id: DateTime.now().millisecondsSinceEpoch.toString(),
+                          tipo: TipoContaPagar.despesaVariavel,
+                          descricao: descricao,
+                          valor: valor,
+                          dataVencimento: dataVencimentoSelecionada,
+                          status: statusContaPagar == 'Pago' ? StatusContaPagar.pago : StatusContaPagar.pendente,
+                          dataPagamento: statusContaPagar == 'Pago' ? DateTime.now() : null,
+                          valorPago: statusContaPagar == 'Pago' ? valor : 0,
+                          formaPagamento: statusContaPagar == 'Pago' ? 'Dinheiro' : null,
+                          usuarioCriacao: responsavel,
+                        );
+                        await dataService.addContaPagar(novaConta);
+                        
+                        if (statusContaPagar == 'Pago' && tirarDoCaixaSePago) {
+                          if (dataService.aberturaCaixaAtual != null) {
+                            await dataService.registrarSangria(
+                              valor: valor,
+                              motivo: 'Pagto Despesa: $descricao',
+                              responsavel: responsavel.isNotEmpty ? responsavel : null,
+                            );
+                          }
+                        }
+                      }
+                      
+                      if (context.mounted) {
+                        Navigator.pop(context);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Sucesso: $tipoLancamento registrado.')),
+                        );
+                      }
+                    } catch (e) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Erro: $e'), backgroundColor: Colors.redAccent),
+                      );
+                    }
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: tipoLancamento == 'Dinheiro do Caixa' ? Colors.redAccent : Colors.blueAccent,
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  child: Text(
+                    tipoLancamento == 'Dinheiro do Caixa' ? 'PAGAR COM CAIXA' : 'LANÇAR CONTA',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildFormNovoLancamento(
+    GlobalKey<FormState> formKey,
+    TextEditingController descricaoController,
+    TextEditingController valorController,
+    TextEditingController responsavelController,
+    String tipoLancamento,
+    String statusContaPagar,
+    bool tirarDoCaixaSePago,
+    DateTime dataVencimento,
+    Function(String) onTypeChanged,
+    Function(String) onStatusChanged,
+    Function(bool) onTirarDoCaixaChanged,
+    Function(DateTime) onDataChanged,
+  ) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Form(
+        key: formKey,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             const Text(
-              'Identifique o cliente para a NFC-e sem necessidade de cadastro completo.',
+              'Escolha a forma de lançamento para esta despesa.',
               style: TextStyle(color: Colors.white54, fontSize: 13),
             ),
             const SizedBox(height: 20),
-            TextField(
-              controller: controllerCpf,
-              autofocus: true,
-              style: const TextStyle(color: Colors.white),
-              decoration: InputDecoration(
-                labelText: 'CPF/CNPJ na Nota',
-                labelStyle: const TextStyle(color: Colors.white54),
-                prefixIcon: const Icon(Icons.badge, color: Colors.white54),
-                filled: true,
-                fillColor: Colors.white.withOpacity(0.05),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
+            
+            Row(
+              children: [
+                Expanded(
+                  child: _buildTipoOption(
+                    'Pagar com Dinheiro do Caixa', 
+                    Icons.account_balance_wallet, 
+                    tipoLancamento == 'Dinheiro do Caixa',
+                    () => onTypeChanged('Dinheiro do Caixa'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildTipoOption(
+                    'Lançar Conta (Fora do Caixa)', 
+                    Icons.receipt_long, 
+                    tipoLancamento == 'Contas a Pagar',
+                    () => onTypeChanged('Contas a Pagar'),
+                  ),
+                ),
+              ],
+            ),
+            
+            const SizedBox(height: 20),
+
+            if (tipoLancamento == 'Contas a Pagar') ...[
+              const Text('Data de Vencimento', style: TextStyle(color: Colors.white70, fontSize: 12)),
+              const SizedBox(height: 8),
+              InkWell(
+                onTap: () async {
+                  final picked = await showDatePicker(
+                    context: context,
+                    initialDate: dataVencimento,
+                    firstDate: DateTime.now().subtract(const Duration(days: 365)),
+                    lastDate: DateTime.now().add(const Duration(days: 3650)),
+                    builder: (context, child) {
+                      return Theme(
+                        data: ThemeData.dark().copyWith(
+                          colorScheme: const ColorScheme.dark(
+                            primary: Colors.blueAccent,
+                            onPrimary: Colors.white,
+                            surface: Color(0xFF1E1E2E),
+                            onSurface: Colors.white,
+                          ),
+                          dialogBackgroundColor: const Color(0xFF1E1E2E),
+                        ),
+                        child: child!,
+                      );
+                    },
+                  );
+                  if (picked != null) onDataChanged(picked);
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.05),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.calendar_today, color: Colors.blueAccent, size: 20),
+                      const SizedBox(width: 12),
+                      Text(
+                        DateFormat('dd / MM / yyyy').format(dataVencimento),
+                        style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                      ),
+                      const Spacer(),
+                      const Icon(Icons.edit, color: Colors.white24, size: 16),
+                    ],
+                  ),
                 ),
               ),
-              keyboardType: TextInputType.number,
+              const SizedBox(height: 16),
+            ],
+
+            TextFormField(
+              controller: descricaoController,
+              style: const TextStyle(color: Colors.white),
+              decoration: _inputDecoration('Descrição / Motivo', Icons.description),
+              validator: (v) => v == null || v.isEmpty ? 'Informe a descrição' : null,
             ),
             const SizedBox(height: 16),
-            TextField(
-              controller: controllerNome,
+            TextFormField(
+              controller: valorController,
               style: const TextStyle(color: Colors.white),
-              decoration: InputDecoration(
-                labelText: 'Nome do Consumidor',
-                labelStyle: const TextStyle(color: Colors.white54),
-                prefixIcon: const Icon(Icons.person_outline, color: Colors.white54),
-                filled: true,
-                fillColor: Colors.white.withOpacity(0.05),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
-                ),
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: _inputDecoration('Valor (R\$)', Icons.attach_money),
+              validator: (v) {
+                if (v == null || v.isEmpty) return 'Informe o valor';
+                final val = double.tryParse(v.replaceAll(',', '.'));
+                if (val == null || val <= 0) return 'Valor inválido';
+                return null;
+              },
+            ),
+            
+            if (tipoLancamento == 'Contas a Pagar') ...[
+              const SizedBox(height: 20),
+              const Divider(color: Colors.white10),
+              const SizedBox(height: 10),
+              const Text('Status da Conta', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildStatusChip(
+                      'Pendente', 
+                      statusContaPagar == 'Pendente',
+                      () => onStatusChanged('Pendente'),
+                      Colors.orange,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _buildStatusChip(
+                      'Pago', 
+                      statusContaPagar == 'Pago',
+                      () => onStatusChanged('Pago'),
+                      Colors.green,
+                    ),
+                  ),
+                ],
               ),
-              textCapitalization: TextCapitalization.words,
+              if (statusContaPagar == 'Pago') ...[
+                const SizedBox(height: 12),
+                CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Tirar dinheiro do caixa?', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                  value: tirarDoCaixaSePago,
+                  onChanged: (v) => onTirarDoCaixaChanged(v ?? false),
+                  activeColor: Colors.blueAccent,
+                  checkColor: Colors.white,
+                  dense: true,
+                  controlAffinity: ListTileControlAffinity.leading,
+                ),
+              ],
+            ],
+            
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: responsavelController,
+              style: const TextStyle(color: Colors.white),
+              decoration: _inputDecoration('Responsável (Opcional)', Icons.person_outline),
+            ),
+            const SizedBox(height: 20),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildListaContasPendentes(DataService dataService, StateSetter setDialogState) {
+    final contasPendentes = dataService.contasPagar
+        .where((c) => c.status == StatusContaPagar.pendente)
+        .toList()
+      ..sort((a, b) => a.dataVencimento.compareTo(b.dataVencimento));
+
+    if (contasPendentes.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.check_circle_outline, color: Colors.green.withOpacity(0.2), size: 80),
+            const SizedBox(height: 16),
+            const Text(
+              'Tudo em dia!', 
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)
+            ),
+            const Text(
+              'Nenhuma conta pendente encontrada.', 
+              style: TextStyle(color: Colors.white54, fontSize: 14)
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('CANCELAR', style: TextStyle(color: Colors.grey)),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              setState(() {
-                _cpfNfce = controllerCpf.text.trim();
-                _nomeNfce = controllerNome.text.trim();
-                
-                // Se identificou o consumidor, remove qualquer cliente selecionado
-                // para não haver conflito de IDENTIFICAÇÃO vs CADASTRO
-                if ((_cpfNfce?.isNotEmpty == true || _nomeNfce?.isNotEmpty == true) && _clienteSelecionado != null) {
-                   _clienteSelecionado = null;
-                }
-              });
-              Navigator.pop(context);
-              
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(_cpfNfce?.isNotEmpty == true 
-                    ? 'Consumidor identificado: $_cpfNfce'
-                    : 'Identificação removida'),
-                  backgroundColor: Colors.blueAccent,
-                  duration: const Duration(seconds: 2),
-                ),
-              );
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.blueAccent,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      );
+    }
+
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      itemCount: contasPendentes.length,
+      itemBuilder: (context, index) {
+        final conta = contasPendentes[index];
+        final hoje = DateTime.now();
+        final vencida = conta.dataVencimento.isBefore(DateTime(hoje.year, hoje.month, hoje.day));
+
+        return Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.03),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: vencida ? Colors.red.withOpacity(0.3) : Colors.white.withOpacity(0.08),
             ),
-            child: const Text('CONFIRMAR'),
           ),
-        ],
+          child: ListTile(
+            contentPadding: const EdgeInsets.all(12),
+            leading: Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: (vencida ? Colors.red : Colors.orange).withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(
+                vencida ? Icons.warning_amber_rounded : Icons.receipt_long, 
+                color: vencida ? Colors.redAccent : Colors.orange, 
+                size: 24
+              ),
+            ),
+            title: Text(
+              conta.descricao,
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(height: 4),
+                Text(
+                  'Vencimento: ${DateFormat('dd/MM/yyyy').format(conta.dataVencimento)}',
+                  style: TextStyle(
+                    color: vencida ? Colors.redAccent : Colors.white54, 
+                    fontSize: 12,
+                    fontWeight: vencida ? FontWeight.bold : FontWeight.normal,
+                  ),
+                ),
+                if (vencida)
+                  const Text(
+                    'CONTA VENCIDA',
+                    style: TextStyle(color: Colors.redAccent, fontSize: 10, fontWeight: FontWeight.bold),
+                  ),
+              ],
+            ),
+            trailing: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  'R\$ ${conta.valor.toStringAsFixed(2)}',
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                ),
+                const SizedBox(height: 6),
+                Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTap: () => _baixarContaPagarDialog(dataService, conta),
+                    borderRadius: BorderRadius.circular(8),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.green.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.green.withOpacity(0.3)),
+                      ),
+                      child: const Text(
+                        'PAGAR',
+                        style: TextStyle(color: Colors.greenAccent, fontSize: 11, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  InputDecoration _inputDecoration(String label, IconData icon) {
+    return InputDecoration(
+      labelText: label,
+      labelStyle: const TextStyle(color: Colors.white54),
+      prefixIcon: Icon(icon, color: Colors.white54),
+      filled: true,
+      fillColor: Colors.white.withOpacity(0.05),
+      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+      contentPadding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
+    );
+  }
+
+  void _baixarContaPagarDialog(DataService dataService, ContaPagar conta) {
+    bool tirarDoCaixa = true;
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSubDialogState) => Dialog(
+          backgroundColor: const Color(0xFF1E1E2E),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          child: Container(
+            padding: const EdgeInsets.all(24),
+            constraints: const BoxConstraints(maxWidth: 400),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: Colors.green.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(Icons.check_circle_outline, color: Colors.greenAccent),
+                    ),
+                    const SizedBox(width: 16),
+                    const Text(
+                      'Baixar Conta',
+                      style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 24),
+                const Text(
+                  'Confirmar pagamento de:',
+                  style: TextStyle(color: Colors.white54, fontSize: 14),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  conta.descricao,
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 20),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Valor: R\$ ${conta.valor.toStringAsFixed(2)}',
+                  style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 18),
+                ),
+                const SizedBox(height: 24),
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.05),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Column(
+                    children: [
+                      CheckboxListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text(
+                          'Registrar saída do caixa?', 
+                          style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)
+                        ),
+                        subtitle: const Text(
+                          'O dinheiro será retirado do saldo do dia.',
+                          style: TextStyle(color: Colors.white54, fontSize: 12),
+                        ),
+                        value: tirarDoCaixa,
+                        onChanged: (v) => setSubDialogState(() => tirarDoCaixa = v ?? false),
+                        activeColor: Colors.blueAccent,
+                        checkColor: Colors.white,
+                        dense: true,
+                        controlAffinity: ListTileControlAffinity.leading,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 32),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        child: const Text('CANCELAR', style: TextStyle(color: Colors.white54, fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      flex: 2,
+                      child: ElevatedButton(
+                        onPressed: () async {
+                          try {
+                            // Atualizar conta como paga
+                            final contaAtualizada = conta.copyWith(
+                              status: StatusContaPagar.pago,
+                              dataPagamento: DateTime.now(),
+                              valorPago: conta.valor,
+                              formaPagamento: 'Dinheiro',
+                            );
+                            
+                            await dataService.updateContaPagar(contaAtualizada);
+                            
+                            // Se tirar do caixa
+                            if (tirarDoCaixa) {
+                              if (dataService.aberturaCaixaAtual == null) {
+                                throw Exception('O caixa precisa estar aberto para registrar a saída.');
+                              }
+                              await dataService.registrarSangria(
+                                valor: conta.valor,
+                                motivo: 'Baixa conta: ${conta.descricao}',
+                              );
+                            }
+                            
+                            if (context.mounted) {
+                              Navigator.pop(context); // Fecha dialog de confirmação
+                              Navigator.pop(context); // Fecha dialog de despesa
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('✓ Conta baixada com sucesso!'), 
+                                  backgroundColor: Colors.green,
+                                  behavior: SnackBarBehavior.floating,
+                                ),
+                              );
+                            }
+                          } catch (e) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Erro: $e'), 
+                                backgroundColor: Colors.redAccent,
+                                behavior: SnackBarBehavior.floating,
+                              ),
+                            );
+                          }
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.green,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        child: const Text(
+                          'CONFIRMAR PAGAMENTO',
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+
+  Widget _buildTipoOption(String label, IconData icon, bool selected, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        decoration: BoxDecoration(
+          color: selected ? Colors.blueAccent.withOpacity(0.2) : Colors.white.withOpacity(0.05),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: selected ? Colors.blueAccent : Colors.transparent,
+            width: 2,
+          ),
+        ),
+        child: Column(
+          children: [
+            Icon(icon, color: selected ? Colors.blueAccent : Colors.white54, size: 32),
+            const SizedBox(height: 8),
+            Text(
+              label,
+              style: TextStyle(
+                color: selected ? Colors.white : Colors.white54,
+                fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+                fontSize: 12,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatusChip(String label, bool selected, VoidCallback onTap, Color color) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        decoration: BoxDecoration(
+          color: selected ? color.withOpacity(0.2) : Colors.white.withOpacity(0.05),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: selected ? color : Colors.transparent,
+            width: 1.5,
+          ),
+        ),
+        child: Center(
+          child: Text(
+            label,
+            style: TextStyle(
+              color: selected ? color : Colors.white54,
+              fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -1859,13 +2601,13 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     );
   }
 
-  void _abrirDialogSangria() {
+  void _abrirDialogPagamento() {
     final dataService = Provider.of<DataService>(context, listen: false);
 
     if (!dataService.caixaAberto) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('É necessário abrir o caixa antes de fazer sangria'),
+          content: Text('É necessário abrir o caixa antes de fazer um pagamento'),
           backgroundColor: Colors.red,
         ),
       );
@@ -1885,7 +2627,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
             Icon(Icons.remove_circle_outline, color: Colors.red),
             const SizedBox(width: 8),
             const Text(
-              'Sangria do Caixa',
+              'Pagamento do Caixa',
               style: TextStyle(color: Colors.white),
             ),
           ],
@@ -1980,7 +2722,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
               if (motivo.isEmpty) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text('Informe o motivo da sangria'),
+                    content: Text('Informe o motivo do pagamento'),
                     backgroundColor: Colors.red,
                   ),
                 );
@@ -2070,14 +2812,14 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
               } catch (e) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    content: Text('Erro ao registrar sangria: $e'),
+                    content: Text('Erro ao registrar pagamento: $e'),
                     backgroundColor: Colors.red,
                   ),
                 );
               }
             },
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('Confirmar Sangria'),
+            child: const Text('Confirmar Pagamento'),
           ),
         ],
       ),
@@ -3212,6 +3954,22 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
 
     dataService.addVendaBalcao(vendaBalcao);
 
+    // Se houver mesa/comanda vinculada, fechá-la
+    if (_mesaComandaVinculada != null) {
+      final mcFechada = _mesaComandaVinculada!.copyWith(
+        status: 'Fechada',
+        dataFechamento: DateTime.now(),
+      );
+      dataService.updateMesaComanda(mcFechada);
+      
+      debugPrint('>>> ✓ ${_mesaComandaVinculada!.tipo == TipoControle.comanda ? 'Comanda' : 'Mesa'} ${_mesaComandaVinculada!.numero} fechada automaticamente.');
+      
+      // Se for mesa, verificar se há comandas vinculadas e avisar? 
+      // Por enquanto fechamos apenas a que foi puxada.
+      
+      _mesaComandaVinculada = null; // Limpar vínculo após fechar
+    }
+
     // Criar Pedido se houver pagamentos pendentes (fiado, crediário, boleto, parcelas)
     // Isso permite que as vendas apareçam na aba "Receber"
     final temPagamentosPendentes = pagamentosAtualizados.any(
@@ -3422,8 +4180,14 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   ) async {
     final nfceService = NfceService();
     final dataService = Provider.of<DataService>(context, listen: false);
-    final empresa =
-        dataService.empresaAtual; // Usando empresaAtual do DataService
+    final empresa = dataService.empresaAtual; // Usando empresaAtual do DataService
+
+    if (empresa != null) {
+      final configUrl = empresa.configuracoes?['bridgeNfceUrl'] as String?;
+      if (configUrl != null && configUrl.isNotEmpty) {
+        nfceService.setBaseUrl(configUrl);
+      }
+    }
 
     // Verificar se o backend está online antes de perguntar
     final online = await nfceService.verificarStatusBackend();
@@ -3483,65 +4247,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
             style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
             onPressed: () async {
               Navigator.pop(context); // Fecha pergunta
-
-              // Mostrar loading
-              showDialog(
-                context: context,
-                barrierDismissible: false,
-                builder: (ctx) =>
-                    const Center(child: CircularProgressIndicator()),
-              );
-
-              try {
-                // Converter itens da venda para CarrinhoItem (formato esperado pelo Service)
-                final itensCarrinho = venda.itens
-                    .map(
-                      (item) => CarrinhoItem(
-                        id: item.id,
-                        tipo: item.isServico ? 'servico' : 'produto',
-                        itemId: item.id, // ID original
-                        nome: item.nome,
-                        preco: item.precoUnitario,
-                        quantidade: item.quantidade,
-                        adicionadoEm: DateTime.now(),
-                      ),
-                    )
-                    .toList();
-
-                if (empresa != null) {
-                  await nfceService.emitirNfce(
-                    numeroVenda:
-                        int.tryParse(venda.numero) ??
-                        0, // Fallback se numero for string não numérico
-                    empresa: empresa,
-                    itens: itensCarrinho,
-                    cliente: cliente,
-                    valorTotal: venda.valorTotal,
-                  );
-
-                  if (mounted) {
-                    Navigator.pop(context); // Fecha loading
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('NFC-e emitida com sucesso!'),
-                        backgroundColor: Colors.green,
-                      ),
-                    );
-                  }
-                } else {
-                  throw Exception("Empresa não configurada");
-                }
-              } catch (e) {
-                if (mounted) {
-                  Navigator.pop(context); // Fecha loading
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Erro ao emitir NFC-e: $e'),
-                      backgroundColor: Colors.red,
-                    ),
-                  );
-                }
-              }
+              await _emitirNFCe(venda);
             },
           ),
         ],
@@ -3891,7 +4597,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   // O carrinho e cliente serão limpos quando o popup for fechado (onDismiss)
 }
 
-  Future<void> _emitirNFCe(VendaBalcao vendaBalcao, {String? cpfCnpjOverride, String? nomeOverride}) async {
+  Future<void> _emitirNFCe(VendaBalcao vendaBalcao, {String? cpfCnpjOverride, String? nomeOverride, String? numeroOverride}) async {
     try {
       // Obter empresa atual
       final authService = Provider.of<AuthService>(context, listen: false);
@@ -4087,7 +4793,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         nomeConsumidor: nomeOverride ?? vendaBalcao.clienteNome,
         observacoes: vendaBalcao.observacoes,
         vendaId: vendaBalcao.id,
-        vendaNumero: vendaBalcao.numero,
+        vendaNumero: numeroOverride ?? dataService.getProximoNumeroNfce().toString(),
         ambienteHomologacao: ambienteHomologacao,
         serie: serieUsuario,
       );
@@ -4196,8 +4902,36 @@ o padrão padrão (sem opções avançadas).
   void _mostrarErroEmissaoNfce(VendaBalcao venda, String erro) {
     if (!mounted) return;
 
-    final controllerCpf = TextEditingController(text: venda.clienteCpfCnpj);
-    final controllerNome = TextEditingController(text: venda.clienteNome);
+    // Detectar duplicidade (539) e extrair número da chave se possível
+    String? numeroDuplicado;
+    String? sugestaoNumero;
+    bool isDuplicidade = erro.contains('[539]') || erro.toLowerCase().contains('duplicidade');
+
+    if (isDuplicidade) {
+      try {
+        // Exemplo: chNFe:35260304829400000165650010000001211740930534
+        final regExp = RegExp(r'chNFe:(\d{44})');
+        final match = regExp.firstMatch(erro);
+        if (match != null) {
+          final chave = match.group(1)!;
+          // Posição 25 a 34 da chave de acesso (9 dígitos) é o número da nota
+          final numStr = chave.substring(25, 34);
+          final numInt = int.tryParse(numStr);
+          if (numInt != null) {
+            numeroDuplicado = numInt.toString();
+            // Próximo maior para encontrar o próximo livre
+            sugestaoNumero = (numInt + 1).toString();
+          }
+        }
+      } catch (e) {
+        debugPrint('Erro ao extrair número da chave duplicada: $e');
+      }
+    }
+
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final proximoDisponivel = dataService.getProximoNumeroNfce().toString();
+    
+    final controller = TextEditingController(text: sugestaoNumero ?? proximoDisponivel);
 
     showDialog(
       context: context,
@@ -4207,9 +4941,15 @@ o padrão padrão (sem opções avançadas).
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: Row(
           children: [
-            const Icon(Icons.error_outline, color: Colors.redAccent),
+            Icon(
+              isDuplicidade ? Icons.warning_amber_rounded : Icons.error_outline,
+              color: isDuplicidade ? Colors.orange : Colors.redAccent,
+            ),
             const SizedBox(width: 10),
-            const Text('Erro na NFC-e', style: TextStyle(color: Colors.white)),
+            Text(
+              isDuplicidade ? 'Duplicidade de Nota' : 'Erro na NFC-e',
+              style: const TextStyle(color: Colors.white),
+            ),
           ],
         ),
         content: Column(
@@ -4228,35 +4968,54 @@ o padrão padrão (sem opções avançadas).
                 style: const TextStyle(color: Colors.redAccent, fontSize: 13),
               ),
             ),
-            const SizedBox(height: 20),
-            const Text(
-              'Corrija os dados abaixo para reemitir:',
-              style: TextStyle(color: Colors.white70, fontSize: 14),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: controllerCpf,
-              decoration: const InputDecoration(
-                labelText: 'CPF/CNPJ do Consumidor',
-                labelStyle: TextStyle(color: Colors.white54),
-                prefixIcon: Icon(Icons.badge_outlined, color: Colors.blueAccent),
-                filled: true,
-                fillColor: Colors.white10,
+            if (isDuplicidade && numeroDuplicado != null) ...[
+              const SizedBox(height: 15),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.info_outline, color: Colors.orange, size: 18),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Nº que Duplicou: $numeroDuplicado',
+                          style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Tente reemitir com um novo número (ex: o anterior ou o próximo):',
+                      style: TextStyle(color: Colors.white70, fontSize: 12),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: controller,
+                      keyboardType: TextInputType.number,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: InputDecoration(
+                        labelText: 'Novo Número da NFC-e',
+                        labelStyle: const TextStyle(color: Colors.orange),
+                        enabledBorder: OutlineInputBorder(
+                          borderSide: BorderSide(color: Colors.orange.withOpacity(0.5)),
+                        ),
+                        focusedBorder: const OutlineInputBorder(
+                          borderSide: BorderSide(color: Colors.orange),
+                        ),
+                        isDense: true,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              style: const TextStyle(color: Colors.white),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: controllerNome,
-              decoration: const InputDecoration(
-                labelText: 'Nome do Consumidor',
-                labelStyle: TextStyle(color: Colors.white54),
-                prefixIcon: Icon(Icons.person_outline, color: Colors.blueAccent),
-                filled: true,
-                fillColor: Colors.white10,
-              ),
-              style: const TextStyle(color: Colors.white),
-            ),
+            ],
           ],
         ),
         actions: [
@@ -4267,27 +5026,14 @@ o padrão padrão (sem opções avançadas).
           ElevatedButton.icon(
             onPressed: () {
               Navigator.pop(context);
-              // Salvar novos dados na venda (para persistência local)
-              final vendaAtualizada = venda.copyWith(
-                clienteCpfCnpj: controllerCpf.text.trim(),
-                clienteNome: controllerNome.text.trim(),
-              );
-              
-              // Atualizar no banco para que as mudanças persistam mesmo se falhar de novo
-              final dataService = Provider.of<DataService>(context, listen: false);
-              dataService.updateVendaBalcao(vendaAtualizada);
-
-              _emitirNFCe(
-                vendaAtualizada, 
-                cpfCnpjOverride: controllerCpf.text.trim(),
-                nomeOverride: controllerNome.text.trim()
-              );
+              _emitirNFCe(venda, numeroOverride: controller.text.trim());
             },
             icon: const Icon(Icons.refresh),
-            label: const Text('CORRIGIR E REEMITIR'),
+            label: const Text('REEMITIR AGORA'),
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.orange,
               foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             ),
           ),
         ],
@@ -5179,11 +5925,14 @@ o padrão padrão (sem opções avançadas).
           return KeyEventResult.handled;
         }
 
-        // Tecla F7 - Identificar Consumidor (NFC-e)
+        // Tecla F7 - Registrar Despesa (Sangria / CP)
         if (key == LogicalKeyboardKey.f7) {
-          _abrirIdentificacaoConsumidor();
+          _abrirLancamentoDespesa();
           return KeyEventResult.handled;
         }
+
+
+
 
         // Tecla F2 - Focar Campo de Busca
         if (key == LogicalKeyboardKey.f2) {
@@ -5670,6 +6419,44 @@ o padrão padrão (sem opções avançadas).
               ),
             ],
           ),
+          bottomNavigationBar: _carrinho.isNotEmpty ? Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            height: isSmallHeight ? 60 : 70,
+            decoration: BoxDecoration(
+              color: const Color(0xFF161624),
+              border: const Border(top: BorderSide(color: Colors.white10)),
+              boxShadow: [
+                BoxShadow(color: Colors.black.withOpacity(0.5), blurRadius: 10, offset: const Offset(0, -2))
+              ],
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                 Column(
+                   mainAxisSize: MainAxisSize.min,
+                   crossAxisAlignment: CrossAxisAlignment.start,
+                   children: [
+                     Text('${_totalItens} ITENS', style: const TextStyle(color: Colors.grey, fontSize: 9, fontWeight: FontWeight.bold)),
+                     Text(
+                       NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(_totalCarrinho), 
+                       style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 16)
+                     ),
+                   ],
+                 ),
+                 ElevatedButton.icon(
+                   onPressed: () => _finalizarVenda(dataService),
+                   icon: const Icon(Icons.payments_outlined, size: 16),
+                   label: const Text('FINALIZAR', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
+                   style: ElevatedButton.styleFrom(
+                     backgroundColor: Colors.green,
+                     foregroundColor: Colors.white,
+                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                   ),
+                 )
+              ],
+            ),
+          ) : null,
         ),
       );
     }
@@ -5714,7 +6501,7 @@ o padrão padrão (sem opções avançadas).
               IconButton(
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(),
-                onPressed: () => _abrirDialogSangria(),
+                onPressed: () => _abrirDialogPagamento(),
                 icon: Container(
                   padding: const EdgeInsets.all(6),
                   decoration: BoxDecoration(
@@ -5728,7 +6515,7 @@ o padrão padrão (sem opções avançadas).
                     size: isSmallHeight ? 18 : 20,
                   ),
                 ),
-                tooltip: 'Sangria',
+                tooltip: 'Fazer Pagamento',
               ),
               // Botão Suprimento (menor, apenas ícone)
               IconButton(
@@ -5803,6 +6590,7 @@ o padrão padrão (sem opções avançadas).
 
   Widget _buildBarraSuperior(DataService dataService) {
     final isSmallHeight = MediaQuery.of(context).size.height < 750;
+    final screenWidth = MediaQuery.of(context).size.width;
 
     return Container(
       padding: EdgeInsets.fromLTRB(
@@ -5813,6 +6601,57 @@ o padrão padrão (sem opções avançadas).
       ),
       child: Row(
         children: [
+          // Botões de Navegação Unificados
+          _buildBotaoMapaMesas(dataService, compact: true),
+          const SizedBox(width: 4),
+          _buildBotaoComandas(dataService, compact: true),
+          const SizedBox(width: 4),
+          _buildBotaoCozinha(dataService, compact: true),
+          const SizedBox(width: 8),
+
+          // Badge de Comanda/Mesa Vinculada (Versão simplificada sem desvincular direto)
+          if (_mesaComandaVinculada != null)
+            Container(
+              margin: const EdgeInsets.only(right: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: _mesaComandaVinculada!.tipo == TipoControle.comanda 
+                    ? Colors.purple.withOpacity(0.2) 
+                    : Colors.orange.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: _mesaComandaVinculada!.tipo == TipoControle.comanda 
+                      ? Colors.purple 
+                      : Colors.orange,
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    _mesaComandaVinculada!.tipo == TipoControle.comanda 
+                        ? Icons.receipt_long 
+                        : Icons.table_restaurant,
+                    size: 16,
+                    color: _mesaComandaVinculada!.tipo == TipoControle.comanda 
+                        ? Colors.purpleAccent 
+                        : Colors.orangeAccent,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    _mesaComandaVinculada!.numero,
+                    style: TextStyle(
+                      color: _mesaComandaVinculada!.tipo == TipoControle.comanda 
+                          ? Colors.purpleAccent 
+                          : Colors.orangeAccent,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
           // Campo de busca principal
           Expanded(
             flex: 3,
@@ -5870,11 +6709,104 @@ o padrão padrão (sem opções avançadas).
                 }),
                 onSubmitted: (value) {
                   if (value.trim().isNotEmpty) {
-                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) async {
                       final dataService = Provider.of<DataService>(
                         context,
                         listen: false,
                       );
+                      
+                      final input = value.trim();
+                      
+                      // Implementação da busca por Comanda (,,) ou Mesa (**)
+                      if (input.startsWith(',,') || input.startsWith('**')) {
+                        final isComanda = input.startsWith(',,');
+                        final query = input.substring(2).trim();
+                        if (query.isEmpty) return;
+                        
+                        _buscaController.clear();
+                        setState(() => _termoBusca = '');
+                        
+                        try {
+                          // Buscar mesa/comanda aberta com esse número
+                          // A busca é por número contido, ex: "12" encontra "CMD-012" ou "MESA-012"
+                          final mc = dataService.mesasComandasAbertas.firstWhere(
+                            (m) => (isComanda ? m.tipo == TipoControle.comanda : m.tipo == TipoControle.mesa) &&
+                                   m.numero.contains(query),
+                            orElse: () => throw Exception('${isComanda ? 'Comanda' : 'Mesa'} $query não encontrada ou já fechada.'),
+                          );
+                          
+                          // Adicionar itens da mesa/comanda ao carrinho
+                          int itensAdicionados = 0;
+                          for (final itemMc in mc.itens) {
+                            if (itemMc.status != StatusItem.cancelado) {
+                              final itemCarrinho = ItemCarrinho(
+                                id: itemMc.itemId,
+                                nome: itemMc.nome,
+                                descricao: itemMc.observacao,
+                                preco: itemMc.preco,
+                                quantidade: itemMc.quantidade,
+                                isServico: itemMc.isServico,
+                              );
+                              
+                              // Replicando lógica de _adicionarAoCarrinho para manter consistência
+                              final indexExistente = _carrinho.indexWhere(
+                                (item) => item.id == itemCarrinho.id && item.isServico == itemCarrinho.isServico
+                              );
+                              
+                              if (indexExistente != -1) {
+                                setState(() {
+                                  _carrinho[indexExistente].quantidade += itemCarrinho.quantidade;
+                                });
+                              } else {
+                                setState(() {
+                                  _carrinho.add(itemCarrinho);
+                                });
+                              }
+                              itensAdicionados++;
+                            }
+                          }
+                          
+                          if (itensAdicionados > 0) {
+                            setState(() {
+                              _mesaComandaVinculada = mc;
+                              // Se a comanda tem cliente vinculado, seleciona ele automaticamente
+                              if (mc.clienteId != null) {
+                                try {
+                                  _clienteSelecionado = dataService.clientes.firstWhere(
+                                    (c) => c.id == mc.clienteId,
+                                  );
+                                } catch (_) {
+                                  // Cliente não encontrado localmente
+                                }
+                              }
+                            });
+
+                            _salvarCarrinho();
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('✓ $itensAdicionados itens da ${mc.numero} adicionados!'),
+                                backgroundColor: Colors.green,
+                                behavior: SnackBarBehavior.floating,
+                              ),
+                            );
+                            _buscaFocusNode.requestFocus();
+                          } else {
+                            throw Exception('A ${mc.numero} não possui itens válidos para importar.');
+                          }
+                          
+                        } catch (e) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('⚠ ${e.toString().replaceAll('Exception: ', '')}'),
+                              backgroundColor: Colors.redAccent,
+                              behavior: SnackBarBehavior.floating,
+                            ),
+                          );
+                          _buscaFocusNode.requestFocus();
+                        }
+                        return;
+                      }
+
                       final resultados = _buscarItens(dataService);
 
                       dynamic itemParaAdicionar;
@@ -6079,6 +7011,34 @@ o padrão padrão (sem opções avançadas).
             ),
           ),
           const SizedBox(width: 12),
+          // Botão Registrar Despesa (Sangria / CP)
+          GestureDetector(
+            onTap: () => _abrirLancamentoDespesa(),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1E1E2E),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.redAccent.withOpacity(0.3)),
+              ),
+              child: const Row(
+                children: [
+                  Icon(
+                    Icons.money_off,
+                    color: Colors.redAccent,
+                    size: 24,
+                  ),
+                  SizedBox(width: 8),
+                  Text(
+                    'Despesa',
+                    style: TextStyle(color: Colors.white70, fontSize: 14),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+
           // Botão NFC-es Pendentes e Emitidas
           GestureDetector(
             onTap: () => _abrirHistoricoNFCe(),
@@ -6445,6 +7405,77 @@ o padrão padrão (sem opções avançadas).
     );
   }
 
+  // ============ Métodos Auxiliares de Navegação ============
+
+  Widget _buildBotaoMapaMesas(DataService dataService, {bool compact = false}) {
+    return IconButton(
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(),
+      onPressed: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => const CozinhaMesasFuncionarioPage()),
+        );
+      },
+      icon: Container(
+        padding: EdgeInsets.all(compact ? 6 : 8),
+        decoration: BoxDecoration(
+          color: Colors.orange.withOpacity(0.15),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.orange.withOpacity(0.4)),
+        ),
+        child: Icon(Icons.table_bar, color: Colors.orange, size: compact ? 18 : 22),
+      ),
+      tooltip: 'Mapa de Mesas',
+    );
+  }
+
+  Widget _buildBotaoComandas(DataService dataService, {bool compact = false}) {
+    return IconButton(
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(),
+      onPressed: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => const CozinhaMesasFuncionarioPage(abaInicial: 1)),
+        );
+      },
+      icon: Container(
+        padding: EdgeInsets.all(compact ? 6 : 8),
+        decoration: BoxDecoration(
+          color: Colors.purpleAccent.withOpacity(0.15),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.purpleAccent.withOpacity(0.4)),
+        ),
+        child: Icon(Icons.receipt_long, color: Colors.purpleAccent, size: compact ? 18 : 22),
+      ),
+      tooltip: 'Comandas',
+    );
+  }
+
+  Widget _buildBotaoCozinha(DataService dataService, {bool compact = false}) {
+    return IconButton(
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(),
+      onPressed: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => const CozinhaBarPage()),
+        );
+      },
+      icon: Container(
+        padding: EdgeInsets.all(compact ? 6 : 8),
+        decoration: BoxDecoration(
+          color: Colors.greenAccent.withOpacity(0.15),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.greenAccent.withOpacity(0.4)),
+        ),
+        child: Icon(Icons.kitchen, color: Colors.greenAccent, size: compact ? 18 : 22),
+      ),
+      tooltip: 'Cozinha / Preparos',
+    );
+  }
+
   Widget _buildBarraAtalhosLegenda() {
     final screenWidth = MediaQuery.of(context).size.width;
     if (screenWidth < 900) return const SizedBox.shrink();
@@ -6461,7 +7492,8 @@ o padrão padrão (sem opções avançadas).
           _buildItemLegenda('SETAS', 'NAVEGAR'),
           _buildItemLegenda('F2', 'BUSCA'),
           _buildItemLegenda('F6', 'CLIENTE'),
-          _buildItemLegenda('F7', 'IDENTIFICAR'),
+          _buildItemLegenda('F7', 'DESPESA'),
+
           _buildItemLegenda('F4', 'CATEGORIAS'),
           _buildItemLegenda('SHIFT', 'CARRINHO'),
           _buildItemLegenda('CTRL', 'CONFERIR'),
@@ -7143,6 +8175,47 @@ o padrão padrão (sem opções avançadas).
                   letterSpacing: 1.5,
                 ),
               ),
+              if (_mesaComandaVinculada != null) ...[
+                const SizedBox(width: 12),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: _mesaComandaVinculada!.tipo == TipoControle.comanda 
+                        ? Colors.purple.withOpacity(0.2) 
+                        : Colors.orange.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: _mesaComandaVinculada!.tipo == TipoControle.comanda 
+                          ? Colors.purple.withOpacity(0.5) 
+                          : Colors.orange.withOpacity(0.5),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        _mesaComandaVinculada!.tipo == TipoControle.comanda 
+                            ? Icons.receipt_long 
+                            : Icons.table_restaurant,
+                        size: 14,
+                        color: _mesaComandaVinculada!.tipo == TipoControle.comanda 
+                            ? Colors.purpleAccent 
+                            : Colors.orangeAccent,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        _mesaComandaVinculada!.numero,
+                        style: TextStyle(
+                          color: _mesaComandaVinculada!.tipo == TipoControle.comanda 
+                              ? Colors.purpleAccent 
+                              : Colors.orangeAccent,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
               const Spacer(),
               // Badge de itens com glow
               Container(
@@ -7185,7 +8258,14 @@ o padrão padrão (sem opções avançadas).
               if (_carrinho.isNotEmpty) ...[
                 const SizedBox(width: 8),
                 GestureDetector(
-                  onTap: _limparCarrinho,
+                  onTap: () {
+                    if (_mesaComandaVinculada != null) {
+                      // Se tem comanda, o 'X' limpa tudo e volta para a origem (página limpa)
+                      _resetarTodaVenda();
+                    } else {
+                      _limparCarrinho();
+                    }
+                  },
                   child: Container(
                     padding: const EdgeInsets.all(6),
                     decoration: BoxDecoration(

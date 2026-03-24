@@ -58,6 +58,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
   String? _certificadoDigitalNome;
   String? _certificadoDigitalBytes; // Bytes em base64 (fallback se não conseguir salvar arquivo)
   String? _certificadoWindowsThumbprint; // Thumbprint do certificado do Windows
+  final _ultimoNumeroNFCeController = TextEditingController(); // Novo: controle de numeração
   bool _ambienteHomologacao = true; // Padrão: homologação
   final _bridgeNfceUrlController = TextEditingController(text: 'http://localhost:8000');
 
@@ -69,6 +70,15 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
   final _nfceLarguraBobinaController = TextEditingController(text: '80.0');
   final _nfceMargemDireitaController = TextEditingController(text: '15.0');
   final _nfceFonteEscalaController = TextEditingController(text: '1.0');
+
+  // Customizações de Impressão Comanda/Mesa
+  final _comandaMargemHController = TextEditingController(text: '12.0');
+  final _comandaMargemVController = TextEditingController(text: '8.0');
+  final _comandaLarguraBobinaController = TextEditingController(text: '80.0');
+  final _comandaFonteTituloController = TextEditingController(text: '14.0');
+  final _comandaFonteCorpoController = TextEditingController(text: '9.0');
+  final _comandaFonteStatusController = TextEditingController(text: '8.0');
+  bool _comandaNegrito = true;
 
   
   Color _corPrimaria = Colors.blueAccent;
@@ -147,6 +157,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
     _cscIdTokenController.text = empresa.cscIdToken ?? '';
     _serieNFCeController.text = empresa.serieNFCe ?? '1';
     _ambienteHomologacao = empresa.ambienteHomologacao ?? true;
+    _ultimoNumeroNFCeController.text = empresa.configuracoes?['ultimo_numero_nfce']?.toString() ?? '';
 
     _bridgeNfceUrlController.text = empresa.configuracoes?['bridgeNfceUrl'] as String? ?? 'http://localhost:8000';
     _bridgeNfceKeyController.text = empresa.configuracoes?['bridgeNfceKey'] as String? ?? '';
@@ -155,6 +166,13 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
     _nfceLarguraBobinaController.text = empresa.configuracoes?['nfceLarguraBobina']?.toString() ?? '80.0';
     _nfceMargemDireitaController.text = empresa.configuracoes?['nfceMargemDireita']?.toString() ?? '15.0';
     _nfceFonteEscalaController.text = empresa.configuracoes?['nfceFonteEscala']?.toString() ?? '1.0';
+    _comandaMargemHController.text = empresa.configuracoes?['comandaMargemH']?.toString() ?? '12.0';
+    _comandaMargemVController.text = empresa.configuracoes?['comandaMargemV']?.toString() ?? '8.0';
+    _comandaLarguraBobinaController.text = empresa.configuracoes?['comandaLarguraBobina']?.toString() ?? '80.0';
+    _comandaFonteTituloController.text = empresa.configuracoes?['comandaFonteTitulo']?.toString() ?? '14.0';
+    _comandaFonteCorpoController.text = empresa.configuracoes?['comandaFonteCorpo']?.toString() ?? '9.0';
+    _comandaFonteStatusController.text = empresa.configuracoes?['comandaFonteStatus']?.toString() ?? '8.0';
+    _comandaNegrito = empresa.configuracoes?['comandaNegrito'] ?? true;
 
     
     // Converter cores hex para Color
@@ -203,6 +221,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
     _whatsappApiUrlController.dispose();
     _whatsappApiKeyController.dispose();
     _whatsappInstanceNameController.dispose();
+    _ultimoNumeroNFCeController.dispose();
 
     _bridgeNfceUrlController.dispose();
     _bridgeNfceKeyController.dispose();
@@ -329,6 +348,16 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
         'nfceLarguraBobina': double.tryParse(_nfceLarguraBobinaController.text.trim()) ?? 80.0,
         'nfceMargemDireita': double.tryParse(_nfceMargemDireitaController.text.trim()) ?? 15.0,
         'nfceFonteEscala': double.tryParse(_nfceFonteEscalaController.text.trim()) ?? 1.0,
+
+        'comandaMargemH': double.tryParse(_comandaMargemHController.text.trim()) ?? 12.0,
+        'comandaMargemV': double.tryParse(_comandaMargemVController.text.trim()) ?? 8.0,
+        'comandaLarguraBobina': double.tryParse(_comandaLarguraBobinaController.text.trim()) ?? 80.0,
+        'comandaFonteTitulo': double.tryParse(_comandaFonteTituloController.text.trim()) ?? 14.0,
+        'comandaFonteCorpo': double.tryParse(_comandaFonteCorpoController.text.trim()) ?? 9.0,
+        'comandaFonteStatus': double.tryParse(_comandaFonteStatusController.text.trim()) ?? 8.0,
+        'comandaNegrito': _comandaNegrito,
+
+        'ultimo_numero_nfce': _ultimoNumeroNFCeController.text.trim().isEmpty ? null : _ultimoNumeroNFCeController.text.trim(),
       },
     );
 
@@ -665,6 +694,15 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                 keyboardType: TextInputType.number,
               ),
               const SizedBox(height: 16),
+              _buildTextField(
+                controller: _ultimoNumeroNFCeController,
+                label: 'Último número da NFC-e emitido',
+                icon: Icons.numbers_rounded,
+                hintText: 'Ex: 125',
+                helperText: 'O sistema somará +1 para a próxima nota (ex: 126). Só altere se a SEFAZ estiver em um número diferente.',
+                keyboardType: TextInputType.number,
+              ),
+              const SizedBox(height: 16),
               // Ambiente (Homologação/Produção)
               Container(
                 padding: const EdgeInsets.all(16),
@@ -792,6 +830,83 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                 ),
               ),
 
+              const SizedBox(height: 24),
+
+              _buildSectionTitle('Ajustes de Impressão (Fechamento de Conta)'),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildTextField(
+                      controller: _comandaMargemHController,
+                      label: 'Margem Horiz. (pt)',
+                      icon: Icons.unfold_more_double,
+                      hintText: '12.0',
+                      keyboardType: TextInputType.number,
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: _buildTextField(
+                      controller: _comandaMargemVController,
+                      label: 'Margem Vert. (pt)',
+                      icon: Icons.height,
+                      hintText: '8.0',
+                      keyboardType: TextInputType.number,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              _buildTextField(
+                controller: _comandaLarguraBobinaController,
+                label: 'Largura da Bobina (mm)',
+                icon: Icons.print,
+                hintText: '80.0 ou 58.0',
+                helperText: 'A largura do papel para o fechamento (80.0 ou 58.0).',
+                keyboardType: TextInputType.number,
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildTextField(
+                      controller: _comandaFonteTituloController,
+                      label: 'Fonte Título',
+                      icon: Icons.title,
+                      hintText: '14.0',
+                      keyboardType: TextInputType.number,
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: _buildTextField(
+                      controller: _comandaFonteCorpoController,
+                      label: 'Fonte Corpo',
+                      icon: Icons.text_fields,
+                      hintText: '9.0',
+                      keyboardType: TextInputType.number,
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: _buildTextField(
+                      controller: _comandaFonteStatusController,
+                      label: 'Fonte Status',
+                      icon: Icons.info_outline,
+                      hintText: '8.0',
+                      keyboardType: TextInputType.number,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              SwitchListTile(
+                title: const Text('Usar Negrito nos Títulos/Itens', style: TextStyle(color: Colors.white)),
+                value: _comandaNegrito,
+                onChanged: (value) => setState(() => _comandaNegrito = value),
+                activeColor: Colors.purple,
+                contentPadding: EdgeInsets.zero,
+              ),
               const SizedBox(height: 24),
 
               // Cores (opcional)

@@ -65,16 +65,19 @@ class _CozinhaBarPageState extends State<CozinhaBarPage> with SingleTickerProvid
             setor: 'Cozinha',
             onMarcarEmPreparo: _marcarEmPreparo,
             onMarcarPronto: _marcarPronto,
+            onDesmarcarPronto: _desmarcarPronto,
           ),
           CozinhaBarListaItens(
             setor: 'Bar',
             onMarcarEmPreparo: _marcarEmPreparo,
             onMarcarPronto: _marcarPronto,
+            onDesmarcarPronto: _desmarcarPronto,
           ),
           CozinhaBarListaItens(
             setor: 'Todos',
             onMarcarEmPreparo: _marcarEmPreparo,
             onMarcarPronto: _marcarPronto,
+            onDesmarcarPronto: _desmarcarPronto,
           ),
         ],
       ),
@@ -143,6 +146,40 @@ class _CozinhaBarPageState extends State<CozinhaBarPage> with SingleTickerProvid
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Erro ao atualizar status: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _desmarcarPronto(
+    ItemMesaComanda item,
+    MesaComanda mesaComanda,
+  ) async {
+    final dataService = Provider.of<DataService>(context, listen: false);
+    try {
+      await dataService.atualizarStatusItemMesaComanda(
+        mesaComanda.id,
+        item.id,
+        StatusItem.emPreparo,
+      );
+      setState(() {});
+      
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${item.nome} voltou para preparo'),
+            backgroundColor: Colors.blueGrey,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erro ao desfazer: $e'),
             backgroundColor: Colors.red,
           ),
         );

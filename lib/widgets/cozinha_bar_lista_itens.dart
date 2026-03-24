@@ -9,12 +9,14 @@ class CozinhaBarListaItens extends StatelessWidget {
   final String setor;
   final Function(ItemMesaComanda, MesaComanda)? onMarcarEmPreparo;
   final Function(ItemMesaComanda, MesaComanda)? onMarcarPronto;
+  final Function(ItemMesaComanda, MesaComanda)? onDesmarcarPronto;
 
   const CozinhaBarListaItens({
     super.key,
     required this.setor,
     this.onMarcarEmPreparo,
     this.onMarcarPronto,
+    this.onDesmarcarPronto,
   });
 
   @override
@@ -41,9 +43,10 @@ class CozinhaBarListaItens extends StatelessWidget {
       }
 
       for (final item in itensFiltrados) {
-        // Incluir itens pendentes, em preparo ou cancelados (para mostrar na cozinha)
+        // Incluir itens pendentes, em preparo, prontos ou cancelados
         if (item.status == StatusItem.pendente || 
             item.status == StatusItem.emPreparo || 
+            item.status == StatusItem.pronto ||
             item.status == StatusItem.cancelado) {
           todosItens.add({
             'item': item,
@@ -105,6 +108,7 @@ class CozinhaBarListaItens extends StatelessWidget {
             dataService: dataService,
             onMarcarEmPreparo: onMarcarEmPreparo,
             onMarcarPronto: onMarcarPronto,
+            onDesmarcarPronto: onDesmarcarPronto,
           );
         },
       ),

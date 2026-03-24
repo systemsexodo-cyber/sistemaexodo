@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:async';
 import '../services/auth_service.dart';
 import '../services/data_service.dart';
 import '../services/excel_import_service.dart';
@@ -310,6 +311,22 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                           color: Colors.white38,
                           size: 14,
                         ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  GestureDetector(
+                    onTap: () => _mostrarDialogoAlterarSenha(context, authService, usuario),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.edit,
+                          color: Colors.blueAccent,
+                          size: 14,
+                        ),
+                        const SizedBox(width: 4),
+                        const Text('Alterar', style: TextStyle(color: Colors.blueAccent, fontSize: 12, fontWeight: FontWeight.bold)),
                       ],
                     ),
                   ),
@@ -1862,8 +1879,8 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
               context,
               icon: Icons.system_update,
               color: Colors.green,
-              title: 'Atualizar Software (Git Pull)',
-              subtitle: 'Baixa as correções de código mais recentes.',
+              title: 'Atualizar Software (Nuvem/Cloud)',
+              subtitle: 'Baixa a versão oficial mais recente enviada via App.',
               onTap: () => _selecionarPCEDispararComando(context, 'update', 'Atualizar'),
             ),
             const SizedBox(height: 12),
@@ -1874,6 +1891,15 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
               title: 'Reiniciar Serviços',
               subtitle: 'Força o reinício do emissor.',
               onTap: () => _selecionarPCEDispararComando(context, 'restart', 'Reiniciar'),
+            ),
+            const SizedBox(height: 12),
+            _buildBridgeActionTile(
+              context,
+              icon: Icons.cloud_upload,
+              color: Colors.pink,
+              title: 'Subir Atualização (.exe)',
+              subtitle: 'Faz upload manual da nova versão e diponibiliza.',
+              onTap: () => _selecionarESubirNovaVersao(context),
             ),
             const SizedBox(height: 12),
             _buildBridgeActionTile(
@@ -1934,10 +1960,10 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
     );
   }
 
-  void _selecionarPCEDispararComando(BuildContext context, String comando, String acaoTitulo, {Map<String, dynamic>? extraData}) {
+  void _selecionarPCEDispararComando(BuildContext pageContext, String comando, String acaoTitulo, {Map<String, dynamic>? extraData}) {
     showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
+      context: pageContext,
+      builder: (dialogContext) => AlertDialog(
         backgroundColor: const Color(0xFF1E1E2E),
         title: Text('Selecione o PC para $acaoTitulo', style: const TextStyle(color: Colors.white, fontSize: 18)),
         content: SizedBox(
@@ -1947,7 +1973,7 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
             stream: FirebaseFirestore.instance
                 .collection('bridge_status')
                 .snapshots(),
-            builder: (context, snapshot) {
+            builder: (streamContext, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
                 return const Center(child: CircularProgressIndicator());
               }
@@ -1972,8 +1998,8 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                     leading: const Icon(Icons.computer, color: Colors.white),
                     title: const Text('TODOS OS COMPUTADORES', style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold)),
                     onTap: () {
-                      Navigator.pop(context);
-                      _confirmarComandoBridge(context, comando, 'Deseja $acaoTitulo em TODOS os emissores simultaneamente?', targetPc: null, extraData: extraData);
+                      Navigator.pop(dialogContext);
+                      _confirmarComandoBridge(pageContext, comando, 'Deseja $acaoTitulo em TODOS os emissores simultaneamente?', targetPc: null, extraData: extraData);
                     },
                   ),
                   const Divider(color: Colors.white24),
@@ -2022,12 +2048,19 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                                 watchdogOnline ? '🛡️ Proteção Ativa' : '⚠️ Proteção Offline',
                                 style: TextStyle(color: watchdogOnline ? Colors.orange : Colors.grey, fontSize: 10),
                               ),
+                              if (data['ultima_empresa'] != null)
+                                Text(
+                                  '🏢 ${data['ultima_empresa']}',
+                                  style: const TextStyle(color: Colors.blueAccent, fontSize: 10, fontWeight: FontWeight.bold),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
                             ],
                           ),
                           trailing: const Icon(Icons.send, color: Colors.white24, size: 16),
                           onTap: () {
-                            Navigator.pop(context);
-                        _confirmarComandoBridge(context, comando, 'Deseja $acaoTitulo no PC: $pcName?', targetPc: pcName, extraData: extraData);
+                            Navigator.pop(dialogContext);
+                        _confirmarComandoBridge(pageContext, comando, 'Deseja $acaoTitulo no PC: $pcName?', targetPc: pcName, extraData: extraData);
                       },
                     ));
                   }
@@ -2044,7 +2077,7 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(dialogContext),
             child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
           ),
         ],
@@ -2055,44 +2088,305 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
   void _confirmarComandoBridge(BuildContext context, String comando, String pergunta, {String? targetPc, Map<String, dynamic>? extraData}) {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         backgroundColor: const Color(0xFF2E2E3E),
         title: const Text('Confirmar Comando', style: TextStyle(color: Colors.white)),
         content: Text(pergunta, style: const TextStyle(color: Colors.white70)),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(dialogContext),
             child: const Text('NÃO'),
           ),
           ElevatedButton(
             onPressed: () async {
-              Navigator.pop(context); // Fecha confirmação
+              Navigator.pop(dialogContext); // Fecha confirmação
+              
               try {
                 debugPrint('>>> [BridgeManager] Enviando comando "$comando" para PC: ${targetPc ?? "Todos"}');
-                await BridgeManagementService.instance.enviarComando(comando, targetPc: targetPc, extraData: extraData);
+                
                 if (mounted) {
+                  ScaffoldMessenger.of(context).hideCurrentSnackBar();
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text('✅ Comando "$comando" enviado com sucesso!'),
-                      backgroundColor: Colors.green,
+                      content: Text('📤 Enviando comando "$comando"...'),
+                      backgroundColor: Colors.blueAccent,
+                      duration: const Duration(seconds: 2),
                     ),
                   );
                 }
+
+                final docRef = await BridgeManagementService.instance.enviarComando(comando, targetPc: targetPc, extraData: extraData);
+                
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('✅ Comando "$comando" postado! Aguardando resposta do PC...'),
+                      backgroundColor: Colors.indigo,
+                      duration: const Duration(seconds: 4),
+                    ),
+                  );
+                }
+
+                // Monitorar Resposta em Tempo Real (Ouvir o Documento apenas uma vez ou por stream limitada)
+                int checkCount = 0;
+                late StreamSubscription sub;
+                
+                sub = docRef.snapshots().listen((snapshot) {
+                  if (!snapshot.exists || !mounted) {
+                    sub.cancel();
+                    return;
+                  }
+                  
+                  final data = snapshot.data() as Map<String, dynamic>;
+                  final status = data['status'];
+                  final resultado = data['resultado'] ?? '';
+                  final processorPc = data['processor_pc'] ?? '';
+
+                  // Gerenciamento de Timeout Interno
+                  checkCount++;
+                  if (status == 'pendente' && checkCount > 15) { // ~15-20 segundos sem sair de pendente
+                    sub.cancel();
+                    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('⚠️ O PC parece estar OFFLINE ou o Bridge está fechado. Verifique se o ícone laranja está aberto no PC.'),
+                        backgroundColor: Colors.brown,
+                        duration: Duration(seconds: 8),
+                      ),
+                    );
+                    return;
+                  }
+
+                  if (status == 'processando') {
+                    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('⏳ $comando: Processando em $processorPc...'),
+                        backgroundColor: Colors.orange,
+                        duration: const Duration(seconds: 10),
+                      ),
+                    );
+                  } 
+                  else if (status == 'concluido' || status == 'autorizada') { // 'autorizada' para nfce
+                    final bool sucesso = data['sucesso'] == true || status == 'autorizada';
+                    
+                    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Row(
+                          children: [
+                            Icon(sucesso ? Icons.check_circle : Icons.error, color: Colors.white),
+                            const SizedBox(width: 8),
+                            Expanded(child: Text(sucesso ? '✅ Sucesso ($processorPc): $resultado' : '❌ Erro ($processorPc): $resultado')),
+                          ],
+                        ),
+                        backgroundColor: sucesso ? Colors.green : Colors.red,
+                        duration: const Duration(seconds: 15),
+                        action: SnackBarAction(label: 'OK', textColor: Colors.white, onPressed: () {}),
+                      ),
+                    );
+                  }
+                  else if (status == 'erro') {
+                    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('❌ Falha ($processorPc): $resultado'),
+                        backgroundColor: Colors.red,
+                        duration: const Duration(seconds: 15),
+                        action: SnackBarAction(label: 'OK', textColor: Colors.white, onPressed: () {}),
+                      ),
+                    );
+                  }
+                });
+
               } catch (e) {
                 debugPrint('>>> [BridgeManager] Erro ao enviar comando: $e');
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text('❌ Erro: $e'), 
+                      content: Text('❌ Erro no Envio: $e'), 
                       backgroundColor: Colors.red,
                       duration: const Duration(seconds: 10),
-                      action: SnackBarAction(label: 'OK', textColor: Colors.white, onPressed: () {}),
                     ),
                   );
                 }
               }
             },
             child: const Text('SIM'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _selecionarESubirNovaVersao(BuildContext context) async {
+    Navigator.pop(context); // Fechar dialog atual
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['exe'],
+      );
+
+      if (result != null && result.files.single.bytes != null) {
+        final file = result.files.single;
+        
+        // Perguntar a versão
+        final versionController = TextEditingController(text: "2.8");
+        final bool? confirm = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            backgroundColor: const Color(0xFF1E1E2E),
+            title: const Text('Confirmar Upload', style: TextStyle(color: Colors.white)),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('Arquivo selecionado: ${file.name} (${(file.size / 1024 / 1024).toStringAsFixed(2)} MB)', style: const TextStyle(color: Colors.white70)),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: versionController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(
+                    labelText: 'Versão a distribuir',
+                    labelStyle: TextStyle(color: Colors.white54),
+                    enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.white30)),
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(child: const Text('Cancelar'), onPressed: () => Navigator.pop(context, false)),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.pink),
+                child: const Text('Iniciar Upload', style: TextStyle(color: Colors.white)),
+                onPressed: () => Navigator.pop(context, true),
+              ),
+            ],
+          ),
+        );
+
+        if (confirm == true && mounted) {
+          // Mostrar progresso
+          showDialog(
+            context: context,
+            barrierDismissible: false,
+            builder: (context) => const AlertDialog(
+              backgroundColor: Color(0xFF1E1E2E),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(color: Colors.pink),
+                  SizedBox(height: 16),
+                  Text('Fazendo upload para a Nuvem...', style: TextStyle(color: Colors.white)),
+                  SizedBox(height: 4),
+                  Text('Isso pode levar alguns minutos (35MB).', style: TextStyle(color: Colors.white54, fontSize: 12)),
+                ],
+              ),
+            ),
+          );
+
+          await BridgeManagementService.instance.subirNovaVersaoBridge(
+            file, 
+            versionController.text.trim(),
+            (progress) {} // Sem atualização em real time por simplicidade visual
+          );
+
+          if (mounted) {
+            Navigator.pop(context); // Fecha dialog de progresso
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('✅ Upload concluído! Os clientes na versão 2.8+ agora podem atualizar via APP.'), backgroundColor: Colors.green),
+            );
+          }
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        if (Navigator.canPop(context)) Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erro no upload: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  void _mostrarDialogoAlterarSenha(BuildContext context, AuthService authService, Usuario usuario) {
+    final formKey = GlobalKey<FormState>();
+    final senhaAtualController = TextEditingController();
+    final novaSenhaController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        title: const Text('Alterar Senha', style: TextStyle(color: Colors.white)),
+        content: Form(
+          key: formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextFormField(
+                controller: senhaAtualController,
+                obscureText: true,
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(
+                  labelText: 'Senha Atual',
+                  labelStyle: TextStyle(color: Colors.white70),
+                  enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white30)),
+                  focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.blueAccent)),
+                ),
+                validator: (value) {
+                  if (value == null || value.isEmpty) return 'Campo obrigatório';
+                  if (value != usuario.senha) return 'Senha atual incorreta';
+                  return null;
+                },
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: novaSenhaController,
+                obscureText: true,
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(
+                  labelText: 'Nova Senha',
+                  labelStyle: TextStyle(color: Colors.white70),
+                  enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white30)),
+                  focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.blueAccent)),
+                ),
+                validator: (value) {
+                  if (value == null || value.isEmpty) return 'Campo obrigatório';
+                  if (value.length < 3) return 'Mínimo de 3 caracteres';
+                  return null;
+                },
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              if (formKey.currentState!.validate()) {
+                try {
+                  final usuarioAtualizado = usuario.copyWith(senha: novaSenhaController.text);
+                  await authService.atualizarUsuario(usuarioAtualizado);
+                  if (context.mounted) {
+                    Navigator.pop(context);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Senha alterada com sucesso!'), backgroundColor: Colors.green),
+                    );
+                  }
+                } catch (e) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Erro ao alterar senha: $e'), backgroundColor: Colors.red),
+                    );
+                  }
+                }
+              }
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
+            child: const Text('Salvar', style: TextStyle(color: Colors.white)),
           ),
         ],
       ),

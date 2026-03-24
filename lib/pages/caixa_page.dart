@@ -280,7 +280,7 @@ class _CaixaPageState extends State<CaixaPage> {
                               ),
                             )
                           else ...[
-                            // Botões de Sangria e Suprimento
+                            // Botões de Pagamento e Suprimento
                             Row(
                               children: [
                                 Expanded(
@@ -318,7 +318,7 @@ class _CaixaPageState extends State<CaixaPage> {
                                               ),
                                               const SizedBox(width: 12),
                                               const Text(
-                                                'Sangria',
+                                                'Pagamento',
                                                 style: TextStyle(
                                                   color: Colors.white,
                                                   fontSize: 16,
@@ -1110,7 +1110,7 @@ class _CaixaPageState extends State<CaixaPage> {
                       if (totalSangrias > 0) ...[
                         const SizedBox(height: 8),
                         _buildInfoRow(
-                          'Total de Sangrias',
+                          'Total de Pagamentos',
                           formatoMoeda.format(totalSangrias),
                           Icons.remove_circle,
                           Colors.orangeAccent,
@@ -1746,7 +1746,7 @@ class _CaixaPageState extends State<CaixaPage> {
           children: [
             Icon(Icons.remove_circle, color: Colors.orange, size: 28),
             SizedBox(width: 12),
-            Text('Registrar Sangria', style: TextStyle(color: Colors.white)),
+            Text('Registrar Pagamento', style: TextStyle(color: Colors.white)),
           ],
         ),
         content: Form(

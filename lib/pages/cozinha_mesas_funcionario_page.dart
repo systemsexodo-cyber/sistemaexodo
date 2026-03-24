@@ -21,7 +21,8 @@ const uuid = Uuid();
 
 /// Página simplificada de cozinha/bar e mesas para funcionários
 class CozinhaMesasFuncionarioPage extends StatefulWidget {
-  const CozinhaMesasFuncionarioPage({super.key});
+  final int abaInicial; // 0 para Mesas, 1 para Comandas
+  const CozinhaMesasFuncionarioPage({super.key, this.abaInicial = 0});
 
   @override
   State<CozinhaMesasFuncionarioPage> createState() => _CozinhaMesasFuncionarioPageState();
@@ -29,214 +30,482 @@ class CozinhaMesasFuncionarioPage extends StatefulWidget {
 
 class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPage> {
   MesaComanda? _mesaSelecionada;
-  final Set<String> _comandasExpandidas = {}; // IDs das comandas expandidas
-  final TextEditingController _buscaController = TextEditingController();
+  late TipoControle _tipoSelecionado;
+  final _buscaController = TextEditingController();
+  final Set<String> _comandasExpandidas = {}; // Necessário para partes não refatoradas
+
+  @override
+  void initState() {
+    super.initState();
+    _tipoSelecionado = widget.abaInicial == 1 ? TipoControle.comanda : TipoControle.mesa;
+  }
 
   @override
   Widget build(BuildContext context) {
     final dataService = Provider.of<DataService>(context, listen: true);
     
-    return Scaffold(
-      backgroundColor: const Color(0xFF0F0F1E),
-      resizeToAvoidBottomInset: true,
-      appBar: AppBar(
-        title: const Text(
-          'Mesas e Comandas',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-        ),
-        backgroundColor: const Color(0xFF1E1E2E),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.history),
-            tooltip: 'Histórico de Operações',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => const HistoricoOperacoesPage(),
-                ),
-              );
-            },
+    return DefaultTabController(
+      length: 2,
+      initialIndex: widget.abaInicial,
+      child: Scaffold(
+        backgroundColor: const Color(0xFF0F0F1E),
+        resizeToAvoidBottomInset: true,
+        appBar: AppBar(
+          title: const Text(
+            'Mesas/Comandas',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
+          leading: _mesaSelecionada != null 
+            ? IconButton(
+                icon: const Icon(Icons.arrow_back), 
+                onPressed: () => setState(() => _mesaSelecionada = null)
+              ) 
+            : null,
+          backgroundColor: const Color(0xFF1E1E2E),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.history),
+              tooltip: 'Histórico de Operações',
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const HistoricoOperacoesPage(),
+                  ),
+                );
+              },
             ),
           ],
+          bottom: _mesaSelecionada == null ? TabBar(
+            onTap: (index) {
+              setState(() {
+                _tipoSelecionado = index == 0 ? TipoControle.mesa : TipoControle.comanda;
+              });
+            },
+            indicatorColor: Colors.orange,
+            labelColor: Colors.orange,
+            unselectedLabelColor: Colors.grey,
+            tabs: const [
+              Tab(icon: Icon(Icons.table_restaurant), text: 'MESAS'),
+              Tab(icon: Icon(Icons.receipt_long), text: 'COMANDAS'),
+            ],
+          ) : null,
         ),
-      body: SafeArea(
-        child: _buildListaMesas(dataService),
+        body: SafeArea(
+          child: _mesaSelecionada != null 
+            ? _buildDetalhesMesaComanda(_mesaSelecionada!, dataService)
+            : _buildListaMesasQuadros(dataService),
+        ),
+        floatingActionButton: _mesaSelecionada == null ? FloatingActionButton.extended(
+          onPressed: () => _tipoSelecionado == TipoControle.mesa 
+            ? _abrirNovaMesa(context, dataService) 
+            : _abrirNovaComanda(context, dataService),
+          icon: const Icon(Icons.add),
+          label: Text(_tipoSelecionado == TipoControle.mesa ? 'Nova Mesa' : 'Nova Comanda'),
+          backgroundColor: _tipoSelecionado == TipoControle.mesa ? Colors.orange : Colors.purple,
+        ) : null,
       ),
     );
   }
 
 
-  Widget _buildListaMesas(DataService dataService) {
-    // Buscar mesas abertas
-    final mesasAbertas = dataService.mesasComandas
-        .where((m) => m.status == 'Aberta' && m.tipo == TipoControle.mesa)
-        .toList();
-    
-    // Buscar apenas comandas independentes (não vinculadas a mesas)
-    final comandasAbertas = dataService.mesasComandas
-        .where((m) => m.status == 'Aberta' && 
-                      m.tipo == TipoControle.comanda && 
-                      m.mesaId == null) // Apenas comandas independentes
+  Widget _buildListaMesasQuadros(DataService dataService) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final int crossAxisCount = screenWidth > 1200 ? 6 : (screenWidth > 800 ? 5 : 3);
+    final double childAspectRatio = screenWidth > 800 ? 1.4 : 1.25;
+
+    // Buscar mesas/comandas abertas filtradas por tipo
+    final todosItens = dataService.mesasComandas
+        .where((m) => m.status == 'Aberta' && m.tipo == _tipoSelecionado)
+        .where((m) => _tipoSelecionado == TipoControle.mesa || m.mesaId == null) // Apenas comandas independentes na aba de comandas
         .toList();
     
     // Filtrar por busca
     final termoBusca = _buscaController.text.toLowerCase().trim();
-    List<MesaComanda> mesasFiltradas = mesasAbertas;
-    List<MesaComanda> comandasFiltradas = comandasAbertas;
+    List<MesaComanda> filtrados = todosItens;
     
     if (termoBusca.isNotEmpty) {
-      mesasFiltradas = mesasAbertas.where((m) {
-        return m.numero.toLowerCase().contains(termoBusca) ||
-               (m.clienteNome != null && m.clienteNome!.toLowerCase().contains(termoBusca));
-      }).toList();
-      
-      comandasFiltradas = comandasAbertas.where((m) {
+      filtrados = todosItens.where((m) {
         return m.numero.toLowerCase().contains(termoBusca) ||
                (m.clienteNome != null && m.clienteNome!.toLowerCase().contains(termoBusca));
       }).toList();
     }
     
     // Ordenar mesas e comandas por número
-    mesasFiltradas.sort((a, b) {
-      // Extrair números para ordenação numérica
-      final numA = _extrairNumero(a.numero);
-      final numB = _extrairNumero(b.numero);
-      if (numA != null && numB != null) {
-        return numA.compareTo(numB);
-      }
-      return a.numero.compareTo(b.numero);
+    filtrados.sort((a, b) {
+      final numA = _extrairNumero(a.numero) ?? 999999;
+      final numB = _extrairNumero(b.numero) ?? 999999;
+      return numA.compareTo(numB);
     });
-    
-    comandasFiltradas.sort((a, b) {
-      final numA = _extrairNumero(a.numero);
-      final numB = _extrairNumero(b.numero);
-      if (numA != null && numB != null) {
-        return numA.compareTo(numB);
-      }
-      return a.numero.compareTo(b.numero);
-    });
-    
-    final todasAbertas = [...mesasFiltradas, ...comandasFiltradas];
 
     return Column(
       children: [
-        // Campo de busca
+        // Campo de busca inteligente
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          padding: const EdgeInsets.all(16),
           child: TextField(
             controller: _buscaController,
             onChanged: (value) => setState(() {}),
+            style: const TextStyle(color: Colors.white),
             decoration: InputDecoration(
-              hintText: 'Buscar mesa ou comanda...',
+              hintText: 'Buscar ${_tipoSelecionado == TipoControle.mesa ? "mesa" : "comanda"}...',
               hintStyle: const TextStyle(color: Colors.grey),
-              prefixIcon: const Icon(Icons.search, color: Colors.grey),
+              prefixIcon: Icon(Icons.search, color: _tipoSelecionado == TipoControle.mesa ? Colors.orange : Colors.purple),
               suffixIcon: _buscaController.text.isNotEmpty
                   ? IconButton(
                       icon: const Icon(Icons.clear, color: Colors.grey),
                       onPressed: () {
-                        setState(() {
-                          _buscaController.clear();
-                        });
+                        setState(() => _buscaController.clear());
                       },
                     )
                   : null,
               filled: true,
-              fillColor: Colors.white.withOpacity(0.1),
+              fillColor: const Color(0xFF1E1E2E),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: Colors.grey),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: Colors.grey),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: Colors.orange, width: 2),
+                borderSide: BorderSide.none,
               ),
             ),
-            style: const TextStyle(color: Colors.white),
           ),
         ),
         
-        // Botões para criar nova mesa ou comanda
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-          child: Row(
-            children: [
-              Expanded(
-          child: ElevatedButton.icon(
-            onPressed: () => _abrirNovaMesa(context, dataService),
-            icon: const Icon(Icons.add),
-            label: const Text('Nova Mesa'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.orange,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24),
-              minimumSize: const Size(double.infinity, 50),
-            ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: () => _abrirNovaComanda(context, dataService),
-                  icon: const Icon(Icons.add),
-                  label: const Text('Nova Comanda'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.purple,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24),
-                    minimumSize: const Size(double.infinity, 50),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        
-        // Lista de mesas e comandas
         Expanded(
-          child: todasAbertas.isEmpty
+          child: filtrados.isEmpty
               ? Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.table_restaurant, size: 80, color: Colors.grey),
+                      Icon(
+                        _tipoSelecionado == TipoControle.mesa ? Icons.table_restaurant : Icons.receipt_long, 
+                        size: 80, 
+                        color: Colors.grey.withOpacity(0.3)
+                      ),
                       const SizedBox(height: 16),
                       Text(
-                        termoBusca.isNotEmpty 
-                            ? 'Nenhuma mesa ou comanda encontrada'
-                            : 'Nenhuma mesa ou comanda aberta',
-                        style: TextStyle(color: Colors.grey, fontSize: 18),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        termoBusca.isNotEmpty
-                            ? 'Tente buscar com outro termo'
-                            : 'Toque no botão acima para criar uma nova mesa',
-                        style: TextStyle(color: Colors.grey, fontSize: 14),
+                        'Nenhuma ${_tipoSelecionado == TipoControle.mesa ? "mesa" : "comanda"} aberta',
+                        style: const TextStyle(color: Colors.grey, fontSize: 18),
                       ),
                     ],
                   ),
                 )
-              : ListView.builder(
+              : GridView.builder(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
-                  itemCount: todasAbertas.length,
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: crossAxisCount,
+                    childAspectRatio: childAspectRatio,
+                    crossAxisSpacing: 10,
+                    mainAxisSpacing: 10,
+                  ),
+                  itemCount: filtrados.length,
                   itemBuilder: (context, index) {
-                    final item = todasAbertas[index];
-                    // Se for comanda, usar o card de comanda, senão usar card de mesa
-                    if (item.tipo == TipoControle.comanda) {
-                      return _buildCardComanda(item, dataService);
-                    } else {
-                      return _buildCardMesa(item, dataService);
-                    }
+                    final item = filtrados[index];
+                    return _buildQuadroMesaComanda(item, dataService);
                   },
                 ),
         ),
       ],
     );
+  }
+
+  Widget _buildQuadroMesaComanda(MesaComanda item, DataService dataService) {
+    final temPendentes = item.temItensPendentes;
+    final temProntos = item.temItensProntos;
+    final total = item.totalCalculado;
+    
+    Color accentColor = _tipoSelecionado == TipoControle.mesa ? Colors.orange : Colors.purpleAccent;
+    if (temPendentes) accentColor = Colors.redAccent;
+    else if (temProntos) accentColor = Colors.greenAccent;
+
+    return Card(
+      elevation: 4,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      color: const Color(0xFF1E1E2E),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => setState(() => _mesaSelecionada = item),
+        child: Stack(
+          children: [
+            Positioned(
+              left: 0, top: 0, bottom: 0, width: 6,
+              child: Container(color: accentColor),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        _tipoSelecionado == TipoControle.mesa ? 'Mesa' : 'Comanda',
+                        style: TextStyle(color: Colors.grey[400], fontSize: 11),
+                      ),
+                      if (temPendentes) const Icon(Icons.priority_high, color: Colors.redAccent, size: 16),
+                    ],
+                  ),
+                  const SizedBox(height: 2),
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      item.numero,
+                      style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  const Spacer(),
+                  if (item.clienteNome != null)
+                    Text(
+                      item.clienteNome!,
+                      maxLines: 1, overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: Colors.grey[500], fontSize: 12),
+                    ),
+                  const SizedBox(height: 4),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('${item.itens.length} it.', style: TextStyle(color: Colors.grey[400], fontSize: 9)),
+                      Text(
+                        NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(total),
+                        style: TextStyle(color: accentColor, fontWeight: FontWeight.bold, fontSize: 13),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            if (temProntos)
+              Positioned(
+                right: 8, top: 8,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(color: Colors.greenAccent, borderRadius: BorderRadius.circular(10)),
+                  child: Text(
+                    '${item.itensProntos.length}',
+                    style: const TextStyle(color: Colors.black, fontSize: 10, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDetalhesMesaComanda(MesaComanda mesa, DataService dataService) {
+    final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+    final formatoData = DateFormat('dd/MM/yyyy HH:mm');
+    
+    // Buscar comandas vinculadas
+    final comandasDaMesa = dataService.mesasComandas
+        .where((c) => c.tipo == TipoControle.comanda && c.mesaId == mesa.id)
+        .toList();
+    
+    double totalGeral = mesa.totalCalculado;
+    for (final c in comandasDaMesa) totalGeral += c.totalCalculado;
+    
+    double totalPagoGeral = mesa.totalPago;
+    for (final c in comandasDaMesa) totalPagoGeral += c.totalPago;
+    
+    final totalPendente = totalGeral - totalPagoGeral;
+    final isComandaIndependente = mesa.tipo == TipoControle.comanda;
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header Detalhes
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1E1E2E),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: Colors.orange.withOpacity(0.3)),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(
+                    isComandaIndependente ? Icons.receipt_long : Icons.table_restaurant,
+                    color: Colors.orange, size: 32,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${isComandaIndependente ? "Comanda" : "Mesa"} ${mesa.numero}',
+                        style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
+                      ),
+                      if (mesa.clienteNome != null)
+                        Text('Cliente: ${mesa.clienteNome}', style: const TextStyle(color: Colors.grey)),
+                      Text('Abertura: ${formatoData.format(mesa.dataAbertura)}', style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                    ],
+                  ),
+                ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(formatoMoeda.format(totalGeral), style: const TextStyle(color: Colors.green, fontSize: 20, fontWeight: FontWeight.bold)),
+                    if (totalPendente > 0.01)
+                      Text('Pendente: ${formatoMoeda.format(totalPendente)}', style: const TextStyle(color: Colors.orange, fontSize: 13)),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+          
+          // Ações Principais
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: () => _adicionarItensMesa(mesa, dataService),
+                  icon: const Icon(Icons.add_shopping_cart),
+                  label: const Text('Lançar Itens'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: () => isComandaIndependente ? _receberComanda(mesa, dataService) : _receberMesa(mesa, dataService),
+                  icon: const Icon(Icons.payment),
+                  label: const Text('Receber'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () => isComandaIndependente 
+                        ? _trocarComanda(mesa, dataService) 
+                        : _trocarMesa(mesa, dataService),
+                    icon: const Icon(Icons.swap_horiz),
+                    label: Text(isComandaIndependente ? 'Trocar Comanda' : 'Trocar Mesa'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: isComandaIndependente ? Colors.purpleAccent : Colors.blue,
+                      side: BorderSide(color: isComandaIndependente ? Colors.purpleAccent : Colors.blue),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () => isComandaIndependente 
+                        ? _unirComandas(mesa, dataService) 
+                        : _unirMesas(mesa, dataService),
+                    icon: const Icon(Icons.merge),
+                    label: Text(isComandaIndependente ? 'Unir Comandas' : 'Unir Mesas'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: isComandaIndependente ? Colors.deepPurpleAccent : Colors.teal,
+                      side: BorderSide(color: isComandaIndependente ? Colors.deepPurpleAccent : Colors.teal),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          
+          const Divider(height: 32, color: Colors.white24),
+          
+          // Lista de Itens
+          const Text('ITENS LANÇADOS', style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold, fontSize: 12)),
+          const SizedBox(height: 12),
+          
+          // Couvert se houver
+          if (mesa.valorCouvertCalculado > 0)
+            Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(color: Colors.orange.withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
+              child: Row(
+                children: [
+                  const Icon(Icons.music_note, color: Colors.orange, size: 20),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Couvert Artístico (${mesa.quantidadePessoasCouvert} pessoas)',
+                      style: const TextStyle(color: Colors.white, fontSize: 14),
+                    ),
+                  ),
+                  Text(formatoMoeda.format(mesa.valorCouvertCalculado), style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold)),
+                  IconButton(icon: const Icon(Icons.edit, color: Colors.orange, size: 18), onPressed: () => _editarCouvert(context, mesa, dataService)),
+                ],
+              ),
+            ),
+          
+          ...mesa.itens.map((item) => Column(
+            children: [
+              _buildItemMesa(item),
+              if (item.status != StatusItem.cancelado)
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton.icon(
+                    onPressed: () => _cancelarItem(item, mesa, dataService),
+                    icon: const Icon(Icons.cancel, size: 14, color: Colors.red),
+                    label: const Text('Cancelar', style: TextStyle(color: Colors.red, fontSize: 12)),
+                  ),
+                ),
+            ],
+          )),
+          
+          if (!isComandaIndependente && comandasDaMesa.isNotEmpty) ...[
+            const Divider(height: 32, color: Colors.white24),
+            const Text('COMANDAS VINCULADAS', style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold, fontSize: 12)),
+            const SizedBox(height: 12),
+            ..._buildComandasDaMesa(mesa, dataService),
+          ],
+          
+          const SizedBox(height: 40),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => _visualizarConta(mesa, dataService),
+                  icon: const Icon(Icons.visibility),
+                  label: const Text('Ver Conta'),
+                  style: OutlinedButton.styleFrom(foregroundColor: Colors.white70),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => _imprimirFechamentoConta(mesa, dataService),
+                  icon: const Icon(Icons.print),
+                  label: const Text('Imprimir'),
+                  style: OutlinedButton.styleFrom(foregroundColor: Colors.white70),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildListaMesas(DataService dataService) {
+    return _buildListaMesasQuadros(dataService);
   }
 
   /// Extrai número de uma string para ordenação numérica
@@ -245,25 +514,30 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
     return match != null ? int.tryParse(match.group(0) ?? '') : null;
   }
 
-  /// Calcula o total da mesa incluindo comandas vinculadas (apenas não pagas)
+  /// Calcula o total bruto da mesa somando suas comandas vinculadas (valor total sem descontar o que já foi pago)
   double _getTotalMesaComComandas(MesaComanda mesa, DataService dataService) {
-    // Total da mesa menos o que já foi pago
-    double total = mesa.totalCalculado - mesa.totalPago;
+    if (mesa.tipo == TipoControle.comanda) return mesa.totalCalculado;
     
-    // Adicionar total das comandas vinculadas que ainda não foram pagas
     final comandasDaMesa = dataService.mesasComandas
-        .where((c) => c.tipo == TipoControle.comanda && 
-                      c.mesaId == mesa.id)
+        .where((c) => c.tipo == TipoControle.comanda && c.mesaId == mesa.id)
         .toList();
     
-    for (final comanda in comandasDaMesa) {
-      // Se a comanda não está totalmente paga, adicionar o valor pendente
-      if (!comanda.estaTotalmentePago) {
-        total += comanda.totalCalculado - comanda.totalPago;
-      }
-    }
+    double totalGeral = mesa.totalCalculado;
+    for (final c in comandasDaMesa) totalGeral += c.totalCalculado;
+    return totalGeral;
+  }
+
+  /// Calcula o saldo pendente (o que ainda não foi pago) para a mesa e comandas vinculadas
+  double _getSaldoPendenteMesaComComandas(MesaComanda mesa, DataService dataService) {
+    double totalDevido = _getTotalMesaComComandas(mesa, dataService);
     
-    return total;
+    double totalJaPago = mesa.totalPago;
+    final comandasDaMesa = dataService.mesasComandas
+        .where((c) => c.tipo == TipoControle.comanda && c.mesaId == mesa.id)
+        .toList();
+    for (final c in comandasDaMesa) totalJaPago += c.totalPago;
+    
+    return totalDevido - totalJaPago;
   }
 
   Widget _buildCardMesa(MesaComanda mesa, DataService dataService) {
@@ -2728,7 +3002,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
     }
   }
 
-  Future<void> _abrirNovaMesa(BuildContext context, DataService dataService) async {
+  Future<MesaComanda?> _abrirNovaMesa(BuildContext context, DataService dataService) async {
     final numeroController = TextEditingController();
     final clienteController = TextEditingController();
     final observacaoController = TextEditingController();
@@ -2954,7 +3228,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
             ),
           );
         }
-        return;
+        return null;
       }
 
       try {
@@ -2999,6 +3273,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
             _mesaSelecionada = novaMesa;
           });
         }
+        return novaMesa;
       } catch (e) {
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -3010,6 +3285,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
         }
       }
     }
+    return null;
   }
 
   Future<void> _adicionarPessoasCouvert(BuildContext context, MesaComanda mesa, DataService dataService) async {
@@ -4514,7 +4790,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
   }
 
   /// Cria uma nova comanda independente
-  Future<void> _abrirNovaComanda(BuildContext context, DataService dataService) async {
+  Future<MesaComanda?> _abrirNovaComanda(BuildContext context, DataService dataService) async {
     final numeroController = TextEditingController();
     final clienteController = TextEditingController();
     final observacaoController = TextEditingController();
@@ -4730,7 +5006,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
             ),
           );
         }
-        return;
+        return null;
       }
       
       final numeroExiste = dataService.mesasComandas.any(
@@ -4746,7 +5022,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
             ),
           );
         }
-        return;
+        return null;
       }
 
       final authService = Provider.of<AuthService>(context, listen: false);
@@ -4788,6 +5064,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
             ),
           );
         }
+        return novaComanda;
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -4799,6 +5076,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
         }
       }
     }
+    return null;
   }
 
   /// Cria uma comanda dentro de uma mesa
@@ -6028,30 +6306,26 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
     }
   }
 
+  /// Aliases para troca e união (agora usando a mesma lógica)
+  Future<void> _trocarComanda(MesaComanda comanda, DataService dataService) => _trocarMesa(comanda, dataService);
+  Future<void> _unirComandas(MesaComanda comanda, DataService dataService) => _unirMesas(comanda, dataService);
+
   /// Troca todos os dados de uma mesa para outra
   Future<void> _trocarMesa(MesaComanda mesaOrigem, DataService dataService) async {
-    final mesasDisponiveis = dataService.mesasComandas
-        .where((m) => m.tipo == TipoControle.mesa && m.id != mesaOrigem.id && m.status == 'Aberta')
+    // Modificar filtro para incluir mesas ou comandas baseadas na origem
+    final isComanda = mesaOrigem.tipo == TipoControle.comanda;
+    final itensDisponiveis = dataService.mesasComandas
+        .where((m) => m.tipo == mesaOrigem.tipo && m.id != mesaOrigem.id && m.status == 'Aberta')
         .toList();
     
-    if (mesasDisponiveis.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Não há outras mesas abertas para transferir'),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      return;
-    }
-    
-    // Mostrar diálogo para selecionar mesa destino
+    // Mostrar diálogo para selecionar mesa destino ou criar nova
     final mesaDestino = await showDialog<MesaComanda>(
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF1E1E2E),
-        title: const Text(
-          'Trocar Mesa',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        title: Text(
+          isComanda ? 'Trocar Comanda' : 'Trocar Mesa',
+          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
         ),
         content: SizedBox(
           width: double.maxFinite,
@@ -6060,30 +6334,65 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Transferir Mesa ${mesaOrigem.numero} para:',
+                'Transferir ${isComanda ? "Comanda" : "Mesa"} ${mesaOrigem.numero} para:',
                 style: const TextStyle(color: Colors.white, fontSize: 14),
               ),
               const SizedBox(height: 16),
-              Container(
-                constraints: const BoxConstraints(maxHeight: 300),
-                child: ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: mesasDisponiveis.length,
-                  itemBuilder: (context, index) {
-                    final mesa = mesasDisponiveis[index];
-                    return ListTile(
-                      leading: const Icon(Icons.table_restaurant, color: Colors.orange),
-                      title: Text(
-                        'Mesa ${mesa.numero}',
-                        style: const TextStyle(color: Colors.white),
-                      ),
-                      subtitle: Text(
-                        mesa.clienteNome ?? 'Sem cliente',
-                        style: TextStyle(color: Colors.grey, fontSize: 12),
-                      ),
-                      onTap: () => Navigator.pop(context, mesa),
-                    );
+              if (itensDisponiveis.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 20),
+                  child: Center(
+                    child: Text('Não há outros itens abertos disponíveis.', style: TextStyle(color: Colors.grey)),
+                  ),
+                )
+              else
+                Container(
+                  constraints: const BoxConstraints(maxHeight: 300),
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: itensDisponiveis.length,
+                    itemBuilder: (context, index) {
+                      final item = itensDisponiveis[index];
+                      return ListTile(
+                        leading: Icon(
+                          isComanda ? Icons.receipt_long : Icons.table_restaurant,
+                          color: isComanda ? Colors.purpleAccent : Colors.orange,
+                        ),
+                        title: Text(
+                          '${isComanda ? "Comanda" : "Mesa"} ${item.numero}',
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                        subtitle: Text(
+                          item.clienteNome ?? 'Sem cliente',
+                          style: const TextStyle(color: Colors.grey, fontSize: 12),
+                        ),
+                        onTap: () => Navigator.pop(context, item),
+                      );
+                    },
+                  ),
+                ),
+              const Divider(color: Colors.white24, height: 32),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () async {
+                    MesaComanda? novoItem;
+                    if (isComanda) {
+                      novoItem = await _abrirNovaComanda(context, dataService);
+                    } else {
+                      novoItem = await _abrirNovaMesa(context, dataService);
+                    }
+                    
+                    if (novoItem != null && context.mounted) {
+                      Navigator.pop(context, novoItem);
+                    }
                   },
+                  icon: const Icon(Icons.add),
+                  label: Text('Criar Nova ${isComanda ? "Comanda" : "Mesa"}'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: isComanda ? Colors.purple : Colors.orange,
+                    foregroundColor: Colors.white,
+                  ),
                 ),
               ),
             ],
@@ -6114,7 +6423,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Transferir todos os dados da Mesa ${mesaOrigem.numero} para a Mesa ${mesaDestino.numero}?',
+              'Transferir todos os dados da ${isComanda ? "Comanda" : "Mesa"} ${mesaOrigem.numero} para a ${isComanda ? "Comanda" : "Mesa"} ${mesaDestino.numero}?',
               style: const TextStyle(color: Colors.white, fontSize: 14),
             ),
             const SizedBox(height: 12),
@@ -6135,9 +6444,9 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                 borderRadius: BorderRadius.circular(6),
                 border: Border.all(color: Colors.orange),
               ),
-              child: const Text(
-                '⚠ A mesa origem será limpa e ficará disponível',
-                style: TextStyle(color: Colors.orange, fontSize: 11),
+              child: Text(
+                '⚠ A ${isComanda ? "comanda" : "mesa"} origem será limpa e ficará disponível',
+                style: const TextStyle(color: Colors.orange, fontSize: 11),
               ),
             ),
           ],
@@ -6225,7 +6534,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Mesa ${mesaOrigem.numero} transferida para Mesa ${mesaDestino.numero} com sucesso!'),
+            content: Text('${isComanda ? "Comanda" : "Mesa"} ${mesaOrigem.numero} transferida para ${isComanda ? "Comanda" : "Mesa"} ${mesaDestino.numero} com sucesso!'),
             backgroundColor: Colors.green,
             duration: const Duration(seconds: 3),
           ),
@@ -6238,7 +6547,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Erro ao transferir mesa: $e'),
+            content: Text('Erro ao transferir ${isComanda ? "comanda" : "mesa"}: $e'),
             backgroundColor: Colors.red,
           ),
         );
@@ -6248,28 +6557,19 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
   
   /// Une duas mesas (junta tudo em uma mesa)
   Future<void> _unirMesas(MesaComanda mesaOrigem, DataService dataService) async {
-    final mesasDisponiveis = dataService.mesasComandas
-        .where((m) => m.tipo == TipoControle.mesa && m.id != mesaOrigem.id && m.status == 'Aberta')
+    final isComanda = mesaOrigem.tipo == TipoControle.comanda;
+    final itensDisponiveis = dataService.mesasComandas
+        .where((m) => m.tipo == mesaOrigem.tipo && m.id != mesaOrigem.id && m.status == 'Aberta')
         .toList();
     
-    if (mesasDisponiveis.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Não há outras mesas abertas para unir'),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      return;
-    }
-    
-    // Mostrar diálogo para selecionar mesa destino
+    // Mostrar diálogo para selecionar destino ou criar novo
     final mesaDestino = await showDialog<MesaComanda>(
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF1E1E2E),
-        title: const Text(
-          'Unir Mesas',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        title: Text(
+          isComanda ? 'Unir Comandas' : 'Unir Mesas',
+          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
         ),
         content: SizedBox(
           width: double.maxFinite,
@@ -6278,30 +6578,61 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Unir Mesa ${mesaOrigem.numero} com:',
+                'Unir ${isComanda ? "Comanda" : "Mesa"} ${mesaOrigem.numero} com:',
                 style: const TextStyle(color: Colors.white, fontSize: 14),
               ),
               const SizedBox(height: 16),
-              Container(
-                constraints: const BoxConstraints(maxHeight: 300),
-                child: ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: mesasDisponiveis.length,
-                  itemBuilder: (context, index) {
-                    final mesa = mesasDisponiveis[index];
-                    return ListTile(
-                      leading: const Icon(Icons.table_restaurant, color: Colors.orange),
-                      title: Text(
-                        'Mesa ${mesa.numero}',
-                        style: const TextStyle(color: Colors.white),
-                      ),
-                      subtitle: Text(
-                        mesa.clienteNome ?? 'Sem cliente',
-                        style: TextStyle(color: Colors.grey, fontSize: 12),
-                      ),
-                      onTap: () => Navigator.pop(context, mesa),
-                    );
+              if (itensDisponiveis.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 20),
+                  child: Center(
+                    child: Text('Não há outros itens abertos para unir.', style: TextStyle(color: Colors.grey)),
+                  ),
+                )
+              else
+                Container(
+                  constraints: const BoxConstraints(maxHeight: 300),
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: itensDisponiveis.length,
+                    itemBuilder: (context, index) {
+                      final item = itensDisponiveis[index];
+                      return ListTile(
+                        leading: Icon(
+                          isComanda ? Icons.receipt_long : Icons.table_restaurant,
+                          color: isComanda ? Colors.purpleAccent : Colors.teal,
+                        ),
+                        title: Text(
+                          '${isComanda ? "Comanda" : "Mesa"} ${item.numero}',
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                        subtitle: Text(
+                          item.clienteNome ?? 'Sem cliente',
+                          style: const TextStyle(color: Colors.grey, fontSize: 12),
+                        ),
+                        onTap: () => Navigator.pop(context, item),
+                      );
+                    },
+                  ),
+                ),
+              const Divider(color: Colors.white24, height: 32),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    if (isComanda) {
+                      _abrirNovaComanda(context, dataService);
+                    } else {
+                      _abrirNovaMesa(context, dataService);
+                    }
                   },
+                  icon: const Icon(Icons.add),
+                  label: Text('Criar Nova ${isComanda ? "Comanda" : "Mesa"} e Unir'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: isComanda ? Colors.deepPurple : Colors.teal,
+                    foregroundColor: Colors.white,
+                  ),
                 ),
               ),
             ],
@@ -6332,16 +6663,16 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Unir Mesa ${mesaOrigem.numero} com Mesa ${mesaDestino.numero}?',
+              'Unir ${isComanda ? "Comanda" : "Mesa"} ${mesaOrigem.numero} com ${isComanda ? "Comanda" : "Mesa"} ${mesaDestino.numero}?',
               style: const TextStyle(color: Colors.white, fontSize: 14),
             ),
             const SizedBox(height: 12),
             Text(
-              'Todos os dados serão juntados na Mesa ${mesaDestino.numero}:',
+              'Todos os dados serão juntados na ${isComanda ? "Comanda" : "Mesa"} ${mesaDestino.numero}:',
               style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 4),
-            const Text('• Todos os itens de ambas as mesas', style: TextStyle(color: Colors.white70, fontSize: 12)),
+            Text('• Todos os itens de ambas as ${isComanda ? "comandas" : "mesas"}', style: const TextStyle(color: Colors.white70, fontSize: 12)),
             const Text('• Todas as comandas vinculadas', style: TextStyle(color: Colors.white70, fontSize: 12)),
             const Text('• Histórico de pagamentos', style: TextStyle(color: Colors.white70, fontSize: 12)),
             const SizedBox(height: 8),
@@ -6353,8 +6684,8 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                 border: Border.all(color: Colors.teal),
               ),
               child: Text(
-                '⚠ A Mesa ${mesaOrigem.numero} será fechada após a união',
-                style: const TextStyle(color: Colors.teal, fontSize: 11),
+                '⚠ A ${isComanda ? "Comanda" : "Mesa"} ${mesaOrigem.numero} será fechada após a união',
+                style: TextStyle(color: isComanda ? Colors.deepPurpleAccent : Colors.teal, fontSize: 11),
               ),
             ),
           ],
@@ -6411,10 +6742,11 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
         if (mesaOrigemAtual.observacao != null) mesaOrigemAtual.observacao!,
       ].join('\n');
       
-      // Registrar união de mesas na observação
+      // Registrar união na observação
       final formatoDataUniao = DateFormat('dd/MM/yyyy HH:mm');
       final agora = DateTime.now();
-      final registroUniao = '🔗 UNIÃO DE MESAS: Mesa ${mesaOrigem.numero} foi unida com Mesa ${mesaDestino.numero} em ${formatoDataUniao.format(agora)}';
+      final termoGeral = isComanda ? "COMANDA" : "MESA";
+      final registroUniao = '🔗 UNIÃO DE ${termoGeral}S: $termoGeral ${mesaOrigem.numero} foi unida com $termoGeral ${mesaDestino.numero} em ${formatoDataUniao.format(agora)}';
       
       // Verificar se já existem registros de união na mesa destino
       final temRegistroUniao = mesaDestinoAtual.observacao != null && 
@@ -6451,8 +6783,9 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
         await dataService.updateMesaComanda(comandaTransferida);
       }
       
-      // Fechar mesa origem (preservar histórico e registrar união)
-      final registroUniaoOrigem = '🔗 MESA UNIDA: Esta mesa foi unida com a Mesa ${mesaDestino.numero} em ${formatoDataUniao.format(DateTime.now())}';
+      // Fechar item origem (preservar histórico e registrar união)
+      final termoGeralOrigem = isComanda ? "COMANDA" : "MESA";
+      final registroUniaoOrigem = '🔗 $termoGeralOrigem UNIDA: Esta ${termoGeralOrigem.toLowerCase()} foi unida com a $termoGeralOrigem ${mesaDestino.numero} em ${formatoDataUniao.format(DateTime.now())}';
       final observacaoOrigemComUniao = [
         registroUniaoOrigem,
         if (mesaOrigemAtual.observacao != null && mesaOrigemAtual.observacao!.isNotEmpty) 
@@ -6474,7 +6807,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Mesas ${mesaOrigem.numero} e ${mesaDestino.numero} unidas com sucesso!'),
+            content: Text('${isComanda ? "Comandas" : "Mesas"} ${mesaOrigem.numero} e ${mesaDestino.numero} unidas com sucesso!'),
             backgroundColor: Colors.green,
             duration: const Duration(seconds: 3),
           ),
@@ -6487,7 +6820,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Erro ao unir mesas: $e'),
+            content: Text('Erro ao unir ${isComanda ? "comandas" : "mesas"}: $e'),
             backgroundColor: Colors.red,
           ),
         );
@@ -7407,6 +7740,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
     }
   }
 
+
   /// Mostra histórico de pagamentos da mesa
   void _mostrarHistoricoPagamentos(MesaComanda mesa) {
     final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
@@ -7428,7 +7762,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Mesa: ${mesa.numero}',
+                '${mesa.tipo == TipoControle.comanda ? "Comanda" : "Mesa"}: ${mesa.numero}',
                 style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 8),

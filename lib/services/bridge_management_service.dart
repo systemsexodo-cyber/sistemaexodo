@@ -1,5 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
+import 'package:file_picker/file_picker.dart';
 
 class BridgeCommand {
   final String id;
@@ -40,8 +42,8 @@ class BridgeManagementService {
 
   final FirebaseFirestore _db = FirebaseFirestore.instance;
 
-  /// Envia um comando para todos os bridges ou um específico
-  Future<void> enviarComando(String comando, {String? targetPc, Map<String, dynamic>? extraData}) async {
+  /// Envia um comando para todos os bridges ou um específico e retorna a referência do documento
+  Future<DocumentReference> enviarComando(String comando, {String? targetPc, Map<String, dynamic>? extraData}) async {
     try {
       final Map<String, dynamic> data = {
         'comando': comando,
@@ -54,7 +56,7 @@ class BridgeManagementService {
         data.addAll(extraData);
       }
 
-      await _db.collection('bridge_commands').add(data);
+      return await _db.collection('bridge_commands').add(data);
     } catch (e) {
       debugPrint('Erro ao enviar comando bridge: $e');
       rethrow;
@@ -85,5 +87,46 @@ class BridgeManagementService {
   /// Atalho para identificar bridges
   Future<void> identificarBridges() async {
     await enviarComando('identify');
+  }
+
+  /// Faz upload de uma nova versão do Emissor NFCe (.exe) para o Firebase Storage
+  /// e atualiza o documento `bridge_config/latest` no Firestore
+  Future<void> subirNovaVersaoBridge(PlatformFile file, String version, Function(double) onProgress) async {
+    if (file.bytes == null) {
+      throw Exception('O arquivo selecionado está vazio ou não pôde ser lido.');
+    }
+
+    try {
+      final storageRef = FirebaseStorage.instance.ref().child('bridge_updates/ExodoNfceBridge_v$version.exe');
+      
+      final uploadTask = storageRef.putData(
+        file.bytes!, 
+        SettableMetadata(contentType: 'application/x-msdownload')
+      );
+
+      // Listener de progresso
+      uploadTask.snapshotEvents.listen((TaskSnapshot snapshot) {
+        final progress = snapshot.bytesTransferred / snapshot.totalBytes;
+        onProgress(progress);
+      });
+
+      // Aguarda completar o upload
+      await uploadTask;
+
+      // Pegar URL Pública
+      final downloadUrl = await storageRef.getDownloadURL();
+
+      // Gravar no Firestore `bridge_config/latest`
+      await FirebaseFirestore.instance.collection('bridge_config').doc('latest').set({
+        'version': version,
+        'download_url': downloadUrl,
+        'updated_at': FieldValue.serverTimestamp(),
+      });
+
+      debugPrint('>>> [BridgeManager] Versão $version enviada com sucesso! URL: $downloadUrl');
+    } catch (e) {
+      debugPrint('>>> [BridgeManager] Erro no upload da nova versão: $e');
+      rethrow;
+    }
   }
 }

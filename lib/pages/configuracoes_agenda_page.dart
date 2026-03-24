@@ -446,6 +446,9 @@ class _ConfiguracoesAgendaPageState extends State<ConfiguracoesAgendaPage> {
 
   @override
   Widget build(BuildContext context) {
+    final dataService = Provider.of<DataService>(context);
+    final isModuloPet = dataService.empresaAtual?.moduloPet ?? false;
+
     return Scaffold(
       backgroundColor: const Color(0xFF0F172A),
       appBar: AppBar(
@@ -469,19 +472,23 @@ class _ConfiguracoesAgendaPageState extends State<ConfiguracoesAgendaPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _buildHeader(),
-            const SizedBox(height: 32),
+            if (isModuloPet) ...[
+              _buildHeader(),
+              const SizedBox(height: 32),
+            ],
             _buildConfiguracoesGerais(),
             const SizedBox(height: 32),
-            _buildFormNovoBairro(),
-            const SizedBox(height: 32),
-            const Text(
-              'Bairros e Taxas Cadastradas',
-              style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 16),
-            _buildListaBairros(),
-            const SizedBox(height: 48),
+            if (isModuloPet) ...[
+              _buildFormNovoBairro(),
+              const SizedBox(height: 32),
+              const Text(
+                'Bairros e Taxas Cadastradas',
+                style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 16),
+              _buildListaBairros(),
+              const SizedBox(height: 48),
+            ],
             _buildHorariosIndisponiveisSection(),
             const SizedBox(height: 32),
             if (_bairrosConfig.isNotEmpty || _horariosIndisponiveis.isNotEmpty)

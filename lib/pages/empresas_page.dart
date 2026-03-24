@@ -583,9 +583,21 @@ class _EmpresasPageState extends State<EmpresasPage> {
                         color: isOnline ? Colors.green : (watchdogOnline ? Colors.orange : Colors.white12)
                       ),
                       title: Text(pcName, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
-                      subtitle: Text(
-                        isOnline ? 'Bridge Online' : (watchdogOnline ? 'Proteção Ativa' : 'Offline total'),
-                        style: TextStyle(color: isOnline ? Colors.green : (watchdogOnline ? Colors.orange : Colors.white24), fontSize: 11),
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            isOnline ? 'Bridge Online' : (watchdogOnline ? 'Proteção Ativa' : 'Offline total'),
+                            style: TextStyle(color: isOnline ? Colors.green : (watchdogOnline ? Colors.orange : Colors.white24), fontSize: 11),
+                          ),
+                          if (data['ultima_empresa'] != null)
+                            Text(
+                              '🏢 ${data['ultima_empresa']}',
+                              style: const TextStyle(color: Colors.blueAccent, fontSize: 10, fontWeight: FontWeight.bold),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                        ],
                       ),
                       trailing: Icon(Icons.send, color: (isOnline || watchdogOnline) ? Colors.blue : Colors.white10, size: 16),
                       onTap: () {

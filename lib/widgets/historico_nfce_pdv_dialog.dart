@@ -8,6 +8,8 @@ import '../services/nfce_service_factory.dart';
 import '../services/nfce_backend_service.dart';
 import '../services/danfe_service.dart';
 import 'package:intl/intl.dart';
+import '../models/produto.dart';
+import 'exodo_cancel_success_dialog.dart';
 
 class HistoricoNFCePDVDialog extends StatefulWidget {
   final Empresa empresa;
@@ -208,7 +210,7 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                       itemCount: _nfcesFiltradas.length,
                       itemBuilder: (context, index) {
                         final nfce = _nfcesFiltradas[index];
-                        final isAutorizada = nfce.status == 'autorizada';
+                        final isAutorizada = nfce.status == 'autorizada' || nfce.status == 'sucesso';
                         final isErro = nfce.status == 'erro' || nfce.status == 'rejeitada';
                         final dt = nfce.createdAt != null ? DateFormat('dd/MM HH:mm').format(nfce.createdAt!) : '-';
                         
@@ -245,7 +247,7 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                                     if (nfce.status?.toUpperCase() == 'ERRO' && nfce.xmlRetorno != null)
                                       Text('${nfce.xmlRetorno}', style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
                                     
-                                    if (isAutorizada || nfce.status == 'cancelada')
+                                    if (isAutorizada || nfce.status == 'cancelada' || nfce.status == 'sucesso' || isErro)
                                       Padding(
                                         padding: const EdgeInsets.only(top: 8),
                                         child: Row(
@@ -258,12 +260,20 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                                                 style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 0)),
                                               ),
                                             const SizedBox(width: 8),
-                                            TextButton.icon(
-                                              onPressed: () => _reimprimir(context, nfce),
-                                              icon: const Icon(Icons.print, color: Colors.blueAccent, size: 18),
-                                              label: const Text('REIMPRIMIR', style: TextStyle(color: Colors.blueAccent, fontSize: 11)),
-                                              style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 0)),
-                                            ),
+                                            if (isAutorizada || nfce.status == 'sucesso')
+                                              TextButton.icon(
+                                                onPressed: () => _reimprimir(context, nfce),
+                                                icon: const Icon(Icons.print, color: Colors.blueAccent, size: 18),
+                                                label: const Text('REIMPRIMIR', style: TextStyle(color: Colors.blueAccent, fontSize: 11)),
+                                                style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 0)),
+                                              ),
+                                            if (isErro)
+                                              TextButton.icon(
+                                                onPressed: () => _reemitirNFCe(context, nfce),
+                                                icon: const Icon(Icons.refresh, color: Colors.orange, size: 18),
+                                                label: const Text('REEMITIR AGORA', style: TextStyle(color: Colors.orange, fontSize: 11)),
+                                                style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 0)),
+                                              ),
                                           ],
                                         ),
                                       ),
@@ -354,11 +364,84 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
 
       if (resultado['success'] == true) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(resultado['message'] ?? 'Nota cancelada com sucesso.')));
+        // Atualizar localmente via DataService para garantir atualização do contador de números
+        final dataService = Provider.of<DataService>(context, listen: false);
+        final nfceCancelada = nfce.copyWith(
+          status: 'cancelada',
+          updatedAt: DateTime.now(),
+        );
+        await dataService.atualizarNFCe(nfceCancelada);
+        
+        if (!mounted) return;
+        ExodoCancelSuccessDialog.mostrar(context, nfceCancelada);
         _loadData(); // Recarregar lista
       } else {
         if (!mounted) return;
         _mostrarErro('Erro ao cancelar: ${resultado['message']}');
+      }
+    } catch (e) {
+      if (!mounted) return;
+      _mostrarErro('Falha técnica: $e');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  void _consultarNFCe(NFCe nfce) async {
+    setState(() => _isLoading = true);
+    try {
+      final nfceService = NFCeServiceFactory.criar();
+      
+      if (nfceService is! NFCeBackendService) {
+         throw Exception('A consulta só está disponível no modo Bridge (Python).');
+      }
+
+      final resultado = await nfceService.consultar(
+        chaveAcesso: nfce.chaveAcesso!,
+        empresa: widget.empresa,
+      );
+
+      if (resultado['success'] == true) {
+        final cStat = resultado['cStat'];
+        final xMotivo = resultado['xMotivo'];
+        final novoStatus = resultado['status']; // 'cancelada' ou 'autorizada'
+
+        if (!mounted) return;
+
+        // Se o status na SEFAZ for diferente do local, perguntar se quer atualizar
+        if (novoStatus != nfce.status && (novoStatus == 'cancelada' || novoStatus == 'autorizada')) {
+           final bool? atualizar = await showDialog<bool>(
+             context: context,
+             builder: (context) => AlertDialog(
+               backgroundColor: const Color(0xFF1E1E1E),
+               title: const Text('Divergência de Status', style: TextStyle(color: Colors.white)),
+               content: Text('Na SEFAZ esta nota consta como: $novoStatus.\nNo sistema local ela está como: ${nfce.status}.\n\nDeseja atualizar o sistema local?', style: const TextStyle(color: Colors.white70)),
+               actions: [
+                 TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('NÃO')),
+                 ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text('SIM, ATUALIZAR')),
+               ],
+             ),
+           );
+
+           if (atualizar == true) {
+              final dataService = Provider.of<DataService>(context, listen: false);
+              final nfceAtualizada = nfce.copyWith(
+                status: novoStatus,
+                updatedAt: DateTime.now(),
+              );
+              await dataService.atualizarNFCe(nfceAtualizada);
+              _loadData();
+           }
+        }
+
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Consulta SEFAZ: [$cStat] $xMotivo'),
+          duration: const Duration(seconds: 5),
+          backgroundColor: Colors.teal,
+        ));
+      } else {
+        if (!mounted) return;
+        _mostrarErro('Erro ao consultar: ${resultado['error']}');
       }
     } catch (e) {
       if (!mounted) return;
@@ -377,6 +460,105 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao imprimir: $e')));
+    }
+  }
+
+  void _reemitirNFCe(BuildContext context, NFCe nfce) async {
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final proximoNum = dataService.getProximoNumeroNfce().toString();
+    final controller = TextEditingController(text: proximoNum);
+
+    final bool? confirmar = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E1E),
+        title: const Text('Reemitir NFC-e', style: TextStyle(color: Colors.white)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Deseja realmente retransmitir esta NFC-e agora?', style: TextStyle(color: Colors.white70)),
+            const SizedBox(height: 16),
+            const Text('O sistema sugere o próximo número oficial disponível (notas com erro NÃO seguram número):', style: TextStyle(color: Colors.white54, fontSize: 12)),
+            const SizedBox(height: 8),
+            TextField(
+              controller: controller,
+              keyboardType: TextInputType.number,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                labelText: 'Número da Nota',
+                labelStyle: TextStyle(color: Colors.orange),
+                enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.orange)),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('VOLTAR', style: TextStyle(color: Colors.white54)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+            child: const Text('REEMITIR AGORA'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmar == true) {
+      setState(() => _isLoading = true);
+      try {
+        final nfceService = NFCeServiceFactory.criar();
+        
+        // Reconstruir produtos a partir dos itens da NFC-e falha
+        final List<Produto> produtos = nfce.itens.map((item) => Produto(
+          id: item.produtoId,
+          codigo: item.codigo,
+          nome: item.descricao,
+          preco: item.valorUnitario,
+          unidade: item.unidade,
+          ncm: item.ncm,
+          cfop: item.cfop,
+          estoque: 0,
+          grupo: 'Geral', // Campo obrigatório
+          createdAt: DateTime.now(), // Campo obrigatório
+          updatedAt: DateTime.now(), // Campo obrigatório
+        )).toList();
+
+        final Map<String, double> quantidades = {};
+        for (final item in nfce.itens) {
+          quantidades[item.produtoId] = item.quantidade;
+        }
+
+        final novaNfce = await nfceService.emitir(
+          empresa: widget.empresa,
+          produtos: produtos,
+          quantidades: quantidades,
+          pagamentos: nfce.pagamentos,
+          valorTotal: nfce.valorTotal,
+          cpfCnpjConsumidor: nfce.cpfCnpjConsumidor,
+          nomeConsumidor: nfce.nomeConsumidor,
+          vendaId: nfce.vendaId,
+          vendaNumero: controller.text, // NOVO NÚMERO
+          ambienteHomologacao: widget.empresa.configuracoes?['ambiente_nfe'] == 'Produção' ? false : true,
+        );
+
+        await dataService.adicionarNFCe(novaNfce);
+        
+        if (novaNfce.status == 'autorizada') {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('NFC-e reemitida com sucesso!')));
+          _loadData();
+        } else {
+           _mostrarErro('Status da emissão: ${novaNfce.status?.toUpperCase()}\n\nRetorno: ${novaNfce.xmlRetorno ?? "Falha na reemissão"}');
+        }
+      } catch (e) {
+        _mostrarErro('Erro ao reemitir: $e');
+      } finally {
+        if (mounted) setState(() => _isLoading = false);
+      }
     }
   }
 

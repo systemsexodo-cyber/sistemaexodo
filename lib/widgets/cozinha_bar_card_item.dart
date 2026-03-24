@@ -10,6 +10,7 @@ class CozinhaBarCardItem extends StatelessWidget {
   final DataService dataService;
   final Function(ItemMesaComanda, MesaComanda)? onMarcarEmPreparo;
   final Function(ItemMesaComanda, MesaComanda)? onMarcarPronto;
+  final Function(ItemMesaComanda, MesaComanda)? onDesmarcarPronto;
 
   const CozinhaBarCardItem({
     super.key,
@@ -18,6 +19,7 @@ class CozinhaBarCardItem extends StatelessWidget {
     required this.dataService,
     this.onMarcarEmPreparo,
     this.onMarcarPronto,
+    this.onDesmarcarPronto,
   });
 
   @override
@@ -54,9 +56,9 @@ class CozinhaBarCardItem extends StatelessWidget {
         statusText = 'Em Preparo';
         break;
       case StatusItem.pronto:
-        statusColor = Colors.green;
+        statusColor = Colors.greenAccent;
         statusIcon = Icons.check_circle;
-        statusText = 'Pronto';
+        statusText = 'PRONTO';
         break;
       case StatusItem.entregue:
         statusColor = Colors.blue;
@@ -72,9 +74,11 @@ class CozinhaBarCardItem extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 12),
       color: isCancelado
           ? Colors.red.shade900.withOpacity(0.3)
-          : isUrgente 
-              ? const Color(0xFF2E1E1E).withOpacity(0.8)
-              : const Color(0xFF1E1E2E),
+          : item.status == StatusItem.pronto
+              ? const Color(0xFF1B2E1E).withOpacity(0.8)
+              : isUrgente 
+                  ? const Color(0xFF2E1E1E).withOpacity(0.8)
+                  : const Color(0xFF1E1E2E),
       elevation: (isUrgente || isCancelado) ? 4 : 1,
       shape: isCancelado
           ? RoundedRectangleBorder(
@@ -96,18 +100,29 @@ class CozinhaBarCardItem extends StatelessWidget {
             Row(
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                   decoration: BoxDecoration(
-                    color: Colors.orange,
+                    color: mesaComanda.tipo == TipoControle.mesa ? Colors.orange : Colors.purple,
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Text(
-                    mesaComanda.numero,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 14,
-                    ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        mesaComanda.tipo == TipoControle.mesa ? Icons.table_restaurant : Icons.receipt_long,
+                        color: Colors.white,
+                        size: 14,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        mesaComanda.numero,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -247,6 +262,20 @@ class CozinhaBarCardItem extends StatelessWidget {
                         fontWeight: isUrgente ? FontWeight.bold : FontWeight.normal,
                       ),
                     ),
+                    if (item.status == StatusItem.pronto && item.dataHoraPronto != null) ...[
+                      const SizedBox(height: 4),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.done_all, color: Colors.greenAccent, size: 10),
+                          const SizedBox(width: 2),
+                          Text(
+                            DateFormat('HH:mm').format(item.dataHoraPronto!),
+                            style: const TextStyle(color: Colors.greenAccent, fontSize: 10, fontWeight: FontWeight.bold),
+                          ),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
               ],
@@ -285,26 +314,47 @@ class CozinhaBarCardItem extends StatelessWidget {
                   ],
                   if (item.status == StatusItem.pronto)
                     Expanded(
-                      child: Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.green.withOpacity(0.2),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: const Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.check_circle, color: Colors.green, size: 18),
-                            SizedBox(width: 6),
-                            Text(
-                              'Aguardando Entrega',
-                              style: TextStyle(
-                                color: Colors.green,
-                                fontWeight: FontWeight.bold,
+                      child: Row(
+                        children: [
+                          Expanded(
+                            flex: 2,
+                            child: Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: Colors.greenAccent.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(color: Colors.greenAccent.withOpacity(0.3)),
+                              ),
+                              child: const Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.check_circle, color: Colors.greenAccent, size: 18),
+                                  SizedBox(width: 8),
+                                  Text(
+                                    'CONCLUÍDO',
+                                    style: TextStyle(
+                                      color: Colors.greenAccent,
+                                      fontWeight: FontWeight.bold,
+                                      letterSpacing: 1.1,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
-                          ],
-                        ),
+                          ),
+                          const SizedBox(width: 8),
+                          if (onDesmarcarPronto != null)
+                            IconButton(
+                              onPressed: () => onDesmarcarPronto!(item, mesaComanda),
+                              icon: const Icon(Icons.undo, color: Colors.white70),
+                              tooltip: 'Desmarcar Pronto',
+                              style: IconButton.styleFrom(
+                                backgroundColor: Colors.white.withOpacity(0.1),
+                                padding: const EdgeInsets.all(12),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                              ),
+                            ),
+                        ],
                       ),
                     ),
                 ],

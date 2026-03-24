@@ -105,6 +105,52 @@ class NFCe {
       'updatedAt': updatedAt.toIso8601String(),
     };
   }
+
+  NFCe copyWith({
+    String? id,
+    String? numero,
+    String? serie,
+    DateTime? dataEmissao,
+    String? empresaId,
+    List<NFCeItem>? itens,
+    double? valorTotal,
+    String? cpfCnpjConsumidor,
+    String? nomeConsumidor,
+    List<NFCePagamento>? pagamentos,
+    String? chaveAcesso,
+    String? protocolo,
+    String? status,
+    String? xmlEnviado,
+    String? xmlRetorno,
+    String? qrCode,
+    String? vendaId,
+    String? vendaNumero,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  }) {
+    return NFCe(
+      id: id ?? this.id,
+      numero: numero ?? this.numero,
+      serie: serie ?? this.serie,
+      dataEmissao: dataEmissao ?? this.dataEmissao,
+      empresaId: empresaId ?? this.empresaId,
+      itens: itens ?? this.itens,
+      valorTotal: valorTotal ?? this.valorTotal,
+      cpfCnpjConsumidor: cpfCnpjConsumidor ?? this.cpfCnpjConsumidor,
+      nomeConsumidor: nomeConsumidor ?? this.nomeConsumidor,
+      pagamentos: pagamentos ?? this.pagamentos,
+      chaveAcesso: chaveAcesso ?? this.chaveAcesso,
+      protocolo: protocolo ?? this.protocolo,
+      status: status ?? this.status,
+      xmlEnviado: xmlEnviado ?? this.xmlEnviado,
+      xmlRetorno: xmlRetorno ?? this.xmlRetorno,
+      qrCode: qrCode ?? this.qrCode,
+      vendaId: vendaId ?? this.vendaId,
+      vendaNumero: vendaNumero ?? this.vendaNumero,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
 }
 
 /// Modelo para item da NFC-e
@@ -174,6 +220,38 @@ class NFCeItem {
       'icmsAliquota': icmsAliquota,
     };
   }
+
+  NFCeItem copyWith({
+    String? produtoId,
+    String? codigo,
+    String? descricao,
+    String? ncm,
+    String? cfop,
+    String? unidade,
+    double? quantidade,
+    double? valorUnitario,
+    double? valorTotal,
+    String? origem,
+    String? csosn,
+    String? icmsCst,
+    double? icmsAliquota,
+  }) {
+    return NFCeItem(
+      produtoId: produtoId ?? this.produtoId,
+      codigo: codigo ?? this.codigo,
+      descricao: descricao ?? this.descricao,
+      ncm: ncm ?? this.ncm,
+      cfop: cfop ?? this.cfop,
+      unidade: unidade ?? this.unidade,
+      quantidade: quantidade ?? this.quantidade,
+      valorUnitario: valorUnitario ?? this.valorUnitario,
+      valorTotal: valorTotal ?? this.valorTotal,
+      origem: origem ?? this.origem,
+      csosn: csosn ?? this.csosn,
+      icmsCst: icmsCst ?? this.icmsCst,
+      icmsAliquota: icmsAliquota ?? this.icmsAliquota,
+    );
+  }
 }
 
 /// Modelo para forma de pagamento da NFC-e
@@ -202,6 +280,18 @@ class NFCePagamento {
       'valor': valor,
       'descricao': descricao,
     };
+  }
+
+  NFCePagamento copyWith({
+    String? tipo,
+    double? valor,
+    String? descricao,
+  }) {
+    return NFCePagamento(
+      tipo: tipo ?? this.tipo,
+      valor: valor ?? this.valor,
+      descricao: descricao ?? this.descricao,
+    );
   }
 
   String get tipoDescricao {

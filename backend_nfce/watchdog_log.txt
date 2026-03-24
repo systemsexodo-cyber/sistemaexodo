@@ -77,3 +77,9 @@
 2026-03-07 18:42:35,317 [INFO] Firebase ativo no Watchdog (Controle Remoto Disponível)
 2026-03-07 18:42:37,577 [WARNING] Bridge não encontrado! Reiniciando...
 2026-03-07 18:42:37,583 [INFO] Bridge iniciado: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\backend_nfce\ExodoNfceBridge.exe
+2026-03-11 21:24:38,611 [INFO] ========================================
+2026-03-11 21:24:38,611 [INFO] ExodoNfceBridge Watchdog INICIADO
+2026-03-11 21:24:38,613 [INFO] Monitorando: ExodoNfceBridge.exe
+2026-03-11 21:24:38,613 [INFO] ========================================
+2026-03-11 21:24:41,086 [INFO] Firebase ativo no Watchdog (Controle Remoto Disponível)
+2026-03-11 21:24:42,664 [INFO] Comando recebido pelo Watchdog: identify

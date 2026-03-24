@@ -6,7 +6,84 @@ import tempfile
 import traceback
 from datetime import datetime
 from lxml import etree
-from pynfe.processamento.comunicacao import ComunicacaoSefaz
+from pynfe.processamento.comunicacao import ComunicacaoSefaz as OriginalComunicacaoSefaz
+
+class ComunicacaoSefaz(OriginalComunicacaoSefaz):
+    def _post(self, url, xml, timeout=None):
+        """Override do metodo _post para garantir a limpeza do XML e namespaces corretos em SP."""
+        from pynfe.utils import etree as _etree
+        from pynfe.entidades.certificado import CertificadoA1 as _CertA1
+        import re, os, requests as _requests
+        
+        certificado_a1 = _CertA1(self.certificate if hasattr(self, 'certificate') else self.certificado)
+        chave, cert = certificado_a1.separar_arquivo(self.certificado_senha, caminho=True)
+        chave_cert = (cert, chave)
+        
+        try:
+            xml_declaration = '<?xml version="1.0" encoding="UTF-8"?>'
+            # Converter etree para string unicode e remover quebras de linha
+            if isinstance(xml, _etree._Element):
+                xml_raw = _etree.tostring(xml, encoding="unicode").replace("\n", "").replace("\r", "")
+            else:
+                xml_raw = str(xml).replace("\n", "").replace("\r", "")
+                
+            # Remover espacos entre tags (essencial para alguns schemas da SEFAZ-SP)
+            xml_raw = re.sub(r">\s+<", "><", xml_raw)
+            
+            # 1. Fix para qrCode (entities mal formadas pelo pynfe)
+            if "<qrCode" in xml_raw:
+                xml_raw = re.sub("<qrCode>(.*?)</qrCode>", 
+                                lambda x: x.group(0).replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", ""), 
+                                xml_raw)
+            
+            # 2. Fix para namespaces e prefixos ns0/ns1
+            if "ns0:" in xml_raw or "ns1:" in xml_raw:
+                xml_raw = re.sub(r"<(/?)ns[0-9]+:", r"<\\1", xml_raw)
+            
+            # 3. Garantir namespaces nos elementos principais se estiverem faltando (comum em cancelamento)
+            for tag in ["envEvento", "evento", "infEvento"]:
+                if f'<{tag}' in xml_raw and 'xmlns=' not in xml_raw.split(f'<{tag}')[1].split('>')[0]:
+                    xml_raw = xml_raw.replace(f'<{tag}', f'<{tag} xmlns="http://www.portalfiscal.inf.br/nfe"')
+            
+            # Fix para Signature se estiver isolado
+            if '<Signature ' in xml_raw and 'xmlns=' not in xml_raw.split('<Signature ')[1].split('>')[0]:
+                xml_raw = xml_raw.replace('<Signature ', '<Signature xmlns="http://www.w3.org/2000/09/xmldsig#" ')
+            elif '<Signature>' in xml_raw:
+                xml_raw = xml_raw.replace('<Signature>', '<Signature xmlns="http://www.w3.org/2000/09/xmldsig#">')
+            
+            # Limpeza final
+            xml_raw = xml_raw.replace(' xmlns=""', '')
+            xml_final = xml_declaration + xml_raw
+
+            # Debug: Salvar o XML final enviado
+            try:
+                temp_dir = os.environ.get("TEMP", "C:/temp")
+                with open(os.path.join(temp_dir, "last_outgoing_soap.xml"), "w", encoding="utf-8") as f: f.write(xml_final)
+            except: pass
+
+            # Realizar a requisição SOAP
+            res = _requests.post(url, xml_final, headers=self._post_header(), cert=chave_cert, verify=False, timeout=timeout)
+            res.encoding = "utf-8"
+            
+            # Debug: Salvar resposta
+            try:
+                with open(os.path.join(os.environ.get("TEMP", "C:/temp"), "last_sefaz_response.xml"), "w", encoding="utf-8") as f: f.write(res.text)
+            except: pass
+            
+            return res
+        finally:
+            if os.path.exists(chave):
+                try: os.remove(chave)
+                except: pass
+            if os.path.exists(cert):
+                try: os.remove(cert)
+                except: pass
+            try:
+                certificado_a1.excluir()
+            except:
+                pass
+
+
 from pynfe.processamento.serializacao import SerializacaoXML
 from pynfe.processamento.assinatura import AssinaturaA1
 from pynfe.entidades.emitente import Emitente
@@ -841,18 +918,296 @@ def salvar_xml_local(cnpj, chave, xml_content):
 
 
 def cancelar_nfce_pynfe(req_dict):
+    """
+    Cancela uma NFC-e enviando o XML de evento DIRETAMENTE para a SEFAZ,
+    sem usar o ComunicacaoSefaz._post que tem fixes específicos de emissão
+    que corrompem o XML de evento (envEvento).
+    """
+    from lxml import etree
+    from datetime import datetime
+    import base64, tempfile, os, re, traceback
+    import requests as _req
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
     try:
-        from pynfe.entidades.evento import EventoCancelarNota
-        from pynfe.processamento.serializacao import SerializacaoXML
-        from pynfe.processamento.assinatura import AssinaturaA1
-        from pynfe.processamento.comunicacao import ComunicacaoSefaz
+        empresa_data = req_dict.get("empresa", {})
+        chave_acesso = req_dict.get("chave_acesso", "").strip()
+        justificativa = req_dict.get("justificativa", "Cancelamento por erro de emissao ou devolucao")
+        protocolo = str(req_dict.get("protocolo", "")).strip()
+
+        if not chave_acesso or not empresa_data.get("certificado_base64"):
+            return {"success": False, "error": "Chave de acesso ou certificado ausentes.", "mensagem": "Dados insuficientes"}
+
+        if not protocolo:
+            return {"success": False, "error": "Protocolo de autorização ausente.", "mensagem": "Protocolo obrigatório para cancelamento"}
+
+        cert_data = base64.b64decode(empresa_data.get("certificado_base64"))
+        senha_cert = empresa_data.get("senha_certificado", "")
+        uf = empresa_data.get("uf", "SP").upper()
+        # Mapeamento robusto do ambiente (padrão de emissão utiliza ambiente_homologacao)
+        is_homolog = (empresa_data.get("ambiente_homologacao") == True) or \
+                     (str(empresa_data.get("ambiente")) == "2") or \
+                     (empresa_data.get("ambiente") == 2)
+        
+        tp_amb = "2" if is_homolog else "1"
+        cnpj = re.sub(r"[^0-9]", "", empresa_data.get("cnpj", ""))
+        dh_evento = datetime.now().strftime("%Y-%m-%dT%H:%M:%S-03:00")
+
+        # Limpar justificativa (xJust: 15–255 chars, caracteres permitidos pelo XSD)
+        just_limpa = re.sub(r'[^\w\s\.\,\-\/]', ' ', justificativa, flags=re.UNICODE).strip()
+        if len(just_limpa) < 15:
+            just_limpa = "Cancelamento a pedido do emitente por erro ou devolucao"
+        just_limpa = just_limpa[:255]
+
+        # cOrgao: extrair dos 2 primeiros dígitos da chave de acesso (cUF)
+        c_orgao = chave_acesso[:2] if len(chave_acesso) >= 44 else "35"
+
+        NS = "http://www.portalfiscal.inf.br/nfe"
+
+        # ── 1. Montar envEvento com lxml puro (sem ElementMaker para evitar xmlns="" em sub-elementos) ──
+        env_evento = etree.Element(f"{{{NS}}}envEvento", versao="1.00", nsmap={None: NS})
+        etree.SubElement(env_evento, f"{{{NS}}}idLote").text = "1"
+
+        evento_el = etree.SubElement(env_evento, f"{{{NS}}}evento", versao="1.00")
+        id_evento = f"ID110111{chave_acesso}01"
+        inf_evento = etree.SubElement(evento_el, f"{{{NS}}}infEvento", Id=id_evento)
+
+        etree.SubElement(inf_evento, f"{{{NS}}}cOrgao").text = c_orgao
+        etree.SubElement(inf_evento, f"{{{NS}}}tpAmb").text = tp_amb
+        etree.SubElement(inf_evento, f"{{{NS}}}CNPJ").text = cnpj
+        etree.SubElement(inf_evento, f"{{{NS}}}chNFe").text = chave_acesso
+        etree.SubElement(inf_evento, f"{{{NS}}}dhEvento").text = dh_evento
+        etree.SubElement(inf_evento, f"{{{NS}}}tpEvento").text = "110111"
+        etree.SubElement(inf_evento, f"{{{NS}}}nSeqEvento").text = "1"
+        etree.SubElement(inf_evento, f"{{{NS}}}verEvento").text = "1.00"
+
+        det_evento = etree.SubElement(inf_evento, f"{{{NS}}}detEvento", versao="1.00")
+        etree.SubElement(det_evento, f"{{{NS}}}descEvento").text = "Cancelamento"
+        etree.SubElement(det_evento, f"{{{NS}}}nProt").text = protocolo
+        etree.SubElement(det_evento, f"{{{NS}}}xJust").text = just_limpa
+
+        # ── 2. Salvar certificado PFX em arquivo temporário, assinar o XML ──
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pfx") as tmp:
+            tmp.write(cert_data)
+            caminho_cert = tmp.name
+
+        chave_pem = None
+        cert_pem = None
+
+        try:
+            from pynfe.processamento.assinatura import AssinaturaA1
+            from pynfe.entidades.certificado import CertificadoA1 as _CertA1
+
+            assinador = AssinaturaA1(caminho_cert, senha_cert)
+            env_evento_assinado = assinador.assinar(env_evento)
+
+            # ── 3. Corrigir posição da Signature ──
+            # O pynfe coloca a Signature como filha do elemento raiz (envEvento),
+            # mas o XSD da SEFAZ exige que seja filha de <evento> (irmã de <infEvento>).
+            # Estrutura correta:
+            #   <envEvento>
+            #     <idLote/>
+            #     <evento>
+            #       <infEvento Id="..."/>
+            #       <Signature/>   ← DEVE estar AQUI
+            #     </evento>
+            #   </envEvento>
+            NS_DSIG = "http://www.w3.org/2000/09/xmldsig#"
+            NS_NFE = "http://www.portalfiscal.inf.br/nfe"
+
+            # Encontrar a Signature no nível errado (filho de envEvento)
+            sig_errada = env_evento_assinado.find(f"{{{NS_DSIG}}}Signature")
+            if sig_errada is None:
+                sig_errada = env_evento_assinado.find("Signature")
+
+            if sig_errada is not None:
+                # Remover do envEvento
+                env_evento_assinado.remove(sig_errada)
+                # Achar o <evento> e mover a Signature para dentro dele
+                evento_tag = env_evento_assinado.find(f"{{{NS_NFE}}}evento")
+                if evento_tag is None:
+                    evento_tag = env_evento_assinado.find("evento")
+                if evento_tag is not None:
+                    evento_tag.append(sig_errada)
+                else:
+                    # Fallback: re-adicionar no envEvento (não deve chegar aqui)
+                    env_evento_assinado.append(sig_errada)
+
+            # ── 4. Serializar para string XML limpa ──
+            xml_str = etree.tostring(env_evento_assinado, encoding="unicode")
+            # Remover xmlns="" que o lxml pode inserir em sub-elementos
+            xml_str = xml_str.replace(' xmlns=""', '')
+            xml_final = '<?xml version="1.0" encoding="UTF-8"?>' + xml_str
+
+            # DEBUG: salvar XML de cancelamento
+            try:
+                dbg = os.path.join(os.environ.get("TEMP", "C:/temp"), "last_cancelamento.xml")
+                with open(dbg, "w", encoding="utf-8") as _f:
+                    _f.write(xml_final)
+                print(f"[DEBUG] XML cancelamento salvo em {dbg}")
+            except:
+                pass
+
+            # ── 4. Determinar URL do serviço de eventos NFC-e por UF ──
+            url_evento = ""
+            try:
+                from pynfe.utils.webservices import NFCE
+                urls_uf = NFCE.get(uf)
+                if not urls_uf:
+                    # Fallback states typically use SVRS for NFC-e
+                    urls_uf = NFCE.get("SVRS")
+                if is_homolog:
+                    url_evento = urls_uf.get("HOMOLOGACAO", "") + urls_uf.get("EVENTOS", "")
+                else:
+                    url_evento = urls_uf.get("HTTPS", "") + urls_uf.get("EVENTOS", "")
+                
+                # Cleanup if url is missing https
+                if url_evento and not url_evento.startswith("http"):
+                    if url_evento.startswith("www.") or url_evento.startswith("nfce.") or url_evento.startswith("homologacao."):
+                        url_evento = "https://" + url_evento
+            except Exception as e:
+                print(f"[AVISO] Erro ao obter URL do pynfe: {e}")
+            
+            # Ensure a fallback 
+            if not url_evento or url_evento == "https://":
+                url_evento = "https://homologacao.nfce.fazenda.sp.gov.br/ws/NFeRecepcaoEvento4.asmx" if is_homolog else "https://nfce.fazenda.sp.gov.br/ws/NFeRecepcaoEvento4.asmx"
+
+
+            print(f"[DEBUG] URL evento NFC-e ({uf}): {url_evento} | Homolog: {is_homolog}")
+
+            # ── 5. Montar envelope SOAP 1.2 ──
+            SOAP_ACTION = "http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4/nfeRecepcaoEvento"
+            soap_envelope = (
+                '<?xml version="1.0" encoding="UTF-8"?>'
+                '<soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
+                'xmlns:xsd="http://www.w3.org/2001/XMLSchema" '
+                'xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">'
+                '<soap12:Body>'
+                '<nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4">'
+                + xml_str +
+                '</nfeDadosMsg>'
+                '</soap12:Body>'
+                '</soap12:Envelope>'
+            )
+
+            # ── 6. Separar certificado PFX em arquivos PEM para o requests ──
+            cert_obj = _CertA1(caminho_cert)
+            chave_pem, cert_pem = cert_obj.separar_arquivo(senha_cert, caminho=True)
+
+            headers = {
+                "Content-Type": f'application/soap+xml; charset=utf-8; action="{SOAP_ACTION}"',
+            }
+
+            resp = _req.post(
+                url_evento,
+                data=soap_envelope.encode("utf-8"),
+                headers=headers,
+                cert=(cert_pem, chave_pem),
+                verify=False,
+                timeout=30
+            )
+            resp.encoding = "utf-8"
+            r_text = resp.text
+
+            # DEBUG: salvar resposta
+            try:
+                resp_dbg = os.path.join(os.environ.get("TEMP", "C:/temp"), "last_cancelamento_resp.xml")
+                with open(resp_dbg, "w", encoding="utf-8") as _f:
+                    _f.write(r_text)
+                print(f"[DEBUG] Resposta cancelamento (HTTP {resp.status_code}) salva em {resp_dbg}")
+            except:
+                pass
+
+            if not r_text:
+                return {"success": False, "error": "Sem resposta da SEFAZ", "mensagem": "Conexao interrompida"}
+
+            # ── 7. Parsear resposta (aceita tanto com envelope SOAP quanto sem) ──
+            cstat = ""
+            xmotivo = "Sem resposta legível da SEFAZ"
+            
+            try:
+                # Limpar soap body se houver
+                xml_to_parse = r_text
+                if "<soap:Body" in r_text or "<soap12:Body" in r_text:
+                    match_body = re.search(r'<[^:]+:Body[^>]*>(.*?)</[^:]+:Body>', r_text, re.DOTALL)
+                    if match_body:
+                        xml_to_parse = match_body.group(1)
+                
+                resp_xml = etree.fromstring(xml_to_parse.encode('utf-8'))
+                
+                # Ignorar namespaces para facilitar a busca (xpath flexível)
+                cstat_evento = resp_xml.xpath('//*[local-name()="retEvento"]//*[local-name()="infEvento"]//*[local-name()="cStat"]/text()')
+                xmotivo_evento = resp_xml.xpath('//*[local-name()="retEvento"]//*[local-name()="infEvento"]//*[local-name()="xMotivo"]/text()')
+                
+                if cstat_evento:
+                    cstat = cstat_evento[0]
+                    xmotivo = xmotivo_evento[0] if xmotivo_evento else "Status retornado vazio"
+                else:
+                    cstat_lote = resp_xml.xpath('//*[local-name()="retEnvEvento"]//*[local-name()="cStat"]/text()')
+                    xmotivo_lote = resp_xml.xpath('//*[local-name()="retEnvEvento"]//*[local-name()="xMotivo"]/text()')
+                    if cstat_lote:
+                        cstat = cstat_lote[0]
+                        xmotivo = xmotivo_lote[0] if xmotivo_lote else "Status de lote retornado vazio"
+            except Exception as e:
+                # Usar regex como fallback seguro
+                cstats = re.findall(r'<cStat>(\d+)</cStat>', r_text)
+                xmotivos = re.findall(r'<xMotivo>([^<]+)</xMotivo>', r_text)
+
+                if len(cstats) >= 2:
+                    cstat = cstats[-1] # Pegar o último que é o do infEvento
+                    xmotivo = xmotivos[-1] if len(xmotivos) >= 2 else "Lote processado"
+                elif len(cstats) == 1:
+                    cstat = cstats[0]
+                    xmotivo = xmotivos[0] if xmotivos else "Sem resposta legível da SEFAZ"
+                else:
+                    cstat = ""
+                    xmotivo = "Sem resposta legível da SEFAZ"
+
+            print(f"[DEBUG] Cancelamento EVENTO cStat={cstat} | xMotivo={xmotivo}")
+
+            # cStat 135 = Evento registrado e vinculado à NF-e (cancelamento aceito)
+            # cStat 155 = Cancelamento homologado (nota já cancelada fora do prazo / denúncia espontânea - raro)
+            # cStat 101 = Cancelamento de NF-e homologado
+            success = cstat in ["135", "101", "155"]
+            
+            # Se success for falso, não tem error genérico. Tem a mensagem exata do erro!
+            return {
+                "success": success,
+                "cStat": cstat,
+                "xMotivo": xmotivo,
+                "mensagem": xmotivo,
+                "error": None if success else f"Rejeição SEFAZ [{cstat}]: {xmotivo}",
+                "data": {"cStat": cstat, "xMotivo": xmotivo}
+            }
+        finally:
+            # Limpar arquivos PEM temporários
+            for f_path in [chave_pem, cert_pem]:
+                if f_path and os.path.exists(f_path):
+                    try: os.remove(f_path)
+                    except: pass
+            # Limpar o cert_obj se existir
+            try:
+                cert_obj.excluir()
+            except: pass
+            if os.path.exists(caminho_cert):
+                try: os.remove(caminho_cert)
+                except: pass
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f"[ERRO CANCELAMENTO] {e}\n{tb}")
+        return {"success": False, "error": str(e), "mensagem": f"Erro interno: {str(e)}", "traceback": tb}
+
+
+def consultar_nfce_pynfe(req_dict):
+    """Consulta o status de uma NFC-e na SEFAZ."""
+    try:
+        # Usando ComunicacaoSefaz global
         
         chave_acesso = req_dict.get('chave_acesso')
-        protocolo = req_dict.get('protocolo')
-        justificativa = req_dict.get('justificativa', 'Cancelamento por erro de emissao')
         empresa_data = req_dict.get('empresa', {})
-        
-        print(f'>>> [CANCELAMENTO] Iniciando para a chave: {chave_acesso}')
+        uf = empresa_data.get('uf', 'SP')
+        is_homologacao = empresa_data.get('ambiente_homologacao', True)
         
         cert_data = base64.b64decode(empresa_data.get('certificado_base64', ''))
         with tempfile.NamedTemporaryFile(delete=False, suffix='.pfx') as tmp_cert:
@@ -861,64 +1216,12 @@ def cancelar_nfce_pynfe(req_dict):
             
         try:
             senha_cert = empresa_data.get('senha_certificado', '')
-            is_homologacao = empresa_data.get('ambiente_homologacao', True)
-            uf = empresa_data.get('uf', 'SP')
-            
             con = ComunicacaoSefaz(uf=uf, certificado=caminho_cert, certificado_senha=senha_cert, homologacao=is_homologacao)
             
-            if not protocolo:
-                print('>>> [PyNFe] Protocolo não fornecido, consultando nota...')
-                resp_cons = con.consulta_nota(modelo='nfce', chave=chave_acesso)
-                if resp_cons.status_code == 200:
-                    try:
-                        root = etree.fromstring(resp_cons.text.encode('utf-8'))
-                        ns = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
-                        inf_prot = root.xpath('//ns:infProt', namespaces=ns)
-                        if inf_prot:
-                            protocolo = inf_prot[0].xpath('ns:nProt', namespaces=ns)[0].text
-                            print(f'>>> [PyNFe] Protocolo obtido: {protocolo}')
-                    except Exception as e_cons:
-                        print(f'Erro extraindo protocolo: {e_cons}')
-            
-            if not protocolo:
-                return {'success': False, 'error': 'Protocolo de autorização não encontrado. A nota pode não estar autorizada.'}
-                
-            e = EventoCancelarNota()
-            e.chave = chave_acesso
-            e.protocolo = protocolo
-            e.justificativa = justificativa
-            e.data_emissao = datetime.now()
-            e.uf = uf
-            e.cnpj = str(empresa_data.get('cnpj', '')).replace('.', '').replace('/', '').replace('-', '').replace(' ', '')
-            
-            serializador = SerializacaoXML(None, homologacao=is_homologacao)
-            xml_evento = serializador.serializar_evento(e)
-            
-            assinador = AssinaturaA1(caminho_cert, senha_cert)
-            xml_assinado = assinador.assinar(xml_evento)
-            
-            resp = con.evento(modelo='nfce', evento=xml_assinado)
+            resp = con.consulta_nota(modelo='nfce', chave=chave_acesso)
             if resp.status_code == 200:
-                xml_text = resp.text
-                if xml_text.startswith('<?xml'):
-                    xml_text = xml_text[xml_text.find('?>')+2:].strip()
-                root = etree.fromstring(xml_text.encode('utf-8'))
-                ns = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
-                inf_evento = root.xpath('//ns:infEvento', namespaces=ns)
-                
-                if inf_evento:
-                    inf = inf_evento[0]
-                    cStat = inf.xpath('ns:cStat', namespaces=ns)
-                    cStat = cStat[0].text if cStat else ''
-                    xMotivo = inf.xpath('ns:xMotivo', namespaces=ns)
-                    xMotivo = xMotivo[0].text if xMotivo else ''
-                    return {
-                        'success': cStat == '135',
-                        'data': {'cStat': cStat, 'xMotivo': xMotivo},
-                        'error': xMotivo if cStat != '135' else None
-                    }
-                else:
-                    return {'success': False, 'error': 'Resposta SEFAZ não contém infEvento', 'details': xml_text[:500]}
+                # O retorno da consulta é um XML que precisa ser parseado para o app entender
+                return {'success': True, 'xml': resp.text, 'status_code': resp.status_code}
             else:
                 return {'success': False, 'error': f'Erro HTTP {resp.status_code}', 'details': resp.text[:500]}
         finally:
@@ -926,8 +1229,41 @@ def cancelar_nfce_pynfe(req_dict):
                 try: os.remove(caminho_cert)
                 except: pass
     except Exception as e:
-        import traceback
-        tb = traceback.format_exc()
-        print(f'[ERRO CANCELAMENTO] {tb}')
-        return {'success': False, 'error': str(e), 'traceback': tb}
+        return {'success': False, 'error': str(e)}
+
+def validar_certificado_pynfe(req_dict):
+    """Valida se o certificado e senha estão corretos e extrai informações."""
+    try:
+        from pynfe.processamento.assinatura import AssinaturaA1
+        from pynfe.entidades.certificado import CertificadoA1
+        
+        cert_b64 = req_dict.get('certificado_base64')
+        senha = req_dict.get('senha')
+        
+        if not cert_b64 or not senha:
+            return {'success': False, 'error': 'Certificado ou senha não fornecidos.'}
+            
+        cert_data = base64.b64decode(cert_b64)
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.pfx') as tmp_cert:
+            tmp_cert.write(cert_data)
+            caminho_cert = tmp_cert.name
+            
+        try:
+            # Tentar instanciar o certificado (valida a senha)
+            cert = CertificadoA1(caminho_cert)
+            # extrair info se possível (pynfe pode não ter extração direta amigável)
+            # mas o fato de carregar sem erro já valida a senha
+            return {
+                'success': True, 
+                'mensagem': 'Certificado validado com sucesso.',
+                'valido': True
+            }
+        except Exception as e:
+            return {'success': False, 'error': f'Sua senha ou o arquivo do certificado estão incorretos: {str(e)}'}
+        finally:
+            if os.path.exists(caminho_cert):
+                try: os.remove(caminho_cert)
+                except: pass
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
 

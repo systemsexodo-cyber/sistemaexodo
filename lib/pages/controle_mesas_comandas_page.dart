@@ -21,7 +21,14 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
   String _filtroStatus = 'Todas'; // Todas, Abertas, Fechadas
   String _filtroSetor = 'Todos'; // Todos, Cozinha, Bar
   MesaComanda? _mesaComandaSelecionada;
+  String _termoBusca = '';
+  final _buscaController = TextEditingController();
 
+  @override
+  void dispose() {
+    _buscaController.dispose();
+    super.dispose();
+  }
   @override
   Widget build(BuildContext context) {
     final dataService = Provider.of<DataService>(context, listen: true);
@@ -29,167 +36,172 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
     // Por enquanto, vamos usar uma lista em memória (depois integrar com DataService)
     // TODO: Adicionar gerenciamento de mesas/comandas no DataService
     
-    return Scaffold(
-      backgroundColor: const Color(0xFF0F0F1E),
-      body: Column(
-        children: [
-          _buildHeader(),
-          _buildFiltros(),
-          Expanded(
-            child: _mesaComandaSelecionada != null
-                ? _buildDetalhesMesaComanda(_mesaComandaSelecionada!, dataService)
-                : _buildListaMesasComandas(dataService),
-          ),
-        ],
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _abrirNovaMesaComanda(context, dataService),
-        icon: const Icon(Icons.add),
-        label: Text(_tipoSelecionado == TipoControle.mesa ? 'Nova Mesa' : 'Nova Comanda'),
-        backgroundColor: Colors.orange,
-      ),
-    );
-  }
-
-  Widget _buildHeader() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1E1E2E),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.3),
-            blurRadius: 4,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.table_restaurant, color: Colors.orange, size: 28),
-          const SizedBox(width: 12),
-          const Text(
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        backgroundColor: const Color(0xFF0F0F1E),
+        appBar: AppBar(
+          backgroundColor: const Color(0xFF1E1E2E),
+          elevation: 0,
+          title: const Text(
             'Controle de Mesas e Comandas',
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
-            ),
+            style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
           ),
-          const Spacer(),
-          // Toggle entre Mesa e Comanda
-          Container(
-            decoration: BoxDecoration(
-              color: const Color(0xFF2A2A3E),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _buildToggleButton(
-                  'Mesa',
-                  TipoControle.mesa,
-                  Icons.table_restaurant,
-                ),
-                _buildToggleButton(
-                  'Comanda',
-                  TipoControle.comanda,
-                  Icons.receipt_long,
-                ),
-              ],
-            ),
+          bottom: TabBar(
+            onTap: (index) {
+              setState(() {
+                _tipoSelecionado = index == 0 ? TipoControle.mesa : TipoControle.comanda;
+                _mesaComandaSelecionada = null;
+              });
+            },
+            indicatorColor: Colors.orange,
+            labelColor: Colors.orange,
+            unselectedLabelColor: Colors.grey,
+            tabs: const [
+              Tab(
+                icon: Icon(Icons.table_restaurant),
+                text: 'MESAS',
+              ),
+              Tab(
+                icon: Icon(Icons.receipt_long),
+                text: 'COMANDAS',
+              ),
+            ],
           ),
-        ],
+        ),
+        body: _mesaComandaSelecionada != null
+            ? _buildDetalhesMesaComanda(_mesaComandaSelecionada!, dataService)
+            : Column(
+                children: [
+                  _buildFiltros(),
+                  Expanded(
+                    child: _buildMapaInteligente(dataService),
+                  ),
+                ],
+              ),
+        floatingActionButton: FloatingActionButton.extended(
+          onPressed: () => _abrirNovaMesaComanda(context, dataService),
+          icon: const Icon(Icons.add),
+          label: Text(_tipoSelecionado == TipoControle.mesa ? 'Nova Mesa' : 'Nova Comanda'),
+          backgroundColor: _tipoSelecionado == TipoControle.mesa ? Colors.orange : Colors.purple,
+        ),
       ),
     );
   }
 
-  Widget _buildToggleButton(String label, TipoControle tipo, IconData icon) {
-    final isSelected = _tipoSelecionado == tipo;
-    return GestureDetector(
-      onTap: () {
-        setState(() {
-          _tipoSelecionado = tipo;
-          _mesaComandaSelecionada = null; // Limpar seleção ao trocar tipo
-        });
-      },
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        decoration: BoxDecoration(
-          color: isSelected ? Colors.orange : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, color: isSelected ? Colors.white : Colors.grey, size: 18),
-            const SizedBox(width: 6),
-            Text(
-              label,
-              style: TextStyle(
-                color: isSelected ? Colors.white : Colors.grey,
-                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  // Removido _buildHeader pois agora usamos AppBar com TabBar
 
   Widget _buildFiltros() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      color: const Color(0xFF1A1A2E),
-      child: Row(
+      padding: const EdgeInsets.all(16),
+      color: const Color(0xFF1E1E2E),
+      child: Column(
         children: [
-          // Filtro de Status
-          Expanded(
-            child: DropdownButton<String>(
-              value: _filtroStatus,
-              isExpanded: true,
-              dropdownColor: const Color(0xFF2A2A3E),
-              style: const TextStyle(color: Colors.white),
-              items: ['Todas', 'Abertas', 'Fechadas']
-                  .map((status) => DropdownMenuItem(
-                        value: status,
-                        child: Text(status),
-                      ))
-                  .toList(),
-              onChanged: (value) {
-                setState(() {
-                  _filtroStatus = value!;
-                });
-              },
+          // Barra de Busca
+          TextField(
+            controller: _buscaController,
+            onChanged: (value) {
+              setState(() {
+                _termoBusca = value.toLowerCase();
+              });
+            },
+            style: const TextStyle(color: Colors.white),
+            decoration: InputDecoration(
+              hintText: 'Buscar mesa ou comanda...',
+              hintStyle: const TextStyle(color: Colors.grey),
+              prefixIcon: const Icon(Icons.search, color: Colors.orange),
+              suffixIcon: _termoBusca.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.clear, color: Colors.grey),
+                      onPressed: () {
+                        _buscaController.clear();
+                        setState(() {
+                          _termoBusca = '';
+                        });
+                      },
+                    )
+                  : null,
+              filled: true,
+              fillColor: const Color(0xFF2A2A3E),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide.none,
+              ),
+              contentPadding: const EdgeInsets.symmetric(vertical: 0),
             ),
           ),
-          const SizedBox(width: 12),
-          // Filtro de Setor
-          Expanded(
-            child: DropdownButton<String>(
-              value: _filtroSetor,
-              isExpanded: true,
-              dropdownColor: const Color(0xFF2A2A3E),
-              style: const TextStyle(color: Colors.white),
-              items: ['Todos', 'Cozinha', 'Bar']
-                  .map((setor) => DropdownMenuItem(
-                        value: setor,
-                        child: Text(setor),
-                      ))
-                  .toList(),
-              onChanged: (value) {
-                setState(() {
-                  _filtroSetor = value!;
-                });
-              },
-            ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              // Filtro de Status
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF2A2A3E),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      value: _filtroStatus,
+                      isExpanded: true,
+                      dropdownColor: const Color(0xFF2A2A3E),
+                      style: const TextStyle(color: Colors.white),
+                      icon: const Icon(Icons.filter_list, color: Colors.orange, size: 18),
+                      items: ['Todas', 'Abertas', 'Fechadas']
+                          .map((status) => DropdownMenuItem(
+                                value: status,
+                                child: Text(status),
+                              ))
+                          .toList(),
+                      onChanged: (value) {
+                        setState(() {
+                          _filtroStatus = value!;
+                        });
+                      },
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              // Filtro de Setor
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF2A2A3E),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      value: _filtroSetor,
+                      isExpanded: true,
+                      dropdownColor: const Color(0xFF2A2A3E),
+                      style: const TextStyle(color: Colors.white),
+                      icon: const Icon(Icons.restaurant_menu, color: Colors.orange, size: 18),
+                      items: ['Todos', 'Cozinha', 'Bar']
+                          .map((setor) => DropdownMenuItem(
+                                value: setor,
+                                child: Text(setor),
+                              ))
+                          .toList(),
+                      onChanged: (value) {
+                        setState(() {
+                          _filtroSetor = value!;
+                        });
+                      },
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),
     );
   }
 
-  Widget _buildListaMesasComandas(DataService dataService) {
+  Widget _buildMapaInteligente(DataService dataService) {
     // Buscar mesas/comandas do DataService
     final todasMesasComandas = dataService.mesasComandas;
     
@@ -210,11 +222,25 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
       mesasComandas = mesasComandas.where((m) => m.itensBar.isNotEmpty).toList();
     }
     
-    // Ordenar: abertas primeiro, depois por data de abertura (mais recente primeiro)
+    // Filtrar por busca
+    if (_termoBusca.isNotEmpty) {
+      mesasComandas = mesasComandas.where((m) {
+        return m.numero.toLowerCase().contains(_termoBusca) ||
+               (m.clienteNome?.toLowerCase().contains(_termoBusca) ?? false);
+      }).toList();
+    }
+    
+    // Ordenar: abertas primeiro, depois por número
     mesasComandas.sort((a, b) {
       if (a.status == 'Aberta' && b.status != 'Aberta') return -1;
       if (a.status != 'Aberta' && b.status == 'Aberta') return 1;
-      return b.dataAbertura.compareTo(a.dataAbertura);
+      
+      // Tentar ordenar numericamente se possível
+      final numA = int.tryParse(a.numero.replaceAll(RegExp(r'[^0-9]'), '')) ?? 1000000;
+      final numB = int.tryParse(b.numero.replaceAll(RegExp(r'[^0-9]'), '')) ?? 1000000;
+      if (numA != numB) return numA.compareTo(numB);
+      
+      return a.numero.compareTo(b.numero);
     });
     
     if (mesasComandas.isEmpty) {
@@ -231,18 +257,10 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
             ),
             const SizedBox(height: 16),
             Text(
-              'Nenhuma ${_tipoSelecionado == TipoControle.mesa ? "mesa" : "comanda"} aberta',
+              'Nenhuma ${_tipoSelecionado == TipoControle.mesa ? "mesa" : "comanda"} encontrada',
               style: TextStyle(
                 fontSize: 18,
                 color: Colors.grey.withOpacity(0.7),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Toque no botão + para criar uma nova',
-              style: TextStyle(
-                fontSize: 14,
-                color: Colors.grey.withOpacity(0.5),
               ),
             ),
           ],
@@ -250,13 +268,141 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
       );
     }
 
-    return ListView.builder(
+    // Tanto Mesa quanto Comanda agora usam GridView (Quadros)
+    return GridView.builder(
       padding: const EdgeInsets.all(16),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        childAspectRatio: 1.1,
+        crossAxisSpacing: 16,
+        mainAxisSpacing: 16,
+      ),
       itemCount: mesasComandas.length,
       itemBuilder: (context, index) {
-        final mesaComanda = mesasComandas[index];
-        return _buildCardMesaComanda(mesaComanda);
+        return _buildQuadroMesaComanda(mesasComandas[index]);
       },
+    );
+  }
+
+  Widget _buildQuadroMesaComanda(MesaComanda mesaComanda) {
+    final temPendentes = mesaComanda.temItensPendentes;
+    final temProntos = mesaComanda.temItensProntos;
+    final total = mesaComanda.totalCalculado;
+    final isComanda = mesaComanda.tipo == TipoControle.comanda;
+    
+    // Coleta status para cor de fundo inteligente
+    Color accentColor = isComanda ? Colors.purpleAccent : Colors.orange;
+    
+    if (temPendentes) {
+      accentColor = Colors.redAccent;
+    } else if (temProntos) {
+      accentColor = Colors.greenAccent;
+    }
+
+    return Card(
+      elevation: 4,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      color: const Color(0xFF1E1E2E),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () {
+          setState(() {
+            _mesaComandaSelecionada = mesaComanda;
+          });
+        },
+        child: Stack(
+          children: [
+            // Faixa lateral de status
+            Positioned(
+              left: 0,
+              top: 0,
+              bottom: 0,
+              width: 6,
+              child: Container(color: accentColor),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        isComanda ? 'Comanda' : 'Mesa',
+                        style: TextStyle(
+                          color: Colors.grey[400],
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      if (temPendentes)
+                        const Icon(Icons.priority_high, color: Colors.redAccent, size: 16),
+                      if (!temPendentes && temProntos)
+                        const Icon(Icons.check_circle, color: Colors.greenAccent, size: 16),
+                    ],
+                  ),
+                  const SizedBox(height: 2),
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      mesaComanda.numero,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  const Spacer(),
+                  if (mesaComanda.clienteNome != null)
+                    Text(
+                      mesaComanda.clienteNome!,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: Colors.grey[500], fontSize: 13),
+                    ),
+                  const SizedBox(height: 4),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        '${mesaComanda.itens.length} itens',
+                        style: TextStyle(color: Colors.grey[400], fontSize: 11),
+                      ),
+                      Text(
+                        NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(total),
+                        style: TextStyle(
+                          color: accentColor,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            // Badge de itens prontos no canto superior direito
+            if (temProntos)
+              Positioned(
+                right: 8,
+                top: 8,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.greenAccent,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    '${mesaComanda.itensProntos.length}',
+                    style: const TextStyle(color: Colors.black, fontSize: 10, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
     );
   }
 

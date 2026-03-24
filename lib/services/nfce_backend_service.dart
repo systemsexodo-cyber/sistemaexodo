@@ -538,7 +538,7 @@ class NFCeBackendService implements NFCeServiceBase {
         final data = snapshot.data() as Map<String, dynamic>;
         final status = data['status'];
 
-        if (status == 'autorizada') {
+        if (status == 'autorizada' || status == 'sucesso') {
           subscription?.cancel();
           final resultado = data['resultado'] as Map<String, dynamic>?;
 
@@ -633,14 +633,23 @@ class NFCeBackendService implements NFCeServiceBase {
     String? justificativa,
   }) async {
     try {
-      if (baseUrl.isEmpty) {
-        return {
-          'success': false,
-          'message': 'Configuração do Bridge (Link) não encontrada. O cancelamento requer o Bridge.',
-        };
+      final bool isWebHttp = kIsWeb && (baseUrl.startsWith('http://') || baseUrl.contains('localhost'));
+      
+      final bool usarFirebase = baseUrl.isEmpty || 
+          baseUrl.contains('firebase') || 
+          isWebHttp ||
+          (empresa.configuracoes?['usarFirebaseBridge'] == true);
+
+      if (usarFirebase) {
+        debugPrint('>>> [NFCeBackend] Cancelando via FIREBASE (Relay)...');
+        return await cancelarNFCeViaFirebase(
+          nfce: nfce,
+          empresa: empresa,
+          justificativa: justificativa,
+        );
       }
 
-      debugPrint('>>> [NFCeBackend] Cancelando NFC-e: ${nfce.numero}');
+      debugPrint('>>> [NFCeBackend] Cancelando NFC-e (Link Direto): ${nfce.numero}');
       
       final apiKey = empresa.configuracoes?['bridgeNfceKey'] as String? ?? '';
       
@@ -686,7 +695,7 @@ class NFCeBackendService implements NFCeServiceBase {
       
       debugPrint('>>> [NFCeBackend] Status: ${response.statusCode}');
       
-      if (response.body.isEmpty) {
+      if (response.body.trim().isEmpty) {
         return {
           'success': false,
           'message': 'Erro ao conectar com o Bridge: Resposta vazia do servidor (Status: ${response.statusCode}).',
@@ -707,16 +716,8 @@ class NFCeBackendService implements NFCeServiceBase {
       if (response.statusCode == 200 && decoded['success'] == true) {
         debugPrint('>>> [NFCeBackend] ✅ NFC-e cancelada com sucesso na SEFAZ.');
         
-        // Atualizar status no Firestore
-        await FirebaseFirestore.instance
-            .collection('empresas')
-            .doc(empresa.id)
-            .collection('nfces')
-            .doc(nfce.id)
-            .update({
-          'status': 'cancelada',
-          'updatedAt': DateTime.now().toIso8601String(),
-        });
+        // O status será atualizado pelo DataService após o retorno desta função
+        debugPrint('>>> [NFCeBackend] SEFAZ retornou sucesso. Retornando ao chamador para atualizar estado local/Firebase.');
         
         return {
           'success': true,
@@ -736,6 +737,113 @@ class NFCeBackendService implements NFCeServiceBase {
       return {
         'success': false,
         'message': 'Erro ao conectar com o Bridge: $e',
+      };
+    }
+  }
+
+  /// Cancela uma NFC-e via Firebase (Relay)
+  Future<Map<String, dynamic>> cancelarNFCeViaFirebase({
+    required NFCe nfce,
+    required Empresa empresa,
+    String? justificativa,
+  }) async {
+    try {
+      final String justificativaFinal = justificativa ?? 'Cancelamento por erro de emissao ou devolucao de mercadoria';
+      
+      // Obter certificado de múltiplas fontes para garantir compatibilidade
+      String? certBytes = empresa.configuracoes?['certificadoDigitalBytes'];
+      if (certBytes == null || certBytes.isEmpty) {
+        if (empresa.certificadoDigitalUrl != null && empresa.certificadoDigitalUrl!.isNotEmpty) {
+           final url = empresa.certificadoDigitalUrl!;
+           if (url.startsWith('base64:')) {
+             certBytes = url.replaceFirst('base64:', '');
+           }
+        }
+      }
+
+      final requestData = {
+        'operacao': 'cancelamento',
+        'status': 'pendente',
+        'created_at': FieldValue.serverTimestamp(),
+        'empresa_id': empresa.id,
+        'chave_acesso': nfce.chaveAcesso,
+        'protocolo': nfce.protocolo,
+        'justificativa': justificativaFinal,
+        'empresa': {
+          'razao_social': empresa.razaoSocial,
+          'cnpj': empresa.cnpj,
+          'inscricao_estadual': empresa.inscricaoEstadual,
+          'certificado_base64': certBytes ?? '',
+          'senha_certificado': empresa.configuracoes?['certificadoDigitalSenha'] ?? empresa.senhaCertificado ?? '',
+          'uf': empresa.estado ?? 'SP',
+          'ambiente_homologacao': empresa.configuracoes?['nfceAmbiente'] == '2',
+        }
+      };
+
+      // Criar documento no Firestore
+      final docRef = await FirebaseFirestore.instance
+          .collection('nfce_requests')
+          .add(requestData);
+
+      debugPrint('>>> [NFCeFirebase] Cancelamento enviado: ${docRef.id}. Aguardando Bridge (60s)...');
+
+      // Listen para o resultado
+      final completer = Completer<Map<String, dynamic>>();
+      StreamSubscription? subscription;
+
+      Timer(const Duration(seconds: 60), () {
+        if (!completer.isCompleted) {
+          subscription?.cancel();
+          docRef.update({'status': 'expirado'}).catchError((_) {});
+          completer.complete({
+            'success': false,
+            'message': 'O Emissor NFC-e demorou demais para responder ao cancelamento (60s).',
+          });
+        }
+      });
+
+      subscription = docRef.snapshots().listen((snapshot) {
+        if (!snapshot.exists) return;
+
+        final data = snapshot.data() as Map<String, dynamic>;
+        final status = data['status'];
+
+        if (status == 'autorizada' || status == 'sucesso') {
+          subscription?.cancel();
+          final resultado = data['resultado'] as Map<String, dynamic>?;
+          
+          // No caso de cancelamento, a Bridge marca como 'autorizada' se teve sucesso na SEFAZ
+          if (!completer.isCompleted) {
+            completer.complete({
+              'success': true,
+              'message': resultado?['data']?['xMotivo'] ?? 'NFC-e cancelada com sucesso.',
+              'data': resultado?['data'],
+            });
+            
+            // O status será atualizado pelo DataService
+          }
+        } else if (status == 'erro') {
+          subscription?.cancel();
+          final resultado = data['resultado'] as Map<String, dynamic>?;
+          final mensagem = resultado != null
+              ? (resultado['mensagem'] ?? resultado['error'] ?? 'Erro desconhecido')
+              : 'Erro desconhecido no processamento.';
+          if (!completer.isCompleted) {
+            completer.complete({
+              'success': false,
+              'message': mensagem,
+              'details': resultado?['details'],
+            });
+          }
+        }
+      });
+
+      return await completer.future;
+    } catch (e) {
+      debugPrint('>>> [NFCeFirebase] ❌ ERRO no cancelamento: $e');
+      return {
+        'success': false,
+        'message': 'Erro ao solicitar cancelamento via Firebase: $e',
       };
     }
   }

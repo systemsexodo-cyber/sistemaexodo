@@ -741,31 +741,40 @@ class PedidoPDFService {
       final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
       final formatoData = DateFormat('dd/MM/yyyy HH:mm');
 
+      // Configurações de impressão dinâmicas
+      final config = empresa.configuracoes ?? {};
+      final double larguraBobina = config['comandaLarguraBobina']?.toDouble() ?? 80.0;
+      final double margemH = config['comandaMargemH']?.toDouble() ?? 5.0;
+      final double margemV = config['comandaMargemV']?.toDouble() ?? 5.0;
+      final double fontSizeTitulo = config['comandaFonteTitulo']?.toDouble() ?? 10.0;
+      final double fontSizeCorpo = config['comandaFonteCorpo']?.toDouble() ?? 8.0;
+      final bool usarNegrito = config['comandaNegrito'] ?? true;
+
       pdf.addPage(
         pw.Page(
-          pageFormat: const PdfPageFormat(80 * 2.83465, 297 * 2.83465), // 80mm x 297mm (térmica)
-          margin: const pw.EdgeInsets.symmetric(horizontal: 5, vertical: 5),
+          pageFormat: PdfPageFormat(larguraBobina * 2.83465, 297 * 2.83465),
+          margin: pw.EdgeInsets.symmetric(horizontal: margemH, vertical: margemV),
           build: (pw.Context context) {
             return pw.Column(
               crossAxisAlignment: pw.CrossAxisAlignment.center,
               children: [
-                _buildCabecalhoTermico(empresa),
+                _buildCabecalhoTermico(empresa, fontSizeTitulo, fontSizeCorpo, usarNegrito),
                 pw.SizedBox(height: 8),
-                _buildDadosPedidoTermico(pedido, formatoData),
+                _buildDadosPedidoTermico(pedido, formatoData, fontSizeCorpo, usarNegrito),
                 pw.SizedBox(height: 8),
-                _buildClienteTermico(pedido),
+                _buildClienteTermico(pedido, fontSizeCorpo),
                 pw.SizedBox(height: 8),
-                _buildItensTermico(pedido, formatoMoeda),
+                _buildItensTermico(pedido, formatoMoeda, fontSizeCorpo, usarNegrito),
                 pw.SizedBox(height: 8),
-                _buildTotalTermico(pedido, formatoMoeda),
+                _buildTotalTermico(pedido, formatoMoeda, fontSizeCorpo),
                 pw.SizedBox(height: 8),
-                _buildPagamentosTermico(pedido, formatoMoeda),
+                _buildPagamentosTermico(pedido, formatoMoeda, fontSizeCorpo),
                 if (pedido.observacoes != null && pedido.observacoes!.isNotEmpty) ...[
                   pw.SizedBox(height: 8),
-                  _buildObservacoesTermico(pedido),
+                  _buildObservacoesTermico(pedido, fontSizeCorpo),
                 ],
                 pw.SizedBox(height: 8),
-                _buildRodapeTermico(empresa, formatoData),
+                _buildRodapeTermico(empresa, formatoData, fontSizeCorpo),
               ],
             );
           },
@@ -779,14 +788,14 @@ class PedidoPDFService {
   }
 
   /// Constrói cabeçalho do pedido térmico
-  static pw.Widget _buildCabecalhoTermico(Empresa empresa) {
+  static pw.Widget _buildCabecalhoTermico(Empresa empresa, double fontSizeTitulo, double fontSizeCorpo, bool usarNegrito) {
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.center,
       children: [
         pw.Text(
           'PEDIDO',
           style: pw.TextStyle(
-            fontSize: 10,
+            fontSize: fontSizeTitulo,
             fontWeight: pw.FontWeight.bold,
           ),
           textAlign: pw.TextAlign.center,
@@ -797,8 +806,8 @@ class PedidoPDFService {
         pw.Text(
           empresa.nomeExibicao,
           style: pw.TextStyle(
-            fontSize: 12,
-            fontWeight: pw.FontWeight.bold,
+            fontSize: fontSizeTitulo + 2,
+            fontWeight: usarNegrito ? pw.FontWeight.bold : pw.FontWeight.normal,
           ),
           textAlign: pw.TextAlign.center,
         ),
@@ -806,7 +815,7 @@ class PedidoPDFService {
           pw.SizedBox(height: 3),
           pw.Text(
             'CNPJ: ${_formatarCNPJ(empresa.cnpj!)}',
-            style: const pw.TextStyle(fontSize: 7),
+            style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
             textAlign: pw.TextAlign.center,
           ),
         ],
@@ -814,21 +823,21 @@ class PedidoPDFService {
           pw.SizedBox(height: 2),
           pw.Text(
             empresa.endereco!,
-            style: const pw.TextStyle(fontSize: 7),
+            style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
             textAlign: pw.TextAlign.center,
           ),
         ],
         if (empresa.numero != null && empresa.numero!.isNotEmpty) ...[
           pw.Text(
             'Nº ${empresa.numero}',
-            style: const pw.TextStyle(fontSize: 7),
+            style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
             textAlign: pw.TextAlign.center,
           ),
         ],
         if (empresa.bairro != null && empresa.bairro!.isNotEmpty) ...[
           pw.Text(
             empresa.bairro!,
-            style: const pw.TextStyle(fontSize: 7),
+            style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
             textAlign: pw.TextAlign.center,
           ),
         ],
@@ -837,7 +846,7 @@ class PedidoPDFService {
             empresa.estado != null && empresa.estado!.isNotEmpty
                 ? '${empresa.cidade} - ${empresa.estado}'
                 : empresa.cidade!,
-            style: const pw.TextStyle(fontSize: 7),
+            style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
             textAlign: pw.TextAlign.center,
           ),
         ],
@@ -845,7 +854,7 @@ class PedidoPDFService {
           pw.SizedBox(height: 2),
           pw.Text(
             'Tel: ${empresa.telefone}',
-            style: const pw.TextStyle(fontSize: 7),
+            style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
             textAlign: pw.TextAlign.center,
           ),
         ],
@@ -856,14 +865,14 @@ class PedidoPDFService {
   }
 
   /// Constrói dados do pedido térmico
-  static pw.Widget _buildDadosPedidoTermico(Pedido pedido, DateFormat formatoData) {
+  static pw.Widget _buildDadosPedidoTermico(Pedido pedido, DateFormat formatoData, double fontSizeCorpo, bool usarNegrito) {
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.center,
       children: [
         pw.Text(
           'PEDIDO',
           style: pw.TextStyle(
-            fontSize: 10,
+            fontSize: fontSizeCorpo + 2,
             fontWeight: pw.FontWeight.bold,
           ),
           textAlign: pw.TextAlign.center,
@@ -871,19 +880,19 @@ class PedidoPDFService {
         pw.SizedBox(height: 3),
         pw.Text(
           'Nº: ${pedido.numero}',
-          style: const pw.TextStyle(fontSize: 9),
+          style: pw.TextStyle(fontSize: fontSizeCorpo + 1),
           textAlign: pw.TextAlign.center,
         ),
         pw.SizedBox(height: 3),
         pw.Text(
           'Status: ${pedido.status}',
-          style: const pw.TextStyle(fontSize: 8),
+          style: pw.TextStyle(fontSize: fontSizeCorpo),
           textAlign: pw.TextAlign.center,
         ),
         pw.SizedBox(height: 3),
         pw.Text(
           formatoData.format(pedido.dataPedido),
-          style: const pw.TextStyle(fontSize: 8),
+          style: pw.TextStyle(fontSize: fontSizeCorpo),
           textAlign: pw.TextAlign.center,
         ),
         pw.SizedBox(height: 5),
@@ -893,14 +902,14 @@ class PedidoPDFService {
   }
 
   /// Constrói informações do cliente térmico
-  static pw.Widget _buildClienteTermico(Pedido pedido) {
+  static pw.Widget _buildClienteTermico(Pedido pedido, double fontSizeCorpo) {
     if (pedido.clienteNome == null || pedido.clienteNome!.isEmpty) {
       return pw.Column(
         crossAxisAlignment: pw.CrossAxisAlignment.start,
         children: [
           pw.Text(
             'Cliente: CONSUMIDOR FINAL',
-            style: const pw.TextStyle(fontSize: 8),
+            style: pw.TextStyle(fontSize: fontSizeCorpo),
           ),
           pw.SizedBox(height: 5),
           pw.Divider(thickness: 1),
@@ -913,27 +922,27 @@ class PedidoPDFService {
       children: [
         pw.Text(
           'Cliente: ${pedido.clienteNome!}',
-          style: const pw.TextStyle(fontSize: 8),
+          style: pw.TextStyle(fontSize: fontSizeCorpo),
         ),
         if (pedido.clienteCpfCnpj != null && pedido.clienteCpfCnpj!.isNotEmpty) ...[
           pw.SizedBox(height: 2),
           pw.Text(
             '${pedido.clienteCpfCnpj!.replaceAll(RegExp(r'[^\d]'), '').length == 11 ? 'CPF' : 'CNPJ'}: ${_formatarCpfCnpj(pedido.clienteCpfCnpj!)}',
-            style: const pw.TextStyle(fontSize: 7),
+            style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
           ),
         ],
         if (pedido.clienteTelefone != null && pedido.clienteTelefone!.isNotEmpty) ...[
           pw.SizedBox(height: 2),
           pw.Text(
             'Tel: ${pedido.clienteTelefone!}',
-            style: const pw.TextStyle(fontSize: 7),
+            style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
           ),
         ],
         if (pedido.clienteEndereco != null && pedido.clienteEndereco!.isNotEmpty) ...[
           pw.SizedBox(height: 2),
           pw.Text(
             'End: ${pedido.clienteEndereco!}',
-            style: const pw.TextStyle(fontSize: 7),
+            style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
           ),
         ],
         pw.SizedBox(height: 5),
@@ -943,7 +952,7 @@ class PedidoPDFService {
   }
 
   /// Constrói itens do pedido térmico
-  static pw.Widget _buildItensTermico(Pedido pedido, NumberFormat formatoMoeda) {
+  static pw.Widget _buildItensTermico(Pedido pedido, NumberFormat formatoMoeda, double fontSizeCorpo, bool usarNegrito) {
     final todosItens = <_ItemLinha>[];
     
     // Adicionar produtos
@@ -972,7 +981,7 @@ class PedidoPDFService {
         pw.Text(
           'ITENS',
           style: pw.TextStyle(
-            fontSize: 9,
+            fontSize: fontSizeCorpo + 1,
             fontWeight: pw.FontWeight.bold,
           ),
         ),
@@ -986,11 +995,11 @@ class PedidoPDFService {
               children: [
                 pw.Text(
                   item.nome,
-                  style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold),
+                  style: pw.TextStyle(fontSize: fontSizeCorpo, fontWeight: usarNegrito ? pw.FontWeight.bold : pw.FontWeight.normal),
                 ),
                 pw.Text(
                   '(${item.tipo})',
-                  style: pw.TextStyle(fontSize: 6, color: PdfColors.grey600),
+                  style: pw.TextStyle(fontSize: fontSizeCorpo - 2, color: PdfColors.grey600),
                 ),
                 pw.SizedBox(height: 2),
                 pw.Row(
@@ -998,13 +1007,13 @@ class PedidoPDFService {
                   children: [
                     pw.Text(
                       '${item.quantidade}x ${formatoMoeda.format(item.precoUnitario)}',
-                      style: const pw.TextStyle(fontSize: 7),
+                      style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
                     ),
                     pw.Text(
                       formatoMoeda.format(subtotal),
                       style: pw.TextStyle(
-                        fontSize: 8,
-                        fontWeight: pw.FontWeight.bold,
+                        fontSize: fontSizeCorpo,
+                        fontWeight: usarNegrito ? pw.FontWeight.bold : pw.FontWeight.normal,
                       ),
                     ),
                   ],
@@ -1020,7 +1029,7 @@ class PedidoPDFService {
   }
 
   /// Constrói totais térmico
-  static pw.Widget _buildTotalTermico(Pedido pedido, NumberFormat formatoMoeda) {
+  static pw.Widget _buildTotalTermico(Pedido pedido, NumberFormat formatoMoeda, double fontSizeCorpo) {
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
@@ -1029,11 +1038,11 @@ class PedidoPDFService {
           children: [
             pw.Text(
               'Produtos:',
-              style: const pw.TextStyle(fontSize: 8),
+              style: pw.TextStyle(fontSize: fontSizeCorpo),
             ),
             pw.Text(
               formatoMoeda.format(pedido.totalProdutos),
-              style: const pw.TextStyle(fontSize: 8),
+              style: pw.TextStyle(fontSize: fontSizeCorpo),
             ),
           ],
         ),
@@ -1043,11 +1052,11 @@ class PedidoPDFService {
           children: [
             pw.Text(
               'Serviços:',
-              style: const pw.TextStyle(fontSize: 8),
+              style: pw.TextStyle(fontSize: fontSizeCorpo),
             ),
             pw.Text(
               formatoMoeda.format(pedido.totalServicos),
-              style: const pw.TextStyle(fontSize: 8),
+              style: pw.TextStyle(fontSize: fontSizeCorpo),
             ),
           ],
         ),
@@ -1063,14 +1072,14 @@ class PedidoPDFService {
               pw.Text(
                 'TOTAL',
                 style: pw.TextStyle(
-                  fontSize: 11,
+                  fontSize: fontSizeCorpo + 3,
                   fontWeight: pw.FontWeight.bold,
                 ),
               ),
               pw.Text(
                 formatoMoeda.format(pedido.totalGeral),
                 style: pw.TextStyle(
-                  fontSize: 12,
+                  fontSize: fontSizeCorpo + 4,
                   fontWeight: pw.FontWeight.bold,
                 ),
               ),
@@ -1082,7 +1091,7 @@ class PedidoPDFService {
   }
 
   /// Constrói formas de pagamento térmico
-  static pw.Widget _buildPagamentosTermico(Pedido pedido, NumberFormat formatoMoeda) {
+  static pw.Widget _buildPagamentosTermico(Pedido pedido, NumberFormat formatoMoeda, double fontSizeCorpo) {
     if (pedido.pagamentos.isEmpty) {
       return pw.SizedBox.shrink();
     }
@@ -1094,7 +1103,7 @@ class PedidoPDFService {
         pw.Text(
           'PAGAMENTOS',
           style: pw.TextStyle(
-            fontSize: 9,
+            fontSize: fontSizeCorpo + 1,
             fontWeight: pw.FontWeight.bold,
           ),
         ),
@@ -1111,13 +1120,13 @@ class PedidoPDFService {
                     pw.Expanded(
                       child: pw.Text(
                         _getNomeTipoPagamento(pagamento.tipo),
-                        style: const pw.TextStyle(fontSize: 8),
+                        style: pw.TextStyle(fontSize: fontSizeCorpo),
                       ),
                     ),
                     pw.Text(
                       formatoMoeda.format(pagamento.valor),
                       style: pw.TextStyle(
-                        fontSize: 9,
+                        fontSize: fontSizeCorpo + 1,
                         fontWeight: pw.FontWeight.bold,
                       ),
                     ),
@@ -1126,19 +1135,19 @@ class PedidoPDFService {
                 if (pagamento.isParcela) ...[
                   pw.Text(
                     'Parcela ${pagamento.numeroParcela}/${pagamento.parcelas}',
-                    style: const pw.TextStyle(fontSize: 7),
+                    style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
                   ),
                 ],
                 if (pagamento.dataVencimento != null) ...[
                   pw.Text(
                     'Venc: ${DateFormat('dd/MM/yyyy').format(pagamento.dataVencimento!)}',
-                    style: const pw.TextStyle(fontSize: 7),
+                    style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
                   ),
                 ],
                 pw.Text(
                   pagamento.recebido ? '✓ Pago' : '⏳ Pendente',
                   style: pw.TextStyle(
-                    fontSize: 7,
+                    fontSize: fontSizeCorpo - 1,
                     fontWeight: pw.FontWeight.bold,
                   ),
                 ),
@@ -1154,12 +1163,12 @@ class PedidoPDFService {
           children: [
             pw.Text(
               'Recebido:',
-              style: const pw.TextStyle(fontSize: 8),
+              style: pw.TextStyle(fontSize: fontSizeCorpo),
             ),
             pw.Text(
               formatoMoeda.format(pedido.totalRecebido),
               style: pw.TextStyle(
-                fontSize: 8,
+                fontSize: fontSizeCorpo,
                 fontWeight: pw.FontWeight.bold,
               ),
             ),
@@ -1172,12 +1181,12 @@ class PedidoPDFService {
             children: [
               pw.Text(
                 'Pendente:',
-                style: const pw.TextStyle(fontSize: 8),
+                style: pw.TextStyle(fontSize: fontSizeCorpo),
               ),
               pw.Text(
                 formatoMoeda.format(pedido.valorPendente),
                 style: pw.TextStyle(
-                  fontSize: 8,
+                  fontSize: fontSizeCorpo,
                   fontWeight: pw.FontWeight.bold,
                 ),
               ),
@@ -1191,21 +1200,21 @@ class PedidoPDFService {
   }
 
   /// Constrói observações térmico
-  static pw.Widget _buildObservacoesTermico(Pedido pedido) {
+  static pw.Widget _buildObservacoesTermico(Pedido pedido, double fontSizeCorpo) {
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
         pw.Text(
           'OBSERVAÇÕES',
           style: pw.TextStyle(
-            fontSize: 8,
+            fontSize: fontSizeCorpo,
             fontWeight: pw.FontWeight.bold,
           ),
         ),
         pw.SizedBox(height: 3),
         pw.Text(
           pedido.observacoes!,
-          style: const pw.TextStyle(fontSize: 7),
+          style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
         ),
         pw.SizedBox(height: 5),
         pw.Divider(thickness: 1),
@@ -1214,21 +1223,21 @@ class PedidoPDFService {
   }
 
   /// Constrói rodapé térmico
-  static pw.Widget _buildRodapeTermico(Empresa empresa, DateFormat formatoData) {
+  static pw.Widget _buildRodapeTermico(Empresa empresa, DateFormat formatoData, double fontSizeCorpo) {
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.center,
       children: [
         pw.SizedBox(height: 10),
         pw.Text(
           '--------------------------------',
-          style: const pw.TextStyle(fontSize: 7),
+          style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
           textAlign: pw.TextAlign.center,
         ),
         pw.SizedBox(height: 5),
         pw.Text(
           'Obrigado pela preferência!',
           style: pw.TextStyle(
-            fontSize: 9,
+            fontSize: fontSizeCorpo + 1,
             fontWeight: pw.FontWeight.bold,
           ),
           textAlign: pw.TextAlign.center,
@@ -1236,21 +1245,21 @@ class PedidoPDFService {
         pw.SizedBox(height: 3),
         pw.Text(
           'Documento gerado em ${formatoData.format(DateTime.now())}',
-          style: const pw.TextStyle(fontSize: 6),
+          style: pw.TextStyle(fontSize: fontSizeCorpo - 2),
           textAlign: pw.TextAlign.center,
         ),
         if (empresa.email != null && empresa.email!.isNotEmpty) ...[
           pw.SizedBox(height: 2),
           pw.Text(
             'E-mail: ${empresa.email}',
-            style: const pw.TextStyle(fontSize: 6),
+            style: pw.TextStyle(fontSize: fontSizeCorpo - 2),
             textAlign: pw.TextAlign.center,
           ),
         ],
         pw.SizedBox(height: 10),
         pw.Text(
           '--------------------------------',
-          style: const pw.TextStyle(fontSize: 7),
+          style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
           textAlign: pw.TextAlign.center,
         ),
       ],

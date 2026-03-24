@@ -31,15 +31,26 @@ import shutil
 from datetime import datetime
 import json
 import logging
+import unicodedata # Correção para erro ModuleNotFoundError detectado no Charles
 
-# Configuração de Logs para Arquivo
+# Configuração de Logs para Arquivo com Rotação (Evita travar o app se o log for gigante)
 def _get_log_path():
     if getattr(sys, 'frozen', False):
         return os.path.join(os.path.dirname(sys.executable), 'bridge_log.txt')
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), 'bridge_log.txt')
 
+LOG_FILE_PATH = _get_log_path()
+
+# Se o log for maior que 10MB, rotacionar para não travar o Bridge
+try:
+    if os.path.exists(LOG_FILE_PATH) and os.path.getsize(LOG_FILE_PATH) > 10 * 1024 * 1024:
+        bak_file = LOG_FILE_PATH + ".bak"
+        if os.path.exists(bak_file): os.remove(bak_file)
+        os.rename(LOG_FILE_PATH, bak_file)
+except: pass
+
 logging.basicConfig(
-    filename=_get_log_path(),
+    filename=LOG_FILE_PATH,
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
     filemode='a'
@@ -103,116 +114,87 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Versão do Bridge
-BRIDGE_VERSION = "2.8"
 
-# Variáveis globais para rastreamento
-LAST_PROCESSED_COMPANY = {"cnpj": None, "nome": None, "timestamp": None}
-
-def get_base_path():
-    if getattr(sys, 'frozen', False):
-        return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.abspath(__file__))
-
-IDENTITY_FILE = os.path.join(get_base_path(), "bridge_identity.json")
-
-def load_identity():
-    global LAST_PROCESSED_COMPANY
-    if os.path.exists(IDENTITY_FILE):
-        try:
-            with open(IDENTITY_FILE, "r") as f:
-                data = json.load(f)
-                if data: LAST_PROCESSED_COMPANY = data
-        except: pass
-
-def save_identity():
-    try:
-        with open(IDENTITY_FILE, "w") as f:
-            json.dump(LAST_PROCESSED_COMPANY, f)
-    except: pass
-
-# Carregar identidade ao iniciar
-load_identity()
-
-# --- EVENTOS DE STARTUP ---
-@app.on_event("startup")
-async def startup_event():
-    log_message("="*40)
-    log_message("UVICORN: SERVIDOR HTTP INICIADO")
-    log_message("="*40)
-    
-    # Criar arquivo de status local
-    update_local_status()
-    
-    # Auto-instalação no registro do Windows para iniciar com o PC
-    try:
-        self_install()
-    except Exception as e:
-        log_message(f"Falha na auto-instalação: {e}", "WARN")
-    
-    log_message("UVICORN: Pronto para receber requisições na porta 8000")
-    log_message("="*40)
-
-# Chave de segurança (DESATIVADA A PEDIDO - ACESSO TOTAL)
-async def verify_api_key(x_api_key: str = Header(None)):
-    return x_api_key
-
+# --- MODELOS ---
 class ConfigEmpresa(BaseModel):
     cnpj: str
-    razao_social: Optional[str] = ""
-    nome_fantasia: Optional[str] = ""
-    inscricao_estadual: Optional[str] = ""
-    codigo_municipio: Optional[str] = ""
-    uf: str
+    razao_social: str
+    nome_fantasia: Optional[str] = None
+    inscricao_estadual: Optional[str] = None
     logradouro: Optional[str] = ""
     numero: Optional[str] = ""
     bairro: Optional[str] = ""
-    cep: Optional[str] = ""
     municipio: Optional[str] = ""
+    codigo_municipio: Optional[str] = ""
+    uf: Optional[str] = ""
+    cep: Optional[str] = ""
+    crt: Optional[str | int] = "1"
+    ambiente: int = 2
     certificado_base64: str
     senha_certificado: str
-    ambiente: int = 2
     csc: Optional[str] = ""
     csc_id: Optional[str] = ""
-    crt: Optional[int] = 1 # 1=Simples Nacional, 3=Regime Normal
 
 class ItemVenda(BaseModel):
     codigo: str
     descricao: str
-    ncm: Optional[str] = "00000000"
-    cfop: Optional[str] = "5102"
+    ncm: str = "00000000"
+    cfop: str = "5102"
     quantidade: float
     valor_unitario: float
     valor_total: float
-    icms_origem: Optional[int] = 0
     icms_csosn: Optional[str] = "102"
     icms_cst: Optional[str] = "00"
+    origem: Optional[str] = "0"
+    icms_origem: Optional[int | str] = 0
     icms_aliquota: Optional[float] = 0.0
 
 class RequisicaoEmissao(BaseModel):
     empresa: ConfigEmpresa
     itens: List[ItemVenda]
     valor_total: float
-    data_emissao: Optional[str] = None
-    venda_numero: Optional[int] = 0
+    venda_numero: Optional[str | int] = None
     cpf_cliente: Optional[str] = None
-    observacoes: Optional[str] = ""
-    serie: Optional[int] = 1
 
-@app.post("/emitir")
-async def emitir(req: RequisicaoEmissao):
+# --- AUXILIARES ---
+def get_base_path():
+    if getattr(sys, 'frozen', False): return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+def save_identity():
     try:
-        # Garantir que venda_numero não seja None
-        if req.venda_numero is None or req.venda_numero == 0:
-            req.venda_numero = int(time.time()) % 100000000
-            
-        # DEBUG: Logar os dados da requisição HTTP
-        print(f"[HTTP] Recebido (nº {req.venda_numero}): {req.model_dump_json()}")
-        
-        # O handler agora recebe tudo da requisição
-        resultado = emitir_nfce_pynfe(req)
+        path = os.path.join(get_base_path(), "bridge_identity.json")
+        with open(path, "w", encoding='utf-8') as f:
+            json.dump(LAST_PROCESSED_COMPANY, f)
+    except: pass
 
-        # Atualizar rastreamento da empresa
+def load_identity():
+    global LAST_PROCESSED_COMPANY
+    try:
+        path = os.path.join(get_base_path(), "bridge_identity.json")
+        if os.path.exists(path):
+            with open(path, "r", encoding='utf-8') as f:
+                LAST_PROCESSED_COMPANY = json.load(f)
+    except: pass
+
+# --- GLOBAIS ---
+BRIDGE_VERSION = "3.4.6"
+
+# Custom encoder for Firestore objects
+def json_serial(obj):
+    if hasattr(obj, 'isoformat'):
+        return obj.isoformat()
+    return str(obj)
+LAST_PROCESSED_COMPANY = {"cnpj": "", "nome": "Aguardando...", "timestamp": ""}
+load_identity()
+GLOBAL_TRAY_ICON = None
+
+@app.post("/api/nfce/emitir")
+async def emitir_nfce_endpoint(req: RequisicaoEmissao):
+    try:
+        resultado = emitir_nfce_pynfe(req)
+        
+        # Sincronizar identidade da empresa processada
         global LAST_PROCESSED_COMPANY
         LAST_PROCESSED_COMPANY = {
             "cnpj": req.empresa.cnpj,
@@ -221,31 +203,14 @@ async def emitir(req: RequisicaoEmissao):
         }
         save_identity()
         
-        # Atualizar ícone da bandeja se disponível
-        if GLOBAL_TRAY_ICON:
-            try:
-                empresa_nome = LAST_PROCESSED_COMPANY["nome"]
-                cnpj = LAST_PROCESSED_COMPANY["cnpj"]
-                ps = get_pystray()
-                
-                menu_items = [
-                    ps.MenuItem(f"Versão: {BRIDGE_VERSION}", lambda: None, enabled=False),
-                    ps.MenuItem(f"Empresa: {empresa_nome}", lambda: None, enabled=False),
-                    ps.MenuItem(f"CNPJ: {cnpj}", lambda: None, enabled=False),
-                    ps.Menu.SEPARATOR,
-                    ps.MenuItem("Reiniciar Serviço", lambda icon, item: restart_action_silent()),
-                    ps.MenuItem("Sair", lambda icon, item: quit_app(icon))
-                ]
-                GLOBAL_TRAY_ICON.menu = ps.Menu(*menu_items)
-                GLOBAL_TRAY_ICON.title = f"Exodo Bridge v{BRIDGE_VERSION} - {empresa_nome}"
-            except Exception as tray_err: 
-                print(f"[TRAY ERROR] {tray_err}")
+        try: update_tray_menu()
+        except: pass
 
         return resultado
     except Exception as e:
         import traceback
         tb = traceback.format_exc()
-        print(f"[HTTP ERRO] {e}\n{tb}")
+        print(f"[HTTP ERRO EMISSAO] {e}\n{tb}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/nfce/cancelar")
@@ -253,6 +218,7 @@ async def cancelar_nfce_endpoint(req: Request):
     from nfce_handler import cancelar_nfce_pynfe
     try:
         data = await req.json()
+        log_message(f">>> [DEBUG CANCEL] Dados recebidos: {json.dumps(data)[:500]}...")
         resultado = cancelar_nfce_pynfe(data)
         
         # O aplicativo Flutter espera os mesmos formatos (success=True/False)
@@ -264,6 +230,26 @@ async def cancelar_nfce_endpoint(req: Request):
         # Retornar 200 com success=False para tratar graciosamente no front
         return {"success": False, "error": str(e), "traceback": tb}
 
+@app.post("/api/nfce/consultar")
+async def consultar_nfce_endpoint(req: Request):
+    from nfce_handler import consultar_nfce_pynfe
+    try:
+        data = await req.json()
+        resultado = consultar_nfce_pynfe(data)
+        return resultado
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/certificado/validar")
+async def validar_certificado_endpoint(req: Request):
+    from nfce_handler import validar_certificado_pynfe
+    try:
+        data = await req.json()
+        resultado = validar_certificado_pynfe(data)
+        return resultado
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
 @app.get("/")
 @app.get("/health")
 def home():
@@ -274,33 +260,50 @@ FIREBASE_ACTIVE = False
 
 def processar_requisicao_firebase(db, doc_id, data):
     try:
-        print(f"[FIREBASE] Processando {doc_id}...")
+        log_message(f"[FIREBASE] ➜ Iniciando processamento: {doc_id}...")
+        log_message(f"[FIREBASE] Dados recebidos (parcial): {json.dumps(data, default=json_serial)[:300]}...")
         doc_ref = db.collection('nfce_requests').document(doc_id)
-        doc_ref.update({'status': 'processando'})
+        
+        # Tentar atualizar status com timeout curto para não travar
+        try:
+            doc_ref.update({'status': 'processando'})
+            log_message(f"[FIREBASE] {doc_id} marcado como 'processando'")
+        except Exception as e_up:
+            log_message(f"[FIREBASE WARNING] Nao conseguiu marcar como processando: {e_up}")
         
         # Garantir que campos vindos do Firebase via snapshots sejam convertidos
         if 'venda_numero' not in data and 'numero' in data:
             data['venda_numero'] = data['numero']
             
         if data.get('venda_numero') is None:
-            # Gerar um número baseado no timestamp se não houver número da venda
-            data['venda_numero'] = int(time.time()) % 100000000 # Max 9 digits
-            print(f"[FIREBASE] venda_numero era None, gerado fallback: {data['venda_numero']}")
+            # Não gerar mais timestamp, buscar do campo de numero se existir ou falhar
+            data['venda_numero'] = data.get('numero', '1')
+            print(f"[FIREBASE] venda_numero era None, usando fallback: {data['venda_numero']}")
         
         try:
-            req = RequisicaoEmissao(**data)
-            print(f"[FIREBASE] Requisição validada.")
+            operacao = data.get('operacao', 'emissao')
+            if operacao == 'cancelamento':
+                from nfce_handler import cancelar_nfce_pynfe
+                print(f"[FIREBASE] Operação: CANCELAMENTO do doc {doc_id}")
+                resultado = cancelar_nfce_pynfe(data)
+                # Normalizar resultado para o Firebase esperar sucesso/autorizada
+                if resultado.get('success'):
+                    resultado['status'] = 'sucesso' # O listener abaixo espera 'sucesso'
+                else:
+                    resultado['status'] = 'erro'
+            else:
+                req = RequisicaoEmissao(**data)
+                print(f"[FIREBASE] Operação: EMISSAO do doc {doc_id}")
+                resultado = emitir_nfce_pynfe(req)
         except Exception as ve:
              print(f"[FIREBASE VALIDATION ERROR] {ve}")
              raise ve
         
-        resultado = emitir_nfce_pynfe(req)
-        
         # Atualizar rastreamento da empresa
         global LAST_PROCESSED_COMPANY
         LAST_PROCESSED_COMPANY = {
-            "cnpj": req.empresa.cnpj,
-            "nome": req.empresa.nome_fantasia or req.empresa.razao_social,
+            "cnpj": data.get('empresa', {}).get('cnpj'),
+            "nome": data.get('empresa', {}).get('nome_fantasia') or data.get('empresa', {}).get('razao_social'),
             "timestamp": datetime.now().isoformat()
         }
         save_identity()
@@ -324,27 +327,33 @@ def processar_requisicao_firebase(db, doc_id, data):
                 GLOBAL_TRAY_ICON.title = f"Exodo Bridge v{BRIDGE_VERSION} - {empresa_nome}"
             except: pass
 
-        if resultado.get('status') == 'sucesso':
+        log_message(f"[FIREBASE] Doc {doc_id} processado. Status do resultado: {resultado.get('status')}")
+
+        if str(resultado.get('status')).lower() in ['sucesso', 'autorizada']:
+            resultado_json = json.loads(json.dumps(resultado, default=json_serial))
+            
             doc_ref.update({
                 'status': 'autorizada',
-                'resultado': resultado,
-                'updated_at': firestore.SERVER_TIMESTAMP
+                'resultado': resultado_json,
+                'processed_at': firestore.SERVER_TIMESTAMP
             })
-            print(f"[FIREBASE] ✓ Sucesso: {doc_id}")
+            log_message(f"[FIREBASE] ✓ Sucesso (Autorizada): {doc_id}")
         else:
+            resultado_json = json.loads(json.dumps(resultado, default=json_serial))
             doc_ref.update({
                 'status': 'erro',
-                'resultado': resultado,
+                'resultado': resultado_json,
                 'updated_at': firestore.SERVER_TIMESTAMP
             })
-            print(f"[FIREBASE] ✗ Erro: {resultado.get('mensagem')}")
+            log_message(f"[FIREBASE] ✗ Erro: {resultado.get('error') or resultado.get('mensagem') or 'Erro genérico'}")
             
     except Exception as e:
         print(f"[FIREBASE] ✗ Erro interno ao processar {doc_id}: {e}")
+        resultado_json = json.loads(json.dumps(resultado if 'resultado' in locals() else {'status': 'erro', 'mensagem': str(e)}, default=json_serial))
         try:
             db.collection('nfce_requests').document(doc_id).update({
                 'status': 'erro',
-                'resultado': {'status': 'erro', 'mensagem': str(e)},
+                'resultado': resultado_json,
                 'updated_at': firestore.SERVER_TIMESTAMP
             })
         except:
@@ -373,85 +382,56 @@ def processar_comando_remoto(db, doc_id, data):
         sucesso = False
         
         if comando == 'update':
-            log_message("[CMD] Iniciando Processo de Atualização...")
+            log_message("[CMD] Iniciando Processo de Atualização Direto (Firebase)...")
+            sucesso = False
+            resultado = "Iniciando..."
             
-            # Tenta Git primeiro (Se disponível na máquina)
-            git_sucesso = False
             try:
-                import subprocess
-                # Verifica se git existe e se há um .git
-                orig_dir = os.getcwd()
-                git_dir = ".." if os.path.exists("../.git") else "."
-                os.chdir(git_dir)
+                # Buscar configurações de atualização na nova coleção segura
+                config_ref = db.collection('bridge_config').document('latest').get()
+                if not config_ref.exists:
+                    raise Exception("Configuração de atualização não encontrada no banco (bridge_config/latest). Suba a atualização pelo aplicativo primeiro.")
                 
-                res = subprocess.run(["git", "--version"], capture_output=True, text=True, timeout=5)
-                if res.returncode == 0:
-                    log_message("[CMD] Git detectado. Tentando atualização via Git...")
-                    subprocess.run(["git", "fetch", "--all"], capture_output=True, text=True, timeout=30)
-                    res = subprocess.run(["git", "reset", "--hard", "origin/modo-dev"], capture_output=True, text=True, timeout=30)
-                    
-                    if res.returncode != 0:
-                        res = subprocess.run(["git", "reset", "--hard", "origin/main"], capture_output=True, text=True, timeout=30)
-                    
-                    if res.returncode == 0:
-                        log_message("[CMD] Atualização via Git concluída com sucesso.")
-                        git_sucesso = True
-                        resultado = f"Atualizado via Git:\n{res.stdout}"
-                os.chdir(orig_dir)
-            except Exception as e:
-                log_message(f"[CMD] Git não disponível ou erro: {e}")
-                try: os.chdir(orig_dir)
-                except: pass
-
-            # Se Git falhou ou não existe, tenta download via HTTP
-            if not git_sucesso:
-                log_message("[CMD] Git indisponível. Tentando Download Direto (HTTP)...")
-                # URLs do GitHub - Nota: Se o repo for privado, isso dará 404 sem um Token
-                BASE_URL = "https://raw.githubusercontent.com/systemsexodo-cyber/sistemaexodo/modo-dev/backend_nfce/"
+                update_data = config_ref.to_dict()
+                download_url = update_data.get('download_url')
+                nova_versao = update_data.get('version', 'Desconhecida')
                 
+                if not download_url:
+                    raise Exception("A URL de download não está presente no banco de dados.")
+                
+                log_message(f"[CMD] Baixando a versão {nova_versao} da nuvem Exodo...")
+                
+                import requests
                 if getattr(sys, 'frozen', False):
                     # Modo Executável
-                    exe_url = "https://github.com/systemsexodo-cyber/sistemaexodo/raw/modo-dev/ExodoNfceBridge.exe"
                     target_exe = sys.executable
                     new_exe = target_exe + ".new"
                     
-                    try:
-                        import requests
-                        r = requests.get(exe_url, stream=True, timeout=60)
-                        if r.status_code == 200:
-                            with open(new_exe, 'wb') as f:
-                                for chunk in r.iter_content(chunk_size=8192): f.write(chunk)
-                            
-                            bat_path = os.path.join(os.path.dirname(target_exe), "update_bridge.bat")
-                            with open(bat_path, "w") as f:
-                                f.write(f'@echo off\ntimeout /t 3\ntaskkill /F /PID {os.getpid()}\nmove /Y "{new_exe}" "{target_exe}"\nstart "" "{target_exe}"\ndel "%~f0"')
-                            
-                            doc_ref.update({'status': 'concluido', 'resultado': 'Atualizado via Download. Reiniciando.', 'sucesso': True})
-                            subprocess.Popen([bat_path], shell=True)
-                            return
-                        else:
-                            resultado = f"Erro HTTP {r.status_code}. Repositório pode ser privado."
-                            git_sucesso = False
-                    except Exception as e:
-                        resultado = f"Erro no download: {e}"
+                    r = requests.get(download_url, stream=True, timeout=120)
+                    if r.status_code == 200:
+                        with open(new_exe, 'wb') as f:
+                            for chunk in r.iter_content(chunk_size=8192): 
+                                f.write(chunk)
+                                
+                        bat_path = os.path.join(os.path.dirname(target_exe), "update_bridge.bat")
+                        with open(bat_path, "w") as f:
+                            # Adicionamos taskkill para o watchdog também para evitar conflitos de arquivo durante o 'move'
+                            f.write(f'@echo off\ntimeout /t 3\ntaskkill /F /IM ExodoNfceBridgeWatchdog.exe\ntaskkill /F /PID {os.getpid()}\ntimeout /t 1\nmove /Y "{new_exe}" "{target_exe}"\nstart "" "{target_exe}"\ndel "%~f0"')
+                        
+                        doc_ref.update({'status': 'concluido', 'resultado': f'Baixado v{nova_versao} com sucesso. Reiniciando para aplicar.', 'sucesso': True})
+                        subprocess.Popen([bat_path], shell=True)
+                        return
+                    else:
+                        raise Exception(f"Erro HTTP ao baixar: {r.status_code}")
                 else:
-                    # Modo Script
-                    try:
-                        import requests
-                        files = ["main.py", "nfce_handler.py"]
-                        for f_name in files:
-                            r = requests.get(BASE_URL + f_name, timeout=30)
-                            if r.status_code == 200:
-                                with open(os.path.join(os.path.dirname(__file__), f_name), "wb") as f:
-                                    f.write(r.content)
-                            else:
-                                raise Exception(f"Erro {r.status_code} no arquivo {f_name}")
-                        git_sucesso = True
-                        resultado = "Arquivos atualizados via HTTP."
-                    except Exception as e:
-                        resultado = f"Falha no download: {e}"
+                    # Modo Dev/Script
+                    raise Exception("A atualização remota agora só suporta arquivos .exe compilados. Em ambiente de script faça git pull manualmente.")
+                    
+            except Exception as e:
+                resultado = f"Falha na atualização: {e}"
+                log_message(f"[CMD] {resultado}")
             
-            sucesso = git_sucesso
+            sucesso = False
             if sucesso:
                 notify_user("Atualização Concluída", "O sistema foi atualizado com sucesso!")
                 # Reiniciar par aplicar
@@ -459,7 +439,7 @@ def processar_comando_remoto(db, doc_id, data):
                     restart_action_silent()
             else:
                 log_message(f"[CMD] Falha na atualização: {resultado}", "ERROR")
-                notify_user("Falha na Atualização", "Não foi possível baixar os arquivos. Verifique a conexão.")
+                notify_user("Falha na Atualização", "Não foi possível baixar ou aplicar. Contate o suporte.")
         
         elif comando == 'restart':
             log_message("[CMD] Comando Reiniciar recebido.")
@@ -552,39 +532,22 @@ def start_firebase_listener():
 
         db = firestore.client()
         FIREBASE_ACTIVE = True
-        log_message("Firebase Listener ativo!")
+        log_message("Conexão com Firebase estabelecida. Iniciando listeners...")
 
-        # 0. Registrar heartbeat (online) no Firestore de forma segura
-        def _safe_heartbeat():
-            import time as _time
-            while FIREBASE_ACTIVE:
-                try:
-                    _registrar_heartbeat(db)
-                except Exception as e:
-                    print(f"[DEBUG] Erro heartbeat: {e}")
-                _time.sleep(60)
-        
-        threading.Thread(target=_safe_heartbeat, daemon=True).start()
-        # Registrar o primeiro imediatamente
-        _registrar_heartbeat(db)
-
-        # 1. Listener de Notas Fiscais
+        # 1. Listener de Notas Fiscais (Inicia AGORA para já receber pedidos)
         def on_snapshot(col_snapshot, changes, read_time):
             try:
                 print(f">>> [DEBUG] Snapshot recebido! {len(changes)} alterações detectadas.")
                 global LAST_HEARTBEAT_TS
-                # Atualizar timestamp local para o Watchdog saber que estamos vivos
                 import time as _time
                 LAST_HEARTBEAT_TS = _time.time()
                 
                 for change in changes:
                     doc = change.document
                     data = doc.to_dict()
-                    print(f">>> [DEBUG] Doc: {doc.id} | Status: {data.get('status')} | Tipo: {change.type.name}")
-                    
                     if change.type.name == 'ADDED' or (change.type.name == 'MODIFIED' and data.get('status') == 'pendente'):
                         if data.get('status') == 'pendente':
-                            print(f">>> [FIREBASE] 🔔 Nova nota recebida: {doc.id}")
+                            log_message(f"🔔 Nova nota recebida: {doc.id}")
                             threading.Thread(
                                 target=processar_requisicao_firebase, 
                                 args=(db, doc.id, data),
@@ -593,7 +556,6 @@ def start_firebase_listener():
             except Exception as e:
                 log_message(f"Erro no snapshot listener: {e}", "ERROR")
 
-        # Iniciar primeiro listener
         nfce_query = db.collection('nfce_requests').where('status', '==', 'pendente')
         nfce_watch = nfce_query.on_snapshot(on_snapshot)
         
@@ -615,7 +577,20 @@ def start_firebase_listener():
         
         cmd_query = db.collection('bridge_commands').where('status', '==', 'pendente')
         cmd_watch = cmd_query.on_snapshot(on_command_snapshot)
-        log_message("Listener de Comandos Remotos ativo!")
+        log_message("Listeners de Notas e Comandos ativos!")
+
+        # 3. Registrar heartbeat (Status Online) em PARALELO
+        # Isso evita que o app fique travado em "Conectando..." se o Firebase demorar a responder o primeiro sinal
+        def _safe_heartbeat_loop():
+            import time as _time
+            while FIREBASE_ACTIVE:
+                try:
+                    _registrar_heartbeat(db)
+                except Exception as e:
+                    print(f"[DEBUG] Erro heartbeat: {e}")
+                _time.sleep(60)
+        
+        threading.Thread(target=_safe_heartbeat_loop, daemon=True).start()
 
         # 3. WATCHDOG: Garante que os listeners não morram em silêncio
         def _watchdog_loop():
@@ -647,40 +622,23 @@ def start_firebase_listener():
         import traceback
         log_message(traceback.format_exc(), "ERROR")
         FIREBASE_ACTIVE = False
+        global FIREBASE_STATUS_MSG
+        FIREBASE_STATUS_MSG = "🔴 Falha Crítica / Offline"
+        update_tray_menu()
 
 def kill_zombies():
-    """Mata outras instâncias do Bridge que possam estar travadas."""
+    """Versão passiva: apenas tenta matar o watchdog para não causar suicídio."""
     try:
-        import os
-        import subprocess
-        my_pid = os.getpid()
-        exe_name = "ExodoNfceBridge.exe"
-        
-        # Obter lista de processos
-        cmd = ["tasklist", "/FI", f"IMAGENAME eq {exe_name}", "/FO", "CSV", "/NH"]
-        res = subprocess.run(cmd, capture_output=True, text=True, creationflags=0x08000000)
-        
-        if res.returncode == 0:
-            lines = res.stdout.strip().split('\n')
-            for line in lines:
-                if not line.strip(): continue
-                parts = line.split('","')
-                if len(parts) > 1:
-                    pid_str = parts[1].strip('"')
-                    try:
-                        pid = int(pid_str)
-                        if pid != my_pid:
-                            log_message(f"Limpando instância zumbi (PID {pid})...")
-                            subprocess.run(["taskkill", "/F", "/PID", str(pid)], creationflags=0x08000000)
-                    except: pass
-    except Exception as e:
-        print(f"Erro ao limpar zumbis: {e}")
+        log_message("Limpando Watchdog (passivo)...")
+        os.system('taskkill /F /IM ExodoNfceBridgeWatchdog* /T >nul 2>&1')
+    except: pass
 
 # --- UTILITÁRIOS ---
 LAST_HEARTBEAT_TS = time.time()
 
 def _registrar_heartbeat(db):
     """Registra/atualiza o heartbeat do Bridge no Firestore."""
+    global LAST_HEARTBEAT_TS, FIREBASE_STATUS_MSG
     try:
         import platform as _plt
         pc_name = _plt.node()
@@ -688,7 +646,6 @@ def _registrar_heartbeat(db):
         import re as _re
         doc_id_clean = _re.sub(r'[^a-zA-Z0-9_-]', '_', pc_name) or 'bridge'
         
-        global LAST_HEARTBEAT_TS
         LAST_HEARTBEAT_TS = time.time() # Atualiza marca de tempo local
 
         db.collection('bridge_status').document(doc_id_clean).set({
@@ -702,8 +659,82 @@ def _registrar_heartbeat(db):
             'ultimo_processamento': LAST_PROCESSED_COMPANY.get('timestamp')
         }, merge=True)
         log_message(f"Sinal de vida (Heartbeat) enviado com sucesso: {pc_name}")
+        
+        FIREBASE_STATUS_MSG = "🟢 Conectado e Operacional"
+        update_tray_menu()
     except Exception as e:
-        log_message(f"Falha ao enviar sinal de vida ao servidor: {e}", "WARN")
+        err_msg = str(e)
+        log_message(f"Falha ao enviar sinal de vida ao servidor: {err_msg}", "WARN")
+        if "iat" in err_msg or "Invalid JWT Signature" in err_msg or "expired" in err_msg.lower():
+            FIREBASE_STATUS_MSG = "🔴 Erro de Relógio (Hora do Windows Errada)"
+            # Tentar sincronizar a hora automaticamente se for admin
+            try:
+                log_message("Detectado erro de relógio. Tentando sincronizar com servidor NTP...", "WARN")
+                os.system('w32tm /resync /force >nul 2>&1')
+                # Se falhar, tentar ligar o serviço de hora
+                os.system('net start w32time >nul 2>&1')
+                os.system('w32tm /resync /force >nul 2>&1')
+            except: pass
+        elif "403" in err_msg or "Permission" in err_msg:
+            FIREBASE_STATUS_MSG = "🔴 Erro de Permissão / Chave Off"
+        else:
+            FIREBASE_STATUS_MSG = f"🔴 Offline: {err_msg[:20]}..."
+        update_tray_menu()
+
+FIREBASE_STATUS_MSG = "🟠 Conectando..."
+
+def update_tray_menu():
+    import pystray
+    global GLOBAL_TRAY_ICON, FIREBASE_STATUS_MSG, LAST_PROCESSED_COMPANY
+    if not GLOBAL_TRAY_ICON: return
+    
+    empresa_nome = LAST_PROCESSED_COMPANY.get('nome') or "Nenhuma"
+    cnpj = LAST_PROCESSED_COMPANY.get('cnpj') or "Aguardando..."
+    
+    # Atualizar Ícone baseado no Status
+    try:
+        from PIL import Image
+        meipass = getattr(sys, '_MEIPASS', None)
+        base_path = get_base_path()
+        
+        icon_name = "icon_orange.ico"
+        if "Conectado" in FIREBASE_STATUS_MSG:
+            icon_name = "icon_green.ico"
+        elif "Offline" in FIREBASE_STATUS_MSG or "Erro" in FIREBASE_STATUS_MSG:
+            icon_name = "icon_red.ico"
+            
+        full_path = None
+        # Busca no MEIPASS primeiro
+        if meipass:
+            p = os.path.join(meipass, icon_name)
+            if os.path.exists(p): full_path = p
+            
+        if not full_path:
+            p = os.path.join(base_path, icon_name)
+            if os.path.exists(p): full_path = p
+            
+        if full_path:
+            GLOBAL_TRAY_ICON.icon = Image.open(full_path)
+    except: pass
+
+    def quit_app(icon):
+        icon.stop()
+        os._exit(0)
+
+    menu_items = [
+        pystray.MenuItem(f"Versão: {BRIDGE_VERSION}", lambda: None, enabled=False),
+        pystray.MenuItem(f"Firebase: {FIREBASE_STATUS_MSG}", lambda: None, enabled=False),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem(f"Exodo Bridge: {empresa_nome}", lambda: None, enabled=False),
+        pystray.MenuItem(f"CNPJ: {cnpj}", lambda: None, enabled=False),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem("Reiniciar Serviço", lambda icon, item: restart_action_silent()),
+        pystray.MenuItem("Sair", lambda icon, item: quit_app(icon))
+    ]
+    GLOBAL_TRAY_ICON.menu = pystray.Menu(*menu_items)
+    
+    status_icon = "Ativo" if "Conectado" in FIREBASE_STATUS_MSG else "Falha"
+    GLOBAL_TRAY_ICON.title = f"Exodo Bridge v{BRIDGE_VERSION} - ({status_icon})"
 
 def update_local_status():
     if getattr(sys, 'frozen', False):
@@ -729,53 +760,52 @@ def self_install():
     """Configura o Bridge para iniciar e REINICIAR sozinho no Windows."""
     if not getattr(sys, 'frozen', False): return
     
+    # Marcador de instalação para evitar lentidão em todo boot
+    install_marker = os.path.join(os.path.dirname(sys.executable), ".installed")
+    
+    try:
+        if os.path.exists(install_marker):
+            with open(install_marker, "r") as f:
+                if f.read().strip() == BRIDGE_VERSION:
+                    return # Já está instalado nesta versão
+    except: pass
+
+    log_message(f"Instalando/Atualizando serviços de inicialização (v{BRIDGE_VERSION})...")
+
     exe_path = os.path.abspath(sys.executable)
     task_name = "ExodoNfceBridgeTask"
     
     # 1. TENTAR TAREFA AGENDADA (Robusta - Reinicia se Fechar)
     try:
         # 1.1 TAREFA DO BRIDGE (Início no Logon)
-        # Remove versão antiga se houver
         subprocess.run(['schtasks', '/delete', '/tn', task_name, '/f'], 
                       capture_output=True, creationflags=0x08000000)
         
-        # Cria a nova tarefa para o Bridge
         cmd = [
             'schtasks', '/create', '/tn', task_name, 
             '/tr', f'"{exe_path}" --silent', 
             '/sc', 'onlogon'
         ]
-        
-        if is_admin():
-            cmd += ['/rl', 'highest']
-            
+        if is_admin(): cmd += ['/rl', 'highest']
         subprocess.run(cmd + ['/f'], capture_output=True, text=True, creationflags=0x08000000)
 
-        # 1.2 TAREFA DO WATCHDOG (Monitoramento Ativo)
-        # O Watchdog deve estar na mesma pasta
+        # 1.2 TAREFA DO WATCHDOG
         watchdog_exe = os.path.join(os.path.dirname(exe_path), "ExodoNfceBridgeWatchdog.exe")
         watchdog_task = "ExodoNfceBridgeWatchdog"
 
         if os.path.exists(watchdog_exe):
-            # Remove antiga
             subprocess.run(['schtasks', '/delete', '/tn', watchdog_task, '/f'], 
                           capture_output=True, creationflags=0x08000000)
             
-            # Cria tarefa que inicia o watchdog no logon
-            cmd_watch = [
-                'schtasks', '/create', '/tn', watchdog_task,
-                '/tr', f'"{watchdog_exe}"',
-                '/sc', 'onlogon'
-            ]
+            cmd_watch = ['schtasks', '/create', '/tn', watchdog_task, '/tr', f'"{watchdog_exe}"', '/sc', 'onlogon']
             if is_admin(): cmd_watch += ['/rl', 'highest']
-            
             subprocess.run(cmd_watch + ['/f'], capture_output=True, text=True, creationflags=0x08000000)
-            log_message(f"Proteção Watchdog instalada: {watchdog_task}")
 
-        log_message(f"Sistema de auto-inicialização configurado via Tarefas Agendadas.")
-        return
+        # Criar marcador para não repetir isso todo boot
+        with open(install_marker, "w") as f: f.write(BRIDGE_VERSION)
+        log_message(f"Sistema de auto-inicialização configurado.")
     except Exception as e:
-        log_message(f"Falha ao configurar Tarefas Agendadas: {e}", "WARN")
+        log_message(f"Falha ao configurar inicialização: {e}", "WARN")
 
     # 2. FALLBACK: REGISTRO RUN (Apenas Início com Windows)
     try:
@@ -787,6 +817,17 @@ def self_install():
     except Exception as e:
         log_message(f"Erro ao configurar inicialização básica: {e}", "ERROR")
 
+    # 3. TRIPLE FALLBACK: PASTA INICIALIZAR (STARTUP FOLDER)
+    try:
+        startup_path = os.path.join(os.environ['APPDATA'], r"Microsoft\Windows\Start Menu\Programs\Startup")
+        shortcut_path = os.path.join(startup_path, "ExodoNfceBridge.bat")
+        # Cria um arquivo .bat simples que aponta para o exe
+        with open(shortcut_path, "w") as f:
+            f.write(f'@echo off\nstart "" "{exe_path}" --silent')
+        log_message(f"Atalho de inicialização criado na pasta Startup.")
+    except Exception as e:
+        log_message(f"Erro ao criar atalho na pasta Startup: {e}", "WARN")
+
 # --- TRAY ICON ---
 def restart_action_silent():
     if getattr(sys, 'frozen', False):
@@ -797,72 +838,70 @@ def restart_action_silent():
 
 def setup_tray():
     import pystray
-    from PIL import Image, ImageDraw
+    from PIL import Image
     
-    width, height = 64, 64
-    image = Image.new('RGBA', (width, height), (0, 0, 0, 0))
-    dc = ImageDraw.Draw(image)
-    dc.rounded_rectangle([2, 2, 62, 62], radius=15, fill=(255, 152, 0))
-    dc.rectangle([18, 16, 28, 48], fill="white")
-    dc.rectangle([28, 16, 46, 23], fill="white")
-    dc.rectangle([28, 28, 40, 35], fill="white")
-    dc.rectangle([28, 40, 46, 47], fill="white")
+    # Prioridade para arquivos internos (MEIPASS) se estiver compilado
+    meipass = getattr(sys, '_MEIPASS', None)
+    base_path = get_base_path()
+    
+    def find_icon(name):
+        # 1. Tenta no MEIPASS (interno ao EXE)
+        if meipass:
+            p = os.path.join(meipass, name)
+            if os.path.exists(p): return p
+        # 2. Tenta na pasta do executável
+        p = os.path.join(base_path, name)
+        if os.path.exists(p): return p
+        return None
+
+    icon_file = find_icon("icon_orange.ico")
+    
+    if icon_file:
+        try:
+            log_message(f"Usando arquivo de ícone: {icon_file}")
+            image = Image.open(icon_file)
+        except Exception as e:
+            log_message(f"Erro ao abrir ícone {icon_file}: {e}. Usando fallback.", "WARN")
+            icon_file = None
+    
+    if not icon_file:
+        log_message("Usando fallback de desenho para o ícone da bandeja.")
+        # Fallback se o arquivo não existir
+        from PIL import ImageDraw
+        width, height = 64, 64
+        image = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+        dc = ImageDraw.Draw(image)
+        dc.rounded_rectangle([2, 2, 62, 62], radius=15, fill=(255, 152, 0))
+        dc.rectangle([18, 16, 28, 48], fill="white")
+        dc.rectangle([28, 16, 46, 23], fill="white")
+        dc.rectangle([28, 28, 40, 35], fill="white")
+        dc.rectangle([28, 40, 46, 47], fill="white")
     
     def quit_app(icon):
         icon.stop()
         os._exit(0)
 
-    def update_menu(icon):
-        empresa_nome = LAST_PROCESSED_COMPANY.get('nome') or "Nenhuma"
-        cnpj = LAST_PROCESSED_COMPANY.get('cnpj') or "Aguardando..."
-        
-        menu_items = [
-            pystray.MenuItem(f"Versão: {BRIDGE_VERSION}", lambda: None, enabled=False),
-            pystray.MenuItem(f"Exodo Bridge: {empresa_nome}", lambda: None, enabled=False),
-            pystray.MenuItem(f"CNPJ: {cnpj}", lambda: None, enabled=False),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Reiniciar Serviço", lambda icon, item: restart_action_silent()),
-            pystray.MenuItem("Sair", lambda icon, item: quit_app(icon))
-        ]
-        icon.menu = pystray.Menu(*menu_items)
-
-    icon = pystray.Icon("exodo_bridge", image, f"Exodo Bridge v{BRIDGE_VERSION}")
-    icon.menu = pystray.Menu(
-        pystray.MenuItem(f"Exodo Bridge v{BRIDGE_VERSION}", lambda: None, enabled=False),
-        pystray.MenuItem("Aguardando empresa...", lambda: None, enabled=False),
+    import secrets
+    icon_id = f"exodo_bridge_{secrets.token_hex(2)}"
+    icon = pystray.Icon(icon_id, image, f"Exodo Bridge v{BRIDGE_VERSION}")
+    
+    menu_items = [
+        pystray.MenuItem(f"Versão: {BRIDGE_VERSION}", lambda: None, enabled=False),
+        pystray.MenuItem(f"Firebase: {FIREBASE_STATUS_MSG}", lambda: None, enabled=False),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem(f"Aguardando empresa...", lambda: None, enabled=False),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Reiniciar Serviço", lambda icon, item: restart_action_silent()),
         pystray.MenuItem("Sair", lambda icon, item: quit_app(icon))
-    )
+    ]
+    icon.menu = pystray.Menu(*menu_items)
     return icon
 
 def run_server():
     try:
         log_message("Iniciando Uvicorn...")
-        # Usa dict padrão para contornar bug do PyInstaller com formatadores do Uvicorn
-        LOGGING_CONFIG = {
-            "version": 1,
-            "disable_existing_loggers": False,
-            "formatters": {
-                "default": {
-                    "()": "logging.Formatter",
-                    "fmt": "%(levelname)s: %(message)s",
-                },
-            },
-            "handlers": {
-                "default": {
-                    "formatter": "default",
-                    "class": "logging.StreamHandler",
-                    "stream": "ext://sys.stderr",
-                },
-            },
-            "loggers": {
-                "uvicorn": {"handlers": ["default"], "level": "INFO"},
-                "uvicorn.error": {"handlers": ["default"], "level": "INFO"},
-                "uvicorn.access": {"handlers": ["default"], "level": "INFO"},
-            },
-        }
-        uvicorn.run(app, host="0.0.0.0", port=8000, log_config=LOGGING_CONFIG, reload=False, workers=1)
+        # log_config=None usa o padrão do uvicorn, o que evita erros de formatação no PyInstaller
+        uvicorn.run(app, host="0.0.0.0", port=8000, log_config=None, reload=False, workers=1)
     except Exception as e:
         log_message(f"ERRO CRÍTICO NO SERVIDOR HTTP: {e}", "ERROR")
         # Se falhar a porta 8000, o sistema continuará funcionando via Firebase
@@ -877,31 +916,46 @@ def notify_user(title, message):
     except Exception as e:
         print(f"Erro notificação: {e}")
 
+def run_background_tasks():
+    """Roda as tarefas pesadas (Firebase, Servidor, Instalação, Cleanup) em segundo plano."""
+    try:
+        # 1. Limpeza de processos antigos (Zumbis)
+        # Rodamos aqui para o ícone sumir das instâncias velhas enquanto este sobe
+        if getattr(sys, 'frozen', False):
+            kill_zombies()
+
+        # 2. Configurações de sistema (Auto-start)
+        if getattr(sys, 'frozen', False):
+            self_install()
+            
+        # 3. Iniciar Firebase (Conexão de rede)
+        log_message("Conectando ao Firebase em segundo plano...")
+        start_firebase_listener()
+        
+        # 4. Iniciar Servidor HTTP
+        run_server()
+    except Exception as e:
+        log_message(f"Erro nas tarefas de background: {e}", "ERROR")
+
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     log_message(">>> INICIO DO PROCESSO PRINCIPAL <<<")
     
-    # 1. Limpar instâncias antigas para evitar conflitos de porta/listener
-    if getattr(sys, 'frozen', False):
-        kill_zombies()
-        self_install()
-        
-    # 2. Iniciar Firebase Listener IMEDIATAMENTE (Coração do sistema)
-    # Iniciamos antes do Uvicorn para garantir que funcione mesmo se a porta 8000 estiver ocupada
-    log_message("Iniciando serviços de nuvem (Firebase)...")
-    start_firebase_listener()
+    # 1. Iniciar as tarefas pesadas (incluindo limpeza) em Thread separada
+    bg_thread = threading.Thread(target=run_background_tasks, daemon=True, name="BgInitThread")
+    bg_thread.start()
     
-    # 3. Iniciar Servidor HTTP em Thread separada
-    server_thread = threading.Thread(target=run_server, daemon=True, name="UvicornThread")
-    server_thread.start()
-    
-    # 4. Iniciar Interface de Bandeja (Loop Principal)
+    # 2. Subir a Interface de Bandeja IMEDIATAMENTE (Não bloqueia o início)
     try:
-        log_message("Iniciando interface da bandeja...")
+        log_message("Subindo ícone da bandeja...")
         GLOBAL_TRAY_ICON = setup_tray()
-        GLOBAL_TRAY_ICON.run()
+        if GLOBAL_TRAY_ICON:
+            GLOBAL_TRAY_ICON.run()
+        else:
+            log_message("Falha ao criar ícone da bandeja", "ERROR")
+            while True: time.sleep(60)
     except Exception as e:
         log_message(f"Erro fatal na interface da bandeja: {e}", "ERROR")
-        # Se a bandeja falhar, manter o processo vivo para os listeners continuarem
+        # Se a bandeja falhar, manter o processo vivo em loop
         while True:
             time.sleep(60)
-        while True: time.sleep(1)

@@ -26,11 +26,30 @@ class NfceService {
     double valorTotal = 0.0,
     double valorDesconto = 0.0,
   }) async {
-    final url = Uri.parse('$_baseUrl/emitir_nfce');
+    final url = Uri.parse('$_baseUrl/emitir');
 
     // Monta o payload JSON esperado pelo Pydantic do backend
     final Map<String, dynamic> payload = {
-      'numero': numeroVenda,
+      'empresa': {
+        'cnpj': empresa.cnpj,
+        'razao_social': empresa.razaoSocial,
+        'nome_fantasia': empresa.nomeFantasia,
+        'inscricao_estadual': empresa.inscricaoEstadual,
+        'codigo_municipio': empresa.configuracoes?['codigo_municipio'] ?? '3550308',
+        'uf': empresa.estado ?? 'SP',
+        'logradouro': empresa.endereco ?? 'Centro',
+        'numero': empresa.numero ?? 'S/N',
+        'bairro': empresa.bairro ?? 'Centro',
+        'cep': empresa.cep ?? '00000000',
+        'municipio': empresa.cidade ?? 'São Paulo',
+        'certificado_base64': empresa.configuracoes?['certificado_base64'] ?? '',
+        'senha_certificado': empresa.configuracoes?['certificado_senha'] ?? '',
+        'ambiente': empresa.configuracoes?['ambiente_nfe'] == 'Produção' ? 1 : 2,
+        'csc': empresa.configuracoes?['csc'] ?? '',
+        'csc_id': empresa.configuracoes?['csc_id'] ?? '',
+        'crt': int.tryParse(empresa.configuracoes?['crt']?.toString() ?? '1') ?? 1,
+      },
+      'venda_numero': numeroVenda,
       'data_emissao': DateTime.now().toIso8601String(),
       'cpf_cliente': cpfNota ?? cliente?.cpfCnpj,
       'valor_total': valorTotal,
