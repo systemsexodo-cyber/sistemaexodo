@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../services/data_service.dart';
+import '../services/auth_service.dart';
 import '../models/mesa_comanda.dart';
 import '../models/produto.dart';
+import 'venda_direta_page.dart';
 import 'package:uuid/uuid.dart';
 
 const uuid = Uuid();
@@ -287,120 +289,160 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
   Widget _buildQuadroMesaComanda(MesaComanda mesaComanda) {
     final temPendentes = mesaComanda.temItensPendentes;
     final temProntos = mesaComanda.temItensProntos;
-    final total = mesaComanda.totalCalculado;
+    final pendente = mesaComanda.totalPendente;
+    final estaPago = mesaComanda.estaTotalmentePago;
     final isComanda = mesaComanda.tipo == TipoControle.comanda;
     
-    // Coleta status para cor de fundo inteligente
-    Color accentColor = isComanda ? Colors.purpleAccent : Colors.orange;
-    
-    if (temPendentes) {
-      accentColor = Colors.redAccent;
-    } else if (temProntos) {
-      accentColor = Colors.greenAccent;
-    }
+    Color accentColor = isComanda ? const Color(0xFF9C27B0) : const Color(0xFFFF9800);
+    if (temPendentes) accentColor = Colors.redAccent;
+    else if (temProntos) accentColor = Colors.greenAccent;
 
-    return Card(
-      elevation: 4,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      color: const Color(0xFF1E1E2E),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: () {
-          setState(() {
-            _mesaComandaSelecionada = mesaComanda;
-          });
-        },
-        child: Stack(
-          children: [
-            // Faixa lateral de status
-            Positioned(
-              left: 0,
-              top: 0,
-              bottom: 0,
-              width: 6,
-              child: Container(color: accentColor),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        isComanda ? 'Comanda' : 'Mesa',
-                        style: TextStyle(
-                          color: Colors.grey[400],
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      if (temPendentes)
-                        const Icon(Icons.priority_high, color: Colors.redAccent, size: 16),
-                      if (!temPendentes && temProntos)
-                        const Icon(Icons.check_circle, color: Colors.greenAccent, size: 16),
-                    ],
-                  ),
-                  const SizedBox(height: 2),
-                  FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: Text(
-                      mesaComanda.numero,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold,
-                      ),
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            const Color(0xFF2A2A3E),
+            const Color(0xFF1E1E2E).withOpacity(0.9),
+          ],
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: accentColor.withOpacity(0.15),
+            blurRadius: 15,
+            spreadRadius: 2,
+            offset: const Offset(0, 5),
+          ),
+        ],
+        border: Border.all(
+          color: accentColor.withOpacity(0.3),
+          width: 1.5,
+        ),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(20),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: () => setState(() => _mesaComandaSelecionada = mesaComanda),
+            child: Stack(
+              children: [
+                // Detalhe decorativo de fundo
+                Positioned(
+                  top: -20,
+                  right: -20,
+                  child: Container(
+                    width: 80,
+                    height: 80,
+                    decoration: BoxDecoration(
+                      color: accentColor.withOpacity(0.05),
+                      shape: BoxShape.circle,
                     ),
-                  ),
-                  const Spacer(),
-                  if (mesaComanda.clienteNome != null)
-                    Text(
-                      mesaComanda.clienteNome!,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: Colors.grey[500], fontSize: 13),
-                    ),
-                  const SizedBox(height: 4),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        '${mesaComanda.itens.length} itens',
-                        style: TextStyle(color: Colors.grey[400], fontSize: 11),
-                      ),
-                      Text(
-                        NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(total),
-                        style: TextStyle(
-                          color: accentColor,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 14,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            // Badge de itens prontos no canto superior direito
-            if (temProntos)
-              Positioned(
-                right: 8,
-                top: 8,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: Colors.greenAccent,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Text(
-                    '${mesaComanda.itensProntos.length}',
-                    style: const TextStyle(color: Colors.black, fontSize: 10, fontWeight: FontWeight.bold),
                   ),
                 ),
-              ),
-          ],
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: accentColor.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              isComanda ? 'COMANDA' : 'MESA',
+                              style: TextStyle(
+                                color: accentColor,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 1.2,
+                              ),
+                            ),
+                          ),
+                          if (temProntos)
+                            Container(
+                              padding: const EdgeInsets.all(4),
+                              decoration: const BoxDecoration(
+                                color: Colors.greenAccent,
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(Icons.check, color: Colors.black, size: 10),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        mesaComanda.numero,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 24,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: -0.5,
+                        ),
+                      ),
+                      if (mesaComanda.clienteNome != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(
+                            mesaComanda.clienteNome!,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.5),
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      const Spacer(),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '${mesaComanda.itens.length} itens',
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.4),
+                                  fontSize: 11,
+                                ),
+                              ),
+                              if (estaPago)
+                                const Text(
+                                  'QUITADO',
+                                  style: TextStyle(
+                                    color: Colors.greenAccent,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                            ],
+                          ),
+                          Text(
+                            estaPago ? 'PAID' : NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(pendente),
+                            style: TextStyle(
+                              color: estaPago ? Colors.greenAccent : Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -408,122 +450,97 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
 
   Widget _buildCardMesaComanda(MesaComanda mesaComanda) {
     final temPendentes = mesaComanda.temItensPendentes;
-    final temEmPreparo = mesaComanda.temItensEmPreparo;
     final temProntos = mesaComanda.temItensProntos;
+    final estaPago = mesaComanda.estaTotalmentePago;
+    final isComanda = mesaComanda.tipo == TipoControle.comanda;
     
-    return Card(
+    Color accentColor = isComanda ? const Color(0xFF9C27B0) : const Color(0xFFFF9800);
+    if (temPendentes) accentColor = Colors.redAccent;
+    else if (temProntos) accentColor = Colors.greenAccent;
+
+    return Container(
       margin: const EdgeInsets.only(bottom: 12),
-      color: const Color(0xFF1E1E2E),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E1E2E).withOpacity(0.6),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: accentColor.withOpacity(0.2)),
+      ),
       child: InkWell(
-        onTap: () {
-          setState(() {
-            _mesaComandaSelecionada = mesaComanda;
-          });
-        },
+        onTap: () => setState(() => _mesaComandaSelecionada = mesaComanda),
+        borderRadius: BorderRadius.circular(16),
         child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Row(
             children: [
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: Colors.orange,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      mesaComanda.numero,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
-                      ),
+              Container(
+                width: 50,
+                height: 50,
+                decoration: BoxDecoration(
+                  color: accentColor.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Center(
+                  child: Text(
+                    mesaComanda.numero.replaceAll(RegExp(r'[^0-9]'), ''),
+                    style: TextStyle(
+                      color: accentColor,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w900,
                     ),
                   ),
-                  const Spacer(),
-                  if (temPendentes)
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: Colors.red.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(4),
-                        border: Border.all(color: Colors.red),
-                      ),
-                      child: Text(
-                        '${mesaComanda.itensPendentes.length} pendente(s)',
-                        style: const TextStyle(color: Colors.red, fontSize: 12),
-                      ),
-                    ),
-                  if (temEmPreparo) ...[
-                    const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: Colors.orange.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(4),
-                        border: Border.all(color: Colors.orange),
-                      ),
-                      child: Text(
-                        '${mesaComanda.itensEmPreparo.length} em preparo',
-                        style: const TextStyle(color: Colors.orange, fontSize: 12),
-                      ),
-                    ),
-                  ],
-                  if (temProntos) ...[
-                    const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: Colors.green.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(4),
-                        border: Border.all(color: Colors.green),
-                      ),
-                      child: Text(
-                        '${mesaComanda.itensProntos.length} pronto(s)',
-                        style: const TextStyle(color: Colors.green, fontSize: 12),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-              if (mesaComanda.clienteNome != null) ...[
-                const SizedBox(height: 8),
-                Text(
-                  'Cliente: ${mesaComanda.clienteNome}',
-                  style: const TextStyle(color: Colors.grey, fontSize: 14),
                 ),
-              ],
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
                       children: [
                         Text(
-                          '${mesaComanda.itens.length} item(ns)',
-                          style: const TextStyle(color: Colors.white70, fontSize: 14),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Total: ${NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(mesaComanda.totalCalculado)}',
-                          style: const TextStyle(
-                            color: Colors.green,
-                            fontSize: 16,
+                          isComanda ? 'COMANDA' : 'MESA',
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.4),
+                            fontSize: 10,
                             fontWeight: FontWeight.bold,
+                            letterSpacing: 1,
                           ),
                         ),
+                        const SizedBox(width: 8),
+                        if (estaPago)
+                          const Text(
+                            '• PAGO',
+                            style: TextStyle(color: Colors.greenAccent, fontSize: 10, fontWeight: FontWeight.bold),
+                          ),
                       ],
                     ),
+                    const SizedBox(height: 2),
+                    Text(
+                      mesaComanda.clienteNome ?? 'Sem Cliente',
+                      style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(mesaComanda.totalPendente),
+                    style: TextStyle(
+                      color: estaPago ? Colors.greenAccent : Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
-                  Icon(
-                    Icons.chevron_right,
-                    color: Colors.grey.withOpacity(0.5),
+                  Text(
+                    '${mesaComanda.itens.length} itens',
+                    style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 11),
                   ),
                 ],
               ),
+              const SizedBox(width: 12),
+              Icon(Icons.chevron_right, color: Colors.white.withOpacity(0.2)),
             ],
           ),
         ),
@@ -602,6 +619,10 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
                         _fecharMesaComanda(context, mesaComanda, dataService);
                       } else if (value == 'editarCouvert') {
                         _editarCouvert(context, mesaComanda, dataService);
+                      } else if (value == 'limpar') {
+                        _limparMesaComanda(context, mesaComanda, dataService);
+                      } else if (value == 'receber') {
+                        _navegarParaReceber(context, mesaComanda);
                       }
                     },
                     itemBuilder: (context) => [
@@ -622,6 +643,26 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
                             Icon(Icons.close, color: Colors.orange, size: 20),
                             SizedBox(width: 8),
                             Text('Fechar', style: TextStyle(color: Colors.orange)),
+                          ],
+                        ),
+                      ),
+                      const PopupMenuItem(
+                        value: 'receber',
+                        child: Row(
+                          children: [
+                            Icon(Icons.monetization_on, color: Colors.greenAccent, size: 20),
+                            SizedBox(width: 8),
+                            Text('Receber / Finalizar', style: TextStyle(color: Colors.greenAccent)),
+                          ],
+                        ),
+                      ),
+                      const PopupMenuItem(
+                        value: 'limpar',
+                        child: Row(
+                          children: [
+                            Icon(Icons.delete_sweep, color: Colors.redAccent, size: 20),
+                            SizedBox(width: 8),
+                            Text('Limpar Mesa (Histórico)', style: TextStyle(color: Colors.redAccent)),
                           ],
                         ),
                       ),
@@ -704,6 +745,57 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
                 ),
               ],
             ),
+          ),
+        ),
+        // Rodapé de Ações Rápidas
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: const Color(0xFF1E1E2E),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.3),
+                blurRadius: 8,
+                offset: const Offset(0, -2),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                flex: 2,
+                child: ElevatedButton.icon(
+                  onPressed: () => _navegarParaReceber(context, mesaComanda),
+                  icon: const Icon(Icons.monetization_on),
+                  label: const Text('RECEBER / FINALIZAR'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green.shade700,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 20),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 1,
+                child: ElevatedButton.icon(
+                  onPressed: () => _limparMesaComanda(context, mesaComanda, dataService),
+                  icon: const Icon(Icons.cleaning_services),
+                  label: const Text('LIMPAR'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red.shade900,
+                    foregroundColor: Colors.white70,
+                    padding: const EdgeInsets.symmetric(vertical: 20),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       ],
@@ -1467,12 +1559,13 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
     }
 
     try {
-      final mesaComandaFechada = mesaComanda.copyWith(
-        status: 'Fechada',
-        dataFechamento: DateTime.now(),
+      // IMPORTANTE: Usar limparMesaComanda para salvar o histórico de consumo
+      // antes de fechar. Isso garante que a venda apareça no Histórico de Vendas.
+      final authService = Provider.of<AuthService>(context, listen: false);
+      await dataService.limparMesaComanda(
+        mesaComanda.id,
+        usuario: authService.usuarioAtual?.nome,
       );
-
-      await dataService.updateMesaComanda(mesaComandaFechada);
 
       if (context.mounted) {
         setState(() {
@@ -1481,7 +1574,7 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
 
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('${mesaComanda.numero} fechada com sucesso!'),
+            content: Text('${mesaComanda.numero} fechada com sucesso! Histórico salvo.'),
             backgroundColor: Colors.green,
           ),
         );
@@ -1494,6 +1587,77 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
             backgroundColor: Colors.red,
           ),
         );
+      }
+    }
+  }
+
+  void _navegarParaReceber(BuildContext context, MesaComanda mesaComanda) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => VendaDiretaPage(mesaComanda: mesaComanda),
+      ),
+    );
+  }
+
+  Future<void> _limparMesaComanda(BuildContext context, MesaComanda mesaComanda, DataService dataService) async {
+    final confirmar = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.red),
+            SizedBox(width: 8),
+            Text('Limpar Mesa?', style: TextStyle(color: Colors.white)),
+          ],
+        ),
+        content: Text(
+          'Deseja limpar a ${mesaComanda.numero}?\n\nO consumo atual será salvo no histórico de pedidos, e a mesa ficará disponível novamente.',
+          style: const TextStyle(color: Colors.grey),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Sim, Limpar e Salvar'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmar == true) {
+      try {
+        final authService = Provider.of<AuthService>(context, listen: false);
+        await dataService.limparMesaComanda(
+          mesaComanda.id, 
+          usuario: authService.usuarioAtual?.nome,
+        );
+        
+        if (context.mounted) {
+          setState(() {
+            _mesaComandaSelecionada = null;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('${mesaComanda.numero} limpa com sucesso! Histórico salvo.'),
+              backgroundColor: Colors.blue,
+            ),
+          );
+        }
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Erro ao limpar mesa: $e'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
       }
     }
   }

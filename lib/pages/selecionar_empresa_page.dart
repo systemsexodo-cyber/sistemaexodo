@@ -65,13 +65,34 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
     return AppTheme.appBackground(
       child: Scaffold(
         backgroundColor: Colors.transparent,
+        extendBodyBehindAppBar: true,
         appBar: AppBar(
-          title: const Text('Selecionar Empresa'),
-          automaticallyImplyLeading: false,
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          leading: Padding(
+            padding: const EdgeInsets.only(left: 16),
+            child: const ExodoLogoCompact(fontSize: 28),
+          ),
+          title: Text(
+            'Portal Êxodo',
+            style: TextStyle(
+              fontWeight: FontWeight.w800,
+              fontSize: 22,
+              letterSpacing: -0.5,
+              color: Colors.white.withOpacity(0.95),
+            ),
+          ),
           actions: [
             if (authService.usuarioAtual?.email.toLowerCase() == 'user')
               IconButton(
-                icon: const Icon(Icons.settings, color: Colors.blueAccent),
+                icon: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.blueAccent.withOpacity(0.15),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.settings, color: Colors.blueAccent, size: 20),
+                ),
                 tooltip: 'Configurações de Empresas',
                 onPressed: () {
                   Navigator.push(
@@ -80,91 +101,150 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                   );
                 },
               ),
+            const SizedBox(width: 8),
             IconButton(
-              icon: const Icon(Icons.logout),
-              tooltip: 'Sair e voltar ao login',
+              icon: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.logout, color: Colors.white70, size: 20),
+              ),
+              tooltip: 'Sair',
               onPressed: () async {
                 final authService = Provider.of<AuthService>(context, listen: false);
                 final dataService = Provider.of<DataService>(context, listen: false);
-                
-                // Limpar empresa do DataService primeiro
                 await dataService.definirEmpresaAtual(null);
-                
-                // Fazer logout
                 await authService.logout();
-                
                 if (context.mounted) {
-                  // Usar Navigator.pushAndRemoveUntil para garantir que não volte para empresas
                   Navigator.pushAndRemoveUntil(
                     context,
-                    MaterialPageRoute(
-                      builder: (context) => const LoginPage(),
-                    ),
-                    (route) => false, // Remove todas as rotas anteriores
+                    MaterialPageRoute(builder: (context) => const LoginPage()),
+                    (route) => false,
                   );
                 }
               },
             ),
+            const SizedBox(width: 16),
           ],
         ),
         body: Stack(
           children: [
             SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.all(24.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    const SizedBox(height: 8),
-                    const ExodoLogo(fontSize: 32, showSubtitle: true),
-                    const SizedBox(height: 16),
-                    Text(
-                      'Selecione a empresa',
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
+              child: CustomScrollView(
+                physics: const BouncingScrollPhysics(),
+                slivers: [
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          const SizedBox(height: 12),
+                          const Center(child: ExodoLogo(fontSize: 42, showSubtitle: true)),
+                          const SizedBox(height: 32),
+                          
+                          // Hero section with better typography
+                          Column(
+                            children: [
+                              Text(
+                                'Bem-vindo de volta',
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.6),
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w400,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                authService.usuarioAtual?.nome ?? 'Usuário',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 28,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: -0.5,
+                                ),
+                              ),
+                            ],
                           ),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Escolha a empresa que deseja gerenciar',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: Colors.white70,
+                          const SizedBox(height: 32),
+
+                          // Essential Admin Cards
+                          if (authService.usuarioAtual?.email.toLowerCase() == 'user') ...[
+                            _buildCardGoogleDrive(context, authService),
+                            const SizedBox(height: 16),
+                            _buildCardBridgeManagement(context, authService),
+                            const SizedBox(height: 24),
+                          ],
+
+                          // User Info Card - redesigned
+                          _buildUsuarioInfoCard(context, authService),
+                          const SizedBox(height: 32),
+
+                          // Search and selection header
+                          Row(
+                            children: [
+                              Container(
+                                width: 4,
+                                height: 24,
+                                decoration: BoxDecoration(
+                                  color: Colors.blueAccent,
+                                  borderRadius: BorderRadius.circular(2),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              const Text(
+                                'Selecionar Empresa',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
                           ),
-                      textAlign: TextAlign.center,
+                          const SizedBox(height: 16),
+                          _buildSearchField(),
+                          const SizedBox(height: 16),
+                        ],
+                      ),
                     ),
-                    const SizedBox(height: 16),
-                    // Card com informações do usuário (incluindo senha)
-                    _buildUsuarioInfoCard(context, authService),
-                    // Card do Google Drive (Apenas Admin)
-                    const SizedBox(height: 12),
-                    _buildCardGoogleDrive(context, authService),
-                    // NOVO: Card de Gerenciamento do Emissor NFC-e
-                    const SizedBox(height: 12),
-                    _buildCardBridgeManagement(context, authService),
-                    const SizedBox(height: 12),
-                    // Campo de busca
-                    _buildSearchField(),
-                    const SizedBox(height: 12),
-                    Expanded(
-                      child: authService.getEmpresasDoUsuario().isEmpty
-                          ? _buildEmptyState(context)
-                          : _buildEmpresasList(context, authService),
-                    ),
-                  ],
-                ),
+                  ),
+                  
+                  // The company list
+                  authService.getEmpresasDoUsuario().isEmpty
+                      ? SliverFillRemaining(
+                          hasScrollBody: false,
+                          child: _buildEmptyState(context),
+                        )
+                      : SliverPadding(
+                          padding: const EdgeInsets.fromLTRB(24, 0, 24, 32),
+                          sliver: _buildEmpresasListSliver(context, authService),
+                        ),
+                ],
               ),
             ),
             if (_isLoading)
-            Container(
-              color: Colors.black.withOpacity(0.5),
-              child: const Center(
-                child: CircularProgressIndicator(
-                  valueColor: AlwaysStoppedAnimation<Color>(Colors.blueAccent),
+              Container(
+                color: Colors.black.withOpacity(0.6),
+                child: const Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      CircularProgressIndicator(
+                        valueColor: AlwaysStoppedAnimation<Color>(Colors.blueAccent),
+                        strokeWidth: 3,
+                      ),
+                      SizedBox(height: 16),
+                      Text(
+                        'Carregando...',
+                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ),
           ],
         ),
       ),
@@ -237,100 +317,102 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
     final usuario = authService.usuarioAtual;
     if (usuario == null) return const SizedBox.shrink();
 
-    bool _senhaVisivel = false;
-
     return StatefulBuilder(
       builder: (context, setState) {
+        bool _senhaVisivel = false;
+        
         return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.08),
-            borderRadius: BorderRadius.circular(12),
+            color: Colors.white.withOpacity(0.06),
+            borderRadius: BorderRadius.circular(20),
             border: Border.all(
-              color: Colors.white.withOpacity(0.15),
-              width: 1,
+              color: Colors.white.withOpacity(0.1),
+              width: 1.5,
             ),
           ),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 children: [
-                  const Icon(
-                    Icons.person,
-                    color: Colors.blueAccent,
-                    size: 18,
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Usuário: ${usuario.nome}',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 14,
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.blueAccent.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(12),
                     ),
+                    child: const Icon(Icons.person_outline, color: Colors.blueAccent, size: 24),
                   ),
-                  const Spacer(),
-                  Text(
-                    usuario.tipo == TipoUsuario.administrador
-                        ? 'ADMIN'
-                        : usuario.tipo == TipoUsuario.gerente
-                            ? 'GERENTE'
-                            : 'OPERADOR',
-                    style: TextStyle(
-                      color: Colors.blueAccent.withOpacity(0.8),
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 1,
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Text(
+                              usuario.nome,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 17,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: Colors.blueAccent.withOpacity(0.2),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                usuario.tipo == TipoUsuario.administrador ? 'ADMIN' : 
+                                usuario.tipo == TipoUsuario.gerente ? 'GERENTE' : 'OPERADOR',
+                                style: const TextStyle(
+                                  color: Colors.blueAccent,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        Text(
+                          usuario.email,
+                          style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 13),
+                        ),
+                      ],
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      'Email: ${usuario.email}',
-                      style: const TextStyle(color: Colors.white70, fontSize: 12),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.lock_outline, color: Colors.white54, size: 16),
+                    const SizedBox(width: 12),
+                    Text(
+                      '••••••••',
+                      style: TextStyle(color: Colors.white.withOpacity(0.7), letterSpacing: 2),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  GestureDetector(
-                    onTap: () => setState(() => _senhaVisivel = !_senhaVisivel),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          _senhaVisivel ? usuario.senha : '••••',
-                          style: const TextStyle(color: Colors.white54, fontSize: 12),
-                        ),
-                        const SizedBox(width: 4),
-                        Icon(
-                          _senhaVisivel ? Icons.visibility : Icons.visibility_off,
-                          color: Colors.white38,
-                          size: 14,
-                        ),
-                      ],
+                    const Spacer(),
+                    TextButton.icon(
+                      style: TextButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                      ),
+                      onPressed: () => _mostrarDialogoAlterarSenha(context, authService, usuario),
+                      icon: const Icon(Icons.edit_outlined, size: 14),
+                      label: const Text('Alterar Senha', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
                     ),
-                  ),
-                  const SizedBox(width: 12),
-                  GestureDetector(
-                    onTap: () => _mostrarDialogoAlterarSenha(context, authService, usuario),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.edit,
-                          color: Colors.blueAccent,
-                          size: 14,
-                        ),
-                        const SizedBox(width: 4),
-                        const Text('Alterar', style: TextStyle(color: Colors.blueAccent, fontSize: 12, fontWeight: FontWeight.bold)),
-                      ],
-                    ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ],
           ),
@@ -369,58 +451,57 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
   }
 
   Widget _buildSearchField() {
-    return TextField(
-      controller: _searchController,
-      style: const TextStyle(color: Colors.white),
-      decoration: InputDecoration(
-        hintText: 'Buscar por nome ou CNPJ...',
-        hintStyle: TextStyle(color: Colors.white.withOpacity(0.5)),
-        prefixIcon: const Icon(Icons.search, color: Colors.white70),
-        suffixIcon: _searchController.text.isNotEmpty
-            ? IconButton(
-                icon: const Icon(Icons.clear, color: Colors.white70),
-                onPressed: () {
-                  setState(() {
-                    _searchController.clear();
-                  });
-                },
-              )
-            : null,
-        filled: true,
-        fillColor: Colors.white.withOpacity(0.1),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide.none,
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(
-            color: Colors.white.withOpacity(0.2),
+    return Container(
+      decoration: BoxDecoration(
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.12),
+            blurRadius: 15,
+            offset: const Offset(0, 5),
           ),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(
-            color: Colors.blueAccent,
-            width: 2,
-          ),
-        ),
+        ],
       ),
-      onChanged: (value) {
-        setState(() {}); // Atualiza a lista quando o texto muda
-      },
+      child: TextField(
+        controller: _searchController,
+        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w500),
+        decoration: InputDecoration(
+          hintText: 'Buscar por nome ou CNPJ...',
+          hintStyle: TextStyle(color: Colors.white.withOpacity(0.4), fontWeight: FontWeight.w400),
+          prefixIcon: Icon(Icons.search_rounded, color: Colors.blueAccent.withAlpha(180)),
+          suffixIcon: _searchController.text.isNotEmpty
+              ? IconButton(
+                  icon: const Icon(Icons.clear_rounded, color: Colors.white54),
+                  onPressed: () {
+                    setState(() => _searchController.clear());
+                  },
+                )
+              : null,
+          filled: true,
+          fillColor: Colors.white.withOpacity(0.08),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(18),
+            borderSide: BorderSide(color: Colors.white.withOpacity(0.15)),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(18),
+            borderSide: BorderSide(color: Colors.white.withOpacity(0.12)),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(18),
+            borderSide: const BorderSide(color: Colors.blueAccent, width: 2),
+          ),
+        ),
+        onChanged: (value) => setState(() {}),
+      ),
     );
   }
 
-  Widget _buildEmpresasList(BuildContext context, AuthService authService) {
-    // Usar método que já filtra empresas por usuário
+  Widget _buildEmpresasListSliver(BuildContext context, AuthService authService) {
     final usuarioAtual = authService.usuarioAtual;
     final isUsuarioMaster = usuarioAtual?.email.toLowerCase() == 'user';
     
-    // Usar getEmpresasDoUsuario() que já aplica o filtro correto
     List<Empresa> empresas = authService.getEmpresasDoUsuario();
-
-    // Aplicar filtro de busca
     final searchText = _searchController.text.toLowerCase().trim();
     if (searchText.isNotEmpty) {
       empresas = empresas.where((empresa) {
@@ -432,45 +513,34 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
     }
 
     if (empresas.isEmpty && searchText.isNotEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.search_off,
-              size: 64,
-              color: Colors.white.withOpacity(0.3),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'Nenhuma empresa encontrada',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    color: Colors.white70,
-                  ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Tente buscar por outro termo',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Colors.white54,
-                  ),
-            ),
-          ],
+      return SliverToBoxAdapter(
+        child: Padding(
+          padding: const EdgeInsets.only(top: 40),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.search_off_rounded, size: 64, color: Colors.white.withOpacity(0.2)),
+              const SizedBox(height: 16),
+              Text(
+                'Nenhuma empresa encontrada',
+                style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 16),
+              ),
+            ],
+          ),
         ),
       );
     }
 
-    return ListView.builder(
-      itemCount: empresas.length + (isUsuarioMaster ? 1 : 0), // +1 para botão criar
-      itemBuilder: (context, index) {
-        // Se for o último item e for usuário master, mostra botão criar
-        if (isUsuarioMaster && index == empresas.length) {
-          return _buildBotaoCriarEmpresa(context);
-        }
-        
-        final empresa = empresas[index];
-        return _buildEmpresaCard(context, empresa, authService);
-      },
+    return SliverList(
+      delegate: SliverChildBuilderDelegate(
+        (context, index) {
+          if (isUsuarioMaster && index == empresas.length) {
+            return _buildBotaoCriarEmpresa(context);
+          }
+          return _buildEmpresaCard(context, empresas[index], authService);
+        },
+        childCount: empresas.length + (isUsuarioMaster ? 1 : 0),
+      ),
     );
   }
   
@@ -547,326 +617,180 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
     );
   }
 
-  Widget _buildEmpresaCard(
-    BuildContext context,
-    Empresa empresa,
-    AuthService authService,
-  ) {
+  Widget _buildEmpresaCard(BuildContext context, Empresa empresa, AuthService authService) {
     final usuarioAtual = authService.usuarioAtual;
     final isUsuarioMaster = usuarioAtual?.email.toLowerCase() == 'user';
     
-    return Card(
+    return Container(
       margin: const EdgeInsets.only(bottom: 16),
-      child: InkWell(
-        onTap: _isLoading ? null : () async {
-          // Validar se o usuário tem acesso a esta empresa
-          final empresasPermitidas = authService.getEmpresasDoUsuario();
-          if (!empresasPermitidas.any((e) => e.id == empresa.id)) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Você não tem permissão para acessar esta empresa'),
-                backgroundColor: Colors.red,
-              ),
-            );
-            return;
-          }
-          
-          setState(() => _isLoading = true);
-          try {
-            await authService.selecionarEmpresa(empresa);
-            
-            // Notificar DataService sobre a empresa selecionada
-            final dataService = Provider.of<DataService>(context, listen: false);
-            // DEFINIR OBJETO COMPLETO PRIMEIRO (para temas e links)
-            dataService.setEmpresaAtual(empresa);
-            // DEFINIR ID PARA CARREGAMENTO DE DADOS
-            await dataService.definirEmpresaAtual(empresa.id);
-            
-            if (context.mounted) {
-              Navigator.pushReplacement(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => const HomePage(),
-                ),
-              );
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.06),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: Colors.white.withOpacity(0.08),
+          width: 1,
+        ),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(20),
+          onTap: _isLoading ? null : () async {
+            setState(() => _isLoading = true);
+            try {
+              await authService.selecionarEmpresa(empresa);
+              final dataService = Provider.of<DataService>(context, listen: false);
+              dataService.setEmpresaAtual(empresa);
+              await dataService.definirEmpresaAtual(empresa.id);
+              if (context.mounted) {
+                Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(builder: (context) => const HomePage()),
+                );
+              }
+            } catch (e) {
+              if (context.mounted) {
+                setState(() => _isLoading = false);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Erro: $e'), backgroundColor: Colors.red),
+                );
+              }
             }
-          } catch (e) {
-            if (context.mounted) {
-              setState(() => _isLoading = false);
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('Erro ao selecionar empresa: $e'),
-                  backgroundColor: Colors.red,
+          },
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                // Icon or Logo
+                Container(
+                  width: 56,
+                  height: 56,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [Colors.blueAccent.withOpacity(0.2), Colors.blueAccent.withOpacity(0.05)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.blueAccent.withOpacity(0.2)),
+                  ),
+                  child: const Icon(Icons.business_rounded, color: Colors.blueAccent, size: 28),
                 ),
-              );
-            }
-          }
-        },
-        borderRadius: BorderRadius.circular(16),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: Row(
-            children: [
-              // Ícone da empresa
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: Colors.blueAccent.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: const Icon(
-                  Icons.business,
-                  color: Colors.blueAccent,
-                  size: 24,
-                ),
-              ),
-              const SizedBox(width: 12),
-              // Informações da empresa
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            empresa.nomeExibicao,
-                            style: const TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
+                const SizedBox(width: 16),
+                // Details
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        empresa.nomeExibicao,
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                          letterSpacing: -0.2,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Icon(Icons.fingerprint, size: 12, color: Colors.white.withOpacity(0.4)),
+                          const SizedBox(width: 4),
+                          Text(
+                            empresa.cnpj ?? 'Sem CNPJ',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.white.withOpacity(0.4),
+                              fontFamily: 'monospace',
                             ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
                           ),
-                        ),
-                        // Bridge Status Badge
-                        Consumer<DataService>(
-                          builder: (context, dataService, _) {
-                            final bool isBridgeOnline = dataService.isEmpresaBridgeOnline(empresa.cnpj);
-                            if (!isBridgeOnline) return const SizedBox.shrink();
-                            
-                            return Container(
-                              margin: const EdgeInsets.only(left: 8),
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: Colors.green.withOpacity(0.1),
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border.all(color: Colors.green.withOpacity(0.3)),
-                              ),
-                              child: const Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(Icons.circle, color: Colors.green, size: 6),
-                                  SizedBox(width: 4),
-                                  Text('ONLINE', style: TextStyle(color: Colors.green, fontSize: 10, fontWeight: FontWeight.bold)),
-                                ],
-                              ),
-                            );
-                          },
-                        ),
-                      ],
-                    ),
-                    if (empresa.razaoSocial != empresa.nomeExibicao) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        empresa.razaoSocial,
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.white.withOpacity(0.7),
-                        ),
+                          const SizedBox(width: 12),
+                          // Online indicator
+                          Consumer<DataService>(
+                            builder: (context, dataService, _) {
+                              final bool isBridgeOnline = dataService.isEmpresaBridgeOnline(empresa.cnpj);
+                              if (!isBridgeOnline) return const SizedBox.shrink();
+                              return Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: Colors.green.withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(color: Colors.green.withOpacity(0.3)),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.green.withOpacity(0.1),
+                                      blurRadius: 10,
+                                      spreadRadius: 1,
+                                    ),
+                                  ],
+                                ),
+                                child: Row(
+                                  children: [
+                                    Container(
+                                      width: 6,
+                                      height: 6,
+                                      decoration: const BoxDecoration(color: Colors.green, shape: BoxShape.circle),
+                                    ),
+                                    const SizedBox(width: 6),
+                                    const Text(
+                                      'ONLINE',
+                                      style: TextStyle(color: Colors.green, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 0.5),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
+                          ),
+                        ],
                       ),
                     ],
-                    if (empresa.cnpj != null) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        'CNPJ: ${empresa.cnpj}',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.white.withOpacity(0.5),
-                        ),
+                  ),
+                ),
+                // Actions
+                if (isUsuarioMaster)
+                  PopupMenuButton<String>(
+                    icon: Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.05),
+                        shape: BoxShape.circle,
                       ),
+                      child: const Icon(Icons.more_vert_rounded, color: Colors.white54, size: 20),
+                    ),
+                    onSelected: (value) {
+                      switch (value) {
+                        case 'edit':
+                          Navigator.push(context, MaterialPageRoute(builder: (context) => AdicionarEmpresaPage(empresa: empresa))).then((_) => setState(() {}));
+                          break;
+                        case 'users':
+                          Navigator.push(context, MaterialPageRoute(builder: (context) => GerenciarUsuariosPage(empresa: empresa)));
+                          break;
+                        case 'reiniciar':
+                          _selecionarPCEDispararComando(context, 'restart', 'Reiniciar Emissor');
+                          break;
+                        case 'importar':
+                          _importarProdutosExcel(context);
+                          break;
+                        case 'limpar':
+                          _confirmarExcluirTodosProdutos(context, Provider.of<DataService>(context, listen: false));
+                          break;
+                      }
+                    },
+                    itemBuilder: (context) => [
+                      const PopupMenuItem(value: 'edit', child: Row(children: [Icon(Icons.edit_outlined, size: 18), SizedBox(width: 12), Text('Editar')])),
+                      const PopupMenuItem(value: 'users', child: Row(children: [Icon(Icons.people_outline, size: 18), SizedBox(width: 12), Text('Usuários')])),
+                      const PopupMenuDivider(),
+                      const PopupMenuItem(value: 'reiniciar', child: Row(children: [Icon(Icons.restart_alt_rounded, color: Colors.blueAccent, size: 18), SizedBox(width: 12), Text('Reiniciar Emissor')])),
+                      const PopupMenuItem(value: 'importar', child: Row(children: [Icon(Icons.file_upload_outlined, color: Colors.green, size: 18), SizedBox(width: 12), Text('Importar Excel')])),
+                      const PopupMenuItem(value: 'limpar', child: Row(children: [Icon(Icons.delete_sweep_outlined, color: Colors.redAccent, size: 18), SizedBox(width: 12), Text('Limpar Produtos')])),
                     ],
-                  ],
-                ),
-              ),
-              // Botões de ação - apenas para user ou master
-              if (isUsuarioMaster || usuarioAtual?.isMaster == true) ...[
-                IconButton(
-                  icon: Container(
-                    padding: const EdgeInsets.all(6),
-                    decoration: BoxDecoration(
-                      color: Colors.green.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.green, width: 1.5),
-                    ),
-                    child: const Icon(Icons.file_upload, color: Colors.green, size: 20),
                   ),
-                  tooltip: 'Importar Produtos Excel',
-                  onPressed: () async {
-                    // Validar acesso antes de selecionar
-                    final empresasPermitidas = authService.getEmpresasDoUsuario();
-                    if (!empresasPermitidas.any((e) => e.id == empresa.id)) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Você não tem permissão para acessar esta empresa'),
-                          backgroundColor: Colors.red,
-                        ),
-                      );
-                      return;
-                    }
-                    // Selecionar empresa primeiro
-                    await authService.selecionarEmpresa(empresa);
-                    final dataService = Provider.of<DataService>(context, listen: false);
-                    await dataService.definirEmpresaAtual(empresa.id);
-                    // Abrir importação
-                    _importarProdutosExcel(context);
-                  },
-                ),
-                IconButton(
-                  icon: Container(
-                    padding: const EdgeInsets.all(6),
-                    decoration: BoxDecoration(
-                      color: Colors.red.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.red, width: 1.5),
-                    ),
-                    child: const Icon(Icons.delete_sweep, color: Colors.red, size: 20),
-                  ),
-                  tooltip: 'Excluir Todos os Produtos',
-                  onPressed: () async {
-                    // Validar acesso antes de selecionar
-                    final empresasPermitidas = authService.getEmpresasDoUsuario();
-                    if (!empresasPermitidas.any((e) => e.id == empresa.id)) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Você não tem permissão para acessar esta empresa'),
-                          backgroundColor: Colors.red,
-                        ),
-                      );
-                      return;
-                    }
-                    // Selecionar empresa primeiro
-                    await authService.selecionarEmpresa(empresa);
-                    final dataService = Provider.of<DataService>(context, listen: false);
-                    await dataService.definirEmpresaAtual(empresa.id);
-                    // Abrir diálogo de confirmação
-                    _confirmarExcluirTodosProdutos(context, dataService);
-                  },
-                ),
+                if (!isUsuarioMaster)
+                  Icon(Icons.chevron_right_rounded, color: Colors.white.withOpacity(0.2)),
               ],
-              // Botão de ação do Bridge (Apenas Admin)
-              if (isUsuarioMaster)
-                PopupMenuButton<String>(
-                  icon: Container(
-                    padding: const EdgeInsets.all(4),
-                    decoration: BoxDecoration(
-                      color: Colors.orange.withOpacity(0.1),
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.orange.withOpacity(0.3)),
-                    ),
-                    child: const Icon(Icons.settings_remote, color: Colors.orange, size: 20),
-                  ),
-                  tooltip: 'Gerenciar Emissor desta Empresa',
-                  onSelected: (value) {
-                    if (value == 'vincular') {
-                      _selecionarPCEDispararComando(
-                        context, 
-                        'set_identity', 
-                        'Vincular Computador',
-                        extraData: {
-                          'cnpj': empresa.cnpj,
-                          'nome': empresa.nomeExibicao,
-                        }
-                      );
-                    } else if (value == 'reiniciar') {
-                      _selecionarPCEDispararComando(
-                        context, 
-                        'restart', 
-                        'Reiniciar Emissor',
-                      );
-                    } else if (value == 'outros') {
-                      _mostrarDialogoGerenciamentoBridge(context);
-                    }
-                  },
-                  itemBuilder: (context) => [
-                    const PopupMenuItem(
-                      value: 'reiniciar',
-                      child: Row(
-                        children: [
-                          Icon(Icons.restart_alt, color: Colors.blue, size: 20),
-                          SizedBox(width: 12),
-                          Text('Reiniciar Emissor'),
-                        ],
-                      ),
-                    ),
-                    const PopupMenuItem(
-                      value: 'vincular',
-                      child: Row(
-                        children: [
-                          Icon(Icons.link, color: Colors.orange, size: 20),
-                          SizedBox(width: 12),
-                          Text('Vincular este PC'),
-                        ],
-                      ),
-                    ),
-                    const PopupMenuItem(
-                      value: 'outros',
-                      child: Row(
-                        children: [
-                          Icon(Icons.more_horiz, color: Colors.white70, size: 20),
-                          SizedBox(width: 12),
-                          Text('Outros Comandos'),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              if (isUsuarioMaster)
-                IconButton(
-                  icon: const Icon(Icons.edit, color: Colors.white54),
-                  tooltip: 'Editar Empresa',
-                  onPressed: () async {
-                    final resultado = await Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => AdicionarEmpresaPage(empresa: empresa),
-                      ),
-                    );
-                    if (resultado == true && mounted) {
-                      setState(() {});
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Empresa atualizada com sucesso!'),
-                          backgroundColor: Colors.green,
-                        ),
-                      );
-                    }
-                  },
-                ),
-              if (isUsuarioMaster) ...[
-                IconButton(
-                  icon: const Icon(Icons.people, color: Colors.white54),
-                  tooltip: 'Gerenciar Usuários',
-                  onPressed: () async {
-                    await Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => GerenciarUsuariosPage(
-                          empresa: empresa,
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ],
-              const Icon(
-                Icons.arrow_forward_ios,
-                color: Colors.white24,
-                size: 16,
-              ),
-            ],
+            ),
           ),
         ),
       ),
@@ -959,89 +883,83 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
   }
 
   Widget _buildCardGoogleDrive(BuildContext context, AuthService authService) {
-    // Apenas administrador "user" pode ver
-    final usuario = authService.usuarioAtual;
-    if (usuario?.email.toLowerCase() != 'user') return const SizedBox.shrink();
+    if (authService.usuarioAtual?.email.toLowerCase() != 'user') return const SizedBox.shrink();
 
     return Container(
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [Colors.blue.withOpacity(0.3), Colors.blue.withOpacity(0.1)],
+          colors: [
+            const Color(0xFF1E88E5).withOpacity(0.3),
+            const Color(0xFF1565C0).withOpacity(0.1),
+          ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: Colors.blue,
-          width: 2,
-        ),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0xFF42A5F5).withOpacity(0.4), width: 1.5),
         boxShadow: [
           BoxShadow(
-            color: Colors.blue.withOpacity(0.3),
-            blurRadius: 10,
-            spreadRadius: 2,
+            color: const Color(0xFF1E88E5).withOpacity(0.15),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
           ),
         ],
       ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: () => _realizarBackupGoogleDrive(context),
-          borderRadius: BorderRadius.circular(16),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            child: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: Colors.blue,
-                    borderRadius: BorderRadius.circular(14),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.blue.withOpacity(0.5),
-                        blurRadius: 8,
-                        spreadRadius: 1,
-                      ),
-                    ],
-                  ),
-                  child: const Icon(
-                    Icons.cloud_upload,
-                    color: Colors.white,
-                    size: 24,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                const Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '☁️ ADMIN - BACKUP GLOBAL DRIVE',
-                        style: TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: () => _realizarBackupGoogleDrive(context),
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF42A5F5),
+                      borderRadius: BorderRadius.circular(18),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF42A5F5).withOpacity(0.4),
+                          blurRadius: 12,
+                          offset: const Offset(0, 4),
                         ),
-                      ),
-                      SizedBox(height: 6),
-                      Text(
-                        'Exportar dados de TODAS as empresas para o Google Drive.',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.white70,
-                          height: 1.4,
-                        ),
-                      ),
-                    ],
+                      ],
+                    ),
+                    child: const Icon(Icons.cloud_done_rounded, color: Colors.white, size: 30),
                   ),
-                ),
-                const Icon(
-                  Icons.arrow_forward_ios,
-                  color: Colors.white,
-                  size: 24,
-                ),
-              ],
+                  const SizedBox(width: 20),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Backup Global',
+                          style: TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.w900,
+                            color: Colors.white,
+                            letterSpacing: -0.5,
+                          ),
+                        ),
+                        SizedBox(height: 6),
+                        Text(
+                          'Sincronizar todas as empresas com a nuvem do Google Drive.',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.white70,
+                            height: 1.3,
+                            fontWeight: FontWeight.w400,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white38, size: 20),
+                ],
+              ),
             ),
           ),
         ),
@@ -1745,89 +1663,83 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
   }
 
   Widget _buildCardBridgeManagement(BuildContext context, AuthService authService) {
-    // Apenas administrador "user" pode ver
-    final usuario = authService.usuarioAtual;
-    if (usuario?.email.toLowerCase() != 'user') return const SizedBox.shrink();
+    if (authService.usuarioAtual?.email.toLowerCase() != 'user') return const SizedBox.shrink();
 
     return Container(
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [Colors.orange.withOpacity(0.3), Colors.orange.withOpacity(0.1)],
+          colors: [
+            const Color(0xFFFB8C00).withOpacity(0.3),
+            const Color(0xFFE65100).withOpacity(0.1),
+          ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: Colors.orange,
-          width: 2,
-        ),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0xFFFFB74D).withOpacity(0.4), width: 1.5),
         boxShadow: [
           BoxShadow(
-            color: Colors.orange.withOpacity(0.3),
-            blurRadius: 10,
-            spreadRadius: 2,
+            color: const Color(0xFFFB8C00).withOpacity(0.15),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
           ),
         ],
       ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: () => _mostrarDialogoGerenciamentoBridge(context),
-          borderRadius: BorderRadius.circular(16),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            child: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: Colors.orange,
-                    borderRadius: BorderRadius.circular(14),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.orange.withOpacity(0.5),
-                        blurRadius: 8,
-                        spreadRadius: 1,
-                      ),
-                    ],
-                  ),
-                  child: const Icon(
-                    Icons.terminal,
-                    color: Colors.white,
-                    size: 24,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                const Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '🖥️ GERENCIAR EMISSOR',
-                        style: TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: () => _mostrarDialogoGerenciamentoBridge(context),
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFB74D),
+                      borderRadius: BorderRadius.circular(18),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFFFFB74D).withOpacity(0.4),
+                          blurRadius: 12,
+                          offset: const Offset(0, 4),
                         ),
-                      ),
-                      SizedBox(height: 6),
-                      Text(
-                        'Atualizar softwares, reiniciar serviços e identificar PCs remotamente.',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.white70,
-                          height: 1.4,
-                        ),
-                      ),
-                    ],
+                      ],
+                    ),
+                    child: const Icon(Icons.terminal_rounded, color: Colors.white, size: 30),
                   ),
-                ),
-                const Icon(
-                  Icons.settings_remote,
-                  color: Colors.white,
-                  size: 24,
-                ),
-              ],
+                  const SizedBox(width: 20),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Gerenciar Emissor',
+                          style: TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.w900,
+                            color: Colors.white,
+                            letterSpacing: -0.5,
+                          ),
+                        ),
+                        SizedBox(height: 6),
+                        Text(
+                          'Acesso remoto: updates, reinício de serviços e identificação de PCs.',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.white70,
+                            height: 1.3,
+                            fontWeight: FontWeight.w400,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Icon(Icons.settings_remote_rounded, color: Colors.white38, size: 20),
+                ],
+              ),
             ),
           ),
         ),

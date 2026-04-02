@@ -118,9 +118,9 @@ class FirebaseService {
         return query.where('updatedAt', isGreaterThanOrEqualTo: lastSync.toIso8601String());
       }
 
-      Query _applySmartPagination(Query query) {
+      Query _applySmartPagination(Query query, [String field = 'createdAt']) {
         if (lastSync != null) return _applySyncFilter(query);
-        return query.where('createdAt', isGreaterThanOrEqualTo: dataLimiteIso);
+        return query.where(field, isGreaterThanOrEqualTo: dataLimiteIso);
       }
       
       final chaves = [
@@ -133,17 +133,19 @@ class FirebaseService {
       ];
 
       final queries = [
-        _applySyncFilter(_getSubCollection(empresaId, _subCollectionClientes)).limit(100),
+        lastSync == null 
+          ? _getSubCollection(empresaId, _subCollectionClientes).orderBy('nome').limit(100)
+          : _applySyncFilter(_getSubCollection(empresaId, _subCollectionClientes)).limit(100),
         _applySyncFilter(_getSubCollection(empresaId, _subCollectionProdutos)),
         _applySyncFilter(_getSubCollection(empresaId, _subCollectionServicos)),
-        _applySmartPagination(_getSubCollection(empresaId, _subCollectionPedidos)).limit(100),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionPedidos), 'dataPedido').orderBy('dataPedido', descending: true).limit(100),
         _applySmartPagination(_getSubCollection(empresaId, _subCollectionOrdensServico)),
         _applySmartPagination(_getSubCollection(empresaId, _subCollectionEntregas)),
-        _applySmartPagination(_getSubCollection(empresaId, _subCollectionVendasBalcao)).limit(100),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionVendasBalcao), 'dataVenda').orderBy('dataVenda', descending: true).limit(100),
         _applySmartPagination(_getSubCollection(empresaId, _subCollectionTrocasDevolucoes)),
         _applySmartPagination(_getSubCollection(empresaId, _subCollectionEstoqueHistorico)),
-        _applySmartPagination(_getSubCollection(empresaId, _subCollectionAberturasCaixa)),
-        _applySmartPagination(_getSubCollection(empresaId, _subCollectionFechamentosCaixa)),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionAberturasCaixa), 'dataAbertura').orderBy('dataAbertura', descending: true),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionFechamentosCaixa), 'dataFechamento').orderBy('dataFechamento', descending: true),
         _applySyncFilter(_getSubCollection(empresaId, _subCollectionMotoristas)),
         _applySyncFilter(_getSubCollection(empresaId, _subCollectionAgendamentosServico)),
         _applySmartPagination(_getSubCollection(empresaId, _subCollectionNotasEntrada)),
@@ -786,7 +788,10 @@ class FirebaseService {
   Future<void> salvarPedido(String empresaId, Pedido pedido) async {
     try {
       final docRef = _getSubCollection(empresaId, _subCollectionPedidos).doc(pedido.id);
-      await docRef.set(pedido.toMap());
+      await docRef.set(pedido.toMap()).timeout(
+        const Duration(seconds: 15),
+        onTimeout: () => throw TimeoutException('Timeout ao salvar pedido no Firebase (15s)'),
+      );
       debugPrint('>>> [Firebase] Pedido salvo: ${pedido.numero} (ID: ${pedido.id})');
     } catch (e, stackTrace) {
       debugPrint('>>> [Firebase] ERRO ao salvar pedido: $e');
@@ -799,7 +804,10 @@ class FirebaseService {
   Future<void> salvarOrdemServico(String empresaId, OrdemServico ordem) async {
     try {
       final docRef = _getSubCollection(empresaId, _subCollectionOrdensServico).doc(ordem.id);
-      await docRef.set(ordem.toMap());
+      await docRef.set(ordem.toMap()).timeout(
+        const Duration(seconds: 15),
+        onTimeout: () => throw TimeoutException('Timeout ao salvar ordem de serviço no Firebase (15s)'),
+      );
       debugPrint('>>> [Firebase] Ordem de serviço salva: ${ordem.id}');
     } catch (e, stackTrace) {
       debugPrint('>>> [Firebase] ERRO ao salvar ordem de serviço: $e');
@@ -812,7 +820,10 @@ class FirebaseService {
   Future<void> salvarEntrega(String empresaId, Entrega entrega) async {
     try {
       final docRef = _getSubCollection(empresaId, _subCollectionEntregas).doc(entrega.id);
-      await docRef.set(entrega.toMap());
+      await docRef.set(entrega.toMap()).timeout(
+        const Duration(seconds: 15),
+        onTimeout: () => throw TimeoutException('Timeout ao salvar entrega no Firebase (15s)'),
+      );
       debugPrint('>>> [Firebase] Entrega salva: ${entrega.id}');
     } catch (e, stackTrace) {
       debugPrint('>>> [Firebase] ERRO ao salvar entrega: $e');
@@ -825,7 +836,10 @@ class FirebaseService {
   Future<void> salvarVendaBalcao(String empresaId, VendaBalcao venda) async {
     try {
       final docRef = _getSubCollection(empresaId, _subCollectionVendasBalcao).doc(venda.id);
-      await docRef.set(venda.toMap());
+      await docRef.set(venda.toMap()).timeout(
+        const Duration(seconds: 15),
+        onTimeout: () => throw TimeoutException('Timeout ao salvar venda balcão no Firebase (15s)'),
+      );
       debugPrint('>>> [Firebase] Venda balcão salva: ${venda.id}');
     } catch (e, stackTrace) {
       debugPrint('>>> [Firebase] ERRO ao salvar venda balcão: $e');
@@ -838,7 +852,10 @@ class FirebaseService {
   Future<void> salvarTrocaDevolucao(String empresaId, TrocaDevolucao troca) async {
     try {
       final docRef = _getSubCollection(empresaId, _subCollectionTrocasDevolucoes).doc(troca.id);
-      await docRef.set(troca.toMap());
+      await docRef.set(troca.toMap()).timeout(
+        const Duration(seconds: 15),
+        onTimeout: () => throw TimeoutException('Timeout ao salvar troca/devolução no Firebase (15s)'),
+      );
       debugPrint('>>> [Firebase] Troca/Devolução salva: ${troca.id}');
     } catch (e, stackTrace) {
       debugPrint('>>> [Firebase] ERRO ao salvar troca/devolução: $e');
@@ -851,7 +868,10 @@ class FirebaseService {
   Future<void> salvarEstoqueHistorico(String empresaId, EstoqueHistorico historico) async {
     try {
       final docRef = _getSubCollection(empresaId, _subCollectionEstoqueHistorico).doc(historico.id);
-      await docRef.set(historico.toMap());
+      await docRef.set(historico.toMap()).timeout(
+        const Duration(seconds: 15),
+        onTimeout: () => throw TimeoutException('Timeout ao salvar histórico de estoque no Firebase (15s)'),
+      );
       debugPrint('>>> [Firebase] Histórico de estoque salvo: ${historico.id}');
     } catch (e, stackTrace) {
       debugPrint('>>> [Firebase] ERRO ao salvar histórico de estoque: $e');
@@ -864,7 +884,10 @@ class FirebaseService {
   Future<void> salvarAberturaCaixa(String empresaId, AberturaCaixa abertura) async {
     try {
       final docRef = _getSubCollection(empresaId, _subCollectionAberturasCaixa).doc(abertura.id);
-      await docRef.set(abertura.toMap());
+      await docRef.set(abertura.toMap()).timeout(
+        const Duration(seconds: 15),
+        onTimeout: () => throw TimeoutException('Timeout ao salvar abertura de caixa no Firebase (15s)'),
+      );
       debugPrint('>>> [Firebase] Abertura de caixa salva: ${abertura.id}');
     } catch (e, stackTrace) {
       debugPrint('>>> [Firebase] ERRO ao salvar abertura de caixa: $e');
@@ -877,7 +900,10 @@ class FirebaseService {
   Future<void> salvarFechamentoCaixa(String empresaId, FechamentoCaixa fechamento) async {
     try {
       final docRef = _getSubCollection(empresaId, _subCollectionFechamentosCaixa).doc(fechamento.id);
-      await docRef.set(fechamento.toMap());
+      await docRef.set(fechamento.toMap()).timeout(
+        const Duration(seconds: 15),
+        onTimeout: () => throw TimeoutException('Timeout ao salvar fechamento de caixa no Firebase (15s)'),
+      );
       debugPrint('>>> [Firebase] Fechamento de caixa salvo: ${fechamento.id}');
     } catch (e, stackTrace) {
       debugPrint('>>> [Firebase] ERRO ao salvar fechamento de caixa: $e');
@@ -890,7 +916,10 @@ class FirebaseService {
   Future<void> salvarMotorista(String empresaId, Motorista motorista) async {
     try {
       final docRef = _getSubCollection(empresaId, _subCollectionMotoristas).doc(motorista.id);
-      await docRef.set(motorista.toMap());
+      await docRef.set(motorista.toMap()).timeout(
+        const Duration(seconds: 15),
+        onTimeout: () => throw TimeoutException('Timeout ao salvar motorista no Firebase (15s)'),
+      );
       debugPrint('>>> [Firebase] Motorista salvo: ${motorista.nome} (ID: ${motorista.id})');
     } catch (e, stackTrace) {
       debugPrint('>>> [Firebase] ERRO ao salvar motorista: $e');

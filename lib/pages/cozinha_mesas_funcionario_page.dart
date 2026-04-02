@@ -7,6 +7,8 @@ import '../models/mesa_comanda.dart';
 import '../models/empresa.dart';
 import '../models/forma_pagamento.dart';
 import '../models/venda_balcao.dart';
+import '../models/pedido.dart';
+import '../models/item_pedido.dart';
 import '../models/produto.dart';
 import '../models/conta_pagar.dart';
 import 'historico_operacoes_page.dart';
@@ -1673,14 +1675,44 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
       }
     }
     
-    // Debug: verificar se há itens
-    if (itensComOrigem.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Nenhum item pendente encontrado na mesa ou comandas vinculadas'),
-          backgroundColor: Colors.orange,
+    // Debug: verificar se há itens (considerar também se há couvert pendente)
+    if (itensComOrigem.isEmpty && mesa.couvertPendente <= 0.01) {
+      // Se não há itens mas a mesa está aberta, perguntar se deseja liberar/limpar a mesa
+      final confirmar = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          backgroundColor: const Color(0xFF1E1E2E),
+          title: const Text('Limpar Mesa', style: TextStyle(color: Colors.white)),
+          content: const Text(
+            'Esta mesa não possui itens pendentes. Deseja limpá-la e deixá-la disponível para o próximo cliente?',
+            style: TextStyle(color: Colors.white70),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Não', style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+              child: const Text('Sim, Limpar Mesa'),
+            ),
+          ],
         ),
       );
+
+      if (confirmar == true && context.mounted) {
+        // Chamar o método de limpar mesa do DataService
+        await dataService.limparMesaComanda(mesa.id);
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Mesa limpa e disponível!'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      }
       return;
     }
     
@@ -1782,6 +1814,36 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                     const Text(
                       'Selecione os itens para receber:',
                       style: TextStyle(color: Colors.white70, fontSize: 14),
+                    ),
+                    const SizedBox(height: 8),
+                    // Selecionar Tudo (Global)
+                    CheckboxListTile(
+                      title: const Text('Selecionar Tudo', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+                      value: itensSelecionados.length == itensComOrigem.length,
+                      activeColor: Colors.orange,
+                      dense: true,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      contentPadding: EdgeInsets.zero,
+                      onChanged: (value) {
+                         if (value == null) return;
+                         setDialogState(() {
+                            if (value) {
+                               for (final itemData in itensComOrigem) {
+                                  final item = itemData['item'] as ItemMesaComanda;
+                                  if (!itensSelecionados.contains(item.id)) {
+                                     itensSelecionados.add(item.id);
+                                     final itemTotal = item.preco * item.quantidade;
+                                     valorItensSelecionados += itemTotal;
+                                     valorSelecionado += itemTotal;
+                                  }
+                               }
+                            } else {
+                               itensSelecionados.clear();
+                               valorItensSelecionados = 0.0;
+                               valorSelecionado = 0.0;
+                            }
+                         });
+                      },
                     ),
                     const SizedBox(height: 8),
                     Container(
@@ -2412,6 +2474,11 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
           clienteId: null, // Limpar ID do cliente
           observacao: null, // Limpar observações
           total: 0.0, // Zerar total
+          valorCouvert: null, // Limpar couvert
+          quantidadePessoasCouvert: null,
+          valorCouvertPorPessoa: null,
+          valorGarcom: null, // Limpar garçom
+          garcomRetirado: false, // Resetar retirada do garçom
           updatedAt: DateTime.now(), // Atualizar timestamp
         );
         
@@ -2422,16 +2489,23 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
           final comandaEstaPaga = comanda.totalPago >= comanda.totalCalculado - 0.01;
           
           if (comandaEstaPaga) {
-            // Se totalmente paga, fechar e limpar tudo
-            // IMPORTANTE: Limpar histórico de pagamentos para evitar saldo negativo
-            // O histórico completo está preservado na venda criada acima
+            // Se totalmente paga, manter aberta e limpa (igual a mesa)
             final comandaLiberada = comanda.copyWith(
               itens: [],
               itensPagos: [],
-              historicoPagamentos: [], // Limpar histórico de pagamentos para evitar saldo negativo
-        status: 'Fechada',
-        dataFechamento: DateTime.now(),
-      );
+              historicoPagamentos: [],
+              status: 'Aberta',
+              dataFechamento: null,
+              dataAbertura: DateTime.now(),
+              clienteNome: null,
+              clienteId: null,
+              valorCouvert: null,
+              quantidadePessoasCouvert: null,
+              valorCouvertPorPessoa: null,
+              valorGarcom: null,
+              garcomRetirado: false,
+              updatedAt: DateTime.now(),
+            );
             await dataService.updateMesaComanda(comandaLiberada);
           }
           // Se não estiver totalmente paga, manter aberta com seus itens pendentes
@@ -2588,6 +2662,35 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                     const Text(
                       'Selecione os itens para receber:',
                       style: TextStyle(color: Colors.white70, fontSize: 14),
+                    ),
+                    const SizedBox(height: 8),
+                    // Selecionar Tudo (Global)
+                    CheckboxListTile(
+                      title: const Text('Selecionar Tudo', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+                      value: itensSelecionados.length == itensNaoPagos.length,
+                      activeColor: Colors.orange,
+                      dense: true,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      contentPadding: EdgeInsets.zero,
+                      onChanged: (value) {
+                         if (value == null) return;
+                         setDialogState(() {
+                            if (value) {
+                               for (final item in itensNaoPagos) {
+                                  if (!itensSelecionados.contains(item.id)) {
+                                     itensSelecionados.add(item.id);
+                                     final itemTotal = item.preco * item.quantidade;
+                                     valorItensSelecionados += itemTotal;
+                                     valorSelecionado += itemTotal;
+                                  }
+                               }
+                            } else {
+                               itensSelecionados.clear();
+                               valorItensSelecionados = 0.0;
+                               valorSelecionado = 0.0;
+                            }
+                         });
+                      },
                     ),
                     const SizedBox(height: 8),
                     Container(
@@ -2895,7 +2998,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
           id: uuid.v4(),
           valor: pagamentoData['valor'] as double,
           dataPagamento: DateTime.now(),
-          formaPagamento: pagamentoData['tipo'] as String,
+          formaPagamento: (pagamentoData['tipo'] as TipoPagamento).nome,
           observacao: observacaoPagamento + (pagamentoData['observacao'] != null ? ' - ${pagamentoData['observacao']}' : ''),
           itensPagos: itensIds,
           pessoaPagou: pessoaPagou,
@@ -2936,12 +3039,79 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
       final estaPago = novoTotalPago >= novoTotal - 0.01;
       
       if (estaPago) {
-        // Se totalmente paga, fechar apenas a comanda (NÃO fechar a mesa)
-        final comandaFechada = comandaAtualizada.copyWith(
-        status: 'Fechada',
-        dataFechamento: DateTime.now(),
-      );
-        await dataService.updateMesaComanda(comandaFechada);
+        // Criar venda balcão e pedido antes de limpar a comanda
+        final todosItensVenda = <ItemVendaBalcao>[];
+        for (final item in comandaAtualizada.itens) {
+          if (item.status != StatusItem.cancelado) {
+            todosItensVenda.add(ItemVendaBalcao(
+              id: item.itemId,
+              nome: item.nome,
+              precoUnitario: item.preco,
+              quantidade: item.quantidade,
+              isServico: item.isServico,
+            ));
+          }
+        }
+        
+        final numeroVenda = dataService.getProximoNumeroVenda();
+        final vendaId = uuid.v4();
+        
+        final vendaBalcao = VendaBalcao(
+          id: vendaId,
+          numero: numeroVenda,
+          dataVenda: DateTime.now(),
+          clienteId: comandaAtualizada.clienteId,
+          clienteNome: comandaAtualizada.clienteNome ?? '${comandaAtualizada.numero}',
+          itens: todosItensVenda,
+          tipoPagamento: pagamentos.first['tipo'] as TipoPagamento,
+          valorTotal: novoTotal,
+          valorRecebido: novoTotalPago,
+          troco: null,
+          observacoes: 'Originada da Comanda ${comandaAtualizada.numero}',
+          origem: 'Mesa/Comanda',
+        );
+
+        final pedidoHistorico = Pedido(
+          id: vendaId,
+          numero: numeroVenda,
+          dataPedido: DateTime.now(),
+          clienteId: comandaAtualizada.clienteId,
+          clienteNome: comandaAtualizada.clienteNome ?? '${comandaAtualizada.numero}',
+          produtos: comandaAtualizada.itens.map((i) => ItemPedido(
+            id: uuid.v4(),
+            nome: i.nome,
+            quantidade: i.quantidade,
+            preco: i.preco,
+          )).toList(),
+          servicos: [],
+          total: novoTotal,
+          status: 'Pago',
+          pagamentos: [],
+          observacoes: 'Originada da Comanda ${comandaAtualizada.numero}',
+          origem: 'Mesa/Comanda',
+        );
+
+        await dataService.addPedido(pedidoHistorico);
+        await dataService.addVendaBalcao(vendaBalcao);
+
+        // Se totalmente paga, manter aberta mas vazia (igual a mesa)
+        final comandaLiberada = comandaAtualizada.copyWith(
+          status: 'Aberta', 
+          dataFechamento: null,
+          dataAbertura: DateTime.now(), // Nova data de abertura para novo uso
+          itens: [], // Limpar itens
+          itensPagos: [],
+          historicoPagamentos: [],
+          valorCouvert: null,
+          quantidadePessoasCouvert: null,
+          valorCouvertPorPessoa: null,
+          valorGarcom: null,
+          garcomRetirado: false,
+          clienteNome: null,
+          clienteId: null,
+          updatedAt: DateTime.now(),
+        );
+        await dataService.updateMesaComanda(comandaLiberada);
         
         // IMPORTANTE: Não verificar nem fechar a mesa aqui
         // A mesa só deve ser fechada quando o usuário clicar no botão "Receber" da mesa

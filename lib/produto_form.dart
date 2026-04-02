@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:sistema_exodo_novo/services/data_service.dart';
 import 'package:sistema_exodo_novo/services/codigo_service.dart';
 import 'package:sistema_exodo_novo/services/grupos_manager.dart';
 import 'package:sistema_exodo_novo/models/produto.dart';
+import 'package:sistema_exodo_novo/models/estoque_historico.dart';
 import 'package:sistema_exodo_novo/models/variacao_produto.dart';
 import 'package:sistema_exodo_novo/services/image_storage_service.dart';
 import 'package:sistema_exodo_novo/services/auth_service.dart';
@@ -34,6 +36,8 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
   final _precoCustoController = TextEditingController();
   final _estoqueController = TextEditingController();
   final _precoPromocionalController = TextEditingController();
+  final _fornecedorNomeController = TextEditingController();
+  final _estoqueMinimoController = TextEditingController();
   
   // Controllers para impostos
   final _ncmController = TextEditingController();
@@ -63,6 +67,8 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
   late double _preco;
   late double? _precoCusto;
   late int _estoque;
+  Map<String, int> _estoquePorFornecedor = {};
+  String? _fornecedorId;
   bool _codigoEditavel = false; // Controlar se código é editável
 
   // Campos de promoção
@@ -111,10 +117,23 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
   List<VariacaoProduto> _variacoes = [];
   bool _temVariacoes = false;
   
+  // Campos para preparação
+  bool _paraCozinha = false;
+  bool _paraBar = false;
+  List<String> _codigosFornecedor = [];
+  
+  // Variáveis para a aba de estoque
+  DateTime? _estoqueDataInicial;
+  DateTime? _estoqueDataFinal;
+  String? _estoqueTipoFiltro;
+  bool _estoqueVisaoGeral = false;
+
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _estoqueDataInicial = DateTime.now().subtract(const Duration(days: 30));
+    _estoqueDataFinal = DateTime.now();
+    _tabController = TabController(length: 4, vsync: this);
     // Adicionar listener para atualizar contador de caracteres
     _descricaoController.addListener(() {
       if (mounted) {
@@ -143,6 +162,10 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
       _precoController.text = _preco.toString();
       _precoCustoController.text = _precoCusto?.toString() ?? '';
       _estoqueController.text = _estoque.toString();
+      _fornecedorId = widget.item?.fornecedorId;
+      _estoquePorFornecedor = Map<String, int>.from(widget.item?.estoquePorFornecedor ?? {});
+      _fornecedorNomeController.text = widget.item?.fornecedorNome ?? '';
+      _estoqueMinimoController.text = (widget.item?.estoqueMinimo ?? 0).toString();
 
       // Carregar dados de promoção
       _precoPromocional = widget.item?.precoPromocional;
@@ -152,6 +175,11 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
       if (_precoPromocional != null) {
         _precoPromocionalController.text = _precoPromocional.toString();
       }
+      
+      // Carregar campos de preparação
+      _paraCozinha = widget.item?.paraCozinha ?? false;
+      _paraBar = widget.item?.paraBar ?? false;
+      _codigosFornecedor = List<String>.from(widget.item?.codigosFornecedor ?? []);
     } else {
       // Novo produto
       _nome = '';
@@ -184,6 +212,9 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
       _cest = null;
       _csosn = null;
       _simplesNacionalAliquota = null;
+      _paraCozinha = false;
+      _paraBar = false;
+      _codigosFornecedor = [];
       
       // Gerar código automaticamente para novo produto
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -273,6 +304,7 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
     _precoCustoController.dispose();
     _estoqueController.dispose();
     _precoPromocionalController.dispose();
+    _fornecedorNomeController.dispose();
     _ncmController.dispose();
     _icmsAliquotaController.dispose();
     _icmsCstController.dispose();
@@ -294,6 +326,7 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
             _larguraCmController.dispose();
             _profundidadeCmController.dispose();
             _tagsController.dispose();
+            _estoqueMinimoController.dispose();
     super.dispose();
   }
 
@@ -380,248 +413,142 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
 
   @override
   Widget build(BuildContext context) {
-    final service = Provider.of<DataService>(context, listen: false);
-    List historico = [];
-    if (widget.item != null) {
-      historico = service.estoqueHistorico
-          .where((h) => h.produtoId == widget.item.id)
-          .toList();
-      historico.sort((a, b) => b.data.compareTo(a.data));
-    }
-
-    return Padding(
-      padding: EdgeInsets.only(
-        bottom: MediaQuery.of(context).viewInsets.bottom,
+    return Container(
+      decoration: const BoxDecoration(
+        color: Color(0xFF0F172A), // Deep Midnight Blue
+        borderRadius: BorderRadius.only(
+          topLeft: Radius.circular(24),
+          topRight: Radius.circular(24),
+        ),
       ),
-      child: Form(
-        key: _formKey,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Header melhorado com gradiente e design minimalista
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    Colors.blue.shade700,
-                    Colors.purple.shade700,
-                    Colors.indigo.shade800,
-                  ],
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.5),
-                    blurRadius: 20,
-                    offset: const Offset(0, 8),
-                  ),
-                ],
-                border: Border(
-                  bottom: BorderSide(
-                    color: Colors.white.withOpacity(0.2),
-                    width: 2,
+      child: Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.of(context).viewInsets.bottom,
+        ),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Header Minimalista
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  border: Border(
+                    bottom: BorderSide(color: Colors.white.withOpacity(0.05)),
                   ),
                 ),
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(
-                        color: Colors.white.withOpacity(0.3),
-                        width: 2,
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: Colors.blueAccent.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(
+                        widget.item == null ? Icons.add_rounded : Icons.edit_rounded,
+                        color: Colors.blueAccent,
+                        size: 24,
                       ),
                     ),
-                    child: Icon(
-                      widget.item == null ? Icons.add_circle_outline : Icons.edit_outlined,
-                      color: Colors.white,
-                      size: 32,
-                    ),
-                  ),
-                  const SizedBox(width: 20),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          widget.item == null ? 'NOVO PRODUTO' : 'EDITAR PRODUTO',
-                          style: const TextStyle(
-                            fontSize: 26,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                            letterSpacing: 1.2,
-                            shadows: [
-                              Shadow(
-                                color: Colors.black87,
-                                blurRadius: 8,
-                                offset: Offset(0, 3),
-                              ),
-                            ],
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            widget.item == null ? 'Novo Produto' : 'Editar Produto',
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          'Preencha as informações abaixo',
-                          style: TextStyle(
-                            fontSize: 15,
-                            color: Colors.white.withOpacity(0.95),
-                            fontWeight: FontWeight.w500,
-                            shadows: [
-                              Shadow(
-                                color: Colors.black54,
-                                blurRadius: 4,
-                                offset: const Offset(0, 2),
-                              ),
-                            ],
+                          Text(
+                            _nome.isEmpty ? 'Preencha os dados' : _nome,
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Colors.white.withOpacity(0.5),
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  // Botão Salvar compacto no header
-                  Container(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [
-                          Colors.green.shade500,
-                          Colors.green.shade700,
                         ],
                       ),
-                      borderRadius: BorderRadius.circular(14),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.green.shade700.withOpacity(0.6),
-                          blurRadius: 12,
-                          offset: const Offset(0, 6),
+                    ),
+                    // Ações Rápidas no Header
+                    Row(
+                      children: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: Text('Cancelar', style: TextStyle(color: Colors.white.withOpacity(0.5))),
+                        ),
+                        const SizedBox(width: 8),
+                        ElevatedButton(
+                          onPressed: () {
+                            if (_formKey.currentState?.validate() ?? false) {
+                              _salvarProduto();
+                            }
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.blueAccent,
+                            foregroundColor: Colors.white,
+                            elevation: 0,
+                            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          ),
+                          child: Text(widget.item == null ? 'SALVAR' : 'ATUALIZAR', 
+                            style: const TextStyle(fontWeight: FontWeight.bold)),
                         ),
                       ],
                     ),
-                    child: Material(
-                      color: Colors.transparent,
-                      child: InkWell(
-                        borderRadius: BorderRadius.circular(14),
-                        onTap: () {
-                          if (_formKey.currentState?.validate() ?? false) {
-                            _salvarProduto();
-                          }
-                        },
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(Icons.check_circle, color: Colors.white, size: 24),
-                              const SizedBox(width: 10),
-                              Text(
-                                widget.item == null ? 'SALVAR' : 'ATUALIZAR',
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 16,
-                                  letterSpacing: 1,
-                                  shadows: [
-                                    Shadow(
-                                      color: Colors.black54,
-                                      blurRadius: 4,
-                                      offset: Offset(0, 2),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            // TabBar melhorado
-            Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    Colors.black.withOpacity(0.4),
-                    Colors.black.withOpacity(0.2),
                   ],
                 ),
-                border: Border(
-                  bottom: BorderSide(
-                    color: Colors.white.withOpacity(0.2),
-                    width: 2,
-                  ),
-                ),
               ),
-              child: TabBar(
+              // TabBar Minimalista
+              TabBar(
                 controller: _tabController,
-                indicatorColor: Colors.blue.shade400,
-                indicatorWeight: 4,
-                indicatorSize: TabBarIndicatorSize.tab,
+                indicatorColor: Colors.blueAccent,
+                indicatorWeight: 3,
+                dividerColor: Colors.transparent,
                 labelColor: Colors.white,
-                unselectedLabelColor: Colors.white.withOpacity(0.6),
-                labelStyle: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 16,
-                  letterSpacing: 0.5,
-                  shadows: [
-                    Shadow(
-                      color: Colors.black54,
-                      blurRadius: 4,
-                      offset: Offset(0, 2),
+                unselectedLabelColor: Colors.white38,
+                labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                tabs: const [
+                  Tab(text: 'Básico'),
+                  Tab(text: 'Fiscal'),
+                  Tab(text: 'E-commerce'),
+                  Tab(text: 'Estoque'),
+                ],
+              ),
+              // Conteúdo
+              SizedBox(
+                height: MediaQuery.of(context).size.height * 0.75,
+                child: TabBarView(
+                  controller: _tabController,
+                  children: [
+                    SingleChildScrollView(
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                      child: _buildAbaInformacoes(),
+                    ),
+                    SingleChildScrollView(
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                      child: _buildAbaImpostos(),
+                    ),
+                    SingleChildScrollView(
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                      child: _buildAbaEcommerce(),
+                    ),
+                    SingleChildScrollView(
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                      child: _buildAbaEstoque(),
                     ),
                   ],
                 ),
-                unselectedLabelStyle: const TextStyle(
-                  fontWeight: FontWeight.w600,
-                  fontSize: 15,
-                ),
-                tabs: const [
-                  Tab(
-                    icon: Icon(Icons.info_outline, size: 24),
-                    text: 'Informações',
-                  ),
-                  Tab(
-                    icon: Icon(Icons.receipt_long, size: 24),
-                    text: 'Impostos',
-                  ),
-                  Tab(
-                    icon: Icon(Icons.shopping_cart, size: 24),
-                    text: 'E-commerce',
-                  ),
-                ],
               ),
-            ),
-            // Conteúdo das abas
-            SizedBox(
-              height: MediaQuery.of(context).size.height * 0.7,
-              child: TabBarView(
-                controller: _tabController,
-                children: [
-                  // Aba 1: Informações
-                  SingleChildScrollView(
-                    padding: const EdgeInsets.all(16),
-                    child: _buildAbaInformacoes(),
-                  ),
-                  // Aba 2: Impostos
-                  SingleChildScrollView(
-                    padding: const EdgeInsets.all(16),
-                    child: _buildAbaImpostos(),
-                  ),
-                  // Aba 3: E-commerce
-                  SingleChildScrollView(
-                    padding: const EdgeInsets.all(16),
-                    child: _buildAbaEcommerce(),
-                  ),
-                ],
-              ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -709,6 +636,7 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
       preco: _preco,
       precoCusto: _precoCusto,
       estoque: _estoque,
+      estoqueMinimo: int.tryParse(_estoqueMinimoController.text) ?? 0,
       createdAt: widget.item?.createdAt ?? DateTime.now(),
       updatedAt: DateTime.now(),
       precoPromocional: _temPromocao
@@ -731,6 +659,10 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
       cest: _cest?.isNotEmpty == true ? _cest : null,
       csosn: _csosn?.isNotEmpty == true ? _csosn : null,
       simplesNacionalAliquota: _simplesNacionalAliquota,
+      // Campos de Preparação
+      paraCozinha: _paraCozinha,
+      paraBar: _paraBar,
+      codigosFornecedor: _codigosFornecedor,
       // Campos de E-commerce
       exibirNaLoja: _exibirNaLoja,
       emDestaque: _emDestaque,
@@ -746,6 +678,11 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
       tags: tagsProcessadas,
       variacoes: _temVariacoes ? _variacoes : [],
       temVariacoes: _temVariacoes,
+      fornecedorId: _fornecedorId,
+      fornecedorNome: _fornecedorNomeController.text.trim().isNotEmpty 
+          ? _fornecedorNomeController.text.trim() 
+          : null,
+      estoquePorFornecedor: _estoquePorFornecedor,
     );
     
     // DEBUG CRÍTICO: Verificar produto criado
@@ -771,1274 +708,632 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
     Navigator.of(context, rootNavigator: true).pop();
   }
 
-  /// Widget auxiliar para criar cards visuais minimalistas
-  Widget _buildCardCampo({
-    required String titulo,
-    required IconData icone,
-    required MaterialColor cor,
-    required Widget child,
-    String? subtitulo,
-  }) {
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            Colors.white.withOpacity(0.15),
-            Colors.white.withOpacity(0.08),
-          ],
-        ),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: cor.withOpacity(0.4),
-          width: 2,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: cor.withOpacity(0.3),
-            blurRadius: 15,
-            offset: const Offset(0, 6),
-          ),
-          BoxShadow(
-            color: Colors.black.withOpacity(0.4),
-            blurRadius: 20,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      cor.shade600,
-                      cor.shade800,
-                    ],
-                  ),
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: [
-                    BoxShadow(
-                      color: cor.withOpacity(0.5),
-                      blurRadius: 8,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: Icon(
-                  icone,
-                  color: Colors.white,
-                  size: 24,
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+  /// Exibe diálogo para ajuste rápido de estoque
+  void _exibirDialogoAjusteEstoque() {
+    if (widget.item == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Salve o produto antes de ajustar o estoque')),
+      );
+      return;
+    }
+
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final qtdController = TextEditingController();
+    final fornecedorController = TextEditingController(text: _fornecedorNomeController.text);
+    final obsController = TextEditingController();
+    String tipo = 'entrada';
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        bool isLoading = false;
+        return StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            backgroundColor: const Color(0xFF1E1E2E),
+            title: const Text('Ajuste de Estoque', style: TextStyle(color: Colors.white)),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
                   children: [
-                    Text(
-                      titulo,
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                        letterSpacing: 0.5,
-                        shadows: [
-                          Shadow(
-                            color: Colors.black54,
-                            blurRadius: 4,
-                            offset: Offset(0, 2),
-                          ),
-                        ],
+                    Expanded(
+                      child: ChoiceChip(
+                        label: const Text('ENTRADA'),
+                        selected: tipo == 'entrada',
+                        onSelected: (s) => setDialogState(() => tipo = 'entrada'),
+                        selectedColor: Colors.greenAccent.withOpacity(0.2),
+                        labelStyle: TextStyle(color: tipo == 'entrada' ? Colors.greenAccent : Colors.white70),
                       ),
                     ),
-                    if (subtitulo != null) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        subtitulo,
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.white.withOpacity(0.8),
-                          fontWeight: FontWeight.w500,
-                        ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: ChoiceChip(
+                        label: const Text('SAÍDA'),
+                        selected: tipo == 'saida',
+                        onSelected: (s) => setDialogState(() => tipo = 'saida'),
+                        selectedColor: Colors.redAccent.withOpacity(0.2),
+                        labelStyle: TextStyle(color: tipo == 'saida' ? Colors.redAccent : Colors.white70),
                       ),
-                    ],
+                    ),
                   ],
                 ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: qtdController,
+                  keyboardType: TextInputType.number,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    labelText: 'Quantidade',
+                    labelStyle: const TextStyle(color: Colors.white70),
+                    filled: true,
+                    fillColor: Colors.white.withOpacity(0.05),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: fornecedorController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    labelText: 'Fornecedor',
+                    labelStyle: const TextStyle(color: Colors.white70),
+                    filled: true,
+                    fillColor: Colors.white.withOpacity(0.05),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: obsController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    labelText: 'Observação (Opcional)',
+                    labelStyle: const TextStyle(color: Colors.white70),
+                    filled: true,
+                    fillColor: Colors.white.withOpacity(0.05),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('CANCELAR', style: TextStyle(color: Colors.grey)),
+              ),
+              ElevatedButton(
+                onPressed: isLoading ? null : () async {
+                  final qtdStr = qtdController.text.trim();
+                  final qtd = int.tryParse(qtdStr) ?? 0;
+                  if (qtd <= 0) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Informe uma quantidade válida'), backgroundColor: Colors.orange),
+                    );
+                    return;
+                  }
+
+                  setDialogState(() => isLoading = true);
+
+                  try {
+                    if (tipo == 'entrada') {
+                      await dataService.registrarEntradaEstoque(
+                        produtoId: widget.item.id,
+                        quantidade: qtd,
+                        fornecedorNome: fornecedorController.text.isEmpty ? 'Geral' : fornecedorController.text,
+                        observacao: obsController.text,
+                        usuario: authService.usuarioAtual?.nome,
+                      );
+                    } else {
+                      await dataService.registrarSaidaEstoque(
+                        produtoId: widget.item.id,
+                        quantidade: qtd,
+                        fornecedorNome: fornecedorController.text.isEmpty ? 'Geral' : fornecedorController.text,
+                        motivo: 'ajuste',
+                        observacao: obsController.text,
+                        usuario: authService.usuarioAtual?.nome,
+                      );
+                    }
+                    
+                    // Fechar o diálogo IMEDIATAMENTE após o processamento local (DataService)
+                    if (context.mounted) Navigator.pop(context);
+
+                    setState(() {
+                      final prod = dataService.produtos.firstWhere((p) => p.id == widget.item.id);
+                      _estoque = prod.estoque;
+                      _estoquePorFornecedor = Map<String, int>.from(prod.estoquePorFornecedor);
+                      _estoqueController.text = _estoque.toString();
+                    });
+
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('✓ Estoque ajustado: $qtd unidades ($tipo)'), backgroundColor: Colors.green),
+                      );
+                    }
+                  } catch (e) {
+                    debugPrint('>>> Erro no ajuste: $e');
+                    if (context.mounted) {
+                      setDialogState(() => isLoading = false);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Erro ao ajustar estoque: $e'), backgroundColor: Colors.red),
+                      );
+                    }
+                  }
+                },
+                style: ElevatedButton.styleFrom(backgroundColor: tipo == 'entrada' ? Colors.green : Colors.redAccent),
+                child: isLoading 
+                  ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                  : const Text('CONFIRMAR'),
               ),
             ],
           ),
-          const SizedBox(height: 20),
-          child,
-        ],
-      ),
+        );
+      },
     );
   }
 
-  /// Widget auxiliar para botões de ícone compactos
-  Widget _buildBotaoIcone({
-    required IconData icone,
-    required MaterialColor cor,
-    required String tooltip,
-    required VoidCallback onPressed,
-  }) {
-    return Tooltip(
-      message: tooltip,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onPressed,
-          borderRadius: BorderRadius.circular(8),
-          child: Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: cor.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(
-                color: cor.withOpacity(0.3),
-                width: 1,
-              ),
-            ),
-            child: Icon(
-              icone,
-              color: cor.shade300,
-              size: 18,
+  Widget _buildSection(String title, List<Widget> children) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 4, bottom: 12, top: 4),
+          child: Text(
+            title.toUpperCase(),
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
+              color: Colors.blueAccent.withOpacity(0.8),
+              letterSpacing: 1.2,
             ),
           ),
         ),
-      ),
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.03),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.white.withOpacity(0.05)),
+          ),
+          child: Column(children: children),
+        ),
+        const SizedBox(height: 16),
+      ],
+    );
+  }
+
+  Widget _buildField({
+    required String label,
+    required Widget child,
+    bool last = false,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 12)),
+        child,
+        if (!last) ...[
+          Divider(color: Colors.white.withOpacity(0.05), height: 32),
+        ],
+      ],
+    );
+  }
+
+  InputDecoration _minimalInput(String hint) {
+    return InputDecoration(
+      hintText: hint,
+      hintStyle: TextStyle(color: Colors.white.withOpacity(0.2)),
+      border: InputBorder.none,
+      isDense: true,
+      contentPadding: const EdgeInsets.symmetric(vertical: 8),
+      errorStyle: const TextStyle(fontSize: 10),
     );
   }
   
   Widget _buildAbaInformacoes() {
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Card de Código - Design minimalista e visual
-        _buildCardCampo(
-          titulo: 'Código do Produto',
-          icone: Icons.qr_code_2,
-          cor: Colors.blue,
-          child: Row(
+        _buildSection('Identificação', [
+          _buildField(
+            label: 'Nome do Produto',
+            child: TextFormField(
+              initialValue: _nome,
+              style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+              decoration: _minimalInput('Ex: Cerveja Antarctica 350ml'),
+              onChanged: (v) => setState(() => _nome = v),
+              validator: (v) => v?.isEmpty ?? true ? 'Campo obrigatório' : null,
+            ),
+          ),
+          _buildField(
+            label: 'Código Interno',
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: _codigoController,
+                    style: TextStyle(color: Colors.white.withOpacity(0.8), fontSize: 15),
+                    decoration: _minimalInput('Automático'),
+                    readOnly: !_codigoEditavel,
+                    onChanged: (v) => _codigo = v,
+                  ),
+                ),
+                if (_codigoEditavel) ...[
+                  IconButton(
+                    icon: const Icon(Icons.auto_fix_high, size: 18, color: Colors.blueAccent),
+                    onPressed: _gerarProximoCodigo,
+                    tooltip: 'Gerar Próximo',
+                  ),
+                ],
+              ],
+            ),
+          ),
+          _buildField(
+            label: 'Código de Barras (EAN)',
+            last: true,
+            child: TextFormField(
+              controller: _codigoBarrasController,
+              style: TextStyle(color: Colors.white.withOpacity(0.8), fontSize: 15),
+              decoration: _minimalInput('Ex: 789000...'),
+              onChanged: (v) => _codigoBarras = v,
+            ),
+          ),
+        ]),
+
+        _buildSection('Configurações de Preparação', [
+          Row(
             children: [
               Expanded(
-                child: TextFormField(
-                  controller: _codigoController,
-                  decoration: InputDecoration(
-                    hintText: 'Ex: PRD-0001',
-                    hintStyle: TextStyle(
-                      color: Colors.white.withOpacity(0.6),
-                      fontSize: 18,
-                      fontWeight: FontWeight.w500,
-                    ),
-                    border: InputBorder.none,
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 0,
-                      vertical: 16,
-                    ),
-                  ),
-                  readOnly: !_codigoEditavel,
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 22,
-                    color: Colors.white,
-                    shadows: [
-                      Shadow(
-                        color: Colors.black54,
-                        blurRadius: 4,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  onChanged: (value) => _codigo = value,
-                  validator: _codigoEditavel
-                      ? (value) {
-                          if (value == null || value.isEmpty) {
-                            return 'Informe o código';
-                          }
-                          return null;
-                        }
-                      : null,
+                child: CheckboxListTile(
+                  title: const Text('Preparar na Cozinha', style: TextStyle(color: Colors.white, fontSize: 13)),
+                  value: _paraCozinha,
+                  activeColor: Colors.orangeAccent,
+                  checkColor: Colors.black,
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  onChanged: (v) => setState(() => _paraCozinha = v ?? false),
                 ),
               ),
-              if (_codigoEditavel) ...[
-                const SizedBox(width: 8),
-                _buildBotaoIcone(
-                  icone: Icons.auto_fix_high,
-                  cor: Colors.orange,
-                  tooltip: 'Preencher furos',
-                  onPressed: _gerarProximoCodigo,
-                ),
-                const SizedBox(width: 8),
-                _buildBotaoIcone(
-                  icone: Icons.arrow_forward,
-                  cor: Colors.blue,
-                  tooltip: 'Próximo código',
-                  onPressed: _gerarProximoUltimo,
-                ),
-              ],
-            ],
-          ),
-        ),
-        const SizedBox(height: 20),
-        // Card de Código de Barras
-        _buildCardCampo(
-          titulo: 'Código de Barras',
-          icone: Icons.qr_code,
-          cor: Colors.purple,
-          subtitulo: 'Opcional - EAN/UPC',
-          child: TextFormField(
-            controller: _codigoBarrasController,
-            decoration: InputDecoration(
-              hintText: 'Ex: 5901234123457',
-              hintStyle: TextStyle(
-                color: Colors.white.withOpacity(0.6),
-                fontSize: 18,
-                fontWeight: FontWeight.w500,
-              ),
-              border: InputBorder.none,
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 0,
-                vertical: 16,
-              ),
-            ),
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 20,
-              fontWeight: FontWeight.w600,
-              shadows: [
-                Shadow(
-                  color: Colors.black54,
-                  blurRadius: 4,
-                  offset: Offset(0, 2),
-                ),
-              ],
-            ),
-            keyboardType: TextInputType.number,
-            onChanged: (value) => _codigoBarras = value,
-            textInputAction: TextInputAction.next,
-          ),
-        ),
-        const SizedBox(height: 20),
-        // Card de Nome
-        _buildCardCampo(
-          titulo: 'Nome do Produto',
-          icone: Icons.inventory_2_outlined,
-          cor: Colors.green,
-          child: TextFormField(
-            initialValue: _nome,
-            decoration: InputDecoration(
-              hintText: 'Ex: Camiseta Manga Curta Preta',
-              hintStyle: TextStyle(
-                color: Colors.white.withOpacity(0.6),
-                fontSize: 18,
-                fontWeight: FontWeight.w500,
-              ),
-              border: InputBorder.none,
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 0,
-                vertical: 16,
-              ),
-            ),
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 22,
-              fontWeight: FontWeight.bold,
-              shadows: [
-                Shadow(
-                  color: Colors.black54,
-                  blurRadius: 4,
-                  offset: Offset(0, 2),
-                ),
-              ],
-            ),
-            validator: (value) {
-              if (value == null || value.isEmpty) {
-                return 'Informe o nome';
-              }
-              return null;
-            },
-            onChanged: (value) => _nome = value,
-            textInputAction: TextInputAction.next,
-            autofocus: true,
-          ),
-        ),
-        const SizedBox(height: 20),
-        // Card de Descrição
-        _buildCardCampo(
-          titulo: 'Descrição',
-          icone: Icons.description_outlined,
-          cor: Colors.cyan,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              TextFormField(
-                controller: _descricaoController,
-                decoration: InputDecoration(
-                  hintText: 'Descreva detalhadamente o produto...',
-                  hintStyle: TextStyle(
-                    color: Colors.white.withOpacity(0.6),
-                    fontSize: 17,
-                    fontWeight: FontWeight.w500,
-                  ),
-                  border: InputBorder.none,
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 0,
-                    vertical: 16,
-                  ),
-                ),
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w600,
-                  height: 1.7,
-                  shadows: [
-                    Shadow(
-                      color: Colors.black54,
-                      blurRadius: 3,
-                      offset: Offset(0, 1),
-                    ),
-                  ],
-                ),
-                maxLines: 5,
-                minLines: 3,
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Informe a descrição';
-                  }
-                  return null;
-                },
-                onChanged: (value) => _descricao = value,
-                textInputAction: TextInputAction.newline,
-              ),
-              const SizedBox(height: 8),
-              Align(
-                alignment: Alignment.centerRight,
-                child: Text(
-                  '${_descricaoController.text.length} caracteres',
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.8),
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                  ),
+              Expanded(
+                child: CheckboxListTile(
+                  title: const Text('Preparar no Bar', style: TextStyle(color: Colors.white, fontSize: 13)),
+                  value: _paraBar,
+                  activeColor: Colors.blueAccent,
+                  checkColor: Colors.black,
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  onChanged: (v) => setState(() => _paraBar = v ?? false),
                 ),
               ),
             ],
           ),
-        ),
-        const SizedBox(height: 20),
-        // Card de Informações Básicas (Unidade, Estoque, Grupo)
-        Row(
-          children: [
-            Expanded(
-              child: _buildCardCampo(
-                titulo: 'Unidade',
-                icone: Icons.straighten,
-                cor: Colors.indigo,
-                child: TextFormField(
-                  controller: _unidadeController,
-                  decoration: InputDecoration(
-                    hintText: 'Ex: UN, KG, LT',
-                    hintStyle: TextStyle(
-                      color: Colors.white.withOpacity(0.6),
-                      fontSize: 18,
-                      fontWeight: FontWeight.w500,
-                    ),
-                    border: InputBorder.none,
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 0,
-                      vertical: 16,
-                    ),
-                  ),
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    shadows: [
-                      Shadow(
-                        color: Colors.black54,
-                        blurRadius: 4,
-                        offset: Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'Informe a unidade';
-                    }
-                    return null;
-                  },
-                  onChanged: (value) => _unidade = value,
-                  textInputAction: TextInputAction.next,
-                ),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _buildCardCampo(
-                titulo: 'Estoque',
-                icone: Icons.inventory,
-                cor: Colors.teal,
-                child: TextFormField(
-                  controller: _estoqueController,
-                  decoration: InputDecoration(
-                    hintText: 'Quantidade',
-                    hintStyle: TextStyle(
-                      color: Colors.white.withOpacity(0.6),
-                      fontSize: 18,
-                      fontWeight: FontWeight.w500,
-                    ),
-                    border: InputBorder.none,
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 0,
-                      vertical: 16,
-                    ),
-                  ),
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                    shadows: [
-                      Shadow(
-                        color: Colors.black54,
-                        blurRadius: 4,
-                        offset: Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  keyboardType: TextInputType.number,
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'Informe o estoque';
-                    }
-                    final estoque = int.tryParse(value);
-                    if (estoque == null || estoque < 0) {
-                      return 'Estoque inválido';
-                    }
-                    return null;
-                  },
-                  onChanged: (value) => _estoque = int.tryParse(value) ?? 0,
-                  textInputAction: TextInputAction.next,
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 20),
-        // Card de Grupo
-        _buildCardCampo(
-          titulo: 'Grupo',
-          icone: Icons.category,
-          cor: Colors.pink,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              TextFormField(
-                controller: _grupoController,
-            decoration: InputDecoration(
-              hintText: 'Ex: Periféricos, Hardware, Serviços',
-              hintStyle: TextStyle(
-                color: Colors.white.withOpacity(0.6),
-                fontSize: 18,
-                fontWeight: FontWeight.w500,
-              ),
-              border: InputBorder.none,
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 0,
-                vertical: 16,
-              ),
-            ),
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 20,
-              fontWeight: FontWeight.w600,
-              shadows: [
-                Shadow(
-                  color: Colors.black54,
-                  blurRadius: 4,
-                  offset: Offset(0, 2),
-                ),
-              ],
-            ),
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Informe o grupo';
-                  }
-                  return null;
-                },
-                onChanged: (value) {
-                  _grupo = value;
-                },
-                textInputAction: TextInputAction.next,
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 20),
-        // Card de Preço de Venda
-        _buildCardCampo(
-          titulo: 'Preço de Venda',
-          icone: Icons.attach_money,
-          cor: Colors.green,
-          subtitulo: 'Valor de venda do produto',
-          child: TextFormField(
-            controller: _precoController,
-            decoration: InputDecoration(
-              hintText: 'Ex: 99.90',
-              hintStyle: TextStyle(
-                color: Colors.white.withOpacity(0.6),
-                fontSize: 20,
-                fontWeight: FontWeight.w500,
-              ),
-              border: InputBorder.none,
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 0,
-                vertical: 16,
-              ),
-            ),
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 28,
-              fontWeight: FontWeight.bold,
-              letterSpacing: 1,
-              shadows: [
-                Shadow(
-                  color: Colors.black87,
-                  blurRadius: 6,
-                  offset: Offset(0, 3),
-                ),
-              ],
-            ),
-            keyboardType: TextInputType.number,
-            validator: (value) {
-              if (value == null || value.isEmpty) {
-                return 'Informe o preço';
-              }
-              final preco = double.tryParse(value.replaceAll(',', '.'));
-              if (preco == null || preco < 0) {
-                return 'Preço inválido';
-              }
-              return null;
-            },
-            onChanged: (value) {
-              _preco = double.tryParse(value.replaceAll(',', '.')) ?? 0.0;
-              setState(() {}); // Atualizar margem de lucro
-            },
-            textInputAction: TextInputAction.next,
-          ),
-        ),
-        const SizedBox(height: 20),
-        // Card de Preço de Custo
-        _buildCardCampo(
-          titulo: 'Preço de Custo',
-          icone: Icons.shopping_cart,
-          cor: Colors.orange,
-          subtitulo: _precoCusto != null && _precoCusto! > 0 && _preco > 0
-              ? _calcularMargemLucro()
-              : 'Opcional - Informe para calcular margem',
-          child: TextFormField(
-            controller: _precoCustoController,
-            decoration: InputDecoration(
-              hintText: 'Ex: 50.00',
-              hintStyle: TextStyle(
-                color: Colors.white.withOpacity(0.6),
-                fontSize: 20,
-                fontWeight: FontWeight.w500,
-              ),
-              border: InputBorder.none,
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 0,
-                vertical: 16,
-              ),
-            ),
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-              letterSpacing: 1,
-              shadows: [
-                Shadow(
-                  color: Colors.black87,
-                  blurRadius: 6,
-                  offset: Offset(0, 3),
-                ),
-              ],
-            ),
-            keyboardType: TextInputType.number,
-            validator: (value) {
-              if (value != null && value.isNotEmpty) {
-                final custo = double.tryParse(value.replaceAll(',', '.'));
-                if (custo == null || custo < 0) {
-                  return 'Custo inválido';
-                }
-              }
-              return null;
-            },
-            onChanged: (value) {
-              _precoCusto = value.isEmpty
-                  ? null
-                  : double.tryParse(value.replaceAll(',', '.'));
-              setState(() {}); // Atualizar margem de lucro
-            },
-            textInputAction: TextInputAction.next,
-          ),
-        ),
-        const SizedBox(height: 20),
+        ]),
 
-              // ========== SEÇÃO DE PROMOÇÃO ==========
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: _temPromocao
-                      ? Colors.red.shade900.withOpacity(0.3)
-                      : Colors.grey.shade800.withOpacity(0.3),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: _temPromocao
-                        ? Colors.red.shade400
-                        : Colors.grey.shade600,
-                    width: 1,
+        _buildSection('Preços e Estoque', [
+          Row(
+            children: [
+              Expanded(
+                child: _buildField(
+                  label: 'Preço Venda',
+                  child: TextFormField(
+                    controller: _precoController,
+                    style: const TextStyle(color: Colors.greenAccent, fontSize: 18, fontWeight: FontWeight.bold),
+                    decoration: _minimalInput('0.00'),
+                    keyboardType: TextInputType.number,
+                    onChanged: (v) {
+                      _preco = double.tryParse(v.replaceAll(',', '.')) ?? 0.0;
+                      setState(() {});
+                    },
                   ),
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.local_offer,
-                          color: _temPromocao
-                              ? Colors.red.shade300
-                              : Colors.grey,
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          'PROMOÇÃO',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                            color: _temPromocao
-                                ? Colors.red.shade300
-                                : Colors.grey,
-                          ),
-                        ),
-                        const Spacer(),
-                        Switch(
-                          value: _temPromocao,
-                          activeThumbColor: Colors.red,
-                          onChanged: (value) {
-                            setState(() {
-                              _temPromocao = value;
-                              if (!value) {
-                                _precoPromocional = null;
-                                _promocaoInicio = null;
-                                _promocaoFim = null;
-                                _precoPromocionalController.clear();
-                              } else {
-                                _promocaoInicio = DateTime.now();
-                                _promocaoFim = DateTime.now().add(
-                                  const Duration(days: 7),
-                                );
-                              }
-                            });
-                          },
-                        ),
-                      ],
-                    ),
-                    if (_temPromocao) ...[
-                      const SizedBox(height: 12),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: _buildField(
+                  label: 'Preço de Custo',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
                       TextFormField(
-                        controller: _precoPromocionalController,
-                        decoration: InputDecoration(
-                          labelText: 'Preço Promocional',
-                          prefixIcon: Icon(
-                            Icons.sell,
-                            color: Colors.red.shade300,
-                          ),
-                          hintText: 'Ex: 79.90',
-                          filled: true,
-                          fillColor: Colors.red.shade900.withOpacity(0.2),
-                        ),
+                        controller: _precoCustoController,
+                        style: TextStyle(color: Colors.white.withOpacity(0.8), fontSize: 16),
+                        decoration: _minimalInput('0.00'),
                         keyboardType: TextInputType.number,
-                        style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                        validator: _temPromocao
-                            ? (value) {
-                                if (value == null || value.isEmpty) {
-                                  return 'Informe o preço promocional';
-                                }
-                                final preco = double.tryParse(
-                                  value.replaceAll(',', '.'),
-                                );
-                                if (preco == null || preco < 0) {
-                                  return 'Preço inválido';
-                                }
-                                if (preco >= _preco) {
-                                  return 'Deve ser menor que o preço normal';
-                                }
-                                return null;
-                              }
-                            : null,
-                        onChanged: (value) => _precoPromocional =
-                            double.tryParse(value.replaceAll(',', '.')),
+                        onChanged: (v) {
+                          _precoCusto = double.tryParse(v.replaceAll(',', '.'));
+                          setState(() {});
+                        },
                       ),
-                      const SizedBox(height: 12),
+                      if (_precoCusto != null && _precoCusto! > 0 && _preco > 0)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(_calcularMargemLucro(), style: const TextStyle(color: Colors.blueAccent, fontSize: 10)),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: _buildField(
+                  label: 'Estoque Atual',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
                       Row(
                         children: [
                           Expanded(
-                            child: InkWell(
-                              onTap: () async {
-                                final data = await showDatePicker(
-                                  context: context,
-                                  initialDate:
-                                      _promocaoInicio ?? DateTime.now(),
-                                  firstDate: DateTime.now().subtract(
-                                    const Duration(days: 30),
-                                  ),
-                                  lastDate: DateTime.now().add(
-                                    const Duration(days: 365),
-                                  ),
-                                );
-                                if (data != null) {
-                                  setState(() => _promocaoInicio = data);
-                                }
-                              },
-                              child: Container(
-                                padding: const EdgeInsets.all(12),
-                                decoration: BoxDecoration(
-                                  color: Colors.green.shade900.withOpacity(0.3),
-                                  borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(
-                                    color: Colors.green.shade400,
-                                  ),
-                                ),
-                                child: Column(
-                                  children: [
-                                    const Icon(
-                                      Icons.calendar_today,
-                                      color: Colors.green,
-                                      size: 20,
-                                    ),
-                                    const SizedBox(height: 4),
-                                    const Text(
-                                      'INÍCIO',
-                                      style: TextStyle(
-                                        fontSize: 10,
-                                        color: Colors.green,
-                                      ),
-                                    ),
-                                    Text(
-                                      _promocaoInicio != null
-                                          ? '${_promocaoInicio!.day.toString().padLeft(2, '0')}/${_promocaoInicio!.month.toString().padLeft(2, '0')}/${_promocaoInicio!.year}'
-                                          : 'Selecionar',
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.white,
-                                      ),
-                                    ),
-                                  ],
-                                ),
+                            child: TextFormField(
+                              controller: _estoqueController,
+                              style: TextStyle(
+                                color: widget.item != null ? Colors.white.withOpacity(0.5) : Colors.white, 
+                                fontSize: 18, 
+                                fontWeight: FontWeight.bold
                               ),
-                            ),
-                          ),
-                          const Padding(
-                            padding: EdgeInsets.symmetric(horizontal: 8),
-                            child: Icon(
-                              Icons.arrow_forward,
-                              color: Colors.grey,
-                            ),
-                          ),
-                          Expanded(
-                            child: InkWell(
-                              onTap: () async {
-                                final data = await showDatePicker(
-                                  context: context,
-                                  initialDate:
-                                      _promocaoFim ??
-                                      DateTime.now().add(
-                                        const Duration(days: 7),
-                                      ),
-                                  firstDate: _promocaoInicio ?? DateTime.now(),
-                                  lastDate: DateTime.now().add(
-                                    const Duration(days: 365),
-                                  ),
-                                );
-                                if (data != null) {
-                                  setState(() => _promocaoFim = data);
-                                }
-                              },
-                              child: Container(
-                                padding: const EdgeInsets.all(12),
-                                decoration: BoxDecoration(
-                                  color: Colors.red.shade900.withOpacity(0.3),
-                                  borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(
-                                    color: Colors.red.shade400,
-                                  ),
-                                ),
-                                child: Column(
-                                  children: [
-                                    const Icon(
-                                      Icons.event,
-                                      color: Colors.red,
-                                      size: 20,
-                                    ),
-                                    const SizedBox(height: 4),
-                                    const Text(
-                                      'FIM',
-                                      style: TextStyle(
-                                        fontSize: 10,
-                                        color: Colors.red,
-                                      ),
-                                    ),
-                                    Text(
-                                      _promocaoFim != null
-                                          ? '${_promocaoFim!.day.toString().padLeft(2, '0')}/${_promocaoFim!.month.toString().padLeft(2, '0')}/${_promocaoFim!.year}'
-                                          : 'Selecionar',
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.white,
-                                      ),
-                                    ),
-                                  ],
-                                ),
+                              decoration: _minimalInput('0').copyWith(
+                                suffixText: widget.item != null ? '🔒 Bloqueado' : null,
+                                suffixStyle: const TextStyle(fontSize: 10, color: Colors.white24),
                               ),
+                              keyboardType: TextInputType.number,
+                              readOnly: widget.item != null, // Bloquear edição direta em produtos existentes
+                              onChanged: (v) => _estoque = int.tryParse(v) ?? 0,
                             ),
                           ),
+                          if (widget.item != null)
+                            TextButton.icon(
+                              icon: const Icon(Icons.playlist_add_circle_outlined, size: 16, color: Colors.blueAccent),
+                              label: const Text('AJUSTAR', style: TextStyle(fontSize: 10, color: Colors.blueAccent)),
+                              onPressed: _exibirDialogoAjusteEstoque,
+                              style: TextButton.styleFrom(padding: EdgeInsets.symmetric(horizontal: 4)),
+                            ),
                         ],
                       ),
-                      if (_precoPromocional != null && _preco > 0)
+                      if (_estoquePorFornecedor.isNotEmpty)
                         Padding(
-                          padding: const EdgeInsets.only(top: 12),
-                          child: Container(
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: Colors.green.shade700,
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                const Icon(
-                                  Icons.trending_down,
-                                  color: Colors.white,
+                          padding: const EdgeInsets.only(top: 8),
+                          child: Wrap(
+                            spacing: 8,
+                            runSpacing: 4,
+                            children: _estoquePorFornecedor.entries
+                              .where((e) => e.value > 0)
+                              .map((e) => Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: Colors.blueAccent.withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(color: Colors.blueAccent.withOpacity(0.2)),
                                 ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  'Desconto: ${((_preco - _precoPromocional!) / _preco * 100).toStringAsFixed(0)}%',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 16,
-                                  ),
+                                child: Text(
+                                  '${e.key}: ${e.value}',
+                                  style: const TextStyle(color: Colors.blueAccent, fontSize: 11, fontWeight: FontWeight.bold),
                                 ),
-                              ],
-                            ),
+                              )).toList(),
                           ),
                         ),
                     ],
-                  ],
+                  ),
                 ),
               ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: _buildField(
+                  label: 'Estoque Mínimo',
+                  last: true,
+                  child: TextFormField(
+                    controller: _estoqueMinimoController,
+                    style: TextStyle(color: Colors.orangeAccent.shade100, fontSize: 18, fontWeight: FontWeight.bold),
+                    decoration: _minimalInput('Ex: 5'),
+                    keyboardType: TextInputType.number,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ]),
+
+        _buildSection('Agrupamento e Fornecedor', [
+          _buildField(
+            label: 'Fornecedor Principal',
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: _fornecedorNomeController,
+                    style: const TextStyle(color: Colors.white, fontSize: 15),
+                    decoration: _minimalInput('Ex: Ambev, Nestlé, etc'),
+                  ),
+                ),
+                if (_fornecedorNomeController.text.isNotEmpty)
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 16, color: Colors.white38),
+                    onPressed: () {
+                      setState(() {
+                        _fornecedorNomeController.clear();
+                        _fornecedorId = null;
+                      });
+                    },
+                  ),
+              ],
+            ),
+          ),
+          _buildField(
+            label: 'Grupo / Categoria',
+            child: TextFormField(
+              controller: _grupoController,
+              style: const TextStyle(color: Colors.white, fontSize: 15),
+              decoration: _minimalInput('Ex: Bebidas'),
+              onChanged: (v) => _grupo = v,
+            ),
+          ),
+          _buildField(
+            label: 'Unidade de Medida',
+            last: true,
+            child: TextFormField(
+              controller: _unidadeController,
+              style: const TextStyle(color: Colors.white, fontSize: 15),
+              decoration: _minimalInput('Ex: UN, KG, LT'),
+              onChanged: (v) => _unidade = v,
+            ),
+          ),
+        ]),
+
+        _buildSection('Promoção', [
+          Row(
+            children: [
+              const Icon(Icons.local_offer_outlined, size: 16, color: Colors.orangeAccent),
+              const SizedBox(width: 8),
+              const Text('Habilitar Promoção', style: TextStyle(color: Colors.white70, fontSize: 13)),
+              const Spacer(),
+              Switch(
+                value: _temPromocao,
+                activeColor: Colors.orangeAccent,
+                onChanged: (v) => setState(() => _temPromocao = v),
+              ),
+            ],
+          ),
+          if (_temPromocao) ...[
+            const SizedBox(height: 12),
+            _buildField(
+              label: 'Preço Promocional',
+              last: true,
+              child: TextFormField(
+                controller: _precoPromocionalController,
+                style: const TextStyle(color: Colors.orangeAccent, fontSize: 18, fontWeight: FontWeight.bold),
+                decoration: _minimalInput('0.00'),
+                onChanged: (v) => _precoPromocional = double.tryParse(v.replaceAll(',', '.')),
+              ),
+            ),
+          ],
+        ]),
       ],
     );
   }
   
   Widget _buildAbaEcommerce() {
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Título da seção
-        Row(
-          children: [
-            Icon(Icons.shopping_cart, color: Colors.purple.shade300),
-            const SizedBox(width: 8),
-            const Text(
-              'Configurações de E-commerce',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
+        _buildSection('Visibilidade e Destaque', [
+          Row(
+            children: [
+              const Icon(Icons.storefront_outlined, size: 16, color: Colors.purpleAccent),
+              const SizedBox(width: 8),
+              const Text('Exibir na Loja Online', style: TextStyle(color: Colors.white70, fontSize: 13)),
+              const Spacer(),
+              Switch(
+                value: _exibirNaLoja,
+                activeColor: Colors.purpleAccent,
+                onChanged: (v) => setState(() {
+                  _exibirNaLoja = v;
+                  if (!v) _emDestaque = false;
+                }),
               ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 24),
-        
-        // Checkbox para exibir na loja
-        Card(
-          color: const Color(0xFF23272A),
-          child: CheckboxListTile(
-            title: const Text(
-              'Exibir na Loja Online',
-              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-            ),
-            subtitle: Text(
-              'Quando ativado, este produto aparecerá na loja pública',
-              style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 12),
-            ),
-            value: _exibirNaLoja,
-            onChanged: (value) {
-              setState(() {
-                _exibirNaLoja = value ?? false;
-                // Se desativar "Exibir na Loja", também desativa "Em Destaque"
-                if (!_exibirNaLoja) {
-                  _emDestaque = false;
-                }
-              });
-            },
-            activeColor: Colors.purple,
-            controlAffinity: ListTileControlAffinity.leading,
+            ],
           ),
-        ),
-        const SizedBox(height: 12),
-        Card(
-          color: const Color(0xFF23272A),
-          child: CheckboxListTile(
-            title: const Text(
-              'Produto em Destaque',
-              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-            ),
-            subtitle: Text(
-              'Quando ativado, este produto aparecerá no topo da loja em destaque',
-              style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 12),
-            ),
-            value: _emDestaque,
-            onChanged: _exibirNaLoja ? (value) {
-              setState(() {
-                _emDestaque = value ?? false;
-              });
-            } : null, // Desabilitado se "Exibir na Loja" estiver desativado
-            activeColor: Colors.orange,
-            controlAffinity: ListTileControlAffinity.leading,
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              const Icon(Icons.star_outline, size: 16, color: Colors.orangeAccent),
+              const SizedBox(width: 8),
+              const Text('Produto em Destaque', style: TextStyle(color: Colors.white70, fontSize: 13)),
+              const Spacer(),
+              Switch(
+                value: _emDestaque,
+                activeColor: Colors.orangeAccent,
+                onChanged: _exibirNaLoja ? (v) => setState(() => _emDestaque = v) : null,
+              ),
+            ],
           ),
-        ),
-        const SizedBox(height: 24),
-        
-        // Seção de Variações
-        _buildSecaoVariacoes(),
-        const SizedBox(height: 24),
-        
-        // Seção de Fotos
-        const Text(
-          '📸 Fotos do Produto',
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-            color: Colors.white,
-          ),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          'Adicione fotos para exibir na loja. A primeira foto será a principal.',
-          style: TextStyle(
-            fontSize: 12,
-            color: Colors.white.withOpacity(0.7),
-          ),
-        ),
-        const SizedBox(height: 12),
-        
-        // Grid de fotos
-        if (_fotosUrls.isNotEmpty)
-          GridView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 3,
-              crossAxisSpacing: 8,
-              mainAxisSpacing: 8,
-              childAspectRatio: 1,
-            ),
-            itemCount: _fotosUrls.length,
-            itemBuilder: (context, index) {
-              final fotoUrl = _fotosUrls[index];
-              final isPrincipal = index == 0;
-              return Stack(
-                children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: Image.network(
-                      fotoUrl,
-                      fit: BoxFit.cover,
-                      width: double.infinity,
-                      height: double.infinity,
-                      errorBuilder: (context, error, stackTrace) {
-                        return Container(
-                          color: Colors.grey[800],
-                          child: const Icon(Icons.broken_image, color: Colors.white54),
-                        );
-                      },
-                    ),
+        ]),
+
+        _buildSection('Logística (Frete)', [
+          Row(
+            children: [
+              Expanded(
+                child: _buildField(
+                  label: 'Peso (g)',
+                  child: TextFormField(
+                    controller: _pesoGramasController,
+                    style: const TextStyle(color: Colors.white, fontSize: 15),
+                    decoration: _minimalInput('Ex: 500'),
+                    keyboardType: TextInputType.number,
+                    onChanged: (v) => _pesoGramas = int.tryParse(v),
                   ),
-                  if (isPrincipal)
-                    Positioned(
-                      top: 4,
-                      left: 4,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Colors.purple,
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: const Text(
-                          'Principal',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 9,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ),
-                  Positioned(
-                    top: 4,
-                    right: 4,
-                    child: IconButton(
-                      icon: const Icon(Icons.close, color: Colors.white, size: 18),
-                      style: IconButton.styleFrom(
-                        backgroundColor: Colors.red.withOpacity(0.8),
-                        padding: const EdgeInsets.all(4),
-                        minimumSize: const Size(24, 24),
-                      ),
-                      onPressed: () {
-                        setState(() {
-                          _fotosUrls.removeAt(index);
-                        });
-                      },
-                    ),
-                  ),
-                  if (index > 0)
-                    Positioned(
-                      bottom: 4,
-                      left: 4,
-                      child: IconButton(
-                        icon: const Icon(Icons.star, color: Colors.white, size: 16),
-                        style: IconButton.styleFrom(
-                          backgroundColor: Colors.blue.withOpacity(0.8),
-                          padding: const EdgeInsets.all(4),
-                          minimumSize: const Size(24, 24),
-                        ),
-                        onPressed: () {
-                          setState(() {
-                            final foto = _fotosUrls.removeAt(index);
-                            _fotosUrls.insert(0, foto);
-                          });
-                        },
-                        tooltip: 'Definir como principal',
-                      ),
-                    ),
-                ],
-              );
-            },
-          ),
-        const SizedBox(height: 12),
-        
-        // Botões de upload
-        Row(
-          children: [
-            Expanded(
-              child: ElevatedButton.icon(
-                onPressed: _uploadingFotos ? null : _adicionarFotos,
-                icon: _uploadingFotos
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.add_photo_alternate),
-                label: Text(_uploadingFotos ? 'Enviando...' : 'Adicionar Fotos'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.purple,
-                  foregroundColor: Colors.white,
                 ),
               ),
-            ),
-            if (_fotosUrls.isNotEmpty) ...[
-              const SizedBox(width: 8),
+              const SizedBox(width: 16),
               Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: () {
-                    setState(() {
-                      _fotosUrls.clear();
-                    });
-                  },
-                  icon: const Icon(Icons.delete_outline),
-                  label: const Text('Remover Todas'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.red,
+                child: _buildField(
+                  label: 'Altura (cm)',
+                  child: TextFormField(
+                    controller: _alturaCmController,
+                    style: const TextStyle(color: Colors.white, fontSize: 15),
+                    decoration: _minimalInput('0.0'),
+                    keyboardType: TextInputType.number,
+                    onChanged: (v) => _alturaCm = double.tryParse(v.replaceAll(',', '.')),
                   ),
                 ),
               ),
             ],
-          ],
-        ),
-        const SizedBox(height: 24),
-        
-        // Descrição para E-commerce
-        TextFormField(
-          controller: _descricaoEcommerceController,
-          decoration: const InputDecoration(
-            labelText: 'Descrição para E-commerce',
-            hintText: 'Descrição detalhada que aparecerá na loja online',
-            prefixIcon: Icon(Icons.description),
-            helperText: 'Esta descrição será exibida na loja. Se vazio, usa a descrição padrão.',
           ),
-          maxLines: 4,
-          onChanged: (value) => _descricaoEcommerce = value.isEmpty ? null : value,
-        ),
-        const SizedBox(height: 24),
-        
-        // Dimensões e Peso
-        const Text(
-          '📦 Dimensões e Peso (para cálculo de frete)',
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-            color: Colors.white,
-          ),
-        ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: TextFormField(
-                controller: _pesoGramasController,
-                decoration: const InputDecoration(
-                  labelText: 'Peso (gramas)',
-                  prefixIcon: Icon(Icons.scale),
-                  hintText: 'Ex: 500',
-                ),
-                keyboardType: TextInputType.number,
-                onChanged: (value) {
-                  _pesoGramas = value.isEmpty ? null : int.tryParse(value);
-                },
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: TextFormField(
-                controller: _alturaCmController,
-                decoration: const InputDecoration(
-                  labelText: 'Altura (cm)',
-                  prefixIcon: Icon(Icons.height),
-                  hintText: 'Ex: 10.5',
-                ),
-                keyboardType: TextInputType.numberWithOptions(decimal: true),
-                onChanged: (value) {
-                  _alturaCm = value.isEmpty
-                      ? null
-                      : double.tryParse(value.replaceAll(',', '.'));
-                },
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: TextFormField(
-                controller: _larguraCmController,
-                decoration: const InputDecoration(
-                  labelText: 'Largura (cm)',
-                  prefixIcon: Icon(Icons.width_wide),
-                  hintText: 'Ex: 15.0',
-                ),
-                keyboardType: TextInputType.numberWithOptions(decimal: true),
-                onChanged: (value) {
-                  _larguraCm = value.isEmpty
-                      ? null
-                      : double.tryParse(value.replaceAll(',', '.'));
-                },
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: TextFormField(
-                controller: _profundidadeCmController,
-                decoration: const InputDecoration(
-                  labelText: 'Profundidade (cm)',
-                  prefixIcon: Icon(Icons.straighten),
-                  hintText: 'Ex: 20.0',
-                ),
-                keyboardType: TextInputType.numberWithOptions(decimal: true),
-                onChanged: (value) {
-                  _profundidadeCm = value.isEmpty
-                      ? null
-                      : double.tryParse(value.replaceAll(',', '.'));
-                },
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 24),
-        
-        // Tags
-        TextFormField(
-          controller: _tagsController,
-          decoration: const InputDecoration(
-            labelText: 'Tags (separadas por vírgula)',
-            hintText: 'Ex: promocao, destaque, novo, pet',
-            prefixIcon: Icon(Icons.label),
-            helperText: 'Tags ajudam na busca e categorização na loja',
-          ),
-          onChanged: (value) {
-            _tags = value
-                .split(',')
-                .map((tag) => tag.trim())
-                .where((tag) => tag.isNotEmpty)
-                .toList();
-          },
-        ),
-        const SizedBox(height: 24),
-        
-        // Informações sobre e-commerce
-        Card(
-          color: Colors.blue.withOpacity(0.1),
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(Icons.info_outline, color: Colors.blue[300], size: 20),
-                    const SizedBox(width: 8),
-                    const Text(
-                      'Dicas para E-commerce',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  '• Adicione pelo menos uma foto de boa qualidade\n'
-                  '• A primeira foto será exibida como principal\n'
-                  '• Use tags relevantes para facilitar a busca\n'
-                  '• Dimensões e peso ajudam no cálculo de frete\n'
-                  '• Produtos com "Exibir na Loja" aparecerão na loja pública',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.white.withOpacity(0.8),
-                    height: 1.5,
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: _buildField(
+                  label: 'Largura (cm)',
+                  child: TextFormField(
+                    controller: _larguraCmController,
+                    style: const TextStyle(color: Colors.white, fontSize: 15),
+                    decoration: _minimalInput('0.0'),
+                    keyboardType: TextInputType.number,
+                    onChanged: (v) => _larguraCm = double.tryParse(v.replaceAll(',', '.')),
                   ),
                 ),
-              ],
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: _buildField(
+                  label: 'Profundidade (cm)',
+                  child: TextFormField(
+                    controller: _profundidadeCmController,
+                    style: const TextStyle(color: Colors.white, fontSize: 15),
+                    decoration: _minimalInput('0.0'),
+                    keyboardType: TextInputType.number,
+                    onChanged: (v) => _profundidadeCm = double.tryParse(v.replaceAll(',', '.')),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ]),
+
+        _buildSection('Descrição Vitrine', [
+          _buildField(
+            label: 'Texto para Site',
+            last: true,
+            child: TextFormField(
+              controller: _descricaoEcommerceController,
+              style: const TextStyle(color: Colors.white, fontSize: 14, height: 1.5),
+              decoration: _minimalInput('Descrição detalhada para a loja...'),
+              maxLines: 5,
+              onChanged: (v) => _descricaoEcommerce = v.isEmpty ? null : v,
             ),
           ),
-        ),
+        ]),
+
+        _buildSection('Fotos e Mídia', [
+           _buildBotoesFotos(),
+           if (_fotosUrls.isNotEmpty) ...[
+             const SizedBox(height: 16),
+             _buildGridFotos(),
+           ],
+        ]),
+
+        const SizedBox(height: 16),
+        _buildSecaoVariacoes(),
       ],
     );
   }
@@ -2213,502 +1508,278 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
     }
   }
   
+  Widget _buildBotoesFotos() {
+    return Row(
+      children: [
+        Expanded(
+          child: ElevatedButton.icon(
+            onPressed: _uploadingFotos ? null : _adicionarFotos,
+            icon: _uploadingFotos
+                ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                : const Icon(Icons.add_a_photo_outlined, size: 16),
+            label: Text(_uploadingFotos ? 'Enviando...' : 'Adicionar Fotos', style: const TextStyle(fontSize: 12)),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.purpleAccent.withOpacity(0.8),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+          ),
+        ),
+        if (_fotosUrls.isNotEmpty) ...[
+          const SizedBox(width: 8),
+          IconButton(
+            icon: const Icon(Icons.delete_sweep_outlined, color: Colors.redAccent, size: 20),
+            onPressed: () => setState(() => _fotosUrls.clear()),
+            tooltip: 'Remover Todas',
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildGridFotos() {
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 4,
+        crossAxisSpacing: 8,
+        mainAxisSpacing: 8,
+        childAspectRatio: 1,
+      ),
+      itemCount: _fotosUrls.length,
+      itemBuilder: (context, index) {
+        final url = _fotosUrls[index];
+        return Stack(
+          children: [
+            Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                image: DecorationImage(image: NetworkImage(url), fit: BoxFit.cover),
+                border: Border.all(color: index == 0 ? Colors.purpleAccent : Colors.white10),
+              ),
+            ),
+            Positioned(
+              top: 2,
+              right: 2,
+              child: GestureDetector(
+                onTap: () => setState(() => _fotosUrls.removeAt(index)),
+                child: Container(
+                  padding: const EdgeInsets.all(2),
+                  decoration: const BoxDecoration(color: Colors.black54, shape: BoxShape.circle),
+                  child: const Icon(Icons.close, size: 14, color: Colors.white),
+                ),
+              ),
+            ),
+            if (index == 0)
+              Positioned(
+                bottom: 2,
+                left: 2,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                  decoration: BoxDecoration(color: Colors.purpleAccent, borderRadius: BorderRadius.circular(4)),
+                  child: const Text('CAPA', style: TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.bold)),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
   Widget _buildAbaImpostos() {
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // NCM
-        TextFormField(
-          controller: _ncmController,
-          decoration: const InputDecoration(
-            labelText: 'NCM (Nomenclatura Comum do Mercosul)',
-            prefixIcon: Icon(Icons.qr_code_scanner),
-            hintText: 'Ex: 85171200',
-            helperText: 'Código de 8 dígitos obrigatório para produtos',
-          ),
-          keyboardType: TextInputType.number,
-          maxLength: 8,
-          onChanged: (value) => _ncm = value.isEmpty ? null : value,
-        ),
-        const SizedBox(height: 16),
-        
-        // Origem
-        TextFormField(
-          controller: _origemController,
-          decoration: const InputDecoration(
-            labelText: 'Origem da Mercadoria',
-            prefixIcon: Icon(Icons.flag),
-            hintText: '0-Nacional, 1-Estrangeira, etc',
-            helperText: 'Código de origem conforme legislação',
-          ),
-          keyboardType: TextInputType.number,
-          maxLength: 1,
-          onChanged: (value) => _origem = value.isEmpty ? null : value,
-        ),
-        const SizedBox(height: 16),
-        
-        // CFOP
-        TextFormField(
-          controller: _cfopController,
-          decoration: const InputDecoration(
-            labelText: 'CFOP (Código Fiscal de Operações)',
-            prefixIcon: Icon(Icons.receipt),
-            hintText: 'Ex: 5102',
-            helperText: 'Código de 4 dígitos',
-          ),
-          keyboardType: TextInputType.number,
-          maxLength: 4,
-          onChanged: (value) => _cfop = value.isEmpty ? null : value,
-        ),
-        const SizedBox(height: 24),
-        
-        // Divisor Simples Nacional
-        const Divider(color: Colors.white24),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Icon(Icons.account_balance, color: Colors.orange.shade300),
-            const SizedBox(width: 8),
-            const Text(
-              'Simples Nacional',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
-              ),
+        _buildSection('Documentação Fiscal', [
+          _buildField(
+            label: 'NCM',
+            child: TextFormField(
+              controller: _ncmController,
+              style: const TextStyle(color: Colors.white, fontSize: 15),
+              decoration: _minimalInput('Ex: 85171200'),
+              keyboardType: TextInputType.number,
+              onChanged: (v) => _ncm = v,
             ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        
-        // CSOSN (Código de Situação da Operação - Simples Nacional)
-        TextFormField(
-          controller: _csosnController,
-          decoration: const InputDecoration(
-            labelText: 'CSOSN',
-            prefixIcon: Icon(Icons.numbers),
-            hintText: 'Ex: 101, 102, 201, 202, etc',
-            helperText: 'Código de Situação da Operação - Simples Nacional',
           ),
-          keyboardType: TextInputType.number,
-          maxLength: 3,
-          onChanged: (value) => _csosn = value.isEmpty ? null : value,
-        ),
-        const SizedBox(height: 8),
-        
-        // Alíquota Simples Nacional
-        TextFormField(
-          controller: _simplesNacionalAliquotaController,
-          decoration: const InputDecoration(
-            labelText: 'Alíquota Simples Nacional (%)',
-            prefixIcon: Icon(Icons.percent),
-            hintText: 'Ex: 6.00, 12.00, 15.00',
-            helperText: 'Percentual da alíquota do Simples Nacional',
-          ),
-          keyboardType: TextInputType.numberWithOptions(decimal: true),
-          onChanged: (value) {
-            _simplesNacionalAliquota = value.isEmpty
-                ? null
-                : double.tryParse(value.replaceAll(',', '.'));
-          },
-        ),
-        const SizedBox(height: 24),
-        
-        // CEST
-        TextFormField(
-          controller: _cestController,
-          decoration: const InputDecoration(
-            labelText: 'CEST (Código Especificador da Substituição Tributária)',
-            prefixIcon: const Icon(Icons.qr_code),
-            hintText: 'Ex: 0100100',
-            helperText: 'Opcional - Apenas para produtos com ST',
-          ),
-          keyboardType: TextInputType.number,
-          onChanged: (value) => _cest = value.isEmpty ? null : value,
-        ),
-        const SizedBox(height: 24),
-        
-        // Divisor ICMS
-        const Divider(color: Colors.white24),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Icon(Icons.account_balance, color: Colors.blue.shade300),
-            const SizedBox(width: 8),
-            const Text(
-              'ICMS (Imposto sobre Circulação de Mercadorias)',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
-              ),
+          _buildField(
+            label: 'Origem da Mercadoria',
+            child: TextFormField(
+              controller: _origemController,
+              style: const TextStyle(color: Colors.white, fontSize: 15),
+              decoration: _minimalInput('0-Nacional, 1-Estrangeira...'),
+              keyboardType: TextInputType.number,
+              onChanged: (v) => _origem = v,
             ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        
-        // ICMS CST
-        TextFormField(
-          controller: _icmsCstController,
-          decoration: const InputDecoration(
-            labelText: 'CST ICMS',
-            prefixIcon: Icon(Icons.numbers),
-            hintText: 'Ex: 00, 10, 20, 30, etc',
-            helperText: 'Código de Situação Tributária do ICMS',
           ),
-          keyboardType: TextInputType.text,
-          maxLength: 3,
-          onChanged: (value) => _icmsCst = value.isEmpty ? null : value,
-        ),
-        const SizedBox(height: 8),
-        
-        // ICMS Alíquota
-        TextFormField(
-          controller: _icmsAliquotaController,
-          decoration: const InputDecoration(
-            labelText: 'Alíquota ICMS (%)',
-            prefixIcon: Icon(Icons.percent),
-            hintText: 'Ex: 18.00',
-            helperText: 'Percentual da alíquota do ICMS',
-          ),
-          keyboardType: TextInputType.numberWithOptions(decimal: true),
-          onChanged: (value) {
-            _icmsAliquota = value.isEmpty
-                ? null
-                : double.tryParse(value.replaceAll(',', '.'));
-          },
-        ),
-        const SizedBox(height: 24),
-        
-        // Divisor IPI
-        const Divider(color: Colors.white24),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Icon(Icons.factory, color: Colors.orange.shade300),
-            const SizedBox(width: 8),
-            const Text(
-              'IPI (Imposto sobre Produtos Industrializados)',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
-              ),
+          _buildField(
+            label: 'CFOP Padrão',
+            last: true,
+            child: TextFormField(
+              controller: _cfopController,
+              style: const TextStyle(color: Colors.white, fontSize: 15),
+              decoration: _minimalInput('Ex: 5102'),
+              keyboardType: TextInputType.number,
+              onChanged: (v) => _cfop = v,
             ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        
-        // IPI CST
-        TextFormField(
-          controller: _ipiCstController,
-          decoration: const InputDecoration(
-            labelText: 'CST IPI',
-            prefixIcon: Icon(Icons.numbers),
-            hintText: 'Ex: 00, 01, 02, etc',
-            helperText: 'Código de Situação Tributária do IPI',
           ),
-          keyboardType: TextInputType.text,
-          maxLength: 3,
-          onChanged: (value) => _ipiCst = value.isEmpty ? null : value,
-        ),
-        const SizedBox(height: 8),
-        
-        // IPI Alíquota
-        TextFormField(
-          controller: _ipiAliquotaController,
-          decoration: const InputDecoration(
-            labelText: 'Alíquota IPI (%)',
-            prefixIcon: Icon(Icons.percent),
-            hintText: 'Ex: 5.00',
-            helperText: 'Percentual da alíquota do IPI',
-          ),
-          keyboardType: TextInputType.numberWithOptions(decimal: true),
-          onChanged: (value) {
-            _ipiAliquota = value.isEmpty
-                ? null
-                : double.tryParse(value.replaceAll(',', '.'));
-          },
-        ),
-        const SizedBox(height: 24),
-        
-        // Divisor PIS
-        const Divider(color: Colors.white24),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Icon(Icons.account_balance_wallet, color: Colors.green.shade300),
-            const SizedBox(width: 8),
-            const Text(
-              'PIS (Programa de Integração Social)',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
-              ),
+        ]),
+
+        _buildSection('Simples Nacional / CRT', [
+          _buildField(
+            label: 'CSOSN',
+            child: TextFormField(
+              controller: _csosnController,
+              style: const TextStyle(color: Colors.white, fontSize: 15),
+              decoration: _minimalInput('Ex: 102'),
+              keyboardType: TextInputType.number,
+              onChanged: (v) => _csosn = v,
             ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        
-        // PIS CST
-        TextFormField(
-          controller: _pisCstController,
-          decoration: const InputDecoration(
-            labelText: 'CST PIS',
-            prefixIcon: Icon(Icons.numbers),
-            hintText: 'Ex: 01, 02, 03, etc',
-            helperText: 'Código de Situação Tributária do PIS',
           ),
-          keyboardType: TextInputType.text,
-          maxLength: 3,
-          onChanged: (value) => _pisCst = value.isEmpty ? null : value,
-        ),
-        const SizedBox(height: 8),
-        
-        // PIS Alíquota
-        TextFormField(
-          controller: _pisAliquotaController,
-          decoration: const InputDecoration(
-            labelText: 'Alíquota PIS (%)',
-            prefixIcon: Icon(Icons.percent),
-            hintText: 'Ex: 1.65',
-            helperText: 'Percentual da alíquota do PIS',
-          ),
-          keyboardType: TextInputType.numberWithOptions(decimal: true),
-          onChanged: (value) {
-            _pisAliquota = value.isEmpty
-                ? null
-                : double.tryParse(value.replaceAll(',', '.'));
-          },
-        ),
-        const SizedBox(height: 24),
-        
-        // Divisor COFINS
-        const Divider(color: Colors.white24),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Icon(Icons.savings, color: Colors.purple.shade300),
-            const SizedBox(width: 8),
-            const Text(
-              'COFINS (Contribuição para o Financiamento da Seguridade Social)',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
-              ),
+          _buildField(
+            label: 'Alíquota Simples (%)',
+            last: true,
+            child: TextFormField(
+              controller: _simplesNacionalAliquotaController,
+              style: const TextStyle(color: Colors.white, fontSize: 15),
+              decoration: _minimalInput('0.00'),
+              keyboardType: TextInputType.number,
+              onChanged: (v) => _simplesNacionalAliquota = double.tryParse(v.replaceAll(',', '.')),
             ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        
-        // COFINS CST
-        TextFormField(
-          controller: _cofinsCstController,
-          decoration: const InputDecoration(
-            labelText: 'CST COFINS',
-            prefixIcon: Icon(Icons.numbers),
-            hintText: 'Ex: 01, 02, 03, etc',
-            helperText: 'Código de Situação Tributária do COFINS',
           ),
-          keyboardType: TextInputType.text,
-          maxLength: 3,
-          onChanged: (value) => _cofinsCst = value.isEmpty ? null : value,
-        ),
-        const SizedBox(height: 8),
-        
-        // COFINS Alíquota
-        TextFormField(
-          controller: _cofinsAliquotaController,
-          decoration: const InputDecoration(
-            labelText: 'Alíquota COFINS (%)',
-            prefixIcon: Icon(Icons.percent),
-            hintText: 'Ex: 7.60',
-            helperText: 'Percentual da alíquota do COFINS',
-          ),
-          keyboardType: TextInputType.numberWithOptions(decimal: true),
-          onChanged: (value) {
-            _cofinsAliquota = value.isEmpty
-                ? null
-                : double.tryParse(value.replaceAll(',', '.'));
-          },
-        ),
-        const SizedBox(height: 24),
-        
-        // Divisor ISS
-        const Divider(color: Colors.white24),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Icon(Icons.business, color: Colors.teal.shade300),
-            const SizedBox(width: 8),
-            const Text(
-              'ISS (Imposto sobre Serviços)',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
-              ),
+        ]),
+
+        _buildSection('ICMS Detalhado', [
+          _buildField(
+            label: 'CST ICMS',
+            child: TextFormField(
+              controller: _icmsCstController,
+              style: const TextStyle(color: Colors.white, fontSize: 15),
+              decoration: _minimalInput('Ex: 00'),
+              onChanged: (v) => _icmsCst = v,
             ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        
-        // ISS Alíquota
-        TextFormField(
-          controller: _issAliquotaController,
-          decoration: const InputDecoration(
-            labelText: 'Alíquota ISS (%)',
-            prefixIcon: Icon(Icons.percent),
-            hintText: 'Ex: 5.00',
-            helperText: 'Percentual da alíquota do ISS (para serviços)',
           ),
-          keyboardType: TextInputType.numberWithOptions(decimal: true),
-          onChanged: (value) {
-            _issAliquota = value.isEmpty
-                ? null
-                : double.tryParse(value.replaceAll(',', '.'));
-          },
-        ),
-        const SizedBox(height: 32),
+          _buildField(
+            label: 'Alíquota ICMS (%)',
+            last: true,
+            child: TextFormField(
+              controller: _icmsAliquotaController,
+              style: const TextStyle(color: Colors.white, fontSize: 15),
+              decoration: _minimalInput('0.00'),
+              keyboardType: TextInputType.number,
+              onChanged: (v) => _icmsAliquota = double.tryParse(v.replaceAll(',', '.')),
+            ),
+          ),
+        ]),
+
+        _buildSection('Outros Impostos (IPI/PIS/COFINS)', [
+          Row(
+            children: [
+              Expanded(
+                child: _buildField(
+                  label: 'CST PIS',
+                  child: TextFormField(
+                    controller: _pisCstController,
+                    style: const TextStyle(color: Colors.white, fontSize: 14),
+                    decoration: _minimalInput('01'),
+                    onChanged: (v) => _pisCst = v,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: _buildField(
+                  label: 'CST COFINS',
+                  child: TextFormField(
+                    controller: _cofinsCstController,
+                    style: const TextStyle(color: Colors.white, fontSize: 14),
+                    decoration: _minimalInput('01'),
+                    onChanged: (v) => _cofinsCst = v,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ]),
       ],
     );
   }
   
   // Seção de Variações de Produto
   Widget _buildSecaoVariacoes() {
-    return Card(
-      color: const Color(0xFF23272A),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+    return _buildSection('Variações de Produto', [
+      Row(
         children: [
-          CheckboxListTile(
-            title: const Text(
-              'Produto com Variações',
-              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-            ),
-            subtitle: Text(
-              'Ative para adicionar variações como tamanhos, cores, sabores, etc.',
-              style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 12),
-            ),
+          const Icon(Icons.layers_outlined, size: 16, color: Colors.blueAccent),
+          const SizedBox(width: 8),
+          const Text('Produto com Variações', style: TextStyle(color: Colors.white70, fontSize: 13)),
+          const Spacer(),
+          Switch(
             value: _temVariacoes,
-            onChanged: (value) {
-              setState(() {
-                _temVariacoes = value ?? false;
-                if (!_temVariacoes) {
-                  _variacoes.clear();
-                }
-              });
-            },
-            activeColor: Colors.blue,
-            controlAffinity: ListTileControlAffinity.leading,
+            activeColor: Colors.blueAccent,
+            onChanged: (v) => setState(() {
+              _temVariacoes = v;
+              if (!v) _variacoes.clear();
+            }),
           ),
-          if (_temVariacoes) ...[
-            const Divider(color: Colors.white24),
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        'Variações Configuradas',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 14,
-                        ),
-                      ),
-                      ElevatedButton.icon(
-                        onPressed: _adicionarVariacao,
-                        icon: const Icon(Icons.add, size: 18),
-                        label: const Text('Adicionar'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.blue,
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  if (_variacoes.isEmpty)
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.grey[800]?.withOpacity(0.5),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: const Text(
-                        'Nenhuma variação adicionada. Clique em "Adicionar" para criar.',
-                        style: TextStyle(color: Colors.white70, fontSize: 12),
-                        textAlign: TextAlign.center,
-                      ),
-                    )
-                  else
-                    ..._variacoes.asMap().entries.map((entry) {
-                      final index = entry.key;
-                      final variacao = entry.value;
-                      return _buildCardVariacao(variacao, index);
-                    }).toList(),
-                ],
-              ),
-            ),
-          ],
         ],
       ),
-    );
+      if (_temVariacoes) ...[
+        const SizedBox(height: 12),
+        ElevatedButton.icon(
+          onPressed: _adicionarVariacao,
+          icon: const Icon(Icons.add, size: 16),
+          label: const Text('Nova Variação', style: TextStyle(fontSize: 12)),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.blueAccent.withOpacity(0.1),
+            foregroundColor: Colors.blueAccent,
+            side: const BorderSide(color: Colors.blueAccent),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          ),
+        ),
+        if (_variacoes.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          ListView.separated(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: _variacoes.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 4),
+            itemBuilder: (context, index) {
+              final variacao = _variacoes[index];
+              return Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.02),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '${variacao.nomeAtributo}: ${variacao.valor}',
+                        style: const TextStyle(color: Colors.white, fontSize: 13),
+                      ),
+                    ),
+                    if (variacao.precoAdicional != null && variacao.precoAdicional! > 0)
+                      Text(
+                        '+ R\$ ${variacao.precoAdicional!.toStringAsFixed(2)}',
+                        style: const TextStyle(color: Colors.greenAccent, fontSize: 12),
+                      ),
+                    const SizedBox(width: 8),
+                    IconButton(
+                      icon: const Icon(Icons.close, size: 14, color: Colors.redAccent),
+                      onPressed: () => setState(() => _variacoes.removeAt(index)),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ],
+      ],
+    ]);
   }
-  
-  Widget _buildCardVariacao(VariacaoProduto variacao, int index) {
-    return Card(
-      color: Colors.grey[900],
-      margin: const EdgeInsets.only(bottom: 8),
-      child: ListTile(
-        title: Text(
-          '${variacao.nomeAtributo}: ${variacao.valor}',
-          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-        ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (variacao.precoAdicional != null)
-              Text(
-                'Preço adicional: R\$ ${variacao.precoAdicional!.toStringAsFixed(2)}',
-                style: TextStyle(color: Colors.white70, fontSize: 11),
-              ),
-            Text(
-              'Estoque: ${variacao.estoque}',
-              style: TextStyle(color: Colors.white70, fontSize: 11),
-            ),
-            Text(
-              variacao.ativo ? '✓ Ativo' : '✗ Inativo',
-              style: TextStyle(
-                color: variacao.ativo ? Colors.green : Colors.red,
-                fontSize: 11,
-              ),
-            ),
-          ],
-        ),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              icon: const Icon(Icons.edit, color: Colors.blue, size: 20),
-              onPressed: () => _editarVariacao(index),
-            ),
-            IconButton(
-              icon: const Icon(Icons.delete, color: Colors.red, size: 20),
-              onPressed: () => _removerVariacao(index),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-  
+
   void _adicionarVariacao() {
     _mostrarDialogVariacao();
   }
@@ -2726,12 +1797,8 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
   void _mostrarDialogVariacao({VariacaoProduto? variacao, int? index}) {
     final nomeAtributoController = TextEditingController(text: variacao?.nomeAtributo ?? '');
     final valorController = TextEditingController(text: variacao?.valor ?? '');
-    final precoAdicionalController = TextEditingController(
-      text: variacao?.precoAdicional?.toString() ?? '',
-    );
-    final estoqueController = TextEditingController(
-      text: variacao?.estoque.toString() ?? '0',
-    );
+    final precoAdicionalController = TextEditingController(text: variacao?.precoAdicional?.toString() ?? '');
+    final estoqueController = TextEditingController(text: variacao?.estoque.toString() ?? '0');
     final codigoBarrasController = TextEditingController(text: variacao?.codigoBarras ?? '');
     final skuController = TextEditingController(text: variacao?.sku ?? '');
     bool ativo = variacao?.ativo ?? true;
@@ -2740,125 +1807,64 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          backgroundColor: const Color(0xFF23272A),
-          title: Text(
-            variacao == null ? 'Adicionar Variação' : 'Editar Variação',
-            style: const TextStyle(color: Colors.white),
-          ),
+          backgroundColor: const Color(0xFF0F172A),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: const BorderSide(color: Colors.white10)),
+          title: Text(variacao == null ? 'Nova Variação' : 'Editar Variação', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                TextField(
-                  controller: nomeAtributoController,
-                  decoration: const InputDecoration(
-                    labelText: 'Nome do Atributo',
-                    labelStyle: TextStyle(color: Colors.white70),
-                    hintText: 'Ex: Tamanho, Cor, Sabor',
-                    hintStyle: TextStyle(color: Colors.white38),
-                    enabledBorder: UnderlineInputBorder(
-                      borderSide: BorderSide(color: Colors.white54),
-                    ),
-                    focusedBorder: UnderlineInputBorder(
-                      borderSide: BorderSide(color: Colors.blue),
-                    ),
+                _buildField(
+                  label: 'Atributo (ex: Tamanho)',
+                  child: TextFormField(
+                    controller: nomeAtributoController,
+                    style: const TextStyle(color: Colors.white, fontSize: 14),
+                    decoration: _minimalInput('Ex: Cor'),
                   ),
-                  style: const TextStyle(color: Colors.white),
                 ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: valorController,
-                  decoration: const InputDecoration(
-                    labelText: 'Valor',
-                    labelStyle: TextStyle(color: Colors.white70),
-                    hintText: 'Ex: P, Azul, Morango',
-                    hintStyle: TextStyle(color: Colors.white38),
-                    enabledBorder: UnderlineInputBorder(
-                      borderSide: BorderSide(color: Colors.white54),
-                    ),
-                    focusedBorder: UnderlineInputBorder(
-                      borderSide: BorderSide(color: Colors.blue),
-                    ),
+                _buildField(
+                  label: 'Valor (ex: G)',
+                  child: TextFormField(
+                    controller: valorController,
+                    style: const TextStyle(color: Colors.white, fontSize: 14),
+                    decoration: _minimalInput('Ex: Azul'),
                   ),
-                  style: const TextStyle(color: Colors.white),
                 ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: precoAdicionalController,
-                  decoration: const InputDecoration(
-                    labelText: 'Preço Adicional (R\$)',
-                    labelStyle: TextStyle(color: Colors.white70),
-                    hintText: '0.00 (deixe vazio para usar preço base)',
-                    hintStyle: TextStyle(color: Colors.white38),
-                    enabledBorder: UnderlineInputBorder(
-                      borderSide: BorderSide(color: Colors.white54),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildField(
+                        label: 'Preço +',
+                        child: TextFormField(
+                          controller: precoAdicionalController,
+                          style: const TextStyle(color: Colors.greenAccent, fontSize: 14),
+                          decoration: _minimalInput('0.00'),
+                          keyboardType: TextInputType.number,
+                        ),
+                      ),
                     ),
-                    focusedBorder: UnderlineInputBorder(
-                      borderSide: BorderSide(color: Colors.blue),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: _buildField(
+                        label: 'Estoque',
+                        child: TextFormField(
+                          controller: estoqueController,
+                          style: const TextStyle(color: Colors.white, fontSize: 14),
+                          decoration: _minimalInput('0'),
+                          keyboardType: TextInputType.number,
+                        ),
+                      ),
                     ),
-                  ),
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  style: const TextStyle(color: Colors.white),
+                  ],
                 ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: estoqueController,
-                  decoration: const InputDecoration(
-                    labelText: 'Estoque',
-                    labelStyle: TextStyle(color: Colors.white70),
-                    enabledBorder: UnderlineInputBorder(
-                      borderSide: BorderSide(color: Colors.white54),
-                    ),
-                    focusedBorder: UnderlineInputBorder(
-                      borderSide: BorderSide(color: Colors.blue),
-                    ),
+                _buildField(
+                  label: 'Cód. Barras / SKU',
+                  last: true,
+                  child: TextFormField(
+                    controller: codigoBarrasController,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    decoration: _minimalInput('Opcional'),
                   ),
-                  keyboardType: TextInputType.number,
-                  style: const TextStyle(color: Colors.white),
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: codigoBarrasController,
-                  decoration: const InputDecoration(
-                    labelText: 'Código de Barras (opcional)',
-                    labelStyle: TextStyle(color: Colors.white70),
-                    enabledBorder: UnderlineInputBorder(
-                      borderSide: BorderSide(color: Colors.white54),
-                    ),
-                    focusedBorder: UnderlineInputBorder(
-                      borderSide: BorderSide(color: Colors.blue),
-                    ),
-                  ),
-                  style: const TextStyle(color: Colors.white),
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: skuController,
-                  decoration: const InputDecoration(
-                    labelText: 'SKU (opcional)',
-                    labelStyle: TextStyle(color: Colors.white70),
-                    enabledBorder: UnderlineInputBorder(
-                      borderSide: BorderSide(color: Colors.white54),
-                    ),
-                    focusedBorder: UnderlineInputBorder(
-                      borderSide: BorderSide(color: Colors.blue),
-                    ),
-                  ),
-                  style: const TextStyle(color: Colors.white),
-                ),
-                const SizedBox(height: 16),
-                CheckboxListTile(
-                  title: const Text(
-                    'Ativo',
-                    style: TextStyle(color: Colors.white),
-                  ),
-                  value: ativo,
-                  onChanged: (value) {
-                    setDialogState(() {
-                      ativo = value ?? true;
-                    });
-                  },
-                  activeColor: Colors.blue,
                 ),
               ],
             ),
@@ -2866,52 +1872,499 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('Cancelar'),
+              child: Text('Cancelar', style: TextStyle(color: Colors.white.withOpacity(0.5))),
             ),
             ElevatedButton(
               onPressed: () {
-                if (nomeAtributoController.text.isEmpty || valorController.text.isEmpty) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Preencha o nome do atributo e o valor'),
-                      backgroundColor: Colors.red,
-                    ),
-                  );
-                  return;
-                }
+                if (nomeAtributoController.text.isEmpty || valorController.text.isEmpty) return;
                 
                 final novaVariacao = VariacaoProduto(
                   id: variacao?.id ?? UniqueKey().toString(),
                   nomeAtributo: nomeAtributoController.text.trim(),
                   valor: valorController.text.trim(),
-                  precoAdicional: precoAdicionalController.text.isNotEmpty
-                      ? double.tryParse(precoAdicionalController.text.replaceAll(',', '.'))
-                      : null,
+                  precoAdicional: double.tryParse(precoAdicionalController.text.replaceAll(',', '.')),
                   estoque: int.tryParse(estoqueController.text) ?? 0,
-                  codigoBarras: codigoBarrasController.text.isNotEmpty
-                      ? codigoBarrasController.text.trim()
-                      : null,
-                  sku: skuController.text.isNotEmpty ? skuController.text.trim() : null,
+                  codigoBarras: codigoBarrasController.text.trim(),
+                  sku: skuController.text.trim(),
                   ativo: ativo,
                 );
                 
                 setState(() {
-                  if (index != null) {
-                    _variacoes[index] = novaVariacao;
-                  } else {
-                    _variacoes.add(novaVariacao);
-                  }
+                  if (index != null) _variacoes[index] = novaVariacao;
+                  else _variacoes.add(novaVariacao);
                 });
-                
                 Navigator.pop(context);
               },
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
-              child: const Text('Salvar'),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
+              child: const Text('Confirmar'),
             ),
           ],
         ),
       ),
     );
+  }
+  Widget _buildAbaEstoque() {
+    if (widget.item == null) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.inventory_2_outlined, size: 48, color: Colors.white.withOpacity(0.2)),
+            const SizedBox(height: 16),
+            Text(
+              'Salve o produto primeiro para gerenciar o estoque.',
+              style: TextStyle(color: Colors.white.withOpacity(0.5)),
+            ),
+          ],
+        ),
+      );
+    }
+    
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildCentralEstoqueMinimo(),
+          const SizedBox(height: 8),
+          _buildConteudoHistoricoEstoque(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCentralEstoqueMinimo() {
+    final int minEstoque = int.tryParse(_estoqueMinimoController.text) ?? 0;
+    final int atualEstoque = _estoque;
+    
+    String status = "ESTOQUE NORMAL";
+    Color statusColor = Colors.greenAccent;
+    IconData statusIcon = Icons.check_circle_outline;
+    String dica = "Seu estoque está saudável.";
+    
+    if (minEstoque > 0) {
+      if (atualEstoque == 0) {
+        status = "ESTOQUE ZERADO";
+        statusColor = Colors.redAccent;
+        statusIcon = Icons.error_outline;
+        dica = "Reposição imediata necessária!";
+      } else if (atualEstoque < minEstoque) {
+        status = "ABAIXO DO MÍNIMO";
+        statusColor = Colors.orangeAccent;
+        statusIcon = Icons.warning_amber_rounded;
+        dica = "Reposição sugerida em breve.";
+      } else if (atualEstoque == minEstoque) {
+        status = "LIMITE ALCANÇADO";
+        statusColor = Colors.yellowAccent;
+        statusIcon = Icons.notification_important_outlined;
+        dica = "Atenção: estoque no limite mínimo.";
+      }
+    } else {
+      status = "MÍNIMO NÃO CONFIGURADO";
+      statusColor = Colors.white24;
+      statusIcon = Icons.settings_outlined;
+      dica = "Configure o estoque mínimo na aba Básico.";
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        color: statusColor.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: statusColor.withOpacity(0.15)),
+      ),
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: statusColor.withOpacity(0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(statusIcon, color: statusColor, size: 28),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      status,
+                      style: TextStyle(
+                        color: statusColor,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      dica,
+                      style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+              if (minEstoque > atualEstoque)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.redAccent.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    'Faltam: ${minEstoque - atualEstoque}',
+                    style: const TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold, fontSize: 11),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 24),
+          Row(
+            children: [
+              _buildStatCard('Estoque Atual', atualEstoque.toString(), Colors.blueAccent, Icons.inventory_2),
+              const SizedBox(width: 12),
+              _buildStatCard('Estoque Mínimo', minEstoque.toString(), Colors.orangeAccent, Icons.low_priority),
+            ],
+          ),
+          if (minEstoque > 0) ...[
+            const SizedBox(height: 20),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: LinearProgressIndicator(
+                value: (atualEstoque / (minEstoque * 1.5)).clamp(0.0, 1.0),
+                backgroundColor: Colors.white.withOpacity(0.05),
+                valueColor: AlwaysStoppedAnimation<Color>(statusColor),
+                minHeight: 8,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatCard(String label, String value, Color color, IconData icon) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.03),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.white.withOpacity(0.05)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, color: color.withOpacity(0.5), size: 16),
+            const SizedBox(height: 8),
+            Text(value, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 4),
+            Text(label, style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 10, fontWeight: FontWeight.bold)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildConteudoHistoricoEstoque() {
+    final dataService = Provider.of<DataService>(context);
+    
+    // Filtragem de dados baseada na visão selecionada (Este produto ou Geral)
+    List<EstoqueHistorico> historicoFull = dataService.estoqueHistorico;
+    
+    final List<EstoqueHistorico> historico = historicoFull.where((h) {
+      // Filtro de visão (este produto ou geral)
+      if (!_estoqueVisaoGeral && h.produtoId != widget.item!.id) return false;
+      
+      // Filtros de data
+      if (_estoqueDataInicial != null && h.data.isBefore(_estoqueDataInicial!)) return false;
+      if (_estoqueDataFinal != null && h.data.isAfter(_estoqueDataFinal!.add(const Duration(days: 1)))) return false;
+      
+      // Filtro de tipo
+      if (_estoqueTipoFiltro != null && h.tipo != _estoqueTipoFiltro) return false;
+      
+      return true;
+    }).toList();
+    
+    historico.sort((a, b) => b.data.compareTo(a.data));
+
+    // Fornecedores únicos para filtro
+    final fornecedores = historicoFull
+        .map((h) => h.fornecedorNome)
+        .where((f) => f != null && f.isNotEmpty)
+        .cast<String>()
+        .toSet()
+        .toList();
+    fornecedores.sort();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Cabeçalho e Seleção de Visão
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text(
+              'RELATÓRIO DE MOVIMENTAÇÕES',
+              style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 1),
+            ),
+            Container(
+              padding: const EdgeInsets.all(2),
+              decoration: BoxDecoration(color: Colors.black26, borderRadius: BorderRadius.circular(8)),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _buildBotaoVisao('Este Item', !_estoqueVisaoGeral),
+                  _buildBotaoVisao('Geral', _estoqueVisaoGeral),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        
+        // Seção de Filtros "Inteligentes"
+        _buildFiltrosHistorico(),
+        const SizedBox(height: 16),
+
+        // Resumo do período filtrado
+        _buildResumoEstoque(historico),
+        const SizedBox(height: 16),
+
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              _estoqueVisaoGeral ? 'TODAS AS MOVIMENTAÇÕES' : 'HISTÓRICO DO PRODUTO',
+              style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.blueAccent.withOpacity(0.8)),
+            ),
+            if (!_estoqueVisaoGeral)
+              TextButton.icon(
+                onPressed: _exibirDialogoAjusteEstoque,
+                icon: const Icon(Icons.add_circle_outline, size: 14),
+                label: const Text('NOVA ENTRADA', style: TextStyle(fontSize: 10)),
+                style: TextButton.styleFrom(foregroundColor: Colors.greenAccent, padding: const EdgeInsets.symmetric(horizontal: 8)),
+              ),
+          ],
+        ),
+        const SizedBox(height: 8),
+
+        if (historico.isEmpty)
+          _buildEmptyHistorico()
+        else
+          ListView.separated(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: historico.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 8),
+            itemBuilder: (context, index) {
+              final h = historico[index];
+              Produto? prod;
+              if (_estoqueVisaoGeral) {
+                prod = dataService.produtos.firstWhere(
+                  (p) => p.id == h.produtoId, 
+                  orElse: () => Produto(
+                    id: '', 
+                    nome: 'Excluído', 
+                    preco: 0, 
+                    estoque: 0,
+                    unidade: 'un',
+                    grupo: 'Geral',
+                    createdAt: DateTime.now(),
+                    updatedAt: DateTime.now(),
+                  ),
+                );
+              }
+              return _buildItemHistoricoMelhorado(h, prod);
+            },
+          ),
+        const SizedBox(height: 24),
+      ],
+    );
+  }
+
+  Widget _buildBotaoVisao(String label, bool selecionado) {
+    return GestureDetector(
+      onTap: () => setState(() => _estoqueVisaoGeral = label == 'Geral'),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: selecionado ? Colors.blueAccent : Colors.transparent,
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(color: selecionado ? Colors.white : Colors.white38, fontSize: 11, fontWeight: selecionBold(selecionado)),
+        ),
+      ),
+    );
+  }
+
+  FontWeight selecionBold(bool s) => s ? FontWeight.bold : FontWeight.normal;
+
+  Widget _buildFiltrosHistorico() {
+    return Row(
+      children: [
+        // Data
+        Expanded(
+          flex: 2,
+          child: InkWell(
+            onTap: _selecionarPeriodoEstoque,
+            child: _boxFiltro(
+              icon: Icons.calendar_today,
+              label: '${DateFormat('dd/MM').format(_estoqueDataInicial!)} - ${DateFormat('dd/MM').format(_estoqueDataFinal!)}',
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        // Tipo
+        Expanded(
+          flex: 1,
+          child: _boxFiltroDropdown(
+            value: _estoqueTipoFiltro,
+            hint: 'Tipo',
+            items: const [
+              DropdownMenuItem(value: null, child: Text('Todos')),
+              DropdownMenuItem(value: 'entrada', child: Text('Entrada')),
+              DropdownMenuItem(value: 'saida', child: Text('Saída')),
+            ],
+            onChanged: (v) => setState(() => _estoqueTipoFiltro = v),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _boxFiltro({required IconData icon, required String label}) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(color: Colors.white.withOpacity(0.03), borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.white.withOpacity(0.05))),
+      child: Row(
+        children: [
+          Icon(icon, size: 14, color: Colors.blueAccent),
+          const SizedBox(width: 8),
+          Expanded(child: Text(label, style: const TextStyle(color: Colors.white70, fontSize: 11), overflow: TextOverflow.ellipsis)),
+        ],
+      ),
+    );
+  }
+
+  Widget _boxFiltroDropdown({String? value, required String hint, required List<DropdownMenuItem<String?>> items, required Function(String?) onChanged}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      decoration: BoxDecoration(color: Colors.white.withOpacity(0.03), borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.white.withOpacity(0.05))),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String?>(
+          value: value,
+          isExpanded: true,
+          dropdownColor: const Color(0xFF1E1E2E),
+          hint: Text(hint, style: const TextStyle(color: Colors.white38, fontSize: 11)),
+          style: const TextStyle(color: Colors.white70, fontSize: 11),
+          items: items,
+          onChanged: onChanged,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildResumoEstoque(List<EstoqueHistorico> lista) {
+    final int ent = lista.where((h) => h.tipo == 'entrada').fold<int>(0, (p, e) => p + e.quantidade);
+    final int sai = lista.where((h) => h.tipo == 'saida').fold<int>(0, (p, e) => p + e.quantidade);
+
+    return Row(
+      children: [
+        _cardResumoPequeno('ENTRADAS', ent, Colors.greenAccent),
+        const SizedBox(width: 12),
+        _cardResumoPequeno('SAÍDAS', sai, Colors.redAccent),
+      ],
+    );
+  }
+
+  Widget _cardResumoPequeno(String label, int valor, Color cor) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(color: cor.withOpacity(0.05), borderRadius: BorderRadius.circular(12), border: Border.all(color: cor.withOpacity(0.1))),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label, style: TextStyle(color: cor.withOpacity(0.5), fontSize: 9, fontWeight: FontWeight.bold)),
+            Text(valor.toString(), style: TextStyle(color: cor, fontSize: 18, fontWeight: FontWeight.bold)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildItemHistoricoMelhorado(EstoqueHistorico h, Produto? p) {
+    final isEntrada = h.tipo == 'entrada';
+    final cor = isEntrada ? Colors.greenAccent : Colors.redAccent;
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(color: Colors.white.withOpacity(0.03), borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.white.withOpacity(0.03))),
+      child: Row(
+        children: [
+          Icon(isEntrada ? Icons.arrow_downward : Icons.arrow_upward, color: cor.withOpacity(0.5), size: 16),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (p != null)
+                  Text(p.nome, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13), maxLines: 1, overflow: TextOverflow.ellipsis),
+                Row(
+                  children: [
+                    Text(DateFormat('dd/MM/yy HH:mm').format(h.data), style: TextStyle(color: Colors.white.withOpacity(0.3), fontSize: 10)),
+                    const SizedBox(width: 8),
+                    Text(h.fornecedorNome ?? 'Geral', style: TextStyle(color: Colors.blueAccent.withOpacity(0.5), fontSize: 10)),
+                  ],
+                ),
+                if (h.observacao != null && h.observacao!.isNotEmpty)
+                  Text(h.observacao!, style: TextStyle(color: Colors.white24, fontSize: 9, fontStyle: FontStyle.italic), maxLines: 1),
+              ],
+            ),
+          ),
+          Text('${isEntrada ? "+" : "-"}${h.quantidade}', style: TextStyle(color: cor, fontWeight: FontWeight.bold, fontSize: 14)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyHistorico() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(32),
+      child: Column(
+        children: [
+          Icon(Icons.history_toggle_off, size: 32, color: Colors.white.withOpacity(0.1)),
+          const SizedBox(height: 12),
+          Text('Nenhuma movimentação encontrada.', style: TextStyle(color: Colors.white.withOpacity(0.2), fontSize: 12)),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _selecionarPeriodoEstoque() async {
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now().add(const Duration(days: 1)),
+      initialDateRange: DateTimeRange(start: _estoqueDataInicial!, end: _estoqueDataFinal!),
+      builder: (context, child) => Theme(
+        data: ThemeData.dark().copyWith(colorScheme: const ColorScheme.dark(primary: Colors.blueAccent, surface: Color(0xFF1E1E2E))),
+        child: child!,
+      ),
+    );
+    if (picked != null) {
+      setState(() {
+        _estoqueDataInicial = picked.start;
+        _estoqueDataFinal = picked.end;
+      });
+    }
   }
 }
 

@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:async';
 import 'dart:html' as html if (dart.library.html) 'dart:html';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -49,6 +50,7 @@ class ItemCarrinho {
   int quantidade;
   final bool isServico;
   double desconto; // Desconto em valor (R$)
+  final String? fornecedorNome; // Fornecedor do produto
 
   ItemCarrinho({
     required this.id,
@@ -58,6 +60,7 @@ class ItemCarrinho {
     this.quantidade = 1,
     this.isServico = false,
     this.desconto = 0.0,
+    this.fornecedorNome,
   });
 
   double get subtotal => (preco * quantidade) - desconto;
@@ -73,6 +76,7 @@ class ItemCarrinho {
       'quantidade': quantidade,
       'isServico': isServico,
       'desconto': desconto,
+      'fornecedorNome': fornecedorNome,
     };
   }
 
@@ -85,6 +89,7 @@ class ItemCarrinho {
       quantidade: map['quantidade'] ?? 1,
       isServico: map['isServico'] ?? false,
       desconto: (map['desconto'] ?? 0.0).toDouble(),
+      fornecedorNome: map['fornecedorNome'],
     );
   }
 }
@@ -96,6 +101,7 @@ class VendaDiretaPage extends StatefulWidget {
   final Cliente? clienteInicial; // Cliente já selecionado
   final List<ItemPedido>? itensParaRepetir; // Itens para repetir venda
   final List<ItemServico>? servicosParaRepetir; // Serviços para repetir venda
+  final MesaComanda? mesaComanda; // Mesa/Comanda para receber
 
   VendaDiretaPage({
     super.key,
@@ -104,16 +110,20 @@ class VendaDiretaPage extends StatefulWidget {
     this.clienteInicial,
     this.itensParaRepetir,
     this.servicosParaRepetir,
+    this.mesaComanda,
   });
 
   @override
   State<VendaDiretaPage> createState() => _VendaDiretaPageState();
 }
 
+enum SortOption { codigo, nome, recentes, grupo }
+
 class _VendaDiretaPageState extends State<VendaDiretaPage> {
   final _buscaController = TextEditingController();
   final _buscaFocusNode = FocusNode();
   String _termoBusca = '';
+  SortOption _sortOption = SortOption.codigo;
   final List<ItemCarrinho> _carrinho = [];
   Cliente? _clienteSelecionado;
   String? _categoriaAtiva;
@@ -132,6 +142,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   bool _focoNasCategorias = false;
   final FocusNode _atalhosFocusNode = FocusNode();
   MesaComanda? _mesaComandaVinculada; // Mesa ou Comanda vinculada à venda atual
+  Timer? _timerFullscreen;
+  int _segundosSemFullscreen = 0;
 
   final LocalStorageService _storage = LocalStorageService();
   static const String _keyCarrinhoPDV = 'exodo_carrinho_pdv';
@@ -140,9 +152,30 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   static const String _keyNomeNfcePDV = 'exodo_nome_nfce_pdv';
   static const String _keyDescontoTotalPDV = 'exodo_desconto_total_pdv';
 
+  // Getters para facilitar identificação de Mesa/Comanda
+  String get tipoNome => _mesaComandaVinculada?.tipo == TipoControle.comanda ? 'Comanda' : 'Mesa';
+  String get labelOrigem => _mesaComandaVinculada?.tipo == TipoControle.comanda ? '[COMANDA]' : '[MESA]';
+  String? get mesaNumero => _mesaComandaVinculada?.numero;
+  String? get mesaParaLimparId => _mesaComandaVinculada?.id;
+
   @override
   void initState() {
     super.initState();
+
+    // Auto Fullscreen Watcher: garante que o PDV sempre volte para tela cheia após 5s se for reduzido
+    _timerFullscreen = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (kIsWeb) {
+        if (html.document.fullscreenElement == null) {
+          _segundosSemFullscreen++;
+          if (_segundosSemFullscreen >= 5) {
+            _segundosSemFullscreen = 0;
+            _entrarTelaCheia();
+          }
+        } else {
+          _segundosSemFullscreen = 0;
+        }
+      }
+    });
 
     // Solicitar abertura de caixa quando o PDV é aberto
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -164,6 +197,112 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     // Se veio um pedido para editar, carregar os itens
     if (widget.pedidoParaEditar != null) {
       _carregarPedidoParaEditar(widget.pedidoParaEditar!);
+    } else if (widget.mesaComanda != null) {
+      // Carregar itens da mesa/comanda
+      _mesaComandaVinculada = widget.mesaComanda;
+      _carrinho.clear();
+      // Filtrar apenas itens que ainda não foram pagos e não foram cancelados
+      final itensPendentes = widget.mesaComanda!.itens
+          .where((i) => i.status != StatusItem.cancelado && !widget.mesaComanda!.itensPagos.contains(i.id))
+          .toList();
+          
+      _carrinho.addAll(itensPendentes.map((i) => ItemCarrinho(
+                id: i.itemId,
+                nome: i.nome,
+                preco: i.preco,
+                quantidade: i.quantidade,
+                isServico: i.isServico,
+              )));
+
+      // Adicionar couvert como um item se existir
+      if (widget.mesaComanda!.valorCouvertCalculado > 0) {
+        _carrinho.add(ItemCarrinho(
+          id: 'couvert',
+          nome: 'Couvert Artístico',
+          preco: widget.mesaComanda!.valorCouvertCalculado / (widget.mesaComanda!.quantidadePessoasCouvert ?? 1),
+          quantidade: widget.mesaComanda!.quantidadePessoasCouvert ?? 1,
+          isServico: true,
+        ));
+      }
+
+      // Adicionar taxa do garçom como um item se houver e não foi retirada
+      if (!widget.mesaComanda!.garcomRetirado) {
+          final vGarcom = widget.mesaComanda!.valorGarcom ?? widget.mesaComanda!.valorGarcomCalculado;
+          if (vGarcom > 0.01) {
+            _carrinho.add(ItemCarrinho(
+              id: 'garcom',
+              nome: 'Taxa de Serviço (Garçom)',
+              preco: vGarcom,
+              quantidade: 1,
+              isServico: true,
+            ));
+          }
+      }
+
+      // Carregar pagamentos parciais já feitos na mesa
+      final listaPagamentos = <PagamentoPedido>[];
+      
+      if (widget.mesaComanda!.historicoPagamentos.isNotEmpty) {
+        listaPagamentos.addAll(widget.mesaComanda!.historicoPagamentos.map((rp) {
+          final f = rp.formaPagamento?.toLowerCase() ?? '';
+          TipoPagamento tipo;
+          if (f.contains('pix')) {
+            tipo = TipoPagamento.pix;
+          } else if (f.contains('dinheiro')) {
+            tipo = TipoPagamento.dinheiro;
+          } else if (f.contains('débito') || f.contains('debito')) {
+            tipo = TipoPagamento.cartaoDebito;
+          } else if (f.contains('crédito') || f.contains('credito') || f.contains('cart')) {
+            tipo = TipoPagamento.cartaoCredito;
+          } else if (f.contains('boleto')) {
+            tipo = TipoPagamento.boleto;
+          } else if (f.contains('crediário') || f.contains('crediario')) {
+            tipo = TipoPagamento.crediario;
+          } else if (f.contains('fiado')) {
+            tipo = TipoPagamento.fiado;
+          } else {
+            tipo = TipoPagamento.outro;
+          }
+
+
+          return PagamentoPedido(
+            id: rp.id,
+            tipo: tipo,
+            valor: rp.valor,
+            recebido: true,
+            dataRecebimento: rp.dataPagamento,
+            observacao: 'Pago na $tipoNome ${widget.mesaComanda!.numero}',
+          );
+        }));
+      }
+      
+      // Adicionar couvert já pago se houver
+      if (widget.mesaComanda!.couvertPago > 0.01) {
+        listaPagamentos.add(PagamentoPedido(
+          id: 'couvert_pago_anterior',
+          tipo: TipoPagamento.outro,
+          valor: widget.mesaComanda!.couvertPago,
+          recebido: true,
+          dataRecebimento: widget.mesaComanda!.updatedAt,
+          observacao: 'Couvert já pago anteriormente',
+        ));
+      }
+      
+      _pagamentosSalvos = listaPagamentos;
+
+      // Sincronizar cliente se houver
+      if (widget.mesaComanda!.clienteNome != null) {
+        _clienteSelecionado = Cliente(
+          id: widget.mesaComanda!.clienteId ?? '',
+          nome: widget.mesaComanda!.clienteNome!,
+          email: '',
+          telefone: '',
+          endereco: '',
+          tipoPessoa: TipoPessoa.fisica,
+          createdAt: DateTime.now(),
+          updatedAt: DateTime.now(),
+        );
+      }
     } else {
       // Carregar cliente inicial se fornecido
       if (widget.clienteInicial != null) {
@@ -304,6 +443,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
 
   @override
   void dispose() {
+    _timerFullscreen?.cancel();
     _buscaController.dispose();
     _buscaFocusNode.dispose();
     _atalhosFocusNode.dispose();
@@ -446,6 +586,72 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     _limparCarrinhoSalvo();
   }
 
+  /// Limpa a mesa/comanda vinculada salvando no histórico do DataService
+  Future<void> _limparMesaComandaVinculada() async {
+    if (_mesaComandaVinculada == null) return;
+    
+    final confirmar = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        title: Row(
+          children: [
+            const Icon(Icons.warning_amber_rounded, color: Colors.blueAccent),
+            const SizedBox(width: 8),
+            Text('Limpar $tipoNome?', style: const TextStyle(color: Colors.white)),
+          ],
+        ),
+        content: Text(
+          'Deseja limpar a ${_mesaComandaVinculada!.numero} e salvar o consumo atual no histórico?\n\nIsso irá liberar a $tipoNome para um novo cliente.',
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
+            child: const Text('Limpar e Salvar'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmar == true) {
+      try {
+        final dataService = Provider.of<DataService>(context, listen: false);
+        final authService = Provider.of<AuthService>(context, listen: false);
+        
+        await dataService.limparMesaComanda(
+          _mesaComandaVinculada!.id, 
+          usuario: authService.usuarioAtual?.nome,
+        );
+        
+        _resetarTodaVenda();
+        
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Mesa limpa e histórico salvo com sucesso!'),
+              backgroundColor: Colors.blue,
+            ),
+          );
+        }
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Erro ao limpar mesa: $e'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    }
+  }
+
   double get _totalCarrinho {
     final subtotalItens = _carrinho.fold(
       0.0,
@@ -465,6 +671,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     final id = item.id;
     final nome = item.nome;
     final preco = isServico ? item.preco : (item as Produto).precoAtual;
+    final fornecedorNome = isServico ? null : (item as Produto).fornecedorNome;
     final descricao = isServico
         ? null
         : (item as Produto).descricao; // Buscar descrição do produto
@@ -487,6 +694,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
             preco: preco,
             isServico: isServico,
             quantidade: _quantidadeDigitada,
+            fornecedorNome: fornecedorNome,
           ),
         );
       });
@@ -502,6 +710,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         quantidade: _quantidadeDigitada,
         preco: preco,
         isServico: isServico,
+        paraCozinha: isServico ? false : (item as Produto).paraCozinha,
+        paraBar: isServico ? false : (item as Produto).paraBar,
         status: StatusItem.pendente,
         usuarioCriou: Provider.of<AuthService>(context, listen: false).usuarioAtual?.nome ?? 'PDV',
       );
@@ -571,6 +781,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
             quantidade: delta,
             preco: itemCarrinho.preco,
             isServico: itemCarrinho.isServico,
+            paraCozinha: itemCarrinho.isServico ? false : dataService.getProdutoById(itemCarrinho.id)?.paraCozinha,
+            paraBar: itemCarrinho.isServico ? false : dataService.getProdutoById(itemCarrinho.id)?.paraBar,
             status: StatusItem.pendente,
             usuarioCriou: Provider.of<AuthService>(context, listen: false).usuarioAtual?.nome ?? 'PDV',
           );
@@ -1271,10 +1483,37 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   }
 
   List<Produto> _getProdutosPorCategoria(DataService dataService) {
-    if (_categoriaAtiva == null) return [];
-    return dataService.produtos
-        .where((p) => p.grupo == _categoriaAtiva)
-        .toList();
+    List<Produto> lista;
+    if (_categoriaAtiva == null) {
+      lista = List<Produto>.from(dataService.produtos);
+    } else {
+      lista = dataService.produtos
+          .where((p) => p.grupo == _categoriaAtiva)
+          .toList();
+    }
+    
+    // Aplicar ordenação selecionada
+    lista.sort((a, b) {
+      switch (_sortOption) {
+        case SortOption.nome:
+          return a.nome.toLowerCase().compareTo(b.nome.toLowerCase());
+        case SortOption.recentes:
+          final dateA = a.updatedAt ?? a.createdAt ?? DateTime(2000);
+          final dateB = b.updatedAt ?? b.createdAt ?? DateTime(2000);
+          return dateB.compareTo(dateA); // Do mais novo para o mais antigo
+        case SortOption.grupo:
+          final grupoCompare = a.grupo.toLowerCase().compareTo(b.grupo.toLowerCase());
+          if (grupoCompare != 0) return grupoCompare;
+          return a.nome.toLowerCase().compareTo(b.nome.toLowerCase());
+        case SortOption.codigo:
+        default:
+          final numA = int.tryParse(a.codigo?.replaceAll(RegExp(r'[^0-9]'), '') ?? '0') ?? 0;
+          final numB = int.tryParse(b.codigo?.replaceAll(RegExp(r'[^0-9]'), '') ?? '0') ?? 0;
+          return numA.compareTo(numB);
+      }
+    });
+    
+    return lista;
   }
 
   List<dynamic> _buscarItens(DataService dataService) {
@@ -3822,12 +4061,28 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     );
   }
 
-  void _concluirVendaComPagamentos(
+  Future<void> _concluirVendaComPagamentos(
     DataService dataService,
     List<PagamentoPedido> pagamentos,
-  ) {
+  ) async {
     final uuid = const Uuid();
-    final numero = dataService.getProximoNumeroVenda();
+    
+    // Capturar propriedades pare evitar problemas de promoção nula (Dart promotion)
+    final mesaParaLimparId = this.mesaParaLimparId;
+    final mesaNumero = this.mesaNumero;
+    final tipoNome = this.tipoNome;
+    
+    String numero = dataService.getProximoNumeroVenda();
+    // Se for mesa ou comanda, ajustar o prefixo do número para facilitar identificação e filtro
+    if (mesaNumero != null) {
+      final bool isComanda = _mesaComandaVinculada?.tipo == TipoControle.comanda || 
+                             mesaNumero.toUpperCase().contains('CMD') || 
+                             mesaNumero.toUpperCase().contains('COMANDA');
+      final prefixo = isComanda ? 'CMD' : 'MESA';
+      final proximoNumVal = numero.split('-').last;
+      numero = '$prefixo-$mesaNumero-$proximoNumVal';
+    }
+
 
     // Atualizar status de recebido dos pagamentos instantâneos
     // (Dinheiro, PIX, Cartão) devem ser marcados como recebidos ao finalizar
@@ -3928,16 +4183,49 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
             precoUnitario: item.preco,
             quantidade: item.quantidade,
             isServico: item.isServico,
+            fornecedorNome: item.fornecedorNome,
           ),
         )
         .toList();
 
+    // Gerar observação automática se for mesa/comanda e não tiver observação manual
+    String? observacoesFinais = _observacoesVenda;
+    final String labelOrigem = tipoNome == 'Comanda' ? '[COMANDA]' : '[MESA]';
+    
+    if (observacoesFinais == null || observacoesFinais.isEmpty) {
+      if (mesaNumero != null) {
+        observacoesFinais = 'Venda originada da $tipoNome $mesaNumero';
+      }
+    }
+
+    // Nome do cliente formatado para SEMPRE ser identificado no histórico se for Mesa/Comanda
+    // Ex: "[COMANDA] 01 - João Silva" ou "[MESA] 05"
+    String? clienteNomeFinal = _clienteSelecionado?.nome ?? _nomeNfce;
+    if (mesaNumero != null) {
+      if (clienteNomeFinal == null || clienteNomeFinal.isEmpty) {
+        clienteNomeFinal = '$labelOrigem $mesaNumero';
+      } else if (!clienteNomeFinal.toUpperCase().contains(labelOrigem.toUpperCase())) {
+        clienteNomeFinal = '$labelOrigem $mesaNumero - $clienteNomeFinal';
+      }
+    }
+
+    // Identificador unificado para o histórico (Bypass Garantido)
+    // Forçar a observação para conter o tipo se for mesa/comanda
+    final String tagIdentificacao = '[VIP-MC] originado de $labelOrigem $mesaNumero';
+    final observacaoIdentificadora = mesaParaLimparId != null 
+        ? (observacoesFinais != null && observacoesFinais.isNotEmpty 
+            ? '$tagIdentificacao | $observacoesFinais' 
+            : tagIdentificacao)
+        : observacoesFinais;
+
+    final vendaId = uuid.v4();
     final vendaBalcao = VendaBalcao(
-      id: uuid.v4(),
+      id: vendaId,
       numero: numero,
       dataVenda: DateTime.now(),
       clienteId: _clienteSelecionado?.id,
-      clienteNome: _clienteSelecionado?.nome ?? _nomeNfce,
+      clienteNome: clienteNomeFinal,
+
       clienteTelefone: _clienteSelecionado?.telefone,
       clienteCpfCnpj: _clienteSelecionado?.cpfCnpj ?? _cpfNfce,
       itens: itensVenda,
@@ -3947,41 +4235,41 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       troco: pagamentosAtualizados
           .where((p) => p.troco != null && p.troco! > 0)
           .fold<double?>(null, (sum, p) => (sum ?? 0) + (p.troco ?? 0)),
-      observacoes: _observacoesVenda?.isNotEmpty == true
-          ? _observacoesVenda
-          : null,
+      observacoes: observacaoIdentificadora,
+      origem: mesaParaLimparId != null ? 'Mesa/Comanda' : 'Venda Direta',
     );
 
+    print('>>> [VendaDireta] Chamando addVendaBalcao para: ${vendaBalcao.numero}');
     dataService.addVendaBalcao(vendaBalcao);
+    print('>>> [VendaDireta] ✓ addVendaBalcao concluído');
 
-    // Se houver mesa/comanda vinculada, fechá-la
-    if (_mesaComandaVinculada != null) {
-      final mcFechada = _mesaComandaVinculada!.copyWith(
-        status: 'Fechada',
-        dataFechamento: DateTime.now(),
-      );
-      dataService.updateMesaComanda(mcFechada);
-      
-      debugPrint('>>> ✓ ${_mesaComandaVinculada!.tipo == TipoControle.comanda ? 'Comanda' : 'Mesa'} ${_mesaComandaVinculada!.numero} fechada automaticamente.');
-      
-      // Se for mesa, verificar se há comandas vinculadas e avisar? 
-      // Por enquanto fechamos apenas a que foi puxada.
-      
-      _mesaComandaVinculada = null; // Limpar vínculo após fechar
+    // MESA/COMANDA: Se originou de uma mesa, garantir que ela seja LIMPA agora que foi recebida 
+    // Isso remove a mesa do quadro de mesas abertas.
+    if (mesaParaLimparId != null) {
+      debugPrint('>>> [VendaDireta] 🔔 Finalizando mesa/comanda ativa vinculada: $mesaParaLimparId');
+      dataService.deleteMesaComanda(mesaParaLimparId);
     }
 
-    // Criar Pedido se houver pagamentos pendentes (fiado, crediário, boleto, parcelas)
-    // Isso permite que as vendas apareçam na aba "Receber"
+
+    // (Mesa vinculada já identificada no início do método)
+
+
+    // Criar Pedido:
+    // - SEMPRE quando a venda vem de uma mesa/comanda (para garantir persistência no histórico)
+    // - Quando houver pagamentos pendentes (fiado, crediário, boleto, parcelas)
     final temPagamentosPendentes = pagamentosAtualizados.any(
       (p) => !p.recebido,
     );
     final temFiadoOuCrediario = pagamentosAtualizados.any(
       (p) => p.tipo == TipoPagamento.fiado || p.tipo == TipoPagamento.crediario,
     );
+    final vendaOriginadaDeMesa = mesaParaLimparId != null;
 
-    // SEMPRE criar Pedido se tiver fiado ou crediário (mesmo que parcialmente recebido)
-    // ou se tiver pagamentos pendentes
-    if (temFiadoOuCrediario || temPagamentosPendentes) {
+    // SEMPRE criar Pedido se:
+    // 1. Venda originou de mesa/comanda (para histórico)
+    // 2. Tem fiado ou crediário
+    // 3. Tem pagamentos pendentes
+    if (vendaOriginadaDeMesa || temFiadoOuCrediario || temPagamentosPendentes) {
       // Converter itens da venda em itens do pedido
       final produtosPedido = <ItemPedido>[];
       final servicosPedido = <ItemServico>[];
@@ -4009,22 +4297,24 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         }
       }
 
-      // Criar pedido com os pagamentos pendentes
+      // Criar pedido com os pagamentos
       final pedido = Pedido(
-        id: uuid.v4(),
-        numero: numero, // Usar o mesmo número da venda
+        id: vendaId,
+        numero: numero, // Usar o mesmo número da venda (CMD-XX ou MESA-XX)
         clienteId: _clienteSelecionado?.id,
-        clienteNome: _clienteSelecionado?.nome ?? vendaBalcao.clienteNome,
+        clienteNome: clienteNomeFinal, // USAR O MESMO NOME COM TAG [MESA]/[COMANDA] DA VENDA BALCAO
         clienteTelefone:
             _clienteSelecionado?.telefone ?? vendaBalcao.clienteTelefone,
         dataPedido: vendaBalcao.dataVenda,
         status: statusPedido,
+        total: _totalCarrinho, // IMPORTANTE: passar o total para que apareça no histórico
         produtos: produtosPedido,
         servicos: servicosPedido,
         pagamentos: pagamentosAtualizados,
-        observacoes: vendaBalcao.observacoes,
+        observacoes: observacaoIdentificadora,
       );
 
+      debugPrint('>>> [VendaDireta] Criando Pedido: ${pedido.numero} (mesa=$vendaOriginadaDeMesa, fiado=$temFiadoOuCrediario, pendente=$temPagamentosPendentes)');
       dataService.addPedido(pedido);
     }
 
@@ -4167,7 +4457,36 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           .where((p) => p.troco != null && p.troco! > 0)
           .fold(0.0, (sum, p) => sum + (p.troco ?? 0));
       
-      _mostrarSucessoVenda(_totalCarrinho, numero, vendaBalcao, troco: trocoTotal);
+      final tipoFeedback = _mesaComandaVinculada?.tipo == TipoControle.comanda ? 'COMANDA' : (_mesaComandaVinculada != null ? 'MESA' : 'VENDA');
+
+      _mostrarSucessoVenda(
+        _totalCarrinho, 
+        numero, 
+        vendaBalcao, 
+        troco: trocoTotal,
+        titulo: '$tipoFeedback FINALIZADA!',
+      );
+    }
+
+    // Identificar e fechar a mesa no DataService
+    if (mesaParaLimparId != null) {
+        // Marcamos como Fechada localmente ANTES de apagar
+        // Isso ativa o filtro do DataService e faz ela sumir na hora
+        final tempMc = _mesaComandaVinculada!.copyWith(status: 'Fechada');
+        dataService.updateMesaComanda(tempMc);
+        
+        await dataService.deleteMesaComanda(mesaParaLimparId);
+        debugPrint('>>> Mesa $mesaNumero liberada no PDV.');
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Mesa/Comanda $mesaNumero liberada!'),
+              backgroundColor: Colors.blueAccent,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
     }
 
     // Resetar estado da venda
@@ -4256,11 +4575,54 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   }
 
   // Salvar venda pendente para receber depois
-  void _salvarVendaPendente(
+  Future<void> _salvarVendaPendente(
     DataService dataService,
     List<PagamentoPedido> pagamentosDoDialog,
-  ) {
+  ) async {
+    String? nomeIdentificacao;
+
+    // Se não tiver cliente selecionado, perguntar um nome rápido para identificar
+    if (_clienteSelecionado == null) {
+      final controller = TextEditingController();
+      nomeIdentificacao = await showDialog<String>(
+        context: context,
+        builder: (context) => AlertDialog(
+          backgroundColor: const Color(0xFF1E1E2E),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Text('Identificar Venda', style: TextStyle(color: Colors.white)),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            style: const TextStyle(color: Colors.white),
+            decoration: InputDecoration(
+              labelText: 'Nome do Cliente ou Mesa',
+              labelStyle: const TextStyle(color: Colors.white70),
+              hintText: 'Ex: João, Mesa 05, Balcão...',
+              hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
+              filled: true,
+              fillColor: Colors.black26,
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, null),
+              child: const Text('IGNORAR', style: TextStyle(color: Colors.white54)),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, controller.text.trim()),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+              child: const Text('SALVAR', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        ),
+      );
+    }
+
     final uuid = const Uuid();
+    final mesaNumero = _mesaComandaVinculada?.numero;
+    final mesaParaLimparId = _mesaComandaVinculada?.id;
+
 
     // Criar itens da venda balcão
     final itensVenda = _carrinho
@@ -4276,7 +4638,6 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         .toList();
 
     // Determinar tipo de pagamento principal (se houver)
-    // Se não houver pagamentos, usar "outro" apenas para a VendaBalcao (não cria Pedido)
     TipoPagamento tipoPrincipal = TipoPagamento.outro;
     if (pagamentosDoDialog.isNotEmpty) {
       tipoPrincipal = pagamentosDoDialog.first.tipo;
@@ -4288,17 +4649,17 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       numero: dataService.getProximoNumeroVenda(),
       dataVenda: DateTime.now(),
       clienteId: _clienteSelecionado?.id,
-      clienteNome: _clienteSelecionado?.nome,
+      clienteNome: _clienteSelecionado?.nome ?? (nomeIdentificacao?.isNotEmpty == true ? nomeIdentificacao : (mesaNumero != null ? 'Mesa $mesaNumero' : null)),
       clienteTelefone: _clienteSelecionado?.telefone,
+
       itens: itensVenda,
       tipoPagamento: tipoPrincipal,
       valorTotal: _totalCarrinho,
-      valorRecebido: null, // Não recebido
+      valorRecebido: null,
       troco: null,
-      observacoes: _observacoesVenda?.isNotEmpty == true
-          ? _observacoesVenda
-          : null,
+      observacoes: _observacoesVenda?.isNotEmpty == true ? _observacoesVenda : null,
     );
+
 
     // Salvar venda balcão
     dataService.addVendaBalcao(vendaBalcao);
@@ -4331,22 +4692,27 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     }
 
     // Criar pedido a partir da venda salva
-    // Se não houver pagamentos definidos, criar pedido sem pagamentos (venda salva)
-    // Se houver pagamentos, usar os pagamentos definidos
     final pedidoVendaSalva = Pedido(
       id: uuid.v4(),
-      numero: vendaBalcao.numero, // Usar o mesmo número da venda
+      numero: vendaBalcao.numero,
       clienteId: _clienteSelecionado?.id,
-      clienteNome: _clienteSelecionado?.nome ?? vendaBalcao.clienteNome,
-      clienteTelefone:
-          _clienteSelecionado?.telefone ?? vendaBalcao.clienteTelefone,
+      clienteNome: vendaBalcao.clienteNome,
+      clienteTelefone: _clienteSelecionado?.telefone ?? vendaBalcao.clienteTelefone,
       dataPedido: vendaBalcao.dataVenda,
       status: 'Pendente',
       produtos: produtosPedido,
       servicos: servicosPedido,
-      pagamentos:
-          pagamentosDoDialog, // Se vazia, não terá pagamentos (venda salva sem pagamento)
-      observacoes: vendaBalcao.observacoes,
+      pagamentos: pagamentosDoDialog.isNotEmpty 
+          ? pagamentosDoDialog 
+          : [PagamentoPedido(
+              id: uuid.v4(),
+              tipo: TipoPagamento.outro,
+              valor: _totalCarrinho,
+              recebido: false,
+              observacao: 'Venda Salva: ${DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now())}',
+            )],
+      createdAt: vendaBalcao.dataVenda,
+      updatedAt: vendaBalcao.dataVenda,
     );
 
     // Salvar o pedido (sempre criar para aparecer na aba Receber)
@@ -4367,17 +4733,37 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     // Chamar callback se existir
     widget.onVendaFinalizada?.call();
 
+    // Marcar como fechada e aguardar liberação
+    if (mesaParaLimparId != null) {
+        // Ativando filtro para sumir da tela
+        final tempMc = _mesaComandaVinculada!.copyWith(status: 'Fechada');
+        dataService.updateMesaComanda(tempMc);
+        
+        await dataService.deleteMesaComanda(mesaParaLimparId);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Mesa/Comanda $mesaNumero liberada!'),
+              backgroundColor: Colors.orange,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+    }
+    
     // Mostrar sucesso
     _mostrarSucessoVendaSalva(vendaBalcao.numero);
 
-    // Navegar para a tela de receber após salvar
+    // Navegar para a tela de pedidos após salvar
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         Navigator.push(
           context,
           MaterialPageRoute(
             builder: (_) => const PdvPage(
-              abaInicial: 0, // 0 = Aba Receber
+              abaInicial: 0, // 0 = Aba Pedidos
+              esconderAbaVenda: true,
             ),
           ),
         );
@@ -4391,7 +4777,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       titulo: 'Venda Salva',
       subtitulo: numeroVenda,
       cor: Colors.orange,
-      info: 'Disponível em "Receber"',
+      info: 'Disponível em "PEDIDOS"',
     );
 
     // Limpar estado completo da venda
@@ -4569,12 +4955,13 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   IconData? icone,
   Color? corBase,
   String? infoExtra,
+  String? titulo,
 }) {
   // Popup animado com dinheiro caindo
   PopupSucessoVenda.mostrar(
     context,
     valor: valor,
-    titulo: 'VENDA CONCLUÍDA!',
+    titulo: titulo ?? 'VENDA CONCLUÍDA!',
     subtitulo: numeroVenda,
     troco: troco,
     icone: icone,
@@ -5861,6 +6248,8 @@ o padrão padrão (sem opções avançadas).
     return ExodoLogo(
       fontSize: isSmallHeight ? 20 : 24,
       showSubtitle: !isSmallHeight,
+      isVertical: false,
+      showPhoenix: false,
     );
   }
 
@@ -6258,9 +6647,7 @@ o padrão padrão (sem opções avançadas).
                             ? (itensEncontrados.isEmpty
                                   ? _buildNenhumResultado()
                                   : _buildGridItens(itensEncontrados))
-                            : _categoriaAtiva != null
-                            ? _buildGridProdutos(produtosCategoria)
-                            : _buildEstadoInicial(dataService),
+                            : _buildGridProdutos(produtosCategoria),
                       ),
                     ],
                   ),
@@ -6396,9 +6783,7 @@ o padrão padrão (sem opções avançadas).
                                       ? (itensEncontrados.isEmpty
                                             ? _buildNenhumResultado()
                                             : _buildGridItens(itensEncontrados))
-                                      : _categoriaAtiva != null
-                                      ? _buildGridProdutos(produtosCategoria)
-                                      : _buildEstadoInicial(dataService),
+                                        : _buildGridProdutos(produtosCategoria),
                                 ),
                               ],
                             ),
@@ -6854,7 +7239,35 @@ o padrão padrão (sem opções avançadas).
               ),
             ),
           ),
-          const SizedBox(width: 16),
+          const SizedBox(width: 8),
+
+          // Botão de Ordenação (Novo!)
+          Container(
+            decoration: BoxDecoration(
+              color: const Color(0xFF1E1E2E),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: Colors.blue.withOpacity(0.3)),
+            ),
+            child: PopupMenuButton<SortOption>(
+              icon: Icon(
+                _sortOption == SortOption.codigo ? Icons.tag :
+                _sortOption == SortOption.nome ? Icons.sort_by_alpha :
+                _sortOption == SortOption.recentes ? Icons.history : Icons.category_outlined,
+                color: Colors.blueAccent, 
+                size: 24
+              ),
+              color: const Color(0xFF1E1E2E),
+              tooltip: 'Ordenar produtos',
+              onSelected: (option) => setState(() => _sortOption = option),
+              itemBuilder: (context) => [
+                const PopupMenuItem(value: SortOption.codigo, child: Row(children: [Icon(Icons.tag, size: 20, color: Colors.blue), SizedBox(width: 12), Text('Código', style: TextStyle(color: Colors.white))])),
+                const PopupMenuItem(value: SortOption.nome, child: Row(children: [Icon(Icons.sort_by_alpha, size: 20, color: Colors.blue), SizedBox(width: 12), Text('Nome (A-Z)', style: TextStyle(color: Colors.white))])),
+                const PopupMenuItem(value: SortOption.recentes, child: Row(children: [Icon(Icons.history, size: 20, color: Colors.blue), SizedBox(width: 12), Text('Recentes', style: TextStyle(color: Colors.white))])),
+                const PopupMenuItem(value: SortOption.grupo, child: Row(children: [Icon(Icons.category_outlined, size: 20, color: Colors.blue), SizedBox(width: 12), Text('Grupo', style: TextStyle(color: Colors.white))])),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
           // Indicador de quantidade
           Container(
             margin: const EdgeInsets.only(left: 4),
@@ -7502,7 +7915,7 @@ o padrão padrão (sem opções avançadas).
           _buildItemLegenda('DEL', 'REMOVER'),
           _buildItemLegenda('⇧+DEL', 'LIMPAR TUDO'),
           _buildItemLegenda('F8', 'SALVAR'),
-          _buildItemLegenda('F9', 'RECEBER', isPrimary: true),
+          _buildItemLegenda('F9', 'FINALIZAR', isPrimary: true),
         ],
       ),
     );
@@ -8065,7 +8478,7 @@ o padrão padrão (sem opções avançadas).
                   ),
                   const SizedBox(width: 4),
                   if (codigo != null && codigo.isNotEmpty)
-                    Expanded(
+                    Flexible(
                       child: Text(
                         codigo,
                         style: const TextStyle(
@@ -8076,7 +8489,45 @@ o padrão padrão (sem opções avançadas).
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                  if (promocao)
+                  if (isProduto && estoque != null) ...[
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                      decoration: BoxDecoration(
+                        color: (estoque <= 0) 
+                            ? Colors.red.withOpacity(0.2) 
+                            : Colors.white.withOpacity(0.05),
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(
+                          color: (estoque <= 0) 
+                              ? Colors.redAccent.withOpacity(0.5) 
+                              : Colors.white10,
+                          width: 1,
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.inventory_2_outlined,
+                            size: 8,
+                            color: (estoque <= 0) ? Colors.redAccent : Colors.white54,
+                          ),
+                          const SizedBox(width: 2),
+                          Text(
+                            estoque.toStringAsFixed(0),
+                            style: TextStyle(
+                              color: (estoque <= 0) ? Colors.redAccent : Colors.white70,
+                              fontSize: 9,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                  if (promocao) ...[
+                    const SizedBox(width: 4),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
                       decoration: BoxDecoration(
@@ -8092,6 +8543,7 @@ o padrão padrão (sem opções avançadas).
                         ),
                       ),
                     ),
+                  ],
                   const Spacer(),
                   Icon(
                     Icons.add_circle,
@@ -8255,27 +8707,50 @@ o padrão padrão (sem opções avançadas).
                   ],
                 ),
               ),
-              if (_carrinho.isNotEmpty) ...[
+              if (_carrinho.isNotEmpty || _mesaComandaVinculada != null) ...[
                 const SizedBox(width: 8),
-                GestureDetector(
-                  onTap: () {
-                    if (_mesaComandaVinculada != null) {
-                      // Se tem comanda, o 'X' limpa tudo e volta para a origem (página limpa)
-                      _resetarTodaVenda();
-                    } else {
-                      _limparCarrinho();
-                    }
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.all(6),
-                    decoration: BoxDecoration(
-                      color: Colors.red.withOpacity(0.15),
-                      borderRadius: BorderRadius.circular(8),
+                if (_mesaComandaVinculada != null) ...[
+                  Tooltip(
+                    message: 'Limpar ${_mesaComandaVinculada!.tipo == TipoControle.comanda ? 'Comanda' : 'Mesa'} e Salvar Histórico',
+                    child: GestureDetector(
+                      onTap: _limparMesaComandaVinculada,
+                      child: Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: Colors.blue.withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Icon(
+                          Icons.cleaning_services_rounded,
+                          color: Colors.blueAccent,
+                          size: 18,
+                        ),
+                      ),
                     ),
-                    child: const Icon(
-                      Icons.delete_sweep_rounded,
-                      color: Colors.redAccent,
-                      size: 18,
+                  ),
+                  const SizedBox(width: 8),
+                ],
+                Tooltip(
+                  message: 'Resetar Venda / Limpar Tudo',
+                  child: GestureDetector(
+                    onTap: () {
+                      if (_mesaComandaVinculada != null) {
+                        _resetarTodaVenda();
+                      } else {
+                        _limparCarrinho();
+                      }
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: Colors.red.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Icon(
+                        Icons.delete_sweep_rounded,
+                        color: Colors.redAccent,
+                        size: 18,
+                      ),
                     ),
                   ),
                 ),
@@ -8383,6 +8858,12 @@ o padrão padrão (sem opções avançadas).
                               _alterarQuantidade(index, delta),
                           onAplicarDesconto: () => _aplicarDescontoItem(index),
                           onRemover: () => _removerItem(index),
+                          onRemoverDescontoDirect: () {
+                             setState(() {
+                               _carrinho[index].desconto = 0.0;
+                             });
+                             _salvarCarrinho();
+                          },
                         ),
                       ),
                     );
@@ -8552,13 +9033,31 @@ o padrão padrão (sem opções avançadas).
                                   letterSpacing: 1,
                                 ),
                               ),
-                              Text(
-                                '- R\$ ${_descontoTotal.toStringAsFixed(2)}',
-                                style: TextStyle(
-                                  color: Colors.orangeAccent,
-                                  fontSize: isVerySmallHeight ? 9 : 11,
-                                  fontWeight: FontWeight.bold,
-                                ),
+                              Row(
+                                children: [
+                                  Text(
+                                    '- R\$ ${_descontoTotal.toStringAsFixed(2)}',
+                                    style: TextStyle(
+                                      color: Colors.orangeAccent,
+                                      fontSize: isVerySmallHeight ? 9 : 11,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  GestureDetector(
+                                    onTap: () {
+                                       setState(() {
+                                         _descontoTotal = 0.0;
+                                       });
+                                       _storage.salvar(_keyDescontoTotalPDV, 0.0);
+                                    },
+                                    child: Icon(
+                                      Icons.close_rounded,
+                                      color: Colors.orangeAccent.withOpacity(0.5),
+                                      size: 14,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ],
                           ),
@@ -8685,7 +9184,7 @@ o padrão padrão (sem opções avançadas).
                                 ),
                                 SizedBox(width: isSmallHeight ? 4 : 6),
                                 Text(
-                                  'RECEBER',
+                                  'PEDIDOS',
                                   style: TextStyle(
                                     color: Colors.white,
                                     fontSize: isSmallHeight ? 9 : 11,
@@ -9113,8 +9612,8 @@ class _NotificacaoItemAdicionadoState extends State<_NotificacaoItemAdicionado>
 
     _controller.forward();
 
-    // Auto-dismiss em 1.5 segundos (equilíbrio ideal)
-    Future.delayed(const Duration(milliseconds: 1500), () {
+    // Auto-dismiss em 0.3 segundos (muito mais rápido para o operador)
+    Future.delayed(const Duration(milliseconds: 300), () {
       if (mounted) {
         _dismiss();
       }
@@ -9303,6 +9802,7 @@ class _ItemCarrinhoComHover extends StatefulWidget {
   final Function(int) onAlterarQuantidade;
   final VoidCallback onAplicarDesconto;
   final VoidCallback onRemover;
+  final VoidCallback onRemoverDescontoDirect;
 
   const _ItemCarrinhoComHover({
     required this.item,
@@ -9310,6 +9810,7 @@ class _ItemCarrinhoComHover extends StatefulWidget {
     required this.onAlterarQuantidade,
     required this.onAplicarDesconto,
     required this.onRemover,
+    required this.onRemoverDescontoDirect,
   });
 
   @override
@@ -9547,13 +10048,29 @@ class _ItemCarrinhoComHoverState extends State<_ItemCarrinhoComHover> {
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     if (item.desconto > 0)
-                      Text(
-                        '-R\$ ${item.desconto.toStringAsFixed(2)}',
-                        style: TextStyle(
-                          color: Colors.orangeAccent,
-                          fontSize: isSmallHeight ? 9 : 10,
-                          fontWeight: FontWeight.bold,
-                        ),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          GestureDetector(
+                            onTap: () {
+                               widget.onRemoverDescontoDirect();
+                            },
+                            child: Icon(
+                              Icons.close_rounded,
+                              color: Colors.orangeAccent.withOpacity(0.5),
+                              size: 10,
+                            ),
+                          ),
+                          const SizedBox(width: 2),
+                          Text(
+                            '- R\$ ${item.desconto.toStringAsFixed(2)}',
+                            style: TextStyle(
+                              color: Colors.orangeAccent,
+                              fontSize: isSmallHeight ? 9 : 10,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
                       ),
                     Text(
                       'R\$ ${item.subtotal.toStringAsFixed(2)}',
@@ -10016,6 +10533,17 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
       .fold(0.0, (sum, p) => sum + (p.troco ?? 0));
 
   void _adicionarPagamento(TipoPagamento tipo) {
+    if (_valorRestante <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('A venda já está totalmente paga. Remova um pagamento se desejar alterar.'),
+          backgroundColor: Colors.orange,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
     final valorSugerido = _valorRestante > 0 ? _valorRestante : 0.0;
 
     // Se for uma venda salva (tem pagamentos iniciais do tipo "outro") e o usuário
@@ -10511,24 +11039,48 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
           }
 
           void concluir() {
-            final valor =
+            final valorOriginal =
                 double.tryParse(
                   valorController.text.replaceAll(',', '.'),
                 ) ??
                 0;
-            if (valor <= 0) return;
+            if (valorOriginal <= 0) return;
 
             final String? obs = observacaoController.text.isNotEmpty
                 ? observacaoController.text
                 : null;
+            
+            double valorALancar = valorOriginal;
             double? valorRecebidoFinal;
             double? trocoFinal;
-            if (isDinheiro && troco > 0) {
-              valorRecebidoFinal = double.tryParse(
-                valorRecebidoController.text.replaceAll(',', '.'),
-              );
-              trocoFinal = troco;
+
+            // Lógica Inteligente de Pagamento e Troco
+            if (isDinheiro) {
+              // Se o valor lançado for maior que o sugerido, calcula o troco automaticamente
+              if (valorOriginal > valorSugerido) {
+                valorALancar = valorSugerido < 0 ? 0 : valorSugerido;
+                valorRecebidoFinal = valorOriginal;
+                trocoFinal = valorOriginal - valorALancar;
+              } else {
+                // Caso contrário, usa os campos específicos de troco se preenchidos
+                final vr = double.tryParse(valorRecebidoController.text.replaceAll(',', '.'));
+                if (vr != null && vr > valorOriginal) {
+                   valorRecebidoFinal = vr;
+                   trocoFinal = vr - valorOriginal;
+                }
+              }
+            } else {
+              // Para outras formas, o valor lançado não pode exceder o restante da venda
+              if (valorOriginal > valorSugerido) {
+                valorALancar = valorSugerido < 0 ? 0 : valorSugerido;
+              }
             }
+
+            // Impede lançamentos sem valor real, a menos que seja um ajuste (valor ALancar == 0)
+            if (valorALancar <= 0) {
+                Navigator.pop(context);
+                return;
+            };
 
             var novaLista = List<PagamentoPedido>.from(_pagamentos);
             if (widget.pagamentosIniciais.isNotEmpty &&
@@ -10541,7 +11093,7 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
             if (parcelar && parcelas > 1) {
               final parcelamentoId = DateTime.now().millisecondsSinceEpoch
                   .toString();
-              final valorCadaParcela = valor / parcelas;
+              final valorCadaParcela = valorALancar / parcelas;
 
               for (int i = 0; i < parcelas; i++) {
                 final dataVenc = primeiroVencimento.add(
@@ -10579,7 +11131,7 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
                 PagamentoPedido(
                   id: DateTime.now().millisecondsSinceEpoch.toString(),
                   tipo: tipo,
-                  valor: valor,
+                  valor: valorALancar,
                   recebido: isRecebido,
                   dataRecebimento: isRecebido ? DateTime.now() : null,
                   dataVencimento: dataVenc,
@@ -11246,11 +11798,14 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
   }
 
   Widget _buildPainelTotalFull() {
+    final totalPago = _pagamentos.fold<double>(0, (sum, p) => sum + p.valor);
+    final falta = widget.totalCarrinho - totalPago;
+
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       child: Container(
         width: double.infinity,
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
         decoration: BoxDecoration(
           gradient: LinearGradient(
             colors: [const Color(0xFF0D0D15), const Color(0xFF161625)],
@@ -11317,7 +11872,7 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
                   ),
               ],
             ),
-            const Divider(color: Colors.white10, height: 32),
+            const Divider(color: Colors.white10, height: 16),
             Text(
               'TOTAL A PAGAR',
               style: TextStyle(
@@ -11327,16 +11882,54 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
                 letterSpacing: 2,
               ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 4),
             Text(
               _formatoMoeda.format(widget.totalCarrinho),
-              style: const TextStyle(
-                color: Colors.greenAccent,
-                fontSize: 48,
+              style: TextStyle(
+                color: Colors.greenAccent.shade400,
+                fontSize: 54,
                 fontWeight: FontWeight.w900,
                 letterSpacing: -1,
               ),
             ),
+            if (falta > 0 && totalPago > 0) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(15),
+                  border: Border.all(color: Colors.orangeAccent.withOpacity(0.3)),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.info_outline, color: Colors.orangeAccent, size: 16),
+                        const SizedBox(width: 8),
+                        const Text(
+                          'FALTA RECEBER:',
+                          style: TextStyle(
+                            color: Colors.orangeAccent,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                    Text(
+                      _formatoMoeda.format(falta),
+                      style: const TextStyle(
+                        color: Colors.orangeAccent,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 22,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -11534,7 +12127,7 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
 
           // Título Fixo no topo
           Padding(
-            padding: const EdgeInsets.fromLTRB(24, 20, 24, 10),
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
             child: Row(
               children: [
                 Container(
@@ -11563,8 +12156,6 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
           ),
 
           if (!isSmallHeight) _buildPainelTotalFull(),
-
-          const SizedBox(height: 8),
 
           // LISTA FRÁGIL: Parte que pode rolar se o conteúdo crescer demais
           Expanded(

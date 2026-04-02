@@ -19,6 +19,9 @@ import 'package:sistema_exodo_novo/models/taxa_entrega.dart';
 import 'package:sistema_exodo_novo/models/conta_pagar.dart';
 import 'package:sistema_exodo_novo/models/nfce.dart';
 import 'package:sistema_exodo_novo/models/mesa_comanda.dart';
+import 'package:sistema_exodo_novo/models/item_pedido.dart';
+import 'package:sistema_exodo_novo/models/item_servico.dart';
+import 'package:sistema_exodo_novo/models/forma_pagamento.dart';
 import 'package:sistema_exodo_novo/models/link_vendedor.dart';
 import 'package:sistema_exodo_novo/models/comissao_vendedor.dart';
 import 'package:sistema_exodo_novo/services/local_storage_service.dart';
@@ -90,9 +93,11 @@ class DataService extends ChangeNotifier {
   // Getters públicos
   List<AgendamentoServico> get agendamentos => agendamentosServico;
 
-  List<MesaComanda> get mesasComandas => _mesasComandas;
-  List<MesaComanda> get mesasComandasAbertas => 
-      _mesasComandas.where((m) => m.status == 'Aberta').toList();
+  // Getter que filtra apenas o que está "ATIVO" (Aberta). 
+  // Isso resolve definitivamente o problema de mesas que não somem após o recebimento.
+  List<MesaComanda> get mesasComandas => _mesasComandas.where((m) => m.status == 'Aberta').toList();
+  
+  List<MesaComanda> get mesasComandasAbertas => mesasComandas;
 
   /// Exporta todos os dados operacionais da empresa em formato JSON
   Map<String, dynamic> exportarBackupCompleto() {
@@ -133,6 +138,16 @@ class DataService extends ChangeNotifier {
   List<SuprimentoCaixa> get suprimentos => _suprimentos;
   List<NotaEntrada> get notasEntrada => _notasEntrada;
   List<NFCe> get nfces => _nfces;
+  List<VendaBalcao> get vendasBalcao => _vendasBalcao;
+  List<Pedido> get pedidos => _pedidos;
+  List<TrocaDevolucao> get trocasDevolucoes => _trocasDevolucoes;
+
+  /// Retorna as trocas e devoluções em um período específico
+  List<TrocaDevolucao> getTrocasDevolucoesPorPeriodo(DateTime inicio, DateTime fim) {
+    return _trocasDevolucoes.where((t) {
+      return t.dataOperacao.isAfter(inicio) && t.dataOperacao.isBefore(fim);
+    }).toList();
+  }
 
   /// Retorna as NFC-es autorizadas em um período específico
   List<NFCe> getNfcesPorPeriodo(DateTime inicio, DateTime fim) {
@@ -219,6 +234,10 @@ class DataService extends ChangeNotifier {
   
   // Controle de coleções modificadas (Selective Saving)
   final Set<String> _dirtyCollections = {};
+  
+  // Cache de IDs removidos recentemente para evitar que o Firebase os restaure 
+  // durante a latência de sincronização (Firestore pode levar segundos para propagar deleção)
+  final Set<String> _idsMesaRemovidosRecentemente = {};
 
   void _marcarSujo(String collectionKey) {
     if (!_dirtyCollections.contains(collectionKey)) {
@@ -1651,13 +1670,10 @@ class DataService extends ChangeNotifier {
   List<OrdemServico> get ordensServico => _ordensServico;
   List<Servico> get servicos => tiposServico;
   List<Funcionario> get funcionarios => _funcionarios;
-  List<Pedido> get pedidos => _pedidos;
   List<Entrega> get entregas => _entregas;
   List<Motorista> get motoristas => _motoristas;
   List<TaxaEntrega> get taxasEntrega => _taxasEntrega;
   List<ContaPagar> get contasPagar => _contasPagar;
-  List<VendaBalcao> get vendasBalcao => _vendasBalcao;
-  List<TrocaDevolucao> get trocasDevolucoes => _trocasDevolucoes;
   List<AgendamentoServico> get agendamentosServico {
     final ids = <String>{};
     return _agendamentosServico.where((a) => ids.add(a.id)).toList();
@@ -2337,122 +2353,76 @@ class DataService extends ChangeNotifier {
   }
 
   Future<void> addProduto(Produto produto) async {
-    // DEBUG CRÍTICO: Verificar dados antes de adicionar
-    debugPrint('>>> [Produto] ========================================');
-    debugPrint('>>> [Produto] ADICIONANDO NOVO PRODUTO');
-    debugPrint('>>> [Produto] Nome: ${produto.nome}');
-    debugPrint('>>> [Produto] ID: ${produto.id}');
-    debugPrint('>>> [Produto] exibirNaLoja: ${produto.exibirNaLoja}');
-    debugPrint('>>> [Produto] emDestaque: ${produto.emDestaque}');
-    debugPrint('>>> [Produto] estoque: ${produto.estoque}');
-    debugPrint('>>> [Produto] Verificando toMap...');
-    final map = produto.toMap();
-    debugPrint('>>> [Produto] toMap["exibirNaLoja"]: ${map["exibirNaLoja"]}');
-    debugPrint('>>> [Produto] ========================================');
-    
-    _produtos.add(produto);
-    notifyListeners();
-    _marcarSujo(LocalStorageService.keyProdutos);
-    
-    // Salvar imediatamente no Firebase (se disponível)
-    if (_firebaseHabilitado && _empresaIdAtual != null) {
-      try {
-        await _firebaseService.salvarProduto(_empresaIdAtual!, produto);
-        debugPrint('>>> [Produto] ✅✅✅ SALVO NO FIREBASE COM SUCESSO! ✅✅✅');
-      } catch (e) {
-        final errorStr = e.toString().toLowerCase();
-        final isQuotaError = errorStr.contains('quota') || 
-                            errorStr.contains('resource-exhausted') ||
-                            errorStr.contains('quota exceeded');
-        
-        if (isQuotaError) {
-          debugPrint('>>> [Produto] ⚠️⚠️⚠️ FIREBASE COM COTA EXCEDIDA - DESABILITANDO TEMPORARIAMENTE ⚠️⚠️⚠️');
-          debugPrint('>>> [Produto] Dados salvos LOCALMENTE - Firebase será desabilitado até a cota ser renovada');
-          _firebaseHabilitado = false; // Desabilitar Firebase temporariamente
-        } else {
-          debugPrint('>>> [Produto] ❌ Erro ao salvar produto no Firebase: $e');
-        }
-        _adicionarSincronizacaoPendente();
-        // NÃO re-throw - dados já estão salvos localmente
-      }
-    }
-  }
-
-  Future<void> updateProduto(Produto produto) async {
-    // DEBUG CRÍTICO: Verificar dados antes de atualizar
-    debugPrint('>>> [Produto] ========================================');
-    debugPrint('>>> [Produto] ATUALIZANDO PRODUTO');
-    debugPrint('>>> [Produto] Nome: ${produto.nome}');
-    debugPrint('>>> [Produto] ID: ${produto.id}');
-    debugPrint('>>> [Produto] exibirNaLoja: ${produto.exibirNaLoja}');
-    debugPrint('>>> [Produto] emDestaque: ${produto.emDestaque}');
-    debugPrint('>>> [Produto] estoque: ${produto.estoque}');
-    final map = produto.toMap();
-    debugPrint('>>> [Produto] toMap["exibirNaLoja"]: ${map["exibirNaLoja"]}');
-    debugPrint('>>> [Produto] ========================================');
-    
     final index = _produtos.indexWhere((p) => p.id == produto.id);
     if (index != -1) {
       _produtos[index] = produto;
-      notifyListeners();
-      
-      // Salvar localmente IMEDIATAMENTE (sem debounce para produtos)
-      try {
-        await _storage.salvarLista(
-          _getChaveComEmpresa(LocalStorageService.keyProdutos), 
-          _produtos
-        );
-        debugPrint('>>> [Produto] ✅ Atualizado localmente: ${produto.nome} (ID: ${produto.id})');
-        debugPrint('>>> [Produto] exibirNaLoja: ${produto.exibirNaLoja}, estoque: ${produto.estoque}');
-        
-        // Verificar se foi salvo corretamente
-        final produtosSalvos = await _storage.carregarLista(_getChaveComEmpresa(LocalStorageService.keyProdutos));
-        final produtoSalvo = produtosSalvos.firstWhere(
-          (p) => p['id'] == produto.id,
-          orElse: () => {},
-        );
-        if (produtoSalvo.isNotEmpty) {
-          debugPrint('>>> [Produto] ✅ Verificação pós-salvamento:');
-          debugPrint('>>> [Produto]    exibirNaLoja no storage: ${produtoSalvo["exibirNaLoja"]}');
-        }
-      } catch (e) {
-        debugPrint('>>> [Produto] ❌ Erro ao atualizar localmente: $e');
-      }
-      
-      // Também chamar salvamento automático (para sincronizar outros dados)
-      _salvarAutomaticamente();
-      
-      // Salvar imediatamente no Firebase (se disponível)
-      if (_firebaseHabilitado && _empresaIdAtual != null) {
-        try {
-          await _firebaseService.salvarProduto(_empresaIdAtual!, produto);
-          debugPrint('>>> [Produto] ✅✅✅ ATUALIZADO NO FIREBASE COM SUCESSO! ✅✅✅');
-        } catch (e) {
-          final errorStr = e.toString().toLowerCase();
-          final isQuotaError = errorStr.contains('quota') || 
-                              errorStr.contains('resource-exhausted') ||
-                              errorStr.contains('quota exceeded');
-          
-          if (isQuotaError) {
-            debugPrint('>>> [Produto] ⚠️⚠️⚠️ FIREBASE COM COTA EXCEDIDA - DESABILITANDO TEMPORARIAMENTE ⚠️⚠️⚠️');
-            debugPrint('>>> [Produto] Dados atualizados LOCALMENTE - Firebase será desabilitado até a cota ser renovada');
-            _firebaseHabilitado = false; // Desabilitar Firebase temporariamente
-          } else {
-            debugPrint('>>> [Produto] ❌ Erro ao atualizar produto no Firebase: $e');
-          }
-          _adicionarSincronizacaoPendente();
-          // NÃO re-throw - dados já estão salvos localmente
-        }
-      }
     } else {
-      debugPrint('>>> [Produto] ⚠️ Produto não encontrado para atualizar: ${produto.id}');
+      _produtos.add(produto);
+    }
+    notifyListeners();
+    _marcarSujo(LocalStorageService.keyProdutos);
+    
+    if (_firebaseHabilitado && _empresaIdAtual != null) {
+      _firebaseService.salvarProduto(_empresaIdAtual!, produto).catchError((e) {
+        debugPrint('>>> Erro ao salvar produto no Firebase: $e');
+        _adicionarSincronizacaoPendente();
+      });
+    }
+  }
+
+  Future<void> updateProduto(Produto produto, {bool aguardarFirebase = true, bool registrarMovimento = true}) async {
+    final index = _produtos.indexWhere((p) => p.id == produto.id);
+    if (index != -1) {
+      final oldProduto = _produtos[index];
+      final stockDiff = produto.estoque - oldProduto.estoque;
+      
+      _produtos[index] = produto;
+      notifyListeners();
+      _marcarSujo(LocalStorageService.keyProdutos);
+
+      // Registro automático de movimento se houver alteração manual no estoque via Form
+      if (registrarMovimento && stockDiff != 0) {
+        final historico = EstoqueHistorico(
+          id: '${DateTime.now().millisecondsSinceEpoch}_${produto.id}',
+          produtoId: produto.id,
+          data: DateTime.now(),
+          quantidade: stockDiff,
+          tipo: stockDiff > 0 ? 'entrada' : 'saida',
+          observacao: 'Alteração manual no cadastro',
+          usuario: 'Sistema',
+          fornecedorNome: 'Geral',
+        );
+        _estoqueHistorico.add(historico);
+        
+        if (_firebaseHabilitado && _empresaIdAtual != null) {
+          _firebaseService.salvarEstoqueHistorico(_empresaIdAtual!, historico).catchError((e) {
+            debugPrint('>>> Erro ao salvar histórico automático no Firebase: $e');
+          });
+        }
+      }
+      
+      if (_firebaseHabilitado && _empresaIdAtual != null) {
+        if (aguardarFirebase) {
+          try {
+            await _firebaseService.salvarProduto(_empresaIdAtual!, produto);
+          } catch (e) {
+            debugPrint('>>> Erro ao atualizar produto no Firebase: $e');
+            _adicionarSincronizacaoPendente();
+          }
+        } else {
+          _firebaseService.salvarProduto(_empresaIdAtual!, produto).catchError((e) {
+            debugPrint('>>> Erro ao atualizar produto no Firebase (BG): $e');
+            _adicionarSincronizacaoPendente();
+          });
+        }
+      }
     }
   }
 
   void deleteProduto(String id) {
     _produtos.removeWhere((p) => p.id == id);
     notifyListeners();
-    _salvarAutomaticamente();
+    _marcarSujo(LocalStorageService.keyProdutos);
     // Remover imediatamente do Firebase
     if (_firebaseHabilitado && _empresaIdAtual != null) {
       _firebaseService.removerProduto(_empresaIdAtual!, id).catchError((e) {
@@ -2516,28 +2486,156 @@ class DataService extends ChangeNotifier {
     print('>>> ✅ Operação concluída. Backup disponível em: backup_produtos_${empresaId}_*');
   }
 
+   Produto? getProdutoById(String id) {
+    try {
+      return _produtos.firstWhere((p) => p.id == id);
+    } catch (_) {
+      return null;
+    }
+  }
 
   // ============ Estoque Histórico ============
 
-  void registrarEntradaEstoque({
+  /// Registra uma entrada de estoque, atualizando o produto e o histórico
+  Future<void> registrarEntradaEstoque({
     required String produtoId,
     required int quantidade,
     String? observacao,
     String? usuario,
-  }) {
+    String? fornecedorId,
+    String? fornecedorNome,
+  }) async {
+    // 1. Localizar o produto
+    final index = _produtos.indexWhere((p) => p.id == produtoId);
+    if (index == -1) {
+      debugPrint('>>> [DataService] registrarEntradaEstoque: Produto não encontrado ($produtoId)');
+      return;
+    }
+
+    final produto = _produtos[index];
+    
+    // 2. Atualizar o estoque por fornecedor
+    final mapaEstoque = Map<String, int>.from(produto.estoquePorFornecedor);
+    final nomeFornecedorFinal = fornecedorNome ?? 'Geral';
+    mapaEstoque[nomeFornecedorFinal] = (mapaEstoque[nomeFornecedorFinal] ?? 0) + quantidade;
+
+    // 3. Atualizar o produto
+    final produtoAtualizado = produto.copyWith(
+      estoque: produto.estoque + quantidade,
+      estoquePorFornecedor: mapaEstoque,
+      updatedAt: DateTime.now(),
+    );
+
+    // Salvar o produto atualizado (não aguardar Firebase para resposta instantânea)
+    await updateProduto(produtoAtualizado, aguardarFirebase: false, registrarMovimento: false);
+
+    // 4. Registrar no histórico
     final historico = EstoqueHistorico(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      id: DateTime.now().millisecondsSinceEpoch.toString() + '_' + produtoId,
       produtoId: produtoId,
       data: DateTime.now(),
       quantidade: quantidade,
       tipo: 'entrada',
       observacao: observacao,
       usuario: usuario,
+      fornecedorId: fornecedorId,
+      fornecedorNome: fornecedorNome,
     );
     _estoqueHistorico.add(historico);
     notifyListeners();
-    _salvarAutomaticamente();
-    // Salvar imediatamente no Firebase
+    _marcarSujo(LocalStorageService.keyEstoqueHistorico);
+
+    // 5. Salvar histórico no Firebase
+    if (_firebaseHabilitado && _empresaIdAtual != null) {
+      _firebaseService.salvarEstoqueHistorico(_empresaIdAtual!, historico).catchError((e) {
+        debugPrint('>>> Erro ao salvar histórico de estoque no Firebase: $e');
+        _adicionarSincronizacaoPendente();
+      });
+    }
+  }
+
+  /// Registra uma saída de estoque, atualizando o produto e o histórico
+  Future<void> registrarSaidaEstoque({
+    required String produtoId,
+    required int quantidade,
+    String? observacao,
+    String? usuario,
+    String? motivo, // 'venda', 'perda', 'consumo', etc.
+    String? fornecedorNome, // Fornecedor específico para abater o estoque
+  }) async {
+    final index = _produtos.indexWhere((p) => p.id == produtoId);
+    if (index == -1) return;
+
+    final produto = _produtos[index];
+    
+    // Abatimento proporcional do estoque por fornecedor
+    final mapaEstoque = Map<String, int>.from(produto.estoquePorFornecedor);
+    int quantidadeRestante = quantidade;
+
+    // Se informou um fornecedor, tentar abater dele PRIMEIRO
+    if (fornecedorNome != null && fornecedorNome.isNotEmpty) {
+      final nomeNorm = fornecedorNome == 'Geral' ? 'Geral' : fornecedorNome;
+      int estoqueDisponivel = mapaEstoque[nomeNorm] ?? 0;
+      if (estoqueDisponivel > 0) {
+        if (estoqueDisponivel >= quantidadeRestante) {
+          mapaEstoque[nomeNorm] = estoqueDisponivel - quantidadeRestante;
+          quantidadeRestante = 0;
+        } else {
+          mapaEstoque[nomeNorm] = 0;
+          quantidadeRestante -= estoqueDisponivel;
+        }
+      }
+    }
+
+    // Tentar abater de outros fornecedores (FIFO-ish simples) se ainda sobrar
+    if (quantidadeRestante > 0) {
+      final fornecedoresOrdenados = mapaEstoque.keys.toList();
+      for (var forn in fornecedoresOrdenados) {
+        if (quantidadeRestante <= 0) break;
+        
+        int estoqueDisponivel = mapaEstoque[forn] ?? 0;
+        if (estoqueDisponivel > 0) {
+          if (estoqueDisponivel >= quantidadeRestante) {
+            mapaEstoque[forn] = estoqueDisponivel - quantidadeRestante;
+            quantidadeRestante = 0;
+          } else {
+            mapaEstoque[forn] = 0;
+            quantidadeRestante -= estoqueDisponivel;
+          }
+        }
+      }
+    }
+
+    // Se ainda sobrar quantidade (estoque negativo), abater do primeiro fornecedor ou 'Geral'
+    if (quantidadeRestante > 0) {
+      final key = fornecedorNome ?? (mapaEstoque.keys.isNotEmpty ? mapaEstoque.keys.first : 'Geral');
+      mapaEstoque[key] = (mapaEstoque[key] ?? 0) - quantidadeRestante;
+    }
+
+    final produtoAtualizado = produto.copyWith(
+      estoque: produto.estoque - quantidade,
+      estoquePorFornecedor: mapaEstoque,
+      updatedAt: DateTime.now(),
+    );
+
+    // Salvar o produto atualizado (não aguardar Firebase para resposta instantânea)
+    await updateProduto(produtoAtualizado, aguardarFirebase: false, registrarMovimento: false);
+
+    // Registrar no histórico
+    final historico = EstoqueHistorico(
+      id: DateTime.now().millisecondsSinceEpoch.toString() + '_saida_' + produtoId,
+      produtoId: produtoId,
+      data: DateTime.now(),
+      quantidade: -quantidade,
+      tipo: 'saida',
+      observacao: (observacao ?? '') + (motivo != null ? ' (Motivo: $motivo)' : ''),
+      usuario: usuario,
+      fornecedorNome: fornecedorNome,
+    );
+    _estoqueHistorico.add(historico);
+    notifyListeners();
+    _marcarSujo(LocalStorageService.keyEstoqueHistorico);
+
     if (_firebaseHabilitado && _empresaIdAtual != null) {
       _firebaseService.salvarEstoqueHistorico(_empresaIdAtual!, historico).catchError((e) {
         debugPrint('>>> Erro ao salvar histórico de estoque no Firebase: $e');
@@ -2553,19 +2651,10 @@ class DataService extends ChangeNotifier {
     // Notificar listeners IMEDIATAMENTE para atualizar a UI
     notifyListeners();
     
-    // Salvar localmente IMEDIATAMENTE (sem debounce)
-    try {
-      await _storage.salvarLista(
-        _getChaveComEmpresa(LocalStorageService.keyNotasEntrada), 
-        _notasEntrada
-      );
-      debugPrint('>>> [NotaEntrada] ✅ Salva localmente: ${nota.id}');
-    } catch (e) {
-      debugPrint('>>> [NotaEntrada] ❌ Erro ao salvar localmente: $e');
-    }
-    
-    // Também chamar salvamento automático (para sincronizar outros dados)
-    _salvarAutomaticamente();
+    // Marcar coleções impactadas para salvamento automático seletivo
+    _marcarSujo(LocalStorageService.keyNotasEntrada);
+    _marcarSujo(LocalStorageService.keyProdutos); // Notas de entrada afetam estoque
+    _marcarSujo(LocalStorageService.keyEstoqueHistorico); // Notas de entrada geram histórico
     
     // Salvar imediatamente no Firebase (aguardando para garantir que foi salvo)
     if (_firebaseHabilitado && _empresaIdAtual != null) {
@@ -3520,22 +3609,29 @@ class DataService extends ChangeNotifier {
     
     _pedidos.add(pedido);
     notifyListeners();
-    _marcarSujo(LocalStorageService.keyPedidos);
     
-    // Salvar imediatamente no Firebase
+    // SALVAR IMEDIATAMENTE no localStorage (sem debounce!)
+    try {
+      await _storage.salvarLista(
+        _getChaveComEmpresa(LocalStorageService.keyPedidos), 
+        _pedidos
+      );
+      debugPrint('>>> [Pedido] ✅ Salvo localmente: ${pedido.numero}');
+    } catch (e) {
+      debugPrint('>>> [Pedido] ❌ Erro ao salvar localmente: $e');
+    }
+    
+    // Salvar imediatamente no Firebase (EM BACKGROUND para não travar a UI offline)
     if (_firebaseHabilitado && _empresaIdAtual != null) {
-      try {
-        await _firebaseService.salvarPedido(_empresaIdAtual!, pedido);
+      _firebaseService.salvarPedido(_empresaIdAtual!, pedido).then((_) {
         debugPrint('>>> [Pedido] ✅✅✅ SALVO NO FIREBASE COM SUCESSO! ✅✅✅');
         debugPrint('>>> [Pedido] Número: ${pedido.numero}');
-        debugPrint('>>> [Pedido] ID: ${pedido.id}');
-      } catch (e, stackTrace) {
+      }).catchError((e, stackTrace) {
         debugPrint('>>> [Pedido] ❌❌❌ ERRO AO SALVAR NO FIREBASE! ❌❌❌');
         debugPrint('>>> [Pedido] Erro: $e');
-        debugPrint('>>> [Pedido] StackTrace: $stackTrace');
-        debugPrint('>>> [Pedido] ⚠️ DADOS SALVOS LOCALMENTE - serão sincronizados quando possível');
+        debugPrint('>>> [Pedido] ⚠️ DADOS SALVOS LOCALMENTE - sincronização agendada');
         _adicionarSincronizacaoPendente();
-      }
+      });
     } else {
       debugPrint('>>> [Pedido] ⚠️⚠️⚠️ NÃO SALVOU NO FIREBASE! ⚠️⚠️⚠️');
       if (!_firebaseHabilitado) {
@@ -3561,17 +3657,14 @@ class DataService extends ChangeNotifier {
       _marcarSujo(LocalStorageService.keyPedidos);
       
       // Salvar imediatamente no Firebase (aguardando para garantir que foi salvo)
+      // Sincronizar com Firebase em background
       if (_firebaseHabilitado && _empresaIdAtual != null) {
-        try {
-          await _firebaseService.salvarPedido(_empresaIdAtual!, pedido);
+        _firebaseService.salvarPedido(_empresaIdAtual!, pedido).then((_) {
           debugPrint('>>> [Pedido] ✅✅✅ ATUALIZADO NO FIREBASE COM SUCESSO! ✅✅✅');
-        } catch (e, stackTrace) {
+        }).catchError((e, stackTrace) {
           debugPrint('>>> [Pedido] ❌❌❌ ERRO AO ATUALIZAR NO FIREBASE! ❌❌❌');
-          debugPrint('>>> [Pedido] Erro: $e');
-          debugPrint('>>> [Pedido] StackTrace: $stackTrace');
           _adicionarSincronizacaoPendente();
-          // NÃO re-throw - dados já estão salvos localmente
-        }
+        });
       } else {
         debugPrint('>>> [Pedido] ⚠️ NÃO ATUALIZOU NO FIREBASE!');
         if (!_firebaseHabilitado) debugPrint('>>> [Pedido] Motivo: Firebase NÃO está habilitado');
@@ -3959,9 +4052,25 @@ class DataService extends ChangeNotifier {
 
   Future<void> addVendaBalcao(VendaBalcao venda) async {
     _vendasBalcao.add(venda);
-    print('✓ Venda ${venda.numero} salva em memória');
+    print('✓ Venda ${venda.numero} (ID: ${venda.id}) salva em memória @ ${DateTime.now()}');
+    
+    // Baixar estoque automaticamente
+    for (final item in venda.itens) {
+      if (!item.isServico) {
+        registrarSaidaEstoque(
+          produtoId: item.id,
+          quantidade: item.quantidade,
+          motivo: 'venda',
+          observacao: 'Saída via venda ${venda.numero}',
+          fornecedorNome: item.fornecedorNome,
+          usuario: venda.operador,
+        );
+      }
+    }
+
     // Notificar listeners IMEDIATAMENTE para atualizar a UI
     notifyListeners();
+
     
     // Salvar localmente IMEDIATAMENTE (sem debounce)
     try {
@@ -3977,18 +4086,16 @@ class DataService extends ChangeNotifier {
     // Também chamar salvamento automático (para sincronizar outros dados)
     _salvarAutomaticamente();
     
-    // Salvar imediatamente no Firebase (aguardando para garantir que foi salvo)
+    // Salvar imediatamente no Firebase (EM BACKGROUND para não travar a UI offline)
     if (_firebaseHabilitado && _empresaIdAtual != null) {
-      try {
-        await _firebaseService.salvarVendaBalcao(_empresaIdAtual!, venda);
+      _firebaseService.salvarVendaBalcao(_empresaIdAtual!, venda).then((_) {
         debugPrint('>>> [VendaBalcao] ✅✅✅ SALVA NO FIREBASE COM SUCESSO! ✅✅✅');
-      } catch (e, stackTrace) {
+      }).catchError((e, stackTrace) {
         debugPrint('>>> [VendaBalcao] ❌❌❌ ERRO AO SALVAR NO FIREBASE! ❌❌❌');
         debugPrint('>>> [VendaBalcao] Erro: $e');
-        debugPrint('>>> [VendaBalcao] StackTrace: $stackTrace');
         _adicionarSincronizacaoPendente();
-        // NÃO re-throw - dados já estão salvos localmente
-      }
+        // Dados já estão salvos localmente
+      });
     } else {
       debugPrint('>>> [VendaBalcao] ⚠️ NÃO SALVOU NO FIREBASE! ⚠️⚠️⚠️');
       if (!_firebaseHabilitado) debugPrint('>>> [VendaBalcao] Motivo: Firebase NÃO está habilitado');
@@ -4042,17 +4149,14 @@ class DataService extends ChangeNotifier {
       _salvarAutomaticamente();
       
       // Salvar imediatamente no Firebase (aguardando para garantir que foi salvo)
+      // Sincronizar com Firebase em background
       if (_firebaseHabilitado && _empresaIdAtual != null) {
-        try {
-          await _firebaseService.salvarVendaBalcao(_empresaIdAtual!, venda);
+        _firebaseService.salvarVendaBalcao(_empresaIdAtual!, venda).then((_) {
           debugPrint('>>> [VendaBalcao] ✅✅✅ ATUALIZADA NO FIREBASE COM SUCESSO! ✅✅✅');
-        } catch (e, stackTrace) {
+        }).catchError((e, stackTrace) {
           debugPrint('>>> [VendaBalcao] ❌❌❌ ERRO AO ATUALIZAR NO FIREBASE! ❌❌❌');
-          debugPrint('>>> [VendaBalcao] Erro: $e');
-          debugPrint('>>> [VendaBalcao] StackTrace: $stackTrace');
           _adicionarSincronizacaoPendente();
-          // NÃO re-throw - dados já estão salvos localmente
-        }
+        });
       } else {
         debugPrint('>>> [VendaBalcao] ⚠️ NÃO ATUALIZOU NO FIREBASE!');
         if (!_firebaseHabilitado) debugPrint('>>> [VendaBalcao] Motivo: Firebase NÃO está habilitado');
@@ -4582,10 +4686,28 @@ class DataService extends ChangeNotifier {
       // Carregar pedidos - ISOLAMENTO: Apenas dados da empresa atual do Firebase
       if (dados['pedidos'] != null && dados['pedidos'].isNotEmpty) {
         final novosPedidos = (dados['pedidos'] as List).map((map) => Pedido.fromMap(map as Map<String, dynamic>)).toList();
-        // ISOLAMENTO: Firebase já filtra por empresaId
-        // ISOLAMENTO: Firebase já filtra por empresaId
         for (final pedido in novosPedidos) {
-          _pedidos.removeWhere((p) => p.id == pedido.id);
+          final indexLocal = _pedidos.indexWhere((p) => p.id == pedido.id);
+          
+          if (indexLocal != -1) {
+            final local = _pedidos[indexLocal];
+            // TRAVA DE MEMÓRIA: Se o local já tem tags de Mesa/Comanda e o vindo do Firebase não, 
+            // ou se o local foi atualizado recentemente, preservamos as tags de identificação.
+            bool localEhMesa = local.numero.contains('MESA') || local.numero.contains('CMD') || local.clienteNome?.contains('[') == true;
+            bool firebaseEhMesa = pedido.numero.contains('MESA') || pedido.numero.contains('CMD') || pedido.clienteNome?.contains('[') == true;
+            
+            if (localEhMesa && !firebaseEhMesa) {
+              debugPrint('>>> [Sync] 🛡️ Preservando Identidade VIP local do Pedido: ${local.numero}');
+              // Mescla: pega os dados do Firebase mas mantém o Número e Nome do Cliente que usamos para o Histórico
+              _pedidos[indexLocal] = pedido.copyWith(
+                numero: local.numero,
+                clienteNome: local.clienteNome,
+                observacoes: local.observacoes
+              );
+              continue;
+            }
+            _pedidos.removeAt(indexLocal);
+          }
           _pedidos.add(pedido);
         }
         print('>>> ✓ ${novosPedidos.length} pedidos carregados do Firebase para empresa $_empresaIdAtual (isolados)');
@@ -4635,10 +4757,26 @@ class DataService extends ChangeNotifier {
       if (dados['vendas_balcao'] != null && dados['vendas_balcao'].isNotEmpty) {
         final novasVendas = (dados['vendas_balcao'] as List)
             .map((map) => VendaBalcao.fromMap(map as Map<String, dynamic>)).toList();
-        // ISOLAMENTO: Firebase já filtra por empresaId
-        // ISOLAMENTO: Firebase já filtra por empresaId
         for (final venda in novasVendas) {
-          _vendasBalcao.removeWhere((v) => v.id == venda.id);
+          final indexLocal = _vendasBalcao.indexWhere((v) => v.id == venda.id);
+          
+          if (indexLocal != -1) {
+            final local = _vendasBalcao[indexLocal];
+            // TRAVA DE MEMÓRIA: Mesmo critério dos Pedidos
+            bool localEhMesa = local.numero.contains('MESA') || local.numero.contains('CMD') || local.clienteNome?.contains('[') == true;
+            bool firebaseEhMesa = venda.numero.contains('MESA') || venda.numero.contains('CMD') || venda.clienteNome?.contains('[') == true;
+            
+            if (localEhMesa && !firebaseEhMesa) {
+              debugPrint('>>> [Sync] 🛡️ Preservando Identidade VIP local da Venda: ${local.numero}');
+              _vendasBalcao[indexLocal] = venda.copyWith(
+                numero: local.numero,
+                clienteNome: local.clienteNome,
+                observacoes: local.observacoes
+              );
+              continue;
+            }
+            _vendasBalcao.removeAt(indexLocal);
+          }
           _vendasBalcao.add(venda);
         }
         print('>>> ✓ ${novasVendas.length} vendas balcão carregadas do Firebase para empresa $_empresaIdAtual (isoladas)');
@@ -4708,19 +4846,15 @@ class DataService extends ChangeNotifier {
         print('>>> ✓ ${novosFechamentos.length} fechamentos de caixa carregados do Firebase (total: ${_fechamentosCaixa.length})');
       }
 
-      // Carregar mesas/comandas - NÃO LIMPAR, apenas adicionar/atualizar
-      if (dados['mesas_comandas'] != null && dados['mesas_comandas'].isNotEmpty) {
-        final novasMesas = (dados['mesas_comandas'] as List).map((map) => MesaComanda.fromMap(map as Map<String, dynamic>)).toList();
-        // Atualizar ou adicionar mesas (evitar duplicatas)
-        for (final mesa in novasMesas) {
-          final index = _mesasComandas.indexWhere((m) => m.id == mesa.id);
-          if (index >= 0) {
-            _mesasComandas[index] = mesa; // Atualizar existente
-          } else {
-            _mesasComandas.add(mesa); // Adicionar nova
-          }
-        }
-        print('>>> ✓ ${novasMesas.length} mesas/comandas carregadas do Firebase (total: ${_mesasComandas.length})');
+      // Carregar mesas/comandas - LIMPAR e substituir para refletir o estado real
+      if (dados['mesas_comandas'] != null) {
+        final novasMesasRaw = (dados['mesas_comandas'] as List)
+            .map((map) => MesaComanda.fromMap(map as Map<String, dynamic>))
+            .where((m) => !_idsMesaRemovidosRecentemente.contains(m.id)) // Filtrar deletadas recentemente
+            .toList();
+        
+        _atualizarListaInPlace(_mesasComandas, novasMesasRaw);
+        print('>>> ✓ ${novasMesasRaw.length} mesas/comandas carregadas do Firebase (total: ${_mesasComandas.length})');
       }
 
       // Carregar funcionários - ISOLAMENTO: Apenas dados da empresa atual do Firebase
@@ -5126,21 +5260,17 @@ class DataService extends ChangeNotifier {
         print('>>> ✓ ${novosSuprimentos.length} suprimentos carregadas (total: ${_suprimentos.length})');
       }
 
-      // Carregar mesas/comandas - NÃO LIMPAR, apenas adicionar/atualizar
+      // Carregar mesas/comandas - LIMPAR e substituir
       final mesasComandasMap =
           await _storage.carregarLista(_getChaveComEmpresa(LocalStorageService.keyMesasComandas));
       if (mesasComandasMap.isNotEmpty) {
-        final novasMesas = mesasComandasMap.map((map) => MesaComanda.fromMap(map)).toList();
-        // Atualizar ou adicionar mesas (evitar duplicatas)
-        for (final mesa in novasMesas) {
-          final index = _mesasComandas.indexWhere((m) => m.id == mesa.id);
-          if (index >= 0) {
-            _mesasComandas[index] = mesa; // Atualizar existente
-          } else {
-            _mesasComandas.add(mesa); // Adicionar nova
-          }
-        }
-        print('>>> ✓ ${novasMesas.length} mesas/comandas carregadas (total: ${_mesasComandas.length})');
+        final novasMesas = mesasComandasMap
+            .map((map) => MesaComanda.fromMap(map))
+            .where((m) => !_idsMesaRemovidosRecentemente.contains(m.id)) // Filtrar deletadas recentemente
+            .toList();
+            
+        _atualizarListaInPlace(_mesasComandas, novasMesas);
+        print('>>> ✓ ${novasMesas.length} mesas/comandas carregadas do localStorage (total: ${_mesasComandas.length})');
       }
 
       // Carregar notas de entrada - NÃO LIMPAR, apenas adicionar/atualizar
@@ -5934,16 +6064,224 @@ class DataService extends ChangeNotifier {
 
   /// Remove uma mesa ou comanda
   Future<void> deleteMesaComanda(String id) async {
-    _mesasComandas.removeWhere((m) => m.id == id);
+    debugPrint('>>> [DataService] 🗑️ Iniciando deleção da Mesa/Comanda: $id');
+    
+    // Adicionar ao Set de supressão recente (evita que o Firebase a restaure por latência)
+    _idsMesaRemovidosRecentemente.add(id);
+    // Remover do Set após 2 minutos (tempo suficiente para o Firestore propagar a deleção mundialmente)
+    Future.delayed(const Duration(minutes: 2), () {
+      _idsMesaRemovidosRecentemente.remove(id);
+      debugPrint('>>> [DataService] 🧹 ID $id removido do Set de supressão recente');
+    });
+
+    // Primeiro marcamos como Fechada localmente para que o Getter filtre IMEDIATAMENTE
+    final index = _mesasComandas.indexWhere((m) => m.id == id);
+    if (index != -1) {
+      _mesasComandas[index] = _mesasComandas[index].copyWith(status: 'Fechada');
+    }
     notifyListeners();
-    _salvarAutomaticamente();
-    // Remover do Firebase
+    
+    // Removemos da lista local (permanente)
+    _mesasComandas.removeWhere((m) => m.id == id);
+    
+    // SALVAR IMEDIATAMENTE no localStorage (sem debounce!)
+    // Isso garante que a deleção persista mesmo se o usuário recarregar a página
+    try {
+      await _storage.salvarLista(
+        _getChaveComEmpresa(LocalStorageService.keyMesasComandas), 
+        _mesasComandas
+      );
+      debugPrint('>>> [DataService] ✅ Lista de mesas/comandas salva localmente após deleção');
+    } catch (e) {
+      debugPrint('>>> [DataService] ❌ Erro ao salvar localmente após deleção: $e');
+    }
+    
+    // Remover do Firebase (EM BACKGROUND)
     if (_firebaseHabilitado && _empresaIdAtual != null) {
-      _firebaseService.removerMesaComanda(_empresaIdAtual!, id).catchError((e) {
-        debugPrint('>>> Erro ao remover mesa/comanda do Firebase: $e');
+      _firebaseService.removerMesaComanda(_empresaIdAtual!, id).then((_) {
+        debugPrint('>>> [DataService] ✓ Mesa/Comanda deletada do Firebase.');
+      }).catchError((e) {
+        debugPrint('>>> [DataService] ❌ Erro ao remover do Firebase: $e');
         _adicionarSincronizacaoPendente();
       });
     }
+  }
+
+  /// Limpa uma mesa/comanda, salvando o histórico como um pedido
+  Future<void> limparMesaComanda(String id, {String? usuario}) async {
+    final mesaIndex = _mesasComandas.indexWhere((m) => m.id == id);
+    if (mesaIndex == -1) {
+      debugPrint('>>> [LimparMesa] ❌ Mesa não encontrada: $id');
+      return;
+    }
+
+    final mesa = _mesasComandas[mesaIndex];
+    debugPrint('');
+    debugPrint('╔════════════════════════════════════════════════╗');
+    debugPrint('║  LIMPAR MESA/COMANDA - SALVANDO HISTÓRICO     ║');
+    debugPrint('╚════════════════════════════════════════════════╝');
+    debugPrint('>>> [LimparMesa] Tipo: ${mesa.tipo.name}');
+    debugPrint('>>> [LimparMesa] Número: ${mesa.numero}');
+    debugPrint('>>> [LimparMesa] Total itens: ${mesa.itens.length}');
+    debugPrint('>>> [LimparMesa] Total calculado: ${mesa.totalCalculado}');
+    debugPrint('>>> [LimparMesa] Pagamentos registrados: ${mesa.historicoPagamentos.length}');
+    debugPrint('>>> [LimparMesa] Couvert: ${mesa.valorCouvertCalculado}');
+
+    // Converter itens para Pedido
+    final produtos = <ItemPedido>[];
+    final servicos = <ItemServico>[];
+
+    for (final item in mesa.itens) {
+      if (item.status == StatusItem.cancelado) continue;
+
+      if (item.isServico) {
+        servicos.add(ItemServico(
+          id: item.itemId,
+          descricao: item.nome,
+          valor: item.preco,
+          valorAdicional: 0.0,
+        ));
+      } else {
+        produtos.add(ItemPedido(
+          id: item.itemId,
+          nome: item.nome,
+          quantidade: item.quantidade,
+          preco: item.preco,
+        ));
+      }
+    }
+
+    // Criar ID ÚNICO para o histórico (será usado tanto no Pedido quanto na VendaBalcao para merge correto)
+    final idHistorico = uuid.v4();
+    final bool isComanda = mesa.tipo == TipoControle.comanda || 
+                           mesa.numero.toUpperCase().contains('CMD') || 
+                           mesa.numero.toUpperCase().contains('COMANDA');
+    
+    // FORÇAR PREFIXOS PADRONIZADOS PARA O HISTÓRICO
+    final String prefixo = isComanda ? 'CMD' : 'MESA';
+    final String labelOrigem = isComanda ? '[COMANDA]' : '[MESA]';
+    
+    // Observação unificada para identificação infalível no histórico
+    final String tagIdentificacao = '[VIP-MC] originado de $labelOrigem ${mesa.numero}';
+    
+    // Se for Comanda, garantir que o número tenha o prefixo CMD (Identificação Garantida)
+    // Evitar prefixo duplo se mesa.numero já contém CMD-
+    final String baseLimpa = mesa.numero.toUpperCase()
+        .replaceAll('CMD-', '')
+        .replaceAll('MESA-', '')
+        .replaceAll('COMANDA-', '')
+        .trim();
+        
+    final String numeroHistorico = '$prefixo-$baseLimpa-${DateTime.now().millisecondsSinceEpoch.toString().substring(10)}';
+
+    // Nome do cliente formatado para SEMPRE ser identificado no histórico
+    // Ex: "[COMANDA] 01 - João Silva" ou "[MESA] 05"
+    String? clienteNomeFinal = mesa.clienteNome;
+    if (clienteNomeFinal == null || clienteNomeFinal.isEmpty) {
+      clienteNomeFinal = '$labelOrigem ${mesa.numero}';
+    } else if (!clienteNomeFinal.toUpperCase().contains(labelOrigem)) {
+      clienteNomeFinal = '$labelOrigem ${mesa.numero} - $clienteNomeFinal';
+    }
+    
+    // Criar lista de pagamentos normalizada
+    final pagamentosHistorico = mesa.historicoPagamentos.map((rp) {
+        TipoPagamento tipo;
+        final f = rp.formaPagamento?.toLowerCase() ?? '';
+        if (f.contains('pix')) {
+          tipo = TipoPagamento.pix;
+        } else if (f.contains('dinheiro')) {
+          tipo = TipoPagamento.dinheiro;
+        } else if (f.contains('débito') || f.contains('debito')) {
+          tipo = TipoPagamento.cartaoDebito;
+        } else if (f.contains('crédito') || f.contains('credito') || f.contains('cart')) {
+          tipo = TipoPagamento.cartaoCredito;
+        } else if (f.contains('boleto')) {
+          tipo = TipoPagamento.boleto;
+        } else if (f.contains('crediário') || f.contains('crediario')) {
+          tipo = TipoPagamento.crediario;
+        } else if (f.contains('fiado')) {
+          tipo = TipoPagamento.fiado;
+        } else {
+          tipo = TipoPagamento.outro;
+        }
+        
+        return PagamentoPedido(
+          id: rp.id,
+          tipo: tipo,
+          valor: rp.valor,
+          recebido: true,
+          dataRecebimento: rp.dataPagamento,
+          observacao: rp.observacao ?? 'Migrado de ${mesa.numero}',
+        );
+    }).toList();
+
+    final novoPedido = Pedido(
+      id: idHistorico,
+      numero: numeroHistorico,
+      dataPedido: DateTime.now(),
+      status: 'Finalizado (Mesa Limpa)',
+      clienteId: mesa.clienteId,
+      clienteNome: clienteNomeFinal, // Use o nome com tag explícita
+      produtos: produtos,
+      servicos: servicos,
+      vendedorNome: usuario,
+      pagamentos: pagamentosHistorico,
+      total: mesa.totalCalculado,
+      origem: 'Mesa/Comanda',
+      observacoes: tagIdentificacao,
+    );
+
+    // Salvar como VendaBalcao (Venda Direta) para aparecer no histórico unificado
+    final vendaHistorico = VendaBalcao(
+      id: idHistorico, // MESMO ID para facilitar o merge no Histórico
+      numero: novoPedido.numero,
+      dataVenda: DateTime.now(),
+      clienteId: mesa.clienteId,
+      clienteNome: novoPedido.clienteNome,
+      itens: mesa.itens.where((i) => i.status != StatusItem.cancelado).map((i) => ItemVendaBalcao(
+        id: i.itemId,
+        nome: i.nome,
+        precoUnitario: i.preco,
+        quantidade: i.quantidade,
+        isServico: i.isServico,
+      )).toList(),
+      tipoPagamento: pagamentosHistorico.isNotEmpty ? pagamentosHistorico.first.tipo : TipoPagamento.outro,
+      valorTotal: mesa.totalCalculado,
+      valorRecebido: mesa.totalPago,
+      operador: usuario,
+      origem: 'Mesa/Comanda',
+      observacoes: 'Mesa finalizada via controle. $tagIdentificacao',
+    );
+
+    // Salvar histórico (Pedido e VendaBalcao) - SEM AWAIT para garantir fluidez offline
+    addPedido(novoPedido);
+    addVendaBalcao(vendaHistorico);
+    debugPrint('>>> [DataService] ✓ Salvo em memória e localmente!');
+    
+    // Deletar a mesa
+    await deleteMesaComanda(id);
+    
+    notifyListeners();
+    debugPrint('>>> [LimparMesa] ✓ Processo concluído com sucesso');
+    debugPrint('');
+  }
+  
+  /// Converte uma string de forma de pagamento para o Enum TipoPagamento
+  TipoPagamento _getTipoPagamentoByString(String? forma) {
+    if (forma == null || forma.isEmpty) return TipoPagamento.dinheiro;
+    
+    final f = forma.toLowerCase();
+    if (f.contains('pix')) return TipoPagamento.pix;
+    if (f.contains('dinheiro')) return TipoPagamento.dinheiro;
+    if (f.contains('cartão') || f.contains('cartao')) {
+      if (f.contains('deb')) return TipoPagamento.cartaoDebito;
+      return TipoPagamento.cartaoCredito;
+    }
+    if (f.contains('boleto')) return TipoPagamento.boleto;
+    if (f.contains('fiado')) return TipoPagamento.fiado;
+    if (f.contains('crediario')) return TipoPagamento.crediario;
+    
+    return TipoPagamento.outro;
   }
 
   /// Atualiza o status de um item de mesa/comanda

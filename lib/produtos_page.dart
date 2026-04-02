@@ -256,9 +256,26 @@ class _ProdutosPageState extends State<ProdutosPage> {
                                     color: Colors.grey,
                                   ),
                                 ),
-                              Text(
-                                'R\$ ${produto.preco.toStringAsFixed(2)} | Estoque: ${produto.estoque}',
-                                style: const TextStyle(fontSize: 13),
+                              Row(
+                                children: [
+                                  Text(
+                                    'R\$ ${produto.preco.toStringAsFixed(2)} | Estoque: ${produto.estoque}',
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: (produto.estoque <= produto.estoqueMinimo && produto.estoqueMinimo > 0) 
+                                          ? Colors.redAccent 
+                                          : Colors.white70,
+                                      fontWeight: (produto.estoque <= produto.estoqueMinimo && produto.estoqueMinimo > 0)
+                                          ? FontWeight.bold
+                                          : FontWeight.normal,
+                                    ),
+                                  ),
+                                  if (produto.estoque <= produto.estoqueMinimo && produto.estoqueMinimo > 0)
+                                    const Padding(
+                                      padding: EdgeInsets.only(left: 8),
+                                      child: Icon(Icons.warning_amber_rounded, color: Colors.redAccent, size: 16),
+                                    ),
+                                ],
                               ),
                             ],
                           ),

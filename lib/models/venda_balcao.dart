@@ -9,7 +9,8 @@ class ItemVendaBalcao {
   final bool isServico;
   final int quantidadeDevolvida; // Quantidade que foi devolvida
   final int quantidadeTrocada; // Quantidade que foi trocada por outro produto
-  final String? trocadoPor; // Nome do produto pelo qual foi trocado
+  final String? trocadoPor; // ID do produto que substituiu este em uma troca
+  final String? fornecedorNome; // Fornecedor do produto no momento da venda
 
   ItemVendaBalcao({
     required this.id,
@@ -20,6 +21,7 @@ class ItemVendaBalcao {
     this.quantidadeDevolvida = 0,
     this.quantidadeTrocada = 0,
     this.trocadoPor,
+    this.fornecedorNome,
   });
 
   /// Quantidade efetiva (descontando devoluções e trocas)
@@ -48,6 +50,7 @@ class ItemVendaBalcao {
       quantidadeDevolvida: map['quantidadeDevolvida'] ?? 0,
       quantidadeTrocada: map['quantidadeTrocada'] ?? 0,
       trocadoPor: map['trocadoPor'],
+      fornecedorNome: map['fornecedorNome'],
     );
   }
 
@@ -61,6 +64,7 @@ class ItemVendaBalcao {
       'quantidadeDevolvida': quantidadeDevolvida,
       'quantidadeTrocada': quantidadeTrocada,
       'trocadoPor': trocadoPor,
+      'fornecedorNome': fornecedorNome,
     };
   }
 
@@ -74,6 +78,7 @@ class ItemVendaBalcao {
     int? quantidadeDevolvida,
     int? quantidadeTrocada,
     String? trocadoPor,
+    String? fornecedorNome,
   }) {
     return ItemVendaBalcao(
       id: id ?? this.id,
@@ -84,6 +89,7 @@ class ItemVendaBalcao {
       quantidadeDevolvida: quantidadeDevolvida ?? this.quantidadeDevolvida,
       quantidadeTrocada: quantidadeTrocada ?? this.quantidadeTrocada,
       trocadoPor: trocadoPor ?? this.trocadoPor,
+      fornecedorNome: fornecedorNome ?? this.fornecedorNome,
     );
   }
 }
@@ -103,6 +109,7 @@ class VendaBalcao {
   final double? valorRecebido;
   final double? troco;
   final String? operador; // Nome do operador/vendedor
+  final String? origem; // Origem detalhada (Mesa/Comanda, Venda Direta, etc)
   final String? observacoes;
   final bool cancelado; // Indica se a venda foi cancelada
   final DateTime createdAt;
@@ -121,6 +128,7 @@ class VendaBalcao {
     this.valorRecebido,
     this.troco,
     this.operador,
+    this.origem,
     this.observacoes,
     this.cancelado = false,
     DateTime? createdAt,
@@ -155,6 +163,7 @@ class VendaBalcao {
       valorRecebido: map['valorRecebido']?.toDouble(),
       troco: map['troco']?.toDouble(),
       operador: map['operador'],
+      origem: map['origem'],
       observacoes: map['observacoes'],
       cancelado: map['cancelado'] ?? false,
       createdAt: map['createdAt'] != null
@@ -178,6 +187,7 @@ class VendaBalcao {
       'valorRecebido': valorRecebido,
       'troco': troco,
       'operador': operador,
+      'origem': origem,
       'observacoes': observacoes,
       'cancelado': cancelado,
       'createdAt': createdAt.toIso8601String(),
@@ -217,6 +227,7 @@ class VendaBalcao {
       valorRecebido: valorRecebido ?? this.valorRecebido,
       troco: troco ?? this.troco,
       operador: operador ?? this.operador,
+      origem: origem ?? this.origem,
       observacoes: observacoes ?? this.observacoes,
       cancelado: cancelado ?? this.cancelado,
       createdAt: createdAt ?? this.createdAt,

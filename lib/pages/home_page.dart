@@ -179,7 +179,7 @@ class _HomePageState extends State<HomePage> {
       child: Scaffold(
         backgroundColor: Colors.transparent,
         appBar: AppBar(
-          title: const ExodoLogoCompact(fontSize: 28),
+          title: const ExodoLogoCompact(fontSize: 28), // Restaurado 'ê' conforme pedido
           centerTitle: true,
           actions: [
             const SyncStatusWidget(),
@@ -327,21 +327,23 @@ class _HomePageState extends State<HomePage> {
             // Página 0: Home (menu principal)
             SingleChildScrollView(
               physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  // Logo principal
-                  const SizedBox(height: 20),
-                  const ExodoLogo(
-                    fontSize: 64,
-                    showSubtitle: true,
-                  ),
-                  const SizedBox(height: 40),
-                  
-                  // Grid de botões de navegação
-                  _buildNavigationGrid(context),
-                ],
+              padding: const EdgeInsets.only(left: 24, right: 24, top: 0, bottom: 24),
+              child: Transform.translate(
+                offset: const Offset(0, -20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // Logo principal
+                    const ExodoLogo(
+                      fontSize: 54, // Reduzido de 64
+                      showSubtitle: true,
+                    ),
+                    const SizedBox(height: 16),
+                    
+                    // Grid de botões de navegação
+                    _buildNavigationGrid(context),
+                  ],
+                ),
               ),
             ),
             // Página 1: Dashboard
@@ -450,7 +452,44 @@ class _HomePageState extends State<HomePage> {
   Widget _buildNavigationGrid(BuildContext context) {
     return Column(
       children: [
-        // Primeira linha: Clientes e Produtos
+        // PRIMEIRA LINHA (OS PRINCIPAIS): PDV e Pedidos
+        Row(
+          children: [
+            Expanded(
+              child: TelaAccessWidget(
+                tela: TelaSistema.pdv,
+                child: PermissionWidget(
+                  permissao: TipoPermissao.vendasVisualizar,
+                  child: _buildNavButton(
+                    context,
+                    title: 'PDV',
+                    subtitle: 'Ponto de Venda',
+                    icon: Icons.point_of_sale,
+                    color: const Color(0xFF00BCD4),
+                    page: VendaDiretaPage(),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: TelaAccessWidget(
+                tela: TelaSistema.pedidos,
+                child: _buildNavButton(
+                  context,
+                  title: 'Pedidos',
+                  subtitle: 'Central de Pedidos',
+                  icon: Icons.receipt_long,
+                  color: const Color(0xFF9C27B0),
+                  page: const PedidosPage(),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        
+        // SEGUNDA LINHA (CADASTROS): Clientes e Produtos
         Row(
           children: [
             Expanded(
@@ -488,7 +527,7 @@ class _HomePageState extends State<HomePage> {
         ),
         const SizedBox(height: 16),
         
-        // Segunda linha: Serviços e Pedidos
+        // TERCEIRA LINHA: Serviços e Funcionários (RAXADO NO MEIO)
         Row(
           children: [
             Expanded(
@@ -506,25 +545,6 @@ class _HomePageState extends State<HomePage> {
             const SizedBox(width: 16),
             Expanded(
               child: TelaAccessWidget(
-                tela: TelaSistema.pedidos,
-                child: _buildNavButton(
-                  context,
-                  title: 'Pedidos',
-                  icon: Icons.receipt_long,
-                  color: const Color(0xFF9C27B0),
-                  page: const PedidosPage(),
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        
-        // Linha adicional: Funcionários / Vendedores
-        Row(
-          children: [
-            Expanded(
-              child: TelaAccessWidget(
                 tela: TelaSistema.funcionarios,
                 child: _buildNavButton(
                   context,
@@ -540,7 +560,7 @@ class _HomePageState extends State<HomePage> {
         ),
         const SizedBox(height: 16),
         
-        // Terceira linha: Entrada de Mercadorias e PDV
+        // QUARTA LINHA (OPERAÇÕES): Entrada e Caixa
         Row(
           children: [
             Expanded(
@@ -559,17 +579,14 @@ class _HomePageState extends State<HomePage> {
             const SizedBox(width: 16),
             Expanded(
               child: TelaAccessWidget(
-                tela: TelaSistema.pdv,
-                child: PermissionWidget(
-                  permissao: TipoPermissao.vendasVisualizar,
-                  child: _buildNavButton(
-                    context,
-                    title: 'PDV',
-                    subtitle: 'Ponto de Venda',
-                    icon: Icons.point_of_sale,
-                    color: const Color(0xFF00BCD4),
-                    page: VendaDiretaPage(),
-                  ),
+                tela: TelaSistema.caixa,
+                child: _buildNavButton(
+                  context,
+                  title: 'Fluxo de Caixa',
+                  subtitle: 'Entradas e Saídas',
+                  icon: Icons.account_balance_wallet,
+                  color: const Color(0xFF4DB6AC),
+                  page: const CaixaPage(),
                 ),
               ),
             ),
@@ -577,7 +594,7 @@ class _HomePageState extends State<HomePage> {
         ),
         const SizedBox(height: 16),
         
-        // Quarta linha: Contas a Pagar
+        // QUINTA LINHA: Contas a Pagar e Agenda
         Row(
           children: [
             Expanded(
@@ -586,7 +603,7 @@ class _HomePageState extends State<HomePage> {
                 child: _buildNavButton(
                   context,
                   title: 'Contas a Pagar',
-                  subtitle: 'Despesas e Pagamentos',
+                  subtitle: 'Despesas',
                   icon: Icons.payment,
                   color: const Color(0xFFD32F2F),
                   page: const ContasPagarPage(),
@@ -600,7 +617,7 @@ class _HomePageState extends State<HomePage> {
                 child: _buildNavButton(
                   context,
                   title: 'Agenda',
-                  subtitle: 'Contas da Semana',
+                  subtitle: 'Contas Semanais',
                   icon: Icons.calendar_today,
                   color: const Color(0xFF1976D2),
                   page: const AgendaContasPage(),
@@ -611,7 +628,7 @@ class _HomePageState extends State<HomePage> {
         ),
         const SizedBox(height: 16),
         
-        // Quinta linha: Cozinha/Bar e Cozinha/Mesas Funcionário
+        // SEXTA LINHA: Restaurante / Atendimento
         Row(
           children: [
             Expanded(
@@ -621,8 +638,8 @@ class _HomePageState extends State<HomePage> {
                   permissao: TipoPermissao.cozinhaVisualizar,
                   child: _buildNavButton(
                     context,
-                    title: 'Acompanhar Pedidos',
-                    subtitle: 'Cozinha e Bar',
+                    title: 'Cozinha e Bar',
+                    subtitle: 'Pedidos',
                     icon: Icons.restaurant,
                     color: const Color(0xFFFF5722),
                     page: const CozinhaBarPage(),
@@ -638,7 +655,7 @@ class _HomePageState extends State<HomePage> {
                   permissao: TipoPermissao.cozinhaFuncionario,
                   child: _buildNavButton(
                     context,
-                    title: 'Mesas e Comandas',
+                    title: 'Mesas/Comandas',
                     subtitle: 'Gerenciamento',
                     icon: Icons.table_restaurant,
                     color: const Color(0xFFFF9800),
@@ -651,41 +668,7 @@ class _HomePageState extends State<HomePage> {
         ),
         const SizedBox(height: 16),
         
-        // Sexta linha: E-commerce - Links de Vendedores e Dashboard
-        Row(
-          children: [
-            Expanded(
-              child: TelaAccessWidget(
-                tela: TelaSistema.linksVendedores,
-                child: _buildNavButton(
-                  context,
-                  title: 'Links Vendedores',
-                  subtitle: 'Gerenciar Links',
-                  icon: Icons.link,
-                  color: const Color(0xFF9C27B0),
-                  page: const GerenciarLinksVendedoresPage(),
-                ),
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: TelaAccessWidget(
-                tela: TelaSistema.vendedorDashboard,
-                child: _buildNavButton(
-                  context,
-                  title: 'Dashboard',
-                  subtitle: 'Vendedores',
-                  icon: Icons.dashboard,
-                  color: const Color(0xFF00BCD4),
-                  page: const VendedorDashboardPage(),
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        
-        // Sétima linha: Personalizar Loja e Agenda de Serviços
+        // SÉTIMA LINHA: E-commerce
         Row(
           children: [
             Expanded(
@@ -703,13 +686,16 @@ class _HomePageState extends State<HomePage> {
             ),
             const SizedBox(width: 16),
             Expanded(
-              child: _buildNavButton(
-                context,
-                title: 'Agenda Pet',
-                subtitle: 'Agendamentos',
-                icon: Icons.calendar_month,
-                color: const Color(0xFFFFC107),
-                page: AgendaServicosPage(),
+              child: TelaAccessWidget(
+                tela: TelaSistema.vendedorDashboard,
+                child: _buildNavButton(
+                  context,
+                  title: 'Vendedor',
+                  subtitle: 'Dashboard',
+                  icon: Icons.dashboard_customize,
+                  color: const Color(0xFF00BCD4),
+                  page: const VendedorDashboardPage(),
+                ),
               ),
             ),
           ],
@@ -727,16 +713,16 @@ class _HomePageState extends State<HomePage> {
     required Widget page,
     bool isFullWidth = false,
   }) {
-    // Tamanhos maiores para o botão PDV
-    final iconSize = isFullWidth ? 60.0 : 40.0;
-    final iconPadding = isFullWidth ? 24.0 : 16.0;
-    final titleFontSize = isFullWidth ? 28.0 : 18.0;
-    final subtitleFontSize = isFullWidth ? 16.0 : 12.0;
-    final containerPadding = isFullWidth ? 32.0 : 24.0;
-    final spacing = isFullWidth ? 20.0 : 16.0;
+    // Tamanhos reduzidos para economizar espaço
+    final iconSize = isFullWidth ? 48.0 : 28.0;
+    final iconPadding = isFullWidth ? 20.0 : 12.0;
+    final titleFontSize = isFullWidth ? 24.0 : 15.0;
+    final subtitleFontSize = isFullWidth ? 14.0 : 11.0;
+    final containerPadding = isFullWidth ? 24.0 : 14.0;
+    final spacing = isFullWidth ? 16.0 : 12.0;
 
     return Container(
-      margin: EdgeInsets.only(bottom: isFullWidth ? 0 : 0),
+      margin: const EdgeInsets.only(bottom: 0),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
@@ -774,32 +760,38 @@ class _HomePageState extends State<HomePage> {
                html_helper.updateUrl('/');
             }
           },
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(16),
           child: Container(
             padding: EdgeInsets.all(containerPadding),
             decoration: BoxDecoration(
-              color: const Color(0xFF1E1E2E).withOpacity(0.8),
-              borderRadius: BorderRadius.circular(20),
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  const Color(0xFF1E1E2E).withOpacity(0.9),
+                  const Color(0xFF161625).withOpacity(0.95),
+                ],
+              ),
+              borderRadius: BorderRadius.circular(16),
               border: Border.all(
-                color: color.withOpacity(0.3),
-                width: isFullWidth ? 2.0 : 1.5,
+                color: color.withOpacity(0.2),
+                width: 1.0,
               ),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.3),
-                  blurRadius: isFullWidth ? 12 : 8,
-                  offset: Offset(0, isFullWidth ? 6 : 4),
+                  color: color.withOpacity(0.05),
+                  blurRadius: 10,
+                  spreadRadius: 1,
                 ),
               ],
             ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
+            child: Row(
               children: [
                 Container(
                   padding: EdgeInsets.all(iconPadding),
                   decoration: BoxDecoration(
-                    color: color.withOpacity(0.2),
-                    shape: BoxShape.circle,
+                    color: color.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(12),
                   ),
                   child: Icon(
                     icon,
@@ -807,32 +799,39 @@ class _HomePageState extends State<HomePage> {
                     color: color,
                   ),
                 ),
-                SizedBox(height: spacing),
-                Text(
-                  title,
-                  style: TextStyle(
-                    fontSize: titleFontSize,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
+                SizedBox(width: spacing),
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: TextStyle(
+                          fontSize: titleFontSize,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                      if (subtitle != null) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          subtitle,
+                          style: TextStyle(
+                            fontSize: subtitleFontSize,
+                            color: Colors.white.withOpacity(0.5),
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ],
                   ),
-                  textAlign: TextAlign.center,
                 ),
-                if (subtitle != null) ...[
-                  SizedBox(height: isFullWidth ? 8 : 4),
-                  Text(
-                    subtitle,
-                    style: TextStyle(
-                      fontSize: subtitleFontSize,
-                      color: Colors.white.withOpacity(0.6),
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                ],
-                SizedBox(height: isFullWidth ? 12 : 8),
                 Icon(
-                  Icons.arrow_forward_ios,
-                  size: isFullWidth ? 20 : 16,
-                  color: color.withOpacity(0.7),
+                  Icons.chevron_right,
+                  size: 18,
+                  color: Colors.white.withOpacity(0.2),
                 ),
               ],
             ),

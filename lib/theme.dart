@@ -154,7 +154,7 @@ class AppTheme {
         final cor1 = darken(primariaFinal, 0.3);
         final cor2 = primariaFinal;
         final cor3 = secundariaFinal;
-        
+
         return SizedBox.expand(
           child: Container(
             decoration: BoxDecoration(
@@ -164,19 +164,46 @@ class AppTheme {
                 end: Alignment.bottomRight,
                 stops: const [0.0, 0.5, 1.0],
               ),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x66000000),
-                  blurRadius: 20,
-                  offset: Offset(0, 8),
+            ),
+            child: Stack(
+              children: [
+                // Fênix suave ao fundo (watermark) - Lado Direito Inferior
+                Positioned(
+                  right: -150,
+                  bottom: -100,
+                  child: Opacity(
+                    opacity: 0.04, // Extremamente sutil "por debaixo dos panos"
+                    child: Transform.rotate(
+                      angle: -0.2,
+                      child: Image.asset(
+                        'assets/images/phoenix.png',
+                        fit: BoxFit.contain,
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  left: -50,
+                  top: 100,
+                  child: Opacity(
+                    opacity: 0.02,
+                    child: Transform.rotate(
+                      angle: 0.4,
+                      child: Image.asset(
+                        'assets/images/phoenix.png',
+                        width: 400,
+                        fit: BoxFit.contain,
+                      ),
+                    ),
+                  ),
+                ),
+                Scaffold(
+                  backgroundColor: Colors.transparent,
+                  body: SafeArea(
+                    child: child,
+                  ),
                 ),
               ],
-            ),
-            child: Scaffold(
-              backgroundColor: Colors.transparent,
-              body: SafeArea(
-                child: child,
-              ),
             ),
           ),
         );

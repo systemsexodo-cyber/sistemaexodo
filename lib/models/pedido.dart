@@ -16,6 +16,7 @@ class Pedido {
   final String? linkVendedorId; // ID do link usado
   final String? linkVendedorCodigo; // Código do link (ex: ABC123)
   final bool origemEcommerce; // Indica se o pedido veio do e-commerce (loja pública)
+  final String? origem; // Origem detalhada do pedido (Mesa/Comanda, Venda Direta, etc)
   final DateTime dataPedido;
   final String status; // Pendente, Em Andamento, Concluído, Cancelado
   final double total;
@@ -40,6 +41,7 @@ class Pedido {
     this.linkVendedorId,
     this.linkVendedorCodigo,
     this.origemEcommerce = false, // Por padrão, não é do e-commerce
+    this.origem,
     DateTime? dataPedido,
     this.status = 'Pendente',
     this.total = 0.0,
@@ -151,7 +153,8 @@ class Pedido {
       vendedorNome: map['vendedorNome'],
       linkVendedorId: map['linkVendedorId'],
       linkVendedorCodigo: map['linkVendedorCodigo'],
-      origemEcommerce: map['origemEcommerce'] ?? false, // Compatibilidade com pedidos antigos
+      origemEcommerce: map['origemEcommerce'] ?? false, 
+      origem: map['origem'],
       dataPedido: map['dataPedido'] != null
           ? DateTime.parse(map['dataPedido'])
           : DateTime.now(),
@@ -193,6 +196,7 @@ class Pedido {
       'linkVendedorId': linkVendedorId,
       'linkVendedorCodigo': linkVendedorCodigo,
       'origemEcommerce': origemEcommerce,
+      'origem': origem,
       'dataPedido': dataPedido.toIso8601String(),
       'status': status,
       'total': total,
@@ -220,6 +224,7 @@ class Pedido {
     String? linkVendedorId,
     String? linkVendedorCodigo,
     bool? origemEcommerce,
+    String? origem,
     DateTime? dataPedido,
     String? status,
     double? total,
@@ -244,6 +249,7 @@ class Pedido {
       linkVendedorId: linkVendedorId ?? this.linkVendedorId,
       linkVendedorCodigo: linkVendedorCodigo ?? this.linkVendedorCodigo,
       origemEcommerce: origemEcommerce ?? this.origemEcommerce,
+      origem: origem ?? this.origem,
       dataPedido: dataPedido ?? this.dataPedido,
       status: status ?? this.status,
       total: total ?? this.total,

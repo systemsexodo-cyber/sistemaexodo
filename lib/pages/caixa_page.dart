@@ -304,7 +304,7 @@ class _CaixaPageState extends State<CaixaPage> {
                                     child: Material(
                                       color: Colors.transparent,
                                       child: InkWell(
-                                        onTap: () => _mostrarDialogoSangria(context, dataService),
+                                        onTap: () => _mostrarDialogoSangria(context, dataService, isPagamento: true),
                                         borderRadius: BorderRadius.circular(16),
                                         child: Padding(
                                           padding: const EdgeInsets.symmetric(vertical: 18),
@@ -312,7 +312,7 @@ class _CaixaPageState extends State<CaixaPage> {
                                             mainAxisAlignment: MainAxisAlignment.center,
                                             children: [
                                               const Icon(
-                                                Icons.remove_circle_outline,
+                                                Icons.outbox,
                                                 color: Colors.white,
                                                 size: 24,
                                               ),
@@ -1470,7 +1470,6 @@ class _CaixaPageState extends State<CaixaPage> {
             onPressed: () async {
               print('>>> [Fechar Caixa] ========== BOTÃO PRESSIONADO ==========');
               
-              // Teste imediato - mostrar que o botão funciona
               if (context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
@@ -1481,7 +1480,6 @@ class _CaixaPageState extends State<CaixaPage> {
                 );
               }
               
-              // Verificar se formKey existe
               if (formKey.currentState == null) {
                 print('>>> [Fechar Caixa] ERRO: formKey.currentState é null!');
                 if (context.mounted) {
@@ -1495,13 +1493,8 @@ class _CaixaPageState extends State<CaixaPage> {
                 return;
               }
               
-              // Validar formulário
-              print('>>> [Fechar Caixa] Validando formulário...');
               final isValid = formKey.currentState!.validate();
-              print('>>> [Fechar Caixa] Resultado da validação: $isValid');
-              
               if (!isValid) {
-                print('>>> [Fechar Caixa] Validação do formulário falhou');
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
@@ -1514,45 +1507,26 @@ class _CaixaPageState extends State<CaixaPage> {
                 return;
               }
               
-              // Salvar estado do formulário
               formKey.currentState!.save();
               
-              print('>>> [Fechar Caixa] Validação passou');
-              
               try {
-                print('>>> [Fechar Caixa] Processando valores...');
-                
                 final valorEsperadoStr = valorEsperadoController.text.replaceAll('.', '').replaceAll(',', '.');
                 final valorRealStr = valorRealController.text.replaceAll('.', '').replaceAll(',', '.');
-                
-                print('>>> [Fechar Caixa] Valor esperado (string): $valorEsperadoStr');
-                print('>>> [Fechar Caixa] Valor real (string): $valorRealStr');
                 
                 final valorEsperado = double.tryParse(valorEsperadoStr) ?? 0.0;
                 final valorReal = double.tryParse(valorRealStr) ?? 0.0;
                 
-                print('>>> [Fechar Caixa] Valor esperado (double): $valorEsperado');
-                print('>>> [Fechar Caixa] Valor real (double): $valorReal');
-                
-                // Calcular diferença
                 final diferenca = valorReal - valorEsperado;
                 final responsavel = responsavelController.text.trim().isEmpty 
                     ? null 
                     : responsavelController.text.trim();
                 
-                print('>>> [Fechar Caixa] Responsável: ${responsavel ?? "Não informado"}');
-                print('>>> [Fechar Caixa] Diferença: $diferenca');
-
-                // Confirmar fechamento se houver diferença significativa
                 if (diferenca.abs() > 0.01) {
-                  print('>>> [Fechar Caixa] Diferença detectada, mostrando diálogo de confirmação');
                   final confirmar = await showDialog<bool>(
                       context: context,
                       builder: (confirmContext) => AlertDialog(
                         backgroundColor: const Color(0xFF1E1E2E),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(20),
-                        ),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
                         title: Row(
                           children: [
                             Icon(
@@ -1560,60 +1534,15 @@ class _CaixaPageState extends State<CaixaPage> {
                               color: diferenca > 0 ? Colors.green : Colors.red,
                             ),
                             const SizedBox(width: 12),
-                            const Text(
-                              'Diferença Detectada',
-                              style: TextStyle(color: Colors.white),
-                            ),
+                            const Text('Diferença Detectada', style: TextStyle(color: Colors.white)),
                           ],
                         ),
                         content: Column(
                           mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              'Foi detectada uma diferença no fechamento:',
-                              style: TextStyle(color: Colors.white.withOpacity(0.8)),
-                            ),
+                            Text('Diferença detectada: ${formatoMoeda.format(diferenca.abs())}', style: const TextStyle(color: Colors.white)),
                             const SizedBox(height: 12),
-                            Container(
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: (diferenca > 0 ? Colors.green : Colors.red)
-                                    .withOpacity(0.2),
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border.all(
-                                  color: (diferenca > 0 ? Colors.green : Colors.red)
-                                      .withOpacity(0.5),
-                                ),
-                              ),
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Text(
-                                    diferenca > 0 ? 'Sobra:' : 'Falta:',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                  Text(
-                                    formatoMoeda.format(diferenca.abs()),
-                                    style: TextStyle(
-                                      color: diferenca > 0
-                                          ? Colors.greenAccent
-                                          : Colors.redAccent,
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            Text(
-                              'Deseja continuar com o fechamento?',
-                              style: TextStyle(color: Colors.white.withOpacity(0.8)),
-                            ),
+                            const Text('Deseja continuar?', style: TextStyle(color: Colors.white70)),
                           ],
                         ),
                         actions: [
@@ -1623,84 +1552,58 @@ class _CaixaPageState extends State<CaixaPage> {
                           ),
                           ElevatedButton(
                             onPressed: () => Navigator.pop(confirmContext, true),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: diferenca > 0 ? Colors.green : Colors.red,
-                            ),
-                            child: const Text('Confirmar Fechamento'),
+                            style: ElevatedButton.styleFrom(backgroundColor: diferenca > 0 ? Colors.green : Colors.red),
+                            child: const Text('Confirmar'),
                           ),
                         ],
                       ),
                     );
 
-                  if (confirmar != true) {
-                    print('>>> [Fechar Caixa] Fechamento cancelado pelo usuário');
-                    return;
-                  }
-                  print('>>> [Fechar Caixa] Confirmação recebida');
+                  if (confirmar != true) return;
                 }
 
                 print('>>> [Fechar Caixa] Chamando registrarFechamentoCaixa...');
-                  
-                  final fechamento = await dataService.registrarFechamentoCaixa(
-                    valorEsperado: valorEsperado,
-                    valorReal: valorReal,
-                    observacao: observacaoController.text.trim().isEmpty
-                        ? null
-                        : observacaoController.text.trim(),
-                    responsavel: responsavel,
+                final fechamento = await dataService.registrarFechamentoCaixa(
+                  valorEsperado: valorEsperado,
+                  valorReal: valorReal,
+                  observacao: observacaoController.text.trim().isEmpty ? null : observacaoController.text.trim(),
+                  responsavel: responsavel,
+                );
+                
+                if (fechamento == null) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Erro ao fechar caixa.'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
+                  return;
+                }
+
+                // Navegação bem-sucedida para Home
+                if (context.mounted) {
+                  Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+                    MaterialPageRoute(builder: (_) => const HomePage()),
+                    (route) => false,
                   );
                   
-                  print('>>> [Fechar Caixa] Fechamento registrado: ${fechamento != null ? "SUCESSO" : "FALHOU"}');
-
-                  if (fechamento == null) {
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Erro: Não foi possível fechar o caixa. Verifique se há uma abertura ativa.'),
-                          backgroundColor: Colors.red,
-                          duration: Duration(seconds: 4),
-                        ),
-                      );
-                    }
-                    return;
-                  }
-
-                  if (context.mounted) {
-                    print('>>> [Fechar Caixa] Fechando diálogo e mostrando mensagem de sucesso');
-                    Navigator.pop(dialogContext);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Row(
-                          children: [
-                            const Icon(Icons.check_circle, color: Colors.white),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                (responsavel != null && responsavel.isNotEmpty)
-                                    ? 'Caixa fechado com sucesso por $responsavel!'
-                                    : 'Caixa fechado com sucesso!',
-                              ),
-                            ),
-                          ],
-                        ),
-                        backgroundColor: Colors.green,
-                        duration: const Duration(seconds: 3),
-                      ),
-                    );
-                  }
-                } catch (e, stackTrace) {
-                  print('>>> [Fechar Caixa] ERRO: $e');
-                  print('>>> [Fechar Caixa] StackTrace: $stackTrace');
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('Erro ao fechar caixa: $e'),
-                        backgroundColor: Colors.red,
-                        duration: const Duration(seconds: 5),
-                      ),
-                    );
-                  }
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(responsavel != null ? 'Caixa fechado por $responsavel!' : 'Caixa fechado com sucesso!'),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
                 }
+              } catch (e) {
+                print('>>> [Fechar Caixa] ERRO: $e');
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Erro ao fechar caixa: $e'), backgroundColor: Colors.red),
+                  );
+                }
+              }
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.redAccent,
@@ -1729,7 +1632,7 @@ class _CaixaPageState extends State<CaixaPage> {
     );
   }
 
-  void _mostrarDialogoSangria(BuildContext context, DataService dataService) {
+  void _mostrarDialogoSangria(BuildContext context, DataService dataService, {bool isPagamento = false}) {
     final valorController = TextEditingController();
     final motivoController = TextEditingController();
     final observacaoController = TextEditingController();
@@ -1742,11 +1645,11 @@ class _CaixaPageState extends State<CaixaPage> {
       builder: (dialogContext) => AlertDialog(
         backgroundColor: const Color(0xFF1E1E2E),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Row(
+        title: Row(
           children: [
-            Icon(Icons.remove_circle, color: Colors.orange, size: 28),
-            SizedBox(width: 12),
-            Text('Registrar Pagamento', style: TextStyle(color: Colors.white)),
+            Icon(isPagamento ? Icons.outbox : Icons.remove_circle, color: isPagamento ? Colors.purpleAccent : Colors.orange, size: 28),
+            const SizedBox(width: 12),
+            Text(isPagamento ? 'Registrar Pagamento' : 'Registrar Sangria', style: const TextStyle(color: Colors.white)),
           ],
         ),
         content: Form(
@@ -1874,7 +1777,7 @@ class _CaixaPageState extends State<CaixaPage> {
 
                   await dataService.registrarSangria(
                     valor: valor,
-                    motivo: motivoController.text.trim(),
+                    motivo: isPagamento ? '[PAGAMENTO] ${motivoController.text.trim()}' : motivoController.text.trim(),
                     observacao: observacaoController.text.trim().isEmpty
                         ? null
                         : observacaoController.text.trim(),
@@ -1888,9 +1791,11 @@ class _CaixaPageState extends State<CaixaPage> {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
                         content: Text(
-                          'Sangria registrada: ${formatoMoeda.format(valor)}',
+                          isPagamento 
+                            ? 'Pagamento registrado: ${formatoMoeda.format(valor)}'
+                            : 'Sangria registrada: ${formatoMoeda.format(valor)}',
                         ),
-                        backgroundColor: Colors.orange,
+                        backgroundColor: isPagamento ? Colors.purple : Colors.orange,
                       ),
                     );
                   }

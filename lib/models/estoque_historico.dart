@@ -6,6 +6,8 @@ class EstoqueHistorico {
   final String tipo; // 'entrada', 'saida', 'ajuste'
   final String? usuario;
   final String? observacao;
+  final String? fornecedorId;
+  final String? fornecedorNome;
 
   EstoqueHistorico({
     required this.id,
@@ -15,6 +17,8 @@ class EstoqueHistorico {
     required this.tipo,
     this.usuario,
     this.observacao,
+    this.fornecedorId,
+    this.fornecedorNome,
   });
 
   factory EstoqueHistorico.fromMap(Map<String, dynamic> map) {
@@ -28,6 +32,8 @@ class EstoqueHistorico {
       tipo: map['tipo'] ?? '',
       usuario: map['usuario'],
       observacao: map['observacao'],
+      fornecedorId: map['fornecedorId'],
+      fornecedorNome: map['fornecedorNome'],
     );
   }
 
@@ -40,6 +46,8 @@ class EstoqueHistorico {
       'tipo': tipo,
       'usuario': usuario,
       'observacao': observacao,
+      'fornecedorId': fornecedorId,
+      'fornecedorNome': fornecedorNome,
     };
   }
 }

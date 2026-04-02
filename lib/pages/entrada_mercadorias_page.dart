@@ -1276,11 +1276,11 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
           final precoVendaAnterior = produtoAtual.preco;
           final estoqueAnterior = produtoAtual.estoque;
           
-          // Atualizar produto
+           // Atualizar produto
           var produtoAtualizado = produtoAtual.copyWith(
             precoCusto: item.precoCusto,
             preco: item.precoVenda,
-            estoque: produtoAtual.estoque + item.quantidade.toInt(),
+            // NÃO incrementamos estoque aqui manualmente, registrarEntradaEstoque fará isso
             updatedAt: DateTime.now(),
           );
 
@@ -1291,13 +1291,19 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
           }
           
           service.updateProduto(produtoAtualizado);
-          print('>>> Produto atualizado: ${produtoAtualizado.nome} - Estoque: ${produtoAtualizado.estoque} - Custo: ${produtoAtualizado.precoCusto}');
+          print('>>> Produto preco atualizado: ${produtoAtualizado.nome}');
           
-          // Registrar entrada no histórico
-          service.registrarEntradaEstoque(
+          // Registrar entrada no histórico e gerenciar estoque
+          final fornecedorFinal = (item.fornecedorNome != null && item.fornecedorNome!.isNotEmpty) 
+              ? item.fornecedorNome 
+              : _fornecedorNome;
+
+          await service.registrarEntradaEstoque(
             produtoId: produtoAtual.id,
             quantidade: item.quantidade.toInt(),
             observacao: 'Entrada por ${_modo == 'xml' ? 'XML' : 'Manual'}',
+            fornecedorId: _fornecedorCNPJ,
+            fornecedorNome: fornecedorFinal,
           );
 
           // Adicionar item com valores anteriores
@@ -1346,8 +1352,14 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
           // Garantir que o grupo está cadastrado
           _cadastrarGrupoSeNaoExistir(item.grupo);
           
+           // Registrar entrada no histórico e gerenciar estoque
+          final fornecedorFinal = (item.fornecedorNome != null && item.fornecedorNome!.isNotEmpty) 
+              ? item.fornecedorNome 
+              : _fornecedorNome;
+
+          final uniqueTime = DateTime.now().microsecondsSinceEpoch.toString();
           final novoProduto = Produto(
-            id: DateTime.now().millisecondsSinceEpoch.toString(),
+            id: '${uniqueTime}_$processados',
             codigo: codigoInterno,
             codigoBarras: item.codigoBarras,
             nome: item.nome,
@@ -1355,20 +1367,24 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
             grupo: item.grupo,
             preco: item.precoVenda,
             precoCusto: item.precoCusto,
-            estoque: item.quantidade.toInt(),
+            estoque: 0, // Inicia com 0, registrarEntradaEstoque vai adicionar
             createdAt: DateTime.now(),
             updatedAt: DateTime.now(),
             codigosFornecedor: codigosFornecedor,
+            fornecedorId: _fornecedorCNPJ,
+            fornecedorNome: fornecedorFinal,
           );
 
           service.addProduto(novoProduto);
-          print('>>> Produto criado: ${novoProduto.nome} - Estoque: ${novoProduto.estoque} - Custo: ${novoProduto.precoCusto}');
+          print('>>> Produto novo criado com estoque 0: ${novoProduto.nome}');
           
-          // Registrar entrada no histórico
-          service.registrarEntradaEstoque(
+          // Registrar entrada no histórico e gerenciar estoque
+          await service.registrarEntradaEstoque(
             produtoId: novoProduto.id,
             quantidade: item.quantidade.toInt(),
             observacao: 'Entrada por ${_modo == 'xml' ? 'XML' : 'Manual'} - Produto novo',
+            fornecedorId: _fornecedorCNPJ,
+            fornecedorNome: fornecedorFinal,
           );
 
           // Adicionar item marcando como produto novo
@@ -1670,9 +1686,121 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
 
     return Column(
       children: [
+        // Informações do Fornecedor (Cabeçalho da Nota)
+        Container(
+          margin: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.05),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.white.withOpacity(0.1)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                   Icon(Icons.business, color: Colors.blueAccent.withOpacity(0.7), size: 18),
+                  const SizedBox(width: 8),
+                  const Text(
+                    'Dados do Fornecedor / Nota',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                    ),
+                  ),
+                  const Spacer(),
+                  if (_modo == 'xml')
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.green.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Text(
+                        'XML',
+                        style: TextStyle(color: Colors.greenAccent, fontSize: 10, fontWeight: FontWeight.bold),
+                      ),
+                    )
+                  else
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Text(
+                        'MANUAL',
+                        style: TextStyle(color: Colors.orangeAccent, fontSize: 10, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    flex: 2,
+                    child: _buildHeaderTextField(
+                      label: 'Nome do Fornecedor',
+                      value: _fornecedorNome ?? '',
+                      onChanged: (v) => setState(() => _fornecedorNome = v),
+                      hint: 'Ex: Ambev S.A.',
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildHeaderTextField(
+                      label: 'CNPJ / CPF',
+                      value: _fornecedorCNPJ ?? '',
+                      onChanged: (v) => setState(() => _fornecedorCNPJ = v),
+                      hint: '00.000.000/0001-00',
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildHeaderTextField(
+                      label: 'Nº da Nota',
+                      value: _numeroNotaReal ?? '',
+                      onChanged: (v) => setState(() => _numeroNotaReal = v),
+                      hint: '000.000.000',
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildHeaderTextField(
+                      label: 'Data Emissão',
+                      value: _dataEmissao != null ? DateFormat('dd/MM/yyyy').format(_dataEmissao!) : '',
+                      readOnly: true,
+                      onTap: () async {
+                        final data = await showDatePicker(
+                          context: context,
+                          initialDate: _dataEmissao ?? DateTime.now(),
+                          firstDate: DateTime(2020),
+                          lastDate: DateTime.now(),
+                        );
+                        if (data != null) {
+                          setState(() => _dataEmissao = data);
+                        }
+                      },
+                      onChanged: (_) {}, // Obrigatório mas não usado pelo campo readOnly
+                      hint: '00/00/0000',
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+
         // Filtro de busca
         Padding(
-          padding: const EdgeInsets.all(16.0),
+          padding: const EdgeInsets.symmetric(horizontal: 16.0),
           child: TextField(
             controller: _buscaController,
             style: const TextStyle(color: Colors.white),
@@ -3098,6 +3226,53 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
       }
     }
   }
+
+  Widget _buildHeaderTextField({
+    required String label,
+    required String value,
+    required Function(String) onChanged,
+    String? hint,
+    bool readOnly = false,
+    VoidCallback? onTap,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            color: Colors.white.withOpacity(0.5),
+            fontSize: 10,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 4),
+        TextFormField(
+          initialValue: value,
+          key: ValueKey('header_${label}_$value'),
+          style: const TextStyle(color: Colors.white, fontSize: 13),
+          readOnly: readOnly,
+          onTap: onTap,
+          onChanged: onChanged,
+          decoration: InputDecoration(
+            hintText: hint,
+            hintStyle: TextStyle(color: Colors.white.withOpacity(0.2), fontSize: 13),
+            isDense: true,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 0, vertical: 8),
+            border: UnderlineInputBorder(
+              borderSide: BorderSide(color: Colors.white.withOpacity(0.1)),
+            ),
+            enabledBorder: UnderlineInputBorder(
+              borderSide: BorderSide(color: Colors.white.withOpacity(0.1)),
+            ),
+            focusedBorder: const UnderlineInputBorder(
+              borderSide: BorderSide(color: Colors.blueAccent),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 
@@ -3296,6 +3471,7 @@ class _ItemEntrada {
   String grupo; // Grupo/Categoria do produto
   Produto? produtoExistente;
   double? margemAtual;
+  String? fornecedorNome; // Fornecedor específico do item
 
   final TextEditingController _nomeController = TextEditingController();
   final TextEditingController _codigoController = TextEditingController();
@@ -3306,6 +3482,7 @@ class _ItemEntrada {
   final TextEditingController _precoVendaController = TextEditingController();
   final TextEditingController _unidadeController = TextEditingController();
   final TextEditingController _grupoController = TextEditingController();
+  final TextEditingController _fornecedorController = TextEditingController();
 
   _ItemEntrada({
     required this.codigo,
@@ -3320,6 +3497,7 @@ class _ItemEntrada {
     String? grupo,
     this.produtoExistente,
     double? margemAtual,
+    this.fornecedorNome,
   }) : precoVenda = precoVenda ?? 0,
        margemAtual = margemAtual,
        quantidadeEmbalagens = quantidadeEmbalagens ?? 0,
@@ -3334,6 +3512,7 @@ class _ItemEntrada {
     _precoVendaController.text = precoVenda.toString();
     _unidadeController.text = unidade;
     _grupoController.text = this.grupo;
+    _fornecedorController.text = fornecedorNome ?? '';
     _calcularQuantidadeTotal();
   }
 
@@ -3357,6 +3536,7 @@ class _ItemEntrada {
     _precoVendaController.dispose();
     _unidadeController.dispose();
     _grupoController.dispose();
+    _fornecedorController.dispose();
   }
 }
 
@@ -3600,7 +3780,7 @@ class _ItemEntradaWidgetState extends State<_ItemEntradaWidget> {
               ],
             ),
             const SizedBox(height: 8),
-            TextField(
+             TextField(
               controller: item._nomeController,
               decoration: const InputDecoration(
                 labelText: 'Nome do Produto',
@@ -3608,6 +3788,25 @@ class _ItemEntradaWidgetState extends State<_ItemEntradaWidget> {
               ),
               onChanged: (value) => item.nome = value,
             ),
+            const SizedBox(height: 8),
+            // Fornecedor específico do item
+            if (context.findAncestorStateOfType<_EntradaMercadoriasPageState>()?._modo == 'manual')
+              Column(
+                children: [
+                  TextField(
+                    controller: item._fornecedorController,
+                    decoration: const InputDecoration(
+                      labelText: 'Fornecedor deste Item (Opcional)',
+                      hintText: 'Ex: Ambev, Coca-Cola...',
+                      prefixIcon: Icon(Icons.business),
+                      helperText: 'Deixe vazio para usar o fornecedor principal (acima)',
+                      helperStyle: TextStyle(fontSize: 10),
+                    ),
+                    onChanged: (v) => item.fornecedorNome = v,
+                  ),
+                  const SizedBox(height: 8),
+                ],
+              ),
             const SizedBox(height: 8),
             // Seção de Quantidade Inteligente
             Container(

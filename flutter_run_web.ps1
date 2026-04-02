@@ -39,7 +39,14 @@ else {
 }
 
 Write-Host ""
+Write-Host "🧹 Limpando processos e temporários..." -ForegroundColor Cyan
+Stop-Process -Name chrome -Force -ErrorAction SilentlyContinue
+Stop-Process -Name flutter -Force -ErrorAction SilentlyContinue
+Stop-Process -Name dart -Force -ErrorAction SilentlyContinue
+Get-ChildItem -Path $env:TEMP -Filter "flutter_tools.*" -Directory | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+
 Write-Host "▶️  Iniciando Flutter..." -ForegroundColor Green
+
 Write-Host ""
 
 # Executar Flutter

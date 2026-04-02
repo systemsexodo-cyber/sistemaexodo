@@ -12,7 +12,20 @@ up-to-date Chrome or Edge.
 
 ## ✅ Soluções
 
+### Solução 0: Fechar Instâncias do Chrome (Novo)
+
+Às vezes, o Chrome está com processos "fantasmas" travados. Execute isso no terminal:
+```powershell
+taskkill /F /IM chrome.exe /T
+```
+
+Ou use o script automatizado que criamos para limpar tudo:
+```powershell
+.\FIX_CHROME_LAUNCH.bat
+```
+
 ### Solução 1: Usar Web Server (Recomendado)
+
 
 Execute o Flutter sem abrir o navegador automaticamente e abra manualmente:
 

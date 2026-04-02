@@ -225,16 +225,25 @@ class MesaComanda {
 
   // Calcula o total dos itens (excluindo itens cancelados)
   double get totalCalculado {
-    final totalItens = itens
+    final totalItensFiltered = itens
         .where((item) => item.status != StatusItem.cancelado)
         .fold(0.0, (sum, item) => sum + (item.preco * item.quantidade));
     
-    // Adicionar couvert se houver
-    final totalComCouvert = totalItens + valorCouvertCalculado;
+    // Adicionar couvert se houver (considerar se tem pessoas)
+    final temConsumoCouvert = (quantidadePessoasCouvert ?? 0) > 0 && (valorCouvertPorPessoa ?? 0) > 0;
+    final totalComCouvert = totalItensFiltered + (temConsumoCouvert ? valorCouvertCalculado : 0.0);
+    
+    // Se não há itens nem couvert, o total deve ser 0 (ignorar taxas residuais)
+    if (totalItensFiltered <= 0.01 && !temConsumoCouvert) {
+      return 0.0;
+    }
     
     // Adicionar garçom se não foi retirado (10% apenas dos itens, sem couvert)
-    if (!garcomRetirado && valorGarcom != null) {
-      return totalComCouvert + valorGarcom!;
+    if (!garcomRetirado) {
+      final vGarcom = valorGarcom ?? valorGarcomCalculado;
+      if (vGarcom > 0.01) {
+        return totalComCouvert + vGarcom;
+      }
     }
     
     return totalComCouvert;
@@ -310,10 +319,13 @@ class MesaComanda {
   // IMPORTANTE: Não permitir saldo negativo quando não há itens
   double get totalPendente {
     final pendente = totalCalculado - totalPago;
-    // Se não há itens e não há couvert, o pendente deve ser 0 (não negativo)
-    if (itens.isEmpty && valorCouvertCalculado <= 0) {
+    
+    // Se não há itens e nem couvert (considerando se tem pessoas), o pendente deve ser 0 (não negativo)
+    final temConsumoCouvert = (quantidadePessoasCouvert ?? 0) > 0 && (valorCouvertPorPessoa ?? 0) > 0;
+    if (itens.isEmpty && !temConsumoCouvert) {
       return 0.0;
     }
+    
     return pendente < 0 ? 0.0 : pendente;
   }
 

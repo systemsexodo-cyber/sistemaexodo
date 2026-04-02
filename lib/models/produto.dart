@@ -60,6 +60,14 @@ class Produto {
   // Campos para variações de produto (tamanhos, cores, sabores, etc)
   final List<VariacaoProduto> variacoes; // Lista de variações disponíveis
   final bool temVariacoes; // Se o produto tem variações configuradas
+  
+  // Campos de Fornecedor
+  final String? fornecedorId;
+  final String? fornecedorNome;
+  final int estoqueMinimo; // Novo: Estoque mínimo para alerta/compra
+  
+  // Mapeamento de estoque por fornecedor (Ex: {"Ambev": 10, "Coca": 10})
+  final Map<String, int> estoquePorFornecedor; 
 
   Produto({
     required this.id,
@@ -107,11 +115,16 @@ class Produto {
     List<String>? tags,
     List<VariacaoProduto>? variacoes,
     bool? temVariacoes,
+    this.fornecedorId,
+    this.fornecedorNome,
+    this.estoqueMinimo = 0,
+    Map<String, int>? estoquePorFornecedor,
   }) : codigosFornecedor = codigosFornecedor ?? [],
        fotosUrls = fotosUrls ?? [],
        tags = tags ?? [],
        variacoes = variacoes ?? [],
-       temVariacoes = temVariacoes ?? false;
+       temVariacoes = temVariacoes ?? false,
+       estoquePorFornecedor = estoquePorFornecedor ?? {};
 
   // Verifica se a promoção está ativa agora
   bool get promocaoAtiva {
@@ -199,6 +212,7 @@ class Produto {
       'preco': preco,
       'precoCusto': precoCusto,
       'estoque': estoque,
+      'estoqueMinimo': estoqueMinimo,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
       'precoPromocional': precoPromocional,
@@ -234,6 +248,9 @@ class Produto {
       'tags': tags,
       'variacoes': variacoes.map((v) => v.toMap()).toList(),
       'temVariacoes': temVariacoes,
+      'fornecedorId': fornecedorId,
+      'fornecedorNome': fornecedorNome,
+      'estoquePorFornecedor': estoquePorFornecedor,
     };
   }
 
@@ -251,6 +268,7 @@ class Produto {
           ? (map['precoCusto'] as num).toDouble()
           : null,
       estoque: map['estoque'] as int,
+      estoqueMinimo: map['estoqueMinimo'] as int? ?? 0,
       createdAt: DateTime.parse(map['createdAt'] as String),
       updatedAt: DateTime.parse(map['updatedAt'] as String),
       precoPromocional: map['precoPromocional'] != null
@@ -325,6 +343,11 @@ class Produto {
               .toList()
           : [],
       temVariacoes: map['temVariacoes'] as bool? ?? false,
+      fornecedorId: map['fornecedorId'] as String?,
+      fornecedorNome: map['fornecedorNome'] as String?,
+      estoquePorFornecedor: map['estoquePorFornecedor'] != null
+          ? Map<String, int>.from(map['estoquePorFornecedor'] as Map)
+          : {},
     );
   }
 
@@ -340,6 +363,7 @@ class Produto {
     double? preco,
     double? precoCusto,
     int? estoque,
+    int? estoqueMinimo,
     DateTime? createdAt,
     DateTime? updatedAt,
     double? precoPromocional,
@@ -375,6 +399,9 @@ class Produto {
     List<String>? tags,
     List<VariacaoProduto>? variacoes,
     bool? temVariacoes,
+    String? fornecedorId,
+    String? fornecedorNome,
+    Map<String, int>? estoquePorFornecedor,
   }) {
     return Produto(
       id: id ?? this.id,
@@ -387,6 +414,7 @@ class Produto {
       preco: preco ?? this.preco,
       precoCusto: precoCusto ?? this.precoCusto,
       estoque: estoque ?? this.estoque,
+      estoqueMinimo: estoqueMinimo ?? this.estoqueMinimo,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       precoPromocional: precoPromocional ?? this.precoPromocional,
@@ -422,6 +450,9 @@ class Produto {
       tags: tags ?? this.tags,
       variacoes: variacoes ?? this.variacoes,
       temVariacoes: temVariacoes ?? this.temVariacoes,
+      fornecedorId: fornecedorId ?? this.fornecedorId,
+      fornecedorNome: fornecedorNome ?? this.fornecedorNome,
+      estoquePorFornecedor: estoquePorFornecedor ?? this.estoquePorFornecedor,
     );
   }
   
