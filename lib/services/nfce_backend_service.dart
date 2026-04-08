@@ -72,6 +72,42 @@ class NFCeBackendService implements NFCeServiceBase {
     // Se retornar vazio, o sistema usará automaticamente o Modo Firebase (Sem Link/Túnel)
     return ''; 
   }
+
+  bool _isAmbienteHomologacao(Empresa empresa) {
+    // 1) Campo forte do modelo
+    if (empresa.ambienteHomologacao != null) return empresa.ambienteHomologacao!;
+
+    // 2) Chaves legadas de configuração
+    final cfg = empresa.configuracoes ?? {};
+    final nfceAmbiente = cfg['nfceAmbiente']?.toString();
+    if (nfceAmbiente == '2') return true;
+    if (nfceAmbiente == '1') return false;
+
+    final ambienteNfe = cfg['ambiente_nfe']?.toString().toLowerCase();
+    if (ambienteNfe?.contains('homolog') == true) return true;
+    if (ambienteNfe?.contains('produ') == true) return false;
+
+    // 3) Fallback seguro
+    return true;
+  }
+
+  bool _isAmbienteHomologacaoParaNfce({
+    required NFCe nfce,
+    required Empresa empresa,
+  }) {
+    // Tenta extrair tpAmb do XML da própria nota (mais confiável para cancelamento)
+    final fontesXml = <String?>[nfce.xmlRetorno, nfce.xmlEnviado];
+    for (final xml in fontesXml) {
+      if (xml == null || xml.isEmpty) continue;
+      final match = RegExp(r'<tpAmb>\s*([12])\s*</tpAmb>').firstMatch(xml);
+      if (match != null) {
+        return match.group(1) == '2'; // 2 = homologação, 1 = produção
+      }
+    }
+
+    // Fallback para configuração da empresa
+    return _isAmbienteHomologacao(empresa);
+  }
   
   /// Emite uma NFC-e via backend Python
   Future<NFCe> emitir({
@@ -664,9 +700,24 @@ class NFCeBackendService implements NFCeServiceBase {
         }
       }
       
+      final chaveLimpa = (nfce.chaveAcesso ?? '').replaceAll(RegExp(r'[^0-9]'), '');
+      final protocoloLimpo = (nfce.protocolo ?? '').replaceAll(RegExp(r'[^0-9]'), '');
+      final ambienteHomologacao = _isAmbienteHomologacaoParaNfce(
+        nfce: nfce,
+        empresa: empresa,
+      );
+
+      if (chaveLimpa.length != 44) {
+        return {
+          'success': false,
+          'message': 'Chave de acesso inválida para cancelamento (esperado 44 dígitos).',
+          'details': 'Chave atual: ${nfce.chaveAcesso ?? "(vazia)"}',
+        };
+      }
+
       final requestData = {
-        'chave_acesso': nfce.chaveAcesso,
-        'protocolo': nfce.protocolo,
+        'chave_acesso': chaveLimpa,
+        'protocolo': protocoloLimpo.isEmpty ? null : protocoloLimpo,
         'justificativa': justificativa ?? 'Cancelamento por erro de emissao ou devolucao de mercadoria',
         'empresa': {
           'razao_social': empresa.razaoSocial,
@@ -675,7 +726,7 @@ class NFCeBackendService implements NFCeServiceBase {
           'certificado_base64': certBytes ?? '',
           'senha_certificado': empresa.configuracoes?['certificadoDigitalSenha'] ?? empresa.senhaCertificado ?? '',
           'uf': empresa.estado ?? 'SP',
-          'ambiente_homologacao': empresa.configuracoes?['nfceAmbiente'] == '2',
+          'ambiente_homologacao': ambienteHomologacao,
         }
       };
       
@@ -761,13 +812,28 @@ class NFCeBackendService implements NFCeServiceBase {
         }
       }
 
+      final chaveLimpa = (nfce.chaveAcesso ?? '').replaceAll(RegExp(r'[^0-9]'), '');
+      final protocoloLimpo = (nfce.protocolo ?? '').replaceAll(RegExp(r'[^0-9]'), '');
+      final ambienteHomologacao = _isAmbienteHomologacaoParaNfce(
+        nfce: nfce,
+        empresa: empresa,
+      );
+
+      if (chaveLimpa.length != 44) {
+        return {
+          'success': false,
+          'message': 'Chave de acesso inválida para cancelamento (esperado 44 dígitos).',
+          'details': 'Chave atual: ${nfce.chaveAcesso ?? "(vazia)"}',
+        };
+      }
+
       final requestData = {
         'operacao': 'cancelamento',
         'status': 'pendente',
         'created_at': FieldValue.serverTimestamp(),
         'empresa_id': empresa.id,
-        'chave_acesso': nfce.chaveAcesso,
-        'protocolo': nfce.protocolo,
+        'chave_acesso': chaveLimpa,
+        'protocolo': protocoloLimpo.isEmpty ? null : protocoloLimpo,
         'justificativa': justificativaFinal,
         'empresa': {
           'razao_social': empresa.razaoSocial,
@@ -776,7 +842,7 @@ class NFCeBackendService implements NFCeServiceBase {
           'certificado_base64': certBytes ?? '',
           'senha_certificado': empresa.configuracoes?['certificadoDigitalSenha'] ?? empresa.senhaCertificado ?? '',
           'uf': empresa.estado ?? 'SP',
-          'ambiente_homologacao': empresa.configuracoes?['nfceAmbiente'] == '2',
+          'ambiente_homologacao': ambienteHomologacao,
         }
       };
 

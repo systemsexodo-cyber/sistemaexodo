@@ -43,4 +43,9 @@ void downloadFile(String content, String fileName, String mimeType) {
   // Não faz nada fora da Web
 }
 
+/// Download de arquivo binário (stub)
+void downloadBytes(List<int> bytes, String fileName, String mimeType) {
+  // Não faz nada fora da Web
+}
+
 

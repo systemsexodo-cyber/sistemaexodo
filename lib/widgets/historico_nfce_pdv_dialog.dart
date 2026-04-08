@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:convert';
+import 'package:archive/archive.dart';
+import 'package:flutter/foundation.dart';
 import '../models/empresa.dart';
 import '../models/nfce.dart';
 import '../services/data_service.dart';
@@ -10,6 +13,7 @@ import '../services/danfe_service.dart';
 import 'package:intl/intl.dart';
 import '../models/produto.dart';
 import 'exodo_cancel_success_dialog.dart';
+import '../pages/html_helper_stub.dart' if (dart.library.html) '../pages/html_helper_web.dart' as html_helper;
 
 class HistoricoNFCePDVDialog extends StatefulWidget {
   final Empresa empresa;
@@ -119,6 +123,145 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
     }
   }
 
+  String _csvField(dynamic value) {
+    final v = (value ?? '').toString().replaceAll('"', '""');
+    return '"$v"';
+  }
+
+  Future<void> _exportarPacoteMensalContador() async {
+    if (_todasNfces.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Não há NFC-e para exportar.')),
+      );
+      return;
+    }
+
+    DateTime? mesRef = _dataFiltro;
+    if (mesRef == null) {
+      mesRef = await showDatePicker(
+        context: context,
+        initialDate: DateTime.now(),
+        firstDate: DateTime(2023),
+        lastDate: DateTime.now(),
+        helpText: 'Selecionar mês para exportação',
+      );
+    }
+
+    if (mesRef == null) return;
+
+    final nfcesMes = _todasNfces.where((n) {
+      final d = n.createdAt ?? n.dataEmissao;
+      return d.year == mesRef!.year && d.month == mesRef.month;
+    }).toList();
+
+    if (nfcesMes.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Nenhuma NFC-e encontrada para ${DateFormat('MM/yyyy').format(mesRef)}.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    final archive = Archive();
+    int xmlCount = 0;
+
+    final csv = StringBuffer();
+    csv.writeln(
+      'data_emissao,numero,serie,status,chave_acesso,venda,pagamentos,valor_total,item_codigo,item_descricao,ncm,cfop,csosn,cst_icms,origem,aliquota_icms,quantidade,valor_unitario,valor_item',
+    );
+
+    for (final n in nfcesMes) {
+      final dataEmissao = DateFormat('dd/MM/yyyy HH:mm').format(n.dataEmissao);
+      final pagamentos = n.pagamentos.map((p) => p.tipoDescricao).join(' + ');
+      final chave = n.chaveAcesso ?? '';
+      final venda = n.vendaNumero ?? n.vendaId ?? n.id;
+
+      for (final item in n.itens) {
+        csv.writeln([
+          _csvField(dataEmissao),
+          _csvField(n.numero),
+          _csvField(n.serie),
+          _csvField((n.status ?? '').toUpperCase()),
+          _csvField(chave),
+          _csvField(venda),
+          _csvField(pagamentos),
+          _csvField(n.valorTotal.toStringAsFixed(2)),
+          _csvField(item.codigo),
+          _csvField(item.descricao),
+          _csvField(item.ncm),
+          _csvField(item.cfop),
+          _csvField(item.csosn ?? ''),
+          _csvField(item.icmsCst ?? ''),
+          _csvField(item.origem ?? ''),
+          _csvField(item.icmsAliquota?.toStringAsFixed(2) ?? ''),
+          _csvField(item.quantidade.toStringAsFixed(4)),
+          _csvField(item.valorUnitario.toStringAsFixed(2)),
+          _csvField(item.valorTotal.toStringAsFixed(2)),
+        ].join(','));
+      }
+
+      final xml = (n.xmlEnviado ?? '').trim();
+      if (xml.isNotEmpty) {
+        final nomeArquivo =
+            (chave.isNotEmpty ? chave : 'nfce_${n.numero}_${n.id}').replaceAll(RegExp(r'[^a-zA-Z0-9_\-]'), '_');
+        final bytes = utf8.encode(xml);
+        archive.addFile(ArchiveFile('xml/$nomeArquivo.xml', bytes.length, bytes));
+        xmlCount++;
+      }
+    }
+
+    final mesTag =
+        '${mesRef.year}_${mesRef.month.toString().padLeft(2, '0')}';
+    final csvBytes = utf8.encode(csv.toString());
+    archive.addFile(
+      ArchiveFile('relatorio_fiscal_nfce_$mesTag.csv', csvBytes.length, csvBytes),
+    );
+
+    final resumo = StringBuffer()
+      ..writeln('PACOTE CONTÁBIL NFC-e')
+      ..writeln('Mês de referência: ${DateFormat('MM/yyyy').format(mesRef)}')
+      ..writeln('Total de NFC-e no período: ${nfcesMes.length}')
+      ..writeln('Total de XML incluídos: $xmlCount')
+      ..writeln('Gerado em: ${DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now())}');
+    final resumoBytes = utf8.encode(resumo.toString());
+    archive.addFile(ArchiveFile('LEIA-ME.txt', resumoBytes.length, resumoBytes));
+
+    final zipBytes = ZipEncoder().encode(archive);
+    if (zipBytes == null || zipBytes.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Falha ao gerar arquivo ZIP.')),
+      );
+      return;
+    }
+
+    final fileName = 'pacote_contabil_nfce_$mesTag.zip';
+
+    if (kIsWeb) {
+      html_helper.downloadBytes(zipBytes, fileName, 'application/zip');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Download iniciado: $fileName'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } else {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'No desktop/mobile, conecte este botão a salvar arquivo local ou compartilhamento.',
+          ),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Dialog(
@@ -168,6 +311,18 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                     ),
                   ),
                   const SizedBox(width: 16),
+                  ElevatedButton.icon(
+                    onPressed: _isLoading ? null : _exportarPacoteMensalContador,
+                    icon: const Icon(Icons.archive_rounded, size: 18),
+                    label: const Text('Exportar Mês'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green.withOpacity(0.85),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
                   ElevatedButton.icon(
                     onPressed: _selecionarData,
                     icon: const Icon(Icons.calendar_today, size: 18),

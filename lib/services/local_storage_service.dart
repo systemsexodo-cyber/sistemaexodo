@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 // Import condicional para Web
 import 'local_storage_service_stub.dart'
     if (dart.library.html) 'local_storage_service_web_stub.dart';
@@ -265,19 +266,18 @@ class LocalStorageService {
   // ============ Métodos SharedPreferences ============
 
   Future<void> _salvarSharedPreferences(String key, String value) async {
-    // Será implementado quando necessário para outras plataformas
-    // Por enquanto, apenas no Web
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(key, value);
   }
 
   Future<String?> _carregarSharedPreferences(String key) async {
-    // Será implementado quando necessário para outras plataformas
-    // Por enquanto, apenas no Web
-    return null;
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(key);
   }
 
   Future<void> _removerSharedPreferences(String key) async {
-    // Será implementado quando necessário para outras plataformas
-    // Por enquanto, apenas no Web
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(key);
   }
 
   // ============ Helpers ============
