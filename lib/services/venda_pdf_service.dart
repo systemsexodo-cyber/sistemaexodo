@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import '../models/venda_balcao.dart';
 import '../models/empresa.dart';
 import '../models/forma_pagamento.dart';
+import '../models/delivery_info.dart';
 
 /// Serviço para geração de PDF de venda
 class VendaPDFService {
@@ -43,6 +44,10 @@ class VendaPDFService {
                 if (venda.observacoes != null && venda.observacoes!.isNotEmpty) ...[
                   pw.SizedBox(height: 20),
                   _buildObservacoes(venda),
+                ],
+                if (venda.deliveryInfo != null) ...[
+                  pw.SizedBox(height: 20),
+                  _buildDelivery(venda),
                 ],
                 pw.Spacer(),
                 _buildRodape(empresa, formatoData),
@@ -569,6 +574,77 @@ class VendaPDFService {
     );
   }
 
+  /// Constrói seção de entrega
+  static pw.Widget _buildDelivery(VendaBalcao venda) {
+    if (venda.deliveryInfo == null) return pw.SizedBox.shrink();
+    final info = venda.deliveryInfo!;
+    return pw.Container(
+      padding: const pw.EdgeInsets.all(10),
+      decoration: pw.BoxDecoration(
+        border: pw.Border.all(color: PdfColors.orange, width: 1.5),
+        borderRadius: pw.BorderRadius.circular(5),
+      ),
+      child: pw.Column(
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        children: [
+          pw.Row(
+            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+            children: [
+              pw.Text(
+                'INFORMAÇÕES DE ENTREGA',
+                style: pw.TextStyle(
+                  fontSize: 11,
+                  fontWeight: pw.FontWeight.bold,
+                  color: PdfColors.orange,
+                ),
+              ),
+              pw.Text(
+                info.status.toUpperCase(),
+                style: pw.TextStyle(
+                  fontSize: 10,
+                  fontWeight: pw.FontWeight.bold,
+                  color: PdfColors.orange,
+                ),
+              ),
+            ],
+          ),
+          pw.SizedBox(height: 8),
+          pw.Text(
+            'Endereço: ${info.logradouro}, ${info.numero}',
+            style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold),
+          ),
+          pw.Text(
+            'Bairro: ${info.bairro}',
+            style: const pw.TextStyle(fontSize: 10),
+          ),
+          pw.Text(
+            'Cidade/UF: ${info.cidade} - ${info.uf}',
+            style: const pw.TextStyle(fontSize: 10),
+          ),
+          if (info.cep != null && info.cep!.isNotEmpty)
+            pw.Text(
+              'CEP: ${info.cep}',
+              style: const pw.TextStyle(fontSize: 10),
+            ),
+          if (info.taxaEntrega > 0) ...[
+            pw.SizedBox(height: 5),
+            pw.Text(
+              'Taxa de Entrega: R\$ ${info.taxaEntrega.toStringAsFixed(2)}',
+              style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold, color: PdfColors.green700),
+            ),
+          ],
+          if (info.motoristaNome != null && info.motoristaNome!.isNotEmpty) ...[
+            pw.SizedBox(height: 5),
+            pw.Text(
+              'Motorista: ${info.motoristaNome}',
+              style: const pw.TextStyle(fontSize: 10),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   /// Constrói rodapé
   static pw.Widget _buildRodape(Empresa empresa, DateFormat formatoData) {
     return pw.Container(
@@ -624,6 +700,8 @@ class VendaPDFService {
         return 'Fiado';
       case TipoPagamento.outro:
         return 'Outro';
+      case TipoPagamento.alimentacao:
+        return 'Ticket/Alimentação';
     }
   }
 
@@ -640,38 +718,51 @@ class VendaPDFService {
       // Configurações de impressão dinâmicas
       final config = empresa.configuracoes ?? {};
       final double larguraBobina = config['comandaLarguraBobina']?.toDouble() ?? 80.0;
-      final double margemH = config['comandaMargemH']?.toDouble() ?? 5.0;
-      final double margemV = config['comandaMargemV']?.toDouble() ?? 5.0;
-      final double fontSizeTitulo = config['comandaFonteTitulo']?.toDouble() ?? 10.0;
-      final double fontSizeCorpo = config['comandaFonteCorpo']?.toDouble() ?? 8.0;
+      final double margemEsq = config['comandaMargemEsq']?.toDouble() ?? config['comandaMargemH']?.toDouble() ?? 10.0;
+      final double margemDir = config['comandaMargemDir']?.toDouble() ?? config['comandaMargemH']?.toDouble() ?? 15.0;
+      final double margemV = config['comandaMargemV']?.toDouble() ?? 10.0;
+      final double fontSizeTitulo = config['comandaFonteTitulo']?.toDouble() ?? 10.5;
+      final double fontSizeCorpo = config['comandaFonteCorpo']?.toDouble() ?? 7.8;
       final bool usarNegrito = config['comandaNegrito'] ?? true;
+
+      // Cálculo de largura útil (mm -> pt) com compensação de segurança
+      final double pageWidth = (larguraBobina - 2) * 2.83465;
 
       pdf.addPage(
         pw.Page(
-          pageFormat: PdfPageFormat(larguraBobina * 2.83465, 297 * 2.83465),
-          margin: pw.EdgeInsets.symmetric(horizontal: margemH, vertical: margemV),
+          pageFormat: PdfPageFormat(pageWidth, 2000),
+          margin: pw.EdgeInsets.only(
+            left: margemEsq,
+            right: margemDir,
+            top: 2,
+            bottom: 2,
+          ),
           build: (pw.Context context) {
             return pw.Column(
               crossAxisAlignment: pw.CrossAxisAlignment.center,
               children: [
                 _buildCabecalhoTermico(empresa, fontSizeTitulo, fontSizeCorpo, usarNegrito),
-                pw.SizedBox(height: 8),
+                pw.SizedBox(height: 2),
                 _buildDadosVendaTermico(venda, formatoData, fontSizeCorpo, usarNegrito),
-                pw.SizedBox(height: 8),
+                pw.SizedBox(height: 2),
                 _buildClienteTermico(venda, fontSizeCorpo),
-                pw.SizedBox(height: 8),
+                pw.SizedBox(height: 3),
                 _buildItensTermico(venda, formatoMoeda, fontSizeCorpo, usarNegrito),
-                pw.SizedBox(height: 8),
+                pw.SizedBox(height: 2),
                 _buildDescontosTermico(venda, formatoMoeda, fontSizeCorpo),
-                pw.SizedBox(height: 8),
+                pw.SizedBox(height: 2),
                 _buildTotalTermico(venda, formatoMoeda, fontSizeCorpo),
-                pw.SizedBox(height: 8),
+                pw.SizedBox(height: 2),
                 _buildPagamentoTermico(venda, formatoMoeda, fontSizeCorpo),
                 if (venda.observacoes != null && venda.observacoes!.isNotEmpty) ...[
-                  pw.SizedBox(height: 8),
+                  pw.SizedBox(height: 2),
                   _buildObservacoesTermico(venda, fontSizeCorpo),
                 ],
-                pw.SizedBox(height: 8),
+                if (venda.deliveryInfo != null) ...[
+                  pw.SizedBox(height: 2),
+                  _buildDeliveryTermico(venda, fontSizeCorpo),
+                ],
+                pw.SizedBox(height: 4),
                 _buildRodapeTermico(empresa, formatoData, fontSizeCorpo),
               ],
             );
@@ -845,7 +936,7 @@ class VendaPDFService {
         ...venda.itens.map((item) {
           final subtotal = item.precoUnitario * item.quantidade;
           return pw.Padding(
-            padding: const pw.EdgeInsets.only(bottom: 6),
+            padding: const pw.EdgeInsets.only(bottom: 1.5),
             child: pw.Column(
               crossAxisAlignment: pw.CrossAxisAlignment.start,
               children: [
@@ -1042,21 +1133,82 @@ class VendaPDFService {
 
   /// Constrói observações térmico
   static pw.Widget _buildObservacoesTermico(VendaBalcao venda, double fontSizeCorpo) {
+    if (venda.observacoes == null || venda.observacoes!.trim().isEmpty) return pw.SizedBox.shrink();
+    
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
+        pw.Divider(thickness: 0.5),
+        pw.SizedBox(height: 1),
         pw.Text(
-          'OBSERVAÇÕES',
+          'OBSERVAÇÕES:',
           style: pw.TextStyle(
             fontSize: fontSizeCorpo,
             fontWeight: pw.FontWeight.bold,
           ),
         ),
-        pw.SizedBox(height: 3),
+        pw.SizedBox(height: 1),
         pw.Text(
           venda.observacoes!,
-          style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
+          style: pw.TextStyle(fontSize: fontSizeCorpo),
         ),
+        pw.SizedBox(height: 2),
+      ],
+    );
+  }
+
+  /// Constrói seção de entrega térmico
+  static pw.Widget _buildDeliveryTermico(VendaBalcao venda, double fontSizeCorpo) {
+    final info = venda.deliveryInfo!;
+    return pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.start,
+      children: [
+        pw.Row(
+          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+          children: [
+            pw.Text(
+              'ENTREGA',
+              style: pw.TextStyle(
+                fontSize: fontSizeCorpo + 1,
+                fontWeight: pw.FontWeight.bold,
+              ),
+            ),
+            pw.Text(
+              info.status.toUpperCase(),
+              style: pw.TextStyle(
+                fontSize: fontSizeCorpo,
+                fontWeight: pw.FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+        pw.SizedBox(height: 4),
+        pw.Text(
+          'Endereço: ${info.logradouro}, ${info.numero}',
+          style: pw.TextStyle(fontSize: fontSizeCorpo, fontWeight: pw.FontWeight.bold),
+        ),
+        pw.Text(
+          'Bairro: ${info.bairro}',
+          style: pw.TextStyle(fontSize: fontSizeCorpo),
+        ),
+        pw.Text(
+          'Cidade/UF: ${info.cidade} - ${info.uf}',
+          style: pw.TextStyle(fontSize: fontSizeCorpo),
+        ),
+        if (info.taxaEntrega > 0) ...[
+          pw.SizedBox(height: 3),
+          pw.Text(
+            'Taxa: R\$ ${info.taxaEntrega.toStringAsFixed(2)}',
+            style: pw.TextStyle(fontSize: fontSizeCorpo, fontWeight: pw.FontWeight.bold),
+          ),
+        ],
+        if (info.motoristaNome != null && info.motoristaNome!.isNotEmpty) ...[
+          pw.SizedBox(height: 3),
+          pw.Text(
+            'Motorista: ${info.motoristaNome}',
+            style: pw.TextStyle(fontSize: fontSizeCorpo),
+          ),
+        ],
         pw.SizedBox(height: 5),
         pw.Divider(thickness: 1),
       ],

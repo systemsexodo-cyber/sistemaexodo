@@ -1,4 +1,5 @@
 import 'package:sistema_exodo_novo/models/variacao_produto.dart';
+import 'package:sistema_exodo_novo/models/adicional_produto.dart';
 
 class Produto {
   final String id;
@@ -61,11 +62,20 @@ class Produto {
   final List<VariacaoProduto> variacoes; // Lista de variações disponíveis
   final bool temVariacoes; // Se o produto tem variações configuradas
   
+  // Novos campos para ADICIONAIS (ex: Acai com Leite Ninho)
+  final List<AdicionalProduto> adicionais; // Lista de adicionais disponíveis
+  final bool temAdicionais; // Se o produto tem adicionais cadastrados
+  final String? observacaoPadrao; // Observação padrão para este produto (ex: "Sem gelo")
+  
   // Campos de Fornecedor
   final String? fornecedorId;
   final String? fornecedorNome;
   final int estoqueMinimo; // Novo: Estoque mínimo para alerta/compra
   
+  // Tracking de Pedidos de Compra
+  final bool pedidoCompraGerado;
+  final DateTime? dataUltimoPedido;
+
   // Mapeamento de estoque por fornecedor (Ex: {"Ambev": 10, "Coca": 10})
   final Map<String, int> estoquePorFornecedor; 
 
@@ -115,15 +125,22 @@ class Produto {
     List<String>? tags,
     List<VariacaoProduto>? variacoes,
     bool? temVariacoes,
+    List<AdicionalProduto>? adicionais,
+    bool? temAdicionais,
+    this.observacaoPadrao,
     this.fornecedorId,
     this.fornecedorNome,
     this.estoqueMinimo = 0,
+    this.pedidoCompraGerado = false,
+    this.dataUltimoPedido,
     Map<String, int>? estoquePorFornecedor,
   }) : codigosFornecedor = codigosFornecedor ?? [],
        fotosUrls = fotosUrls ?? [],
        tags = tags ?? [],
        variacoes = variacoes ?? [],
        temVariacoes = temVariacoes ?? false,
+       adicionais = adicionais ?? [],
+       temAdicionais = temAdicionais ?? false,
        estoquePorFornecedor = estoquePorFornecedor ?? {};
 
   // Verifica se a promoção está ativa agora
@@ -248,9 +265,14 @@ class Produto {
       'tags': tags,
       'variacoes': variacoes.map((v) => v.toMap()).toList(),
       'temVariacoes': temVariacoes,
+      'adicionais': adicionais.map((a) => a.toMap()).toList(),
+      'temAdicionais': temAdicionais,
+      'observacaoPadrao': observacaoPadrao,
       'fornecedorId': fornecedorId,
       'fornecedorNome': fornecedorNome,
       'estoquePorFornecedor': estoquePorFornecedor,
+      'pedidoCompraGerado': pedidoCompraGerado,
+      'dataUltimoPedido': dataUltimoPedido?.toIso8601String(),
     };
   }
 
@@ -267,8 +289,8 @@ class Produto {
       precoCusto: map['precoCusto'] != null
           ? (map['precoCusto'] as num).toDouble()
           : null,
-      estoque: map['estoque'] as int,
-      estoqueMinimo: map['estoqueMinimo'] as int? ?? 0,
+      estoque: (map['estoque'] as num).toInt(),
+      estoqueMinimo: (map['estoqueMinimo'] as num?)?.toInt() ?? 0,
       createdAt: DateTime.parse(map['createdAt'] as String),
       updatedAt: DateTime.parse(map['updatedAt'] as String),
       precoPromocional: map['precoPromocional'] != null
@@ -343,11 +365,22 @@ class Produto {
               .toList()
           : [],
       temVariacoes: map['temVariacoes'] as bool? ?? false,
+      adicionais: map['adicionais'] != null
+          ? (map['adicionais'] as List)
+              .map((a) => AdicionalProduto.fromMap(a as Map<String, dynamic>))
+              .toList()
+          : [],
+      temAdicionais: map['temAdicionais'] as bool? ?? false,
+      observacaoPadrao: map['observacaoPadrao'] as String?,
       fornecedorId: map['fornecedorId'] as String?,
       fornecedorNome: map['fornecedorNome'] as String?,
       estoquePorFornecedor: map['estoquePorFornecedor'] != null
           ? Map<String, int>.from(map['estoquePorFornecedor'] as Map)
           : {},
+      pedidoCompraGerado: map['pedidoCompraGerado'] as bool? ?? false,
+      dataUltimoPedido: map['dataUltimoPedido'] != null
+          ? DateTime.parse(map['dataUltimoPedido'] as String)
+          : null,
     );
   }
 
@@ -399,9 +432,14 @@ class Produto {
     List<String>? tags,
     List<VariacaoProduto>? variacoes,
     bool? temVariacoes,
+    List<AdicionalProduto>? adicionais,
+    bool? temAdicionais,
+    String? observacaoPadrao,
     String? fornecedorId,
     String? fornecedorNome,
     Map<String, int>? estoquePorFornecedor,
+    bool? pedidoCompraGerado,
+    DateTime? dataUltimoPedido,
   }) {
     return Produto(
       id: id ?? this.id,
@@ -450,9 +488,14 @@ class Produto {
       tags: tags ?? this.tags,
       variacoes: variacoes ?? this.variacoes,
       temVariacoes: temVariacoes ?? this.temVariacoes,
+      adicionais: adicionais ?? this.adicionais,
+      temAdicionais: temAdicionais ?? this.temAdicionais,
+      observacaoPadrao: observacaoPadrao ?? this.observacaoPadrao,
       fornecedorId: fornecedorId ?? this.fornecedorId,
       fornecedorNome: fornecedorNome ?? this.fornecedorNome,
       estoquePorFornecedor: estoquePorFornecedor ?? this.estoquePorFornecedor,
+      pedidoCompraGerado: pedidoCompraGerado ?? this.pedidoCompraGerado,
+      dataUltimoPedido: dataUltimoPedido ?? this.dataUltimoPedido,
     );
   }
   

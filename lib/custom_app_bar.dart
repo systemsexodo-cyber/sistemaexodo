@@ -4,8 +4,9 @@ import 'widgets/sync_status_widget.dart';
 class CustomAppBar extends StatelessWidget implements PreferredSizeWidget {
   final String title;
   final List<Widget>? actions;
+  final PreferredSizeWidget? bottom;
 
-  const CustomAppBar({super.key, required this.title, this.actions});
+  const CustomAppBar({super.key, required this.title, this.actions, this.bottom});
 
   @override
   Widget build(BuildContext context) {
@@ -13,6 +14,7 @@ class CustomAppBar extends StatelessWidget implements PreferredSizeWidget {
       title: Text(title),
       elevation: 0,
       backgroundColor: Colors.transparent,
+      bottom: bottom,
       actions: [
         const SyncStatusWidget(),
         if (actions != null) ...actions!,
@@ -21,5 +23,5 @@ class CustomAppBar extends StatelessWidget implements PreferredSizeWidget {
   }
 
   @override
-  Size get preferredSize => const Size.fromHeight(kToolbarHeight);
+  Size get preferredSize => Size.fromHeight(kToolbarHeight + (bottom?.preferredSize.height ?? 0));
 }

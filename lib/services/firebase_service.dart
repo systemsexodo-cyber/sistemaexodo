@@ -134,30 +134,30 @@ class FirebaseService {
 
       final queries = [
         lastSync == null 
-          ? _getSubCollection(empresaId, _subCollectionClientes).orderBy('nome').limit(100)
-          : _applySyncFilter(_getSubCollection(empresaId, _subCollectionClientes)).limit(100),
-        _applySyncFilter(_getSubCollection(empresaId, _subCollectionProdutos)),
-        _applySyncFilter(_getSubCollection(empresaId, _subCollectionServicos)),
+          ? _getSubCollection(empresaId, _subCollectionClientes).orderBy('nome').limit(200)
+          : _applySyncFilter(_getSubCollection(empresaId, _subCollectionClientes)).limit(200),
+        _applySyncFilter(_getSubCollection(empresaId, _subCollectionProdutos)).limit(200),
+        _applySyncFilter(_getSubCollection(empresaId, _subCollectionServicos)).limit(200),
         _applySmartPagination(_getSubCollection(empresaId, _subCollectionPedidos), 'dataPedido').orderBy('dataPedido', descending: true).limit(100),
-        _applySmartPagination(_getSubCollection(empresaId, _subCollectionOrdensServico)),
-        _applySmartPagination(_getSubCollection(empresaId, _subCollectionEntregas)),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionOrdensServico)).limit(100),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionEntregas)).limit(100),
         _applySmartPagination(_getSubCollection(empresaId, _subCollectionVendasBalcao), 'dataVenda').orderBy('dataVenda', descending: true).limit(100),
-        _applySmartPagination(_getSubCollection(empresaId, _subCollectionTrocasDevolucoes)),
-        _applySmartPagination(_getSubCollection(empresaId, _subCollectionEstoqueHistorico)),
-        _applySmartPagination(_getSubCollection(empresaId, _subCollectionAberturasCaixa), 'dataAbertura').orderBy('dataAbertura', descending: true),
-        _applySmartPagination(_getSubCollection(empresaId, _subCollectionFechamentosCaixa), 'dataFechamento').orderBy('dataFechamento', descending: true),
-        _applySyncFilter(_getSubCollection(empresaId, _subCollectionMotoristas)),
-        _applySyncFilter(_getSubCollection(empresaId, _subCollectionAgendamentosServico)),
-        _applySmartPagination(_getSubCollection(empresaId, _subCollectionNotasEntrada)),
-        _applySyncFilter(_getSubCollection(empresaId, _subCollectionFuncionarios)),
-        _applySyncFilter(_getSubCollection(empresaId, _subCollectionTaxasEntrega)),
-        _applySmartPagination(_getSubCollection(empresaId, _subCollectionContasPagar)),
-        _applySmartPagination(_getSubCollection(empresaId, _subCollectionNFCes)),
-        _applySmartPagination(_getSubCollection(empresaId, _subCollectionSangrias)),
-        _applySmartPagination(_getSubCollection(empresaId, _subCollectionSuprimentos)),
-        _applySyncFilter(_getSubCollection(empresaId, _subCollectionMesasComandas)),
-        _applySyncFilter(_getSubCollection(empresaId, _subCollectionLinksVendedores)),
-        _applySyncFilter(_getSubCollection(empresaId, _subCollectionComissoesVendedores)),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionTrocasDevolucoes)).limit(100),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionEstoqueHistorico)).limit(200),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionAberturasCaixa), 'dataAbertura').orderBy('dataAbertura', descending: true).limit(50),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionFechamentosCaixa), 'dataFechamento').orderBy('dataFechamento', descending: true).limit(50),
+        _applySyncFilter(_getSubCollection(empresaId, _subCollectionMotoristas)).limit(50),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionAgendamentosServico), 'updatedAt').orderBy('updatedAt', descending: true).limit(200),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionNotasEntrada)).limit(100),
+        _applySyncFilter(_getSubCollection(empresaId, _subCollectionFuncionarios)).limit(100),
+        _applySyncFilter(_getSubCollection(empresaId, _subCollectionTaxasEntrega)).limit(200),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionContasPagar)).limit(100),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionNFCes)).limit(200),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionSangrias)).limit(100),
+        _applySmartPagination(_getSubCollection(empresaId, _subCollectionSuprimentos)).limit(100),
+        _applySyncFilter(_getSubCollection(empresaId, _subCollectionMesasComandas)).limit(100),
+        _applySyncFilter(_getSubCollection(empresaId, _subCollectionLinksVendedores)).limit(50),
+        _applySyncFilter(_getSubCollection(empresaId, _subCollectionComissoesVendedores)).limit(50),
       ];
 
       // Executar todas em paralelo
@@ -987,10 +987,16 @@ class FirebaseService {
       rethrow;
     }
   }
-  /// Obtém um stream de agendamentos de uma empresa para tempo real
   Stream<List<AgendamentoServico>> getAgendamentosStream(String empresaId) {
-    debugPrint('>>> [Firebase] 📣 Criando novo Stream em: empresas/$empresaId/agendamentos_servico');
+    debugPrint('>>> [Firebase] 📣 Criando Stream Otimizado (Limit 100, 30 dias) em: agendamentos_servico');
+    
+    final dataCorte = DateTime.now().subtract(const Duration(days: 30));
+    final dataCorteIso = dataCorte.toIso8601String();
+
     return _getSubCollection(empresaId, _subCollectionAgendamentosServico)
+        .where('updatedAt', isGreaterThanOrEqualTo: dataCorteIso)
+        .orderBy('updatedAt', descending: true)
+        .limit(100)
         .snapshots()
         .map((snapshot) {
       return snapshot.docs.map((doc) {
@@ -1035,6 +1041,24 @@ class FirebaseService {
           return null;
         }
       }).where((s) => s != null).cast<Servico>().toList();
+    });
+  }
+
+  /// Obtém um stream de mesas/comandas para tempo real
+  Stream<List<MesaComanda>> getMesasComandasStream(String empresaId) {
+    debugPrint('>>> [Firebase] 📣 Criando novo Stream em: empresas/$empresaId/mesas_comandas');
+    
+    return _getSubCollection(empresaId, _subCollectionMesasComandas)
+        .snapshots()
+        .map((snapshot) {
+      try {
+        return snapshot.docs
+            .map((doc) => MesaComanda.fromMap(doc.data() as Map<String, dynamic>))
+            .toList();
+      } catch (e) {
+        debugPrint('>>> [Firebase] Erro ao converter mesa/comanda do stream: $e');
+        return [];
+      }
     });
   }
 

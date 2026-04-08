@@ -2,6 +2,7 @@ import 'package:sistema_exodo_novo/models/item_pedido.dart';
 import 'package:sistema_exodo_novo/models/item_servico.dart';
 import 'package:sistema_exodo_novo/models/item_material.dart';
 import 'package:sistema_exodo_novo/models/forma_pagamento.dart';
+import 'package:sistema_exodo_novo/models/delivery_info.dart';
 
 class Pedido {
   final String id;
@@ -25,6 +26,7 @@ class Pedido {
   final List<ItemServico> servicos;
   final List<PagamentoPedido> pagamentos; // Formas de pagamento do pedido
   final List<ItemMaterial> materiaisConsumidos; // Materiais consumidos nos serviços (histórico)
+  final DeliveryInfo? deliveryInfo; // Informações de entrega
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -50,6 +52,7 @@ class Pedido {
     required this.servicos,
     List<PagamentoPedido>? pagamentos,
     List<ItemMaterial>? materiaisConsumidos,
+    this.deliveryInfo,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) : dataPedido = dataPedido ?? DateTime.now(),
@@ -75,7 +78,7 @@ class Pedido {
   }
 
   // Calcula o total geral
-  double get totalGeral => totalProdutos + totalServicos;
+  double get totalGeral => totalProdutos + totalServicos + (deliveryInfo?.taxaEntrega ?? 0.0);
 
   // Quantidade total de itens
   int get quantidadeItens =>
@@ -173,6 +176,9 @@ class Pedido {
       materiaisConsumidos: (map['materiaisConsumidos'] as List<dynamic>? ?? [])
           .map((m) => ItemMaterial.fromMap(m as Map<String, dynamic>))
           .toList(),
+      deliveryInfo: map['deliveryInfo'] != null
+          ? DeliveryInfo.fromMap(map['deliveryInfo'] as Map<String, dynamic>)
+          : null,
       createdAt: map['createdAt'] != null
           ? DateTime.parse(map['createdAt'])
           : DateTime.now(),
@@ -205,6 +211,7 @@ class Pedido {
       'servicos': servicos.map((s) => s.toMap()).toList(),
       'pagamentos': pagamentos.map((p) => p.toMap()).toList(),
       'materiaisConsumidos': materiaisConsumidos.map((m) => m.toMap()).toList(),
+      'deliveryInfo': deliveryInfo?.toMap(),
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
     };
@@ -233,6 +240,7 @@ class Pedido {
     List<ItemServico>? servicos,
     List<PagamentoPedido>? pagamentos,
     List<ItemMaterial>? materiaisConsumidos,
+    DeliveryInfo? deliveryInfo,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
@@ -258,6 +266,7 @@ class Pedido {
       servicos: servicos ?? this.servicos,
       pagamentos: pagamentos ?? this.pagamentos,
       materiaisConsumidos: materiaisConsumidos ?? this.materiaisConsumidos,
+      deliveryInfo: deliveryInfo ?? this.deliveryInfo,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? DateTime.now(),
     );

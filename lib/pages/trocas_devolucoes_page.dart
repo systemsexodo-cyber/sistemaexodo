@@ -7,6 +7,7 @@ import '../models/venda_balcao.dart';
 import '../models/troca_devolucao.dart';
 import '../models/forma_pagamento.dart';
 import '../models/produto.dart';
+import '../models/cliente.dart';
 import 'historico_vendas_page.dart';
 
 /// Página inteligente de Trocas e Devoluções
@@ -25,7 +26,7 @@ class _TrocasDevolucoesBuscarPageState
   final _formatoData = DateFormat('dd/MM/yyyy HH:mm');
 
   String _termoBusca = '';
-  List<_VendaUnificada> _resultados = [];
+  List<VendaParaTroca> _resultados = [];
 
   @override
   void dispose() {
@@ -40,7 +41,7 @@ class _TrocasDevolucoesBuscarPageState
     }
 
     final termo = _termoBusca.toLowerCase().trim();
-    final resultados = <_VendaUnificada>[];
+    final resultados = <VendaParaTroca>[];
 
     // Buscar nos pedidos - apenas pedidos finalizados (totalmente recebidos)
     for (final pedido in dataService.pedidos) {
@@ -67,7 +68,7 @@ class _TrocasDevolucoesBuscarPageState
       }
 
       if (match) {
-        resultados.add(_VendaUnificada.fromPedido(pedido));
+        resultados.add(VendaParaTroca.fromPedido(pedido));
       }
     }
 
@@ -98,7 +99,7 @@ class _TrocasDevolucoesBuscarPageState
       }
 
       if (match) {
-        resultados.add(_VendaUnificada.fromVendaBalcao(venda));
+        resultados.add(VendaParaTroca.fromVendaBalcao(venda));
       }
     }
 
@@ -310,7 +311,7 @@ class _TrocasDevolucoesBuscarPageState
     );
   }
 
-  Widget _buildCardVenda(_VendaUnificada venda, DataService dataService) {
+  Widget _buildCardVenda(VendaParaTroca venda, DataService dataService) {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
@@ -332,7 +333,7 @@ class _TrocasDevolucoesBuscarPageState
             Navigator.push(
               context,
               MaterialPageRoute(
-                builder: (context) => _SelecionarItensTrocaPage(venda: venda),
+                builder: (context) => SelecionarItensTrocaPage(venda: venda),
               ),
             );
           },
@@ -562,17 +563,17 @@ class _TrocasDevolucoesBuscarPageState
 }
 
 /// Página de seleção de itens para troca/devolução
-class _SelecionarItensTrocaPage extends StatefulWidget {
-  final _VendaUnificada venda;
+class SelecionarItensTrocaPage extends StatefulWidget {
+  final VendaParaTroca venda;
 
-  const _SelecionarItensTrocaPage({required this.venda});
+  const SelecionarItensTrocaPage({required this.venda});
 
   @override
-  State<_SelecionarItensTrocaPage> createState() =>
-      _SelecionarItensTrocaPageState();
+  State<SelecionarItensTrocaPage> createState() =>
+      SelecionarItensTrocaPageState();
 }
 
-class _SelecionarItensTrocaPageState extends State<_SelecionarItensTrocaPage> {
+class SelecionarItensTrocaPageState extends State<SelecionarItensTrocaPage> {
   final _formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
   final _motivoController = TextEditingController();
 
@@ -843,7 +844,7 @@ class _SelecionarItensTrocaPageState extends State<_SelecionarItensTrocaPage> {
     );
   }
 
-  Widget _buildItemCard(_ItemVenda item) {
+  Widget _buildItemCard(ItemParaTroca item) {
     final qtdSelecionada = _itensSelecionados[item.id] ?? 0;
     final isSelected = qtdSelecionada > 0;
 
@@ -1014,6 +1015,106 @@ class _SelecionarItensTrocaPageState extends State<_SelecionarItensTrocaPage> {
 
   Future<void> _processarDevolucao(DataService dataService) async {
     final venda = widget.venda;
+
+    // --- NOVA LÓGICA DE ESCOLHA DE ESTORNO ---
+    String? metodoEstorno; // 'fiado' ou 'dinheiro'
+    
+    // Buscar cliente se existir
+    final cliente = venda.clienteId != null 
+        ? dataService.clientes.firstWhere((c) => c.id == venda.clienteId, orElse: () => null as dynamic) 
+        : null;
+
+    final escolha = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text(
+          'Como deseja devolver o valor?',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.red.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.red.withOpacity(0.3)),
+              ),
+              child: Column(
+                children: [
+                  const Text(
+                    'VALOR DO ESTORNO',
+                    style: TextStyle(color: Colors.redAccent, fontSize: 12, fontWeight: FontWeight.bold),
+                  ),
+                  Text(
+                    _formatoMoeda.format(_valorTotal),
+                    style: const TextStyle(color: Colors.redAccent, fontSize: 28, fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+            // Opcao 1: Fiado (Se houver cliente)
+            _buildBotaoEstorno(
+              context,
+              venda.clienteId != null ? 'Crédito no Fiado' : 'Vincular Cliente (Crédito)',
+              venda.clienteId != null 
+                  ? 'Adicionar como crédito na conta do cliente'
+                  : 'Pesquisar cliente para salvar crédito',
+              Icons.account_balance_wallet,
+              Colors.blueAccent,
+              () async {
+                if (venda.clienteId != null) {
+                  Navigator.pop(context, 'fiado');
+                } else {
+                  // Abrir seletor de cliente
+                  final novoCliente = await _abrirSeletorCliente(context, dataService);
+                  if (novoCliente != null) {
+                    // Atualizar o ID do cliente na venda para o processamento posterior
+                    // (Note: venda é local a este método e é uma VendaParaTroca)
+                    // Como venda é final, usaremos uma variável local para o cliente selecionado
+                    Navigator.pop(context, 'fiado_novo:${novoCliente.id}');
+                  }
+                }
+              },
+              extra: cliente != null ? 'Saldo atual: ${_formatoMoeda.format(cliente.saldoDevedor)}' : (venda.clienteId == null ? 'Venda sem cliente vinculado' : null),
+            ),
+            const SizedBox(height: 12),
+            // Opcao 2: Dinheiro
+            _buildBotaoEstorno(
+              context,
+              'Dinheiro (Espécie)',
+              'Devolver o valor em dinheiro agora',
+              Icons.money,
+              Colors.greenAccent,
+              () => Navigator.pop(context, 'dinheiro'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, null),
+            child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+          ),
+        ],
+      ),
+    );
+
+    if (escolha == null) return;
+    String idClienteFinal = venda.clienteId ?? '';
+    
+    if (escolha.startsWith('fiado_novo:')) {
+      idClienteFinal = escolha.split(':')[1];
+      metodoEstorno = 'fiado';
+    } else {
+      metodoEstorno = escolha;
+    }
+    // --- FIM DA NOVA LÓGICA ---
+
 
     // 1. CRIAR LISTA DE ITENS DEVOLVIDOS E DEVOLVER AO ESTOQUE
     final itensDevolvidos = <ItemTrocaDevolucao>[];
@@ -1205,12 +1306,15 @@ class _SelecionarItensTrocaPageState extends State<_SelecionarItensTrocaPage> {
     }
 
     // 5. CRIAR REGISTRO DA DEVOLUÇÃO
+    
     final troca = TrocaDevolucao(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
       pedidoId: venda.id,
       numeroPedido: venda.numero,
-      clienteId: venda.clienteId,
-      clienteNome: venda.clienteNome,
+      clienteId: idClienteFinal.isNotEmpty ? idClienteFinal : venda.clienteId,
+      clienteNome: idClienteFinal.isNotEmpty 
+          ? dataService.clientes.firstWhere((c) => c.id == idClienteFinal).nome 
+          : venda.clienteNome,
       dataOperacao: DateTime.now(),
       tipo: TipoOperacao.devolucao,
       itensDevolvidos: itensDevolvidos,
@@ -1218,9 +1322,38 @@ class _SelecionarItensTrocaPageState extends State<_SelecionarItensTrocaPage> {
       diferenca: -_valorTotal,
       observacao: _motivo.isNotEmpty ? _motivo : null,
       status: 'Concluído',
+      metodoEstorno: metodoEstorno,
     );
 
     await dataService.addTrocaDevolucao(troca);
+
+    // 6. APLICAR O ESTORNO ESCOLHIDO (Crédito ou Dinheiro)
+    if (metodoEstorno == 'fiado' && idClienteFinal.isNotEmpty) {
+      try {
+        final clienteParaAtualizar = dataService.clientes.firstWhere((c) => c.id == idClienteFinal);
+        await dataService.updateCliente(clienteParaAtualizar.copyWith(
+          saldoDevedor: clienteParaAtualizar.saldoDevedor - _valorTotal,
+          updatedAt: DateTime.now(),
+        ));
+        debugPrint('>>> [Estorno] ✓ Crédito de ${_valorTotal} aplicado ao cliente ${clienteParaAtualizar.nome}');
+        
+        // Se o cliente foi vinculado agora, podemos opcionalmente atualizar a venda original 
+        // mas isso pode ser complexo. O registro da Devolução já terá o cliente correto.
+      } catch (e) {
+        debugPrint('>>> [Estorno] ERRO ao aplicar crédito no fiado: $e');
+      }
+    } else if (metodoEstorno == 'dinheiro') {
+      try {
+        await dataService.registrarSangria(
+          valor: _valorTotal,
+          motivo: 'Estorno Devolução: ${venda.numero}',
+          responsavel: 'Sistema',
+        );
+        debugPrint('>>> [Estorno] ✓ Sangria de estorno registrada no caixa');
+      } catch (e) {
+        debugPrint('>>> [Estorno] AVISO: Sangria manual necessária. Erro: $e');
+      }
+    }
 
     // Mostrar confirmação
     showDialog(
@@ -1266,13 +1399,28 @@ class _SelecionarItensTrocaPageState extends State<_SelecionarItensTrocaPage> {
                 color: Colors.green.withOpacity(0.2),
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: Text(
-                'Valor a devolver: ${_formatoMoeda.format(_valorTotal)}',
-                style: const TextStyle(
-                  color: Colors.greenAccent,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 18,
-                ),
+              child: Column(
+                children: [
+                  Text(
+                    'Valor a devolver: ${_formatoMoeda.format(_valorTotal)}',
+                    style: const TextStyle(
+                      color: Colors.greenAccent,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 18,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    metodoEstorno == 'fiado' 
+                        ? 'VALOR ADICIONADO AO SALDO DO CLIENTE'
+                        : 'VALOR DEVOLVIDO EM DINHEIRO',
+                    style: TextStyle(
+                      color: Colors.greenAccent.withOpacity(0.7),
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -1309,12 +1457,12 @@ class _SelecionarItensTrocaPageState extends State<_SelecionarItensTrocaPage> {
 
   void _navegarParaTroca(DataService dataService) {
     // Criar lista de itens a devolver
-    final itensDevolver = <_ItemVenda>[];
+    final itensDevolver = <ItemParaTroca>[];
     for (final item in widget.venda.itens) {
       final qtd = _itensSelecionados[item.id] ?? 0;
       if (qtd > 0) {
         itensDevolver.add(
-          _ItemVenda(
+          ItemParaTroca(
             id: item.id,
             produtoId: item.produtoId,
             nome: item.nome,
@@ -1328,7 +1476,7 @@ class _SelecionarItensTrocaPageState extends State<_SelecionarItensTrocaPage> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => _SelecionarNovosProdutosPage(
+        builder: (context) => SelecionarNovosProdutosPage(
           vendaOriginal: widget.venda,
           itensDevolver: itensDevolver,
           valorCredito: _valorTotal,
@@ -1337,16 +1485,93 @@ class _SelecionarItensTrocaPageState extends State<_SelecionarItensTrocaPage> {
       ),
     );
   }
+
+  Future<Cliente?> _abrirSeletorCliente(BuildContext context, DataService dataService) async {
+    return await showDialog<Cliente>(
+      context: context,
+      builder: (context) => _DialogBuscaCliente(dataService: dataService),
+    );
+  }
+
+  Widget _buildBotaoEstorno(
+    BuildContext context,
+    String titulo,
+    String subtitulo,
+    IconData icone,
+    Color cor,
+    VoidCallback onTap, {
+    String? extra,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(15),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.05),
+          borderRadius: BorderRadius.circular(15),
+          border: Border.all(color: Colors.white.withOpacity(0.1)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: cor.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(icone, color: cor),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    titulo,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                  Text(
+                    subtitulo,
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.5),
+                      fontSize: 12,
+                    ),
+                  ),
+                  if (extra != null) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      extra,
+                      style: TextStyle(
+                        color: cor,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right, color: Colors.white.withOpacity(0.3)),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 /// Página de seleção de novos produtos para troca
-class _SelecionarNovosProdutosPage extends StatefulWidget {
-  final _VendaUnificada vendaOriginal;
-  final List<_ItemVenda> itensDevolver;
+class SelecionarNovosProdutosPage extends StatefulWidget {
+  final VendaParaTroca vendaOriginal;
+  final List<ItemParaTroca> itensDevolver;
   final double valorCredito;
   final String motivo;
 
-  const _SelecionarNovosProdutosPage({
+  const SelecionarNovosProdutosPage({
     required this.vendaOriginal,
     required this.itensDevolver,
     required this.valorCredito,
@@ -1354,12 +1579,12 @@ class _SelecionarNovosProdutosPage extends StatefulWidget {
   });
 
   @override
-  State<_SelecionarNovosProdutosPage> createState() =>
-      _SelecionarNovosProdutosPageState();
+  State<SelecionarNovosProdutosPage> createState() =>
+      SelecionarNovosProdutosPageState();
 }
 
-class _SelecionarNovosProdutosPageState
-    extends State<_SelecionarNovosProdutosPage> {
+class SelecionarNovosProdutosPageState
+    extends State<SelecionarNovosProdutosPage> {
   final _formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
   final _buscaController = TextEditingController();
 
@@ -1915,7 +2140,7 @@ class _SelecionarNovosProdutosPageState
         (d) => d.id == item.id || 
                d.produtoId == item.id ||
                (d.nome == item.nome && d.preco == item.preco),
-        orElse: () => _ItemVenda(
+        orElse: () => ItemParaTroca(
           id: '',
           nome: '',
           quantidade: 0,
@@ -2280,17 +2505,17 @@ class _SelecionarNovosProdutosPageState
 // ============ Classes auxiliares ============
 
 /// Venda unificada (Pedido ou VendaBalcao)
-class _VendaUnificada {
+class VendaParaTroca {
   final String id;
   final String numero;
   final DateTime data;
   final String? clienteId;
   final String? clienteNome;
   final double valorTotal;
-  final List<_ItemVenda> itens;
+  final List<ItemParaTroca> itens;
   final bool isPedido;
 
-  _VendaUnificada({
+  VendaParaTroca({
     required this.id,
     required this.numero,
     required this.data,
@@ -2301,8 +2526,8 @@ class _VendaUnificada {
     required this.isPedido,
   });
 
-  factory _VendaUnificada.fromPedido(Pedido pedido) {
-    return _VendaUnificada(
+  factory VendaParaTroca.fromPedido(Pedido pedido) {
+    return VendaParaTroca(
       id: pedido.id,
       numero: pedido.numero,
       data: pedido.dataPedido,
@@ -2311,7 +2536,7 @@ class _VendaUnificada {
       valorTotal: pedido.totalGeral,
       itens: pedido.produtos
           .map(
-            (p) => _ItemVenda(
+            (p) => ItemParaTroca(
               id: p.id,
               produtoId: p.id, // No ItemPedido, o id É o produtoId
               nome: p.nome,
@@ -2324,8 +2549,8 @@ class _VendaUnificada {
     );
   }
 
-  factory _VendaUnificada.fromVendaBalcao(VendaBalcao venda) {
-    return _VendaUnificada(
+  factory VendaParaTroca.fromVendaBalcao(VendaBalcao venda) {
+    return VendaParaTroca(
       id: venda.id,
       numero: venda.numero,
       data: venda.dataVenda,
@@ -2335,7 +2560,7 @@ class _VendaUnificada {
       itens: venda.itens
           .where((i) => !i.isServico) // Só produtos, não serviços
           .map(
-            (i) => _ItemVenda(
+            (i) => ItemParaTroca(
               id: i.id,
               produtoId: i.id, // No ItemVendaBalcao, o id É o produtoId
               nome: i.nome,
@@ -2350,14 +2575,88 @@ class _VendaUnificada {
 }
 
 /// Item de venda
-class _ItemVenda {
+class _DialogBuscaCliente extends StatefulWidget {
+  final DataService dataService;
+  const _DialogBuscaCliente({required this.dataService});
+
+  @override
+  State<_DialogBuscaCliente> createState() => _DialogBuscaClienteState();
+}
+
+class _DialogBuscaClienteState extends State<_DialogBuscaCliente> {
+  final _buscaController = TextEditingController();
+  String _termo = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final clientes = widget.dataService.clientes.where((c) {
+      if (_termo.isEmpty) return true;
+      return c.nome.toLowerCase().contains(_termo.toLowerCase()) ||
+             c.telefone.contains(_termo);
+    }).toList();
+
+    return AlertDialog(
+      backgroundColor: const Color(0xFF1E1E2E),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      title: const Text('Selecionar Cliente', style: TextStyle(color: Colors.white)),
+      content: SizedBox(
+        width: 400,
+        height: 500,
+        child: Column(
+          children: [
+            TextField(
+              controller: _buscaController,
+              autofocus: true,
+              style: const TextStyle(color: Colors.white),
+              decoration: InputDecoration(
+                hintText: 'Pesquisar por nome ou telefone...',
+                hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
+                prefixIcon: const Icon(Icons.search, color: Colors.white54),
+                filled: true,
+                fillColor: Colors.white.withOpacity(0.05),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              onChanged: (v) => setState(() => _termo = v),
+            ),
+            const SizedBox(height: 16),
+            Expanded(
+              child: ListView.builder(
+                itemCount: clientes.length,
+                itemBuilder: (context, index) {
+                  final c = clientes[index];
+                  return ListTile(
+                    leading: CircleAvatar(
+                      backgroundColor: Colors.blueAccent.withOpacity(0.2),
+                      child: Text(c.nome[0].toUpperCase(), style: const TextStyle(color: Colors.blueAccent)),
+                    ),
+                    title: Text(c.nome, style: const TextStyle(color: Colors.white)),
+                    subtitle: Text(c.telefone, style: const TextStyle(color: Colors.white54)),
+                    onTap: () => Navigator.pop(context, c),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('CANCELAR', style: TextStyle(color: Colors.white54)),
+        ),
+      ],
+    );
+  }
+}
+
+class ItemParaTroca {
   final String id;
   final String? produtoId;
   final String nome;
   final int quantidade;
   final double preco;
 
-  _ItemVenda({
+  ItemParaTroca({
     required this.id,
     this.produtoId,
     required this.nome,

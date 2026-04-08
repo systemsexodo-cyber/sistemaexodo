@@ -1,6 +1,7 @@
 library mesa_comanda;
 
-import 'conta_pagar.dart';
+import 'package:sistema_exodo_novo/models/conta_pagar.dart';
+import 'package:sistema_exodo_novo/models/adicional_produto.dart';
 
 /// Status de um item em uma mesa/comanda
 enum StatusItem {
@@ -32,6 +33,7 @@ class ItemMesaComanda {
   final DateTime dataHora;
   final DateTime? dataHoraPronto;
   final String? observacao;
+  final List<AdicionalProduto> adicionais; // Adicionais selecionados para este item
   // Campos de auditoria/rastreamento
   final String? usuarioCriou; // Nome do usuário que criou o item
   final String? usuarioModificou; // Nome do usuário que modificou o item pela última vez
@@ -56,7 +58,9 @@ class ItemMesaComanda {
     this.usuarioModificou,
     this.dataModificacao,
     this.acaoRealizada,
-  }) : dataHora = dataHora ?? DateTime.now();
+    List<AdicionalProduto>? adicionais,
+  }) : dataHora = dataHora ?? DateTime.now(),
+       adicionais = adicionais ?? [];
 
   ItemMesaComanda copyWith({
     String? id,
@@ -95,6 +99,7 @@ class ItemMesaComanda {
       usuarioModificou: usuarioModificou ?? this.usuarioModificou,
       dataModificacao: dataModificacao ?? this.dataModificacao,
       acaoRealizada: acaoRealizada ?? this.acaoRealizada,
+      adicionais: adicionais ?? this.adicionais,
     );
   }
 
@@ -117,6 +122,7 @@ class ItemMesaComanda {
       'usuarioModificou': usuarioModificou,
       'dataModificacao': dataModificacao?.toIso8601String(),
       'acaoRealizada': acaoRealizada,
+      'adicionais': adicionais.map((a) => a.toMap()).toList(),
     };
   }
 
@@ -146,8 +152,20 @@ class ItemMesaComanda {
           ? DateTime.parse(map['dataModificacao'] as String)
           : null,
       acaoRealizada: map['acaoRealizada'] as String?,
+      adicionais: (map['adicionais'] as List<dynamic>?)
+          ?.map((a) => AdicionalProduto.fromMap(a as Map<String, dynamic>))
+          .toList() ?? [],
     );
   }
+
+  /// Calcula o preço unitário total (base + adicionais)
+  double get precoUnitarioComAdicionais {
+    final totalAdicionais = adicionais.fold(0.0, (sum, a) => sum + a.preco);
+    return preco + totalAdicionais;
+  }
+
+  /// Calcula o subtotal (preço unitário total * quantidade)
+  double get subtotal => precoUnitarioComAdicionais * quantidade;
 }
 
 /// Modelo para Mesa ou Comanda
@@ -176,6 +194,7 @@ class MesaComanda {
   final double? valorCouvert; // Valor do couvert artístico (calculado: quantidadePessoasCouvert * valorCouvertPorPessoa)
   final int? quantidadePessoasCouvert; // Número de pessoas para o couvert
   final double? valorCouvertPorPessoa; // Valor do couvert por pessoa
+  final String? nomeQuemPagouCouvert; // Nome de quem pagou o couvert
   final double? valorGarcom; // Valor do garçom (10% do total)
   final bool garcomRetirado; // Se o garçom já foi retirado
 
@@ -202,6 +221,7 @@ class MesaComanda {
     this.valorCouvert,
     this.quantidadePessoasCouvert,
     this.valorCouvertPorPessoa,
+    this.nomeQuemPagouCouvert,
     this.valorGarcom,
     bool? garcomRetirado,
   }) : itens = itens ?? [],
@@ -227,7 +247,7 @@ class MesaComanda {
   double get totalCalculado {
     final totalItensFiltered = itens
         .where((item) => item.status != StatusItem.cancelado)
-        .fold(0.0, (sum, item) => sum + (item.preco * item.quantidade));
+        .fold(0.0, (sum, item) => sum + item.subtotal);
     
     // Adicionar couvert se houver (considerar se tem pessoas)
     final temConsumoCouvert = (quantidadePessoasCouvert ?? 0) > 0 && (valorCouvertPorPessoa ?? 0) > 0;
@@ -253,8 +273,22 @@ class MesaComanda {
   double get valorGarcomCalculado {
     final totalItens = itens
         .where((item) => item.status != StatusItem.cancelado)
-        .fold(0.0, (sum, item) => sum + (item.preco * item.quantidade));
+        .fold(0.0, (sum, item) => sum + item.subtotal);
     return totalItens * 0.10; // 10% apenas dos itens (sem couvert)
+  }
+
+  // Alias para valor do garçom (taxa de serviço) para uso em relatórios e histórico
+  double get valorTaxaServicoCalculado {
+    if (garcomRetirado) return 0.0;
+    
+    // Se não há itens, a taxa de serviço deve ser 0
+    final totalItensFiltered = itens
+        .where((item) => item.status != StatusItem.cancelado)
+        .fold(0.0, (sum, item) => sum + item.subtotal);
+    
+    if (totalItensFiltered <= 0.01) return 0.0;
+    
+    return valorGarcom ?? valorGarcomCalculado;
   }
 
   // Itens pendentes
@@ -346,18 +380,20 @@ class MesaComanda {
     return itens.where((item) => itensPagos.contains(item.id)).toList();
   }
 
+  static const Object _sentinel = Object();
+
   MesaComanda copyWith({
     String? id,
     TipoControle? tipo,
     String? numero,
-    String? clienteId,
-    String? clienteNome,
-    String? mesaId,
+    Object? clienteId = _sentinel,
+    Object? clienteNome = _sentinel,
+    Object? mesaId = _sentinel,
     List<ItemMesaComanda>? itens,
     DateTime? dataAbertura,
-    DateTime? dataFechamento,
+    Object? dataFechamento = _sentinel,
     String? status,
-    String? observacao,
+    Object? observacao = _sentinel,
     double? total,
     List<RegistroPagamento>? historicoPagamentos,
     List<String>? itensPagos,
@@ -366,24 +402,25 @@ class MesaComanda {
     DateTime? updatedAt,
     String? usuarioCriou,
     String? usuarioModificou,
-    double? valorCouvert,
-    int? quantidadePessoasCouvert,
-    double? valorCouvertPorPessoa,
-    double? valorGarcom,
+    Object? valorCouvert = _sentinel,
+    Object? quantidadePessoasCouvert = _sentinel,
+    Object? valorCouvertPorPessoa = _sentinel,
+    Object? nomeQuemPagouCouvert = _sentinel,
+    Object? valorGarcom = _sentinel,
     bool? garcomRetirado,
   }) {
     return MesaComanda(
       id: id ?? this.id,
       tipo: tipo ?? this.tipo,
       numero: numero ?? this.numero,
-      clienteId: clienteId ?? this.clienteId,
-      clienteNome: clienteNome ?? this.clienteNome,
-      mesaId: mesaId ?? this.mesaId,
+      clienteId: (clienteId == _sentinel) ? this.clienteId : (clienteId as String?),
+      clienteNome: (clienteNome == _sentinel) ? this.clienteNome : (clienteNome as String?),
+      mesaId: (mesaId == _sentinel) ? this.mesaId : (mesaId as String?),
       itens: itens ?? this.itens,
       dataAbertura: dataAbertura ?? this.dataAbertura,
-      dataFechamento: dataFechamento ?? this.dataFechamento,
+      dataFechamento: (dataFechamento == _sentinel) ? this.dataFechamento : (dataFechamento as DateTime?),
       status: status ?? this.status,
-      observacao: observacao ?? this.observacao,
+      observacao: (observacao == _sentinel) ? this.observacao : (observacao as String?),
       total: total ?? this.total,
       historicoPagamentos: historicoPagamentos ?? this.historicoPagamentos,
       itensPagos: itensPagos ?? this.itensPagos,
@@ -392,10 +429,11 @@ class MesaComanda {
       updatedAt: updatedAt ?? DateTime.now(),
       usuarioCriou: usuarioCriou ?? this.usuarioCriou,
       usuarioModificou: usuarioModificou ?? this.usuarioModificou,
-      valorCouvert: valorCouvert ?? this.valorCouvert,
-      quantidadePessoasCouvert: quantidadePessoasCouvert ?? this.quantidadePessoasCouvert,
-      valorCouvertPorPessoa: valorCouvertPorPessoa ?? this.valorCouvertPorPessoa,
-      valorGarcom: valorGarcom ?? this.valorGarcom,
+      valorCouvert: (valorCouvert == _sentinel) ? this.valorCouvert : (valorCouvert as double?),
+      quantidadePessoasCouvert: (quantidadePessoasCouvert == _sentinel) ? this.quantidadePessoasCouvert : (quantidadePessoasCouvert as int?),
+      valorCouvertPorPessoa: (valorCouvertPorPessoa == _sentinel) ? this.valorCouvertPorPessoa : (valorCouvertPorPessoa as double?),
+      nomeQuemPagouCouvert: (nomeQuemPagouCouvert == _sentinel) ? this.nomeQuemPagouCouvert : (nomeQuemPagouCouvert as String?),
+      valorGarcom: (valorGarcom == _sentinel) ? this.valorGarcom : (valorGarcom as double?),
       garcomRetirado: garcomRetirado ?? this.garcomRetirado,
     );
   }
@@ -424,6 +462,7 @@ class MesaComanda {
       'valorCouvert': valorCouvert,
       'quantidadePessoasCouvert': quantidadePessoasCouvert,
       'valorCouvertPorPessoa': valorCouvertPorPessoa,
+      'nomeQuemPagouCouvert': nomeQuemPagouCouvert,
       'valorGarcom': valorGarcom,
       'garcomRetirado': garcomRetirado,
     };
@@ -469,6 +508,7 @@ class MesaComanda {
           ? (map['quantidadePessoasCouvert'] as num).toInt()
           : null,
       valorCouvertPorPessoa: (map['valorCouvertPorPessoa'] as num?)?.toDouble(),
+      nomeQuemPagouCouvert: map['nomeQuemPagouCouvert'] as String?,
       valorGarcom: (map['valorGarcom'] as num?)?.toDouble(),
       garcomRetirado: map['garcomRetirado'] as bool? ?? false,
     );

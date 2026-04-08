@@ -13,6 +13,7 @@ class ItemNotaEntrada {
   final double? precoCustoAnterior;
   final double? precoVendaAnterior;
   final int? estoqueAnterior;
+  final int? estoqueMinimo; // Adicionado: estoque mínimo configurado na entrada
   final bool produtoNovo; // Se o produto foi criado por esta nota
 
   ItemNotaEntrada({
@@ -29,6 +30,7 @@ class ItemNotaEntrada {
     this.precoCustoAnterior,
     this.precoVendaAnterior,
     this.estoqueAnterior,
+    this.estoqueMinimo,
     this.produtoNovo = false,
   });
 
@@ -47,6 +49,7 @@ class ItemNotaEntrada {
       precoCustoAnterior: map['precoCustoAnterior'] != null ? (map['precoCustoAnterior'] as num).toDouble() : null,
       precoVendaAnterior: map['precoVendaAnterior'] != null ? (map['precoVendaAnterior'] as num).toDouble() : null,
       estoqueAnterior: map['estoqueAnterior'] != null ? (map['estoqueAnterior'] as num).toInt() : null,
+      estoqueMinimo: map['estoqueMinimo'] != null ? (map['estoqueMinimo'] as num).toInt() : null,
       produtoNovo: map['produtoNovo'] ?? false,
     );
   }
@@ -66,6 +69,7 @@ class ItemNotaEntrada {
       'precoCustoAnterior': precoCustoAnterior,
       'precoVendaAnterior': precoVendaAnterior,
       'estoqueAnterior': estoqueAnterior,
+      'estoqueMinimo': estoqueMinimo,
       'produtoNovo': produtoNovo,
     };
   }

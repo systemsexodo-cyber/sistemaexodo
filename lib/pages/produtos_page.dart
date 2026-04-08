@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
+import 'package:flutter/services.dart';
 import '../models/produto.dart';
 import '../services/data_service.dart';
 import '../services/auth_service.dart';
 import '../produto_form.dart' as produto_form;
+import '../services/excel_export_service.dart';
 import '../custom_app_bar.dart';
 import '../theme.dart';
 import '../widgets/permission_widget.dart';
@@ -20,7 +22,7 @@ class ProdutosPage extends StatefulWidget {
   State<ProdutosPage> createState() => _ProdutosPageState();
 }
 
-enum SortOption { codigo, nome, recentes, grupo }
+enum SortOption { codigo, nome, recentes, grupo, unidade }
 
 class _ProdutosPageState extends State<ProdutosPage> {
   String _busca = '';
@@ -35,6 +37,7 @@ class _ProdutosPageState extends State<ProdutosPage> {
   // Filtro de estoque e grupo
   int? _filtroEstoque; // null = todos, 10, 20, 30
   String? _filtroGrupo; 
+  String? _filtroUnidade; // Novo: Filtro por unidade (UN, KG, etc)
 
   // Seleção para edição em massa
   final Set<String> _selecionados = {};
@@ -140,8 +143,42 @@ class _ProdutosPageState extends State<ProdutosPage> {
       _editandoId = null;
     });
   }
+  
+  void _copiarDescricao(Produto produto) {
+    final texto = [
+      'Produto: ${produto.nome}',
+      if (produto.descricao != null && produto.descricao!.isNotEmpty) 'Descrição: ${produto.descricao}',
+      'Preço: ${NumberFormat.currency(locale: "pt_BR", symbol: "R\$").format(produto.precoAtual)}',
+      if (produto.codigo != null && produto.codigo!.isNotEmpty) 'Código: ${produto.codigo}',
+      if (produto.codigoBarras != null && produto.codigoBarras!.isNotEmpty) 'Barras: ${produto.codigoBarras}',
+    ].join('\n');
+    
+    Clipboard.setData(ClipboardData(text: texto));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('✅ Informações copiadas para a área de transferência!'),
+        backgroundColor: Colors.blueAccent,
+        duration: Duration(seconds: 2),
+      )
+    );
+  }
 
-  void _showForm(BuildContext context, {Produto? produto}) {
+  void _clonarProduto(Produto produto) {
+    // Criar um clone com ID vazio para que o DataService gere um novo
+    final clone = produto.copyWith(
+      id: '', 
+      codigo: '', // Importante para que o Form saiba que deve gerar o PRÓXIMO disponível
+      nome: '${produto.nome} (Cópia)',
+      estoque: 0,
+      updatedAt: DateTime.now(),
+      createdAt: DateTime.now(),
+    );
+    
+    // Abrir o formulário com o clone, marcando como clone para usar addProduto no onSave
+    _showForm(context, produto: clone, isClone: true);
+  }
+
+  void _showForm(BuildContext context, {Produto? produto, bool isClone = false}) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -154,7 +191,7 @@ class _ProdutosPageState extends State<ProdutosPage> {
             item: produto,
             onSave: (newProduto) {
               final service = Provider.of<DataService>(context, listen: false);
-              if (produto == null) {
+              if (produto == null || isClone) {
                 service.addProduto(newProduto);
               } else {
                 service.updateProduto(newProduto);
@@ -180,6 +217,11 @@ class _ProdutosPageState extends State<ProdutosPage> {
       
       // 2. Filtro de grupo
       if (_filtroGrupo != null && p.grupo != _filtroGrupo) {
+        return false;
+      }
+      
+      // 3. Filtro de unidade
+      if (_filtroUnidade != null && p.unidade != _filtroUnidade) {
         return false;
       }
 
@@ -225,6 +267,10 @@ class _ProdutosPageState extends State<ProdutosPage> {
         case SortOption.grupo:
           final grupoCompare = a.grupo.toLowerCase().compareTo(b.grupo.toLowerCase());
           if (grupoCompare != 0) return grupoCompare;
+          return a.nome.toLowerCase().compareTo(b.nome.toLowerCase());
+        case SortOption.unidade:
+          final unidadeCompare = a.unidade.toLowerCase().compareTo(b.unidade.toLowerCase());
+          if (unidadeCompare != 0) return unidadeCompare;
           return a.nome.toLowerCase().compareTo(b.nome.toLowerCase());
         case SortOption.codigo:
         default:
@@ -303,7 +349,7 @@ class _ProdutosPageState extends State<ProdutosPage> {
                       );
                     },
                   ),
-                  if (service.produtos.any((p) => p.estoqueMinimo > 0 && p.estoque <= p.estoqueMinimo))
+                  if (service.produtos.any((p) => (p.estoqueMinimo > 0 && p.estoque <= p.estoqueMinimo) || p.estoque <= 0))
                     Positioned(
                       right: 8,
                       top: 8,
@@ -318,7 +364,7 @@ class _ProdutosPageState extends State<ProdutosPage> {
                           minHeight: 14,
                         ),
                         child: Text(
-                          service.produtos.where((p) => p.estoqueMinimo > 0 && p.estoque <= p.estoqueMinimo).length.toString(),
+                          service.produtos.where((p) => (p.estoqueMinimo > 0 && p.estoque <= p.estoqueMinimo) || p.estoque <= 0).length.toString(),
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 8,
@@ -347,6 +393,80 @@ class _ProdutosPageState extends State<ProdutosPage> {
                       builder: (_) => const EstoqueRelatorioGeralPage(),
                     ),
                   );
+                },
+              ),
+            ),
+            // Botão Exportar CSV
+            PermissionWidget(
+              permissao: TipoPermissao.estoqueVisualizar,
+              child: IconButton(
+                icon: const Icon(
+                  Icons.shopping_cart_checkout_rounded,
+                  color: Colors.blueAccent,
+                ),
+                tooltip: 'Exportar CSV para E-commerce',
+                onPressed: () {
+                  try {
+                    debugPrint('>>> [ProdutosPage] Iniciando exportação CSV...');
+                    if (produtosFiltrados.isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Nenhum produto filtrado para exportar')),
+                      );
+                      return;
+                    }
+                    ExcelExportService.exportarProdutosCSV(produtosFiltrados);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('✓ CSV exportado! Verifique a pasta DOWNLOADS (Ctrl+J)'),
+                        backgroundColor: Colors.blueAccent,
+                        duration: Duration(seconds: 4),
+                      ),
+                    );
+                  } catch (e) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('❌ Erro na exportação CSV: $e'),
+                        backgroundColor: Colors.redAccent,
+                      ),
+                    );
+                  }
+                },
+              ),
+            ),
+            // Botão Exportar Excel
+            PermissionWidget(
+              permissao: TipoPermissao.estoqueVisualizar,
+              child: IconButton(
+                icon: const Icon(
+                  Icons.file_download_outlined,
+                  color: Colors.greenAccent,
+                ),
+                tooltip: 'Exportar para Excel',
+                onPressed: () {
+                  try {
+                    debugPrint('>>> [ProdutosPage] Iniciando exportação Excel...');
+                    if (produtosFiltrados.isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Nenhum produto filtrado para exportar')),
+                      );
+                      return;
+                    }
+                    ExcelExportService.exportarProdutos(produtosFiltrados);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('✓ Exportação concluída! Verifique a pasta DOWNLOADS (Ctrl+J)'),
+                        backgroundColor: Colors.green,
+                        duration: Duration(seconds: 4),
+                      ),
+                    );
+                  } catch (e) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('❌ Erro na exportação Excel: $e'),
+                        backgroundColor: Colors.redAccent,
+                      ),
+                    );
+                  }
                 },
               ),
             ),
@@ -389,13 +509,13 @@ class _ProdutosPageState extends State<ProdutosPage> {
               padding: const EdgeInsets.symmetric(horizontal: 16),
               height: 54,
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.08),
+                color: Colors.white.withOpacity(0.12),
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(color: Colors.white.withOpacity(0.1)),
               ),
               child: Row(
                 children: [
-                  Icon(Icons.search, color: Colors.white.withOpacity(0.4), size: 22),
+                  Icon(Icons.search, color: Colors.white.withOpacity(0.6), size: 22),
                   const SizedBox(width: 12),
                   Expanded(
                     child: TextField(
@@ -404,7 +524,7 @@ class _ProdutosPageState extends State<ProdutosPage> {
                       style: const TextStyle(color: Colors.white, fontSize: 15),
                       decoration: InputDecoration(
                         hintText: 'Buscar produtos...',
-                        hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
+                        hintStyle: TextStyle(color: Colors.white.withOpacity(0.5)),
                         border: InputBorder.none,
                         isDense: true,
                       ),
@@ -423,7 +543,8 @@ class _ProdutosPageState extends State<ProdutosPage> {
                     icon: Icon(
                       _sortOption == SortOption.codigo ? Icons.tag :
                       _sortOption == SortOption.nome ? Icons.sort_by_alpha :
-                      _sortOption == SortOption.recentes ? Icons.history : Icons.category_outlined,
+                      _sortOption == SortOption.recentes ? Icons.history : 
+                      _sortOption == SortOption.grupo ? Icons.category_outlined : Icons.straighten,
                       color: Colors.blueAccent, size: 20,
                     ),
                     tooltip: 'Ordenar produtos',
@@ -433,6 +554,7 @@ class _ProdutosPageState extends State<ProdutosPage> {
                       const PopupMenuItem(value: SortOption.nome, child: Row(children: [Icon(Icons.sort_by_alpha, size: 16), SizedBox(width: 8), Text('Nome (A-Z)')])),
                       const PopupMenuItem(value: SortOption.recentes, child: Row(children: [Icon(Icons.history, size: 16), SizedBox(width: 8), Text('Recentes')])),
                       const PopupMenuItem(value: SortOption.grupo, child: Row(children: [Icon(Icons.category_outlined, size: 16), SizedBox(width: 8), Text('Grupo')])),
+                      const PopupMenuItem(value: SortOption.unidade, child: Row(children: [Icon(Icons.straighten, size: 16), SizedBox(width: 8), Text('Unidade')])),
                     ],
                   ),
                   const VerticalDivider(width: 12, indent: 14, endIndent: 14, color: Colors.white10),
@@ -455,6 +577,29 @@ class _ProdutosPageState extends State<ProdutosPage> {
                       return [
                         const PopupMenuItem(value: null, child: Text('Todos os Grupos')),
                         ...grupos.map((g) => PopupMenuItem(value: g, child: Text(g))),
+                      ];
+                    },
+                  ),
+                  const VerticalDivider(width: 12, indent: 14, endIndent: 14, color: Colors.white10),
+                  // Filtro por Unidade (Novo!)
+                  PopupMenuButton<String?>(
+                    icon: Icon(Icons.straighten, 
+                      color: _filtroUnidade != null ? Colors.tealAccent : Colors.white60, 
+                      size: 20
+                    ),
+                    tooltip: 'Filtrar por Unidade',
+                    onSelected: (v) => setState(() { _filtroUnidade = v; _resetPaginacao(); }),
+                    itemBuilder: (context) {
+                      final unidades = service.produtos
+                          .map((p) => p.unidade)
+                          .where((u) => u.isNotEmpty)
+                          .toSet()
+                          .toList();
+                      unidades.sort();
+                      
+                      return [
+                        const PopupMenuItem(value: null, child: Text('Todas as Unidades')),
+                        ...unidades.map((u) => PopupMenuItem(value: u, child: Text(u))),
                       ];
                     },
                   ),
@@ -502,6 +647,16 @@ class _ProdutosPageState extends State<ProdutosPage> {
                         avatar: const Icon(Icons.close, size: 14, color: Colors.white),
                         padding: EdgeInsets.zero,
                       ),
+                    if (_filtroUnidade != null)
+                      ChoiceChip(
+                        label: Text('Unidade: $_filtroUnidade', style: const TextStyle(fontSize: 11, color: Colors.white)),
+                        selected: true,
+                        onSelected: (_) => setState(() => _filtroUnidade = null),
+                        backgroundColor: Colors.teal.shade900.withOpacity(0.4),
+                        selectedColor: Colors.teal.shade800,
+                        avatar: const Icon(Icons.close, size: 14, color: Colors.white),
+                        padding: EdgeInsets.zero,
+                      ),
                   ],
                 ),
               ),
@@ -524,7 +679,7 @@ class _ProdutosPageState extends State<ProdutosPage> {
                       itemCount: _itensVisiveis > produtosFiltrados.length 
                           ? produtosFiltrados.length 
                           : _itensVisiveis,
-                      separatorBuilder: (_, __) => Divider(color: Colors.white.withOpacity(0.05), height: 1),
+                      separatorBuilder: (_, __) => const SizedBox(height: 4),
                       itemBuilder: (context, index) {
                         final produto = produtosFiltrados[index];
                         final estaEditando = _editandoId == produto.id;
@@ -535,121 +690,183 @@ class _ProdutosPageState extends State<ProdutosPage> {
                           return _buildEdicaoRapida(produto);
                         }
 
-                        return InkWell(
-                          onTap: () {
-                            if (_modoSelecao) {
-                              setState(() {
-                                if (_selecionados.contains(produto.id)) {
-                                  _selecionados.remove(produto.id);
-                                } else {
-                                  _selecionados.add(produto.id);
-                                }
-                              });
-                            } else {
-                              _iniciarEdicaoRapida(produto);
-                            }
-                          },
-                          onLongPress: () => _showForm(context, produto: produto),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            child: Row(
-                              children: [
-                                if (_modoSelecao)
-                                  Checkbox(
-                                    value: _selecionados.contains(produto.id),
-                                    onChanged: (v) {
-                                      setState(() {
-                                        if (v == true) {
-                                          _selecionados.add(produto.id);
-                                        } else {
-                                          _selecionados.remove(produto.id);
-                                        }
-                                      });
-                                    },
-                                    activeColor: Colors.blueAccent,
-                                    side: const BorderSide(color: Colors.white24),
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.04),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                              color: Colors.white.withOpacity(0.05),
+                            ),
+                          ),
+                          child: InkWell(
+                            onTap: () {
+                              if (_modoSelecao) {
+                                setState(() {
+                                  if (_selecionados.contains(produto.id)) {
+                                    _selecionados.remove(produto.id);
+                                  } else {
+                                    _selecionados.add(produto.id);
+                                  }
+                                });
+                              } else {
+                                _iniciarEdicaoRapida(produto);
+                              }
+                            },
+                            onLongPress: () => _showForm(context, produto: produto),
+                            borderRadius: BorderRadius.circular(16),
+                            child: Padding(
+                              padding: const EdgeInsets.all(12),
+                              child: Row(
+                                children: [
+                                  if (_modoSelecao)
+                                    Checkbox(
+                                      value: _selecionados.contains(produto.id),
+                                      onChanged: (v) {
+                                        setState(() {
+                                          if (v == true) {
+                                            _selecionados.add(produto.id);
+                                          } else {
+                                            _selecionados.remove(produto.id);
+                                          }
+                                        });
+                                      },
+                                      activeColor: Colors.blueAccent,
+                                      side: const BorderSide(color: Colors.white24),
+                                    ),
+                                  if (_modoSelecao) const SizedBox(width: 4),
+                                  Container(
+                                    width: 52,
+                                    height: 40,
+                                    decoration: BoxDecoration(
+                                      color: Colors.blueAccent.withOpacity(0.15),
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    alignment: Alignment.center,
+                                    child: Text(
+                                      produto.codigo?.replaceAll('COD-', '') ?? '?',
+                                      style: const TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold, fontSize: 13),
+                                    ),
                                   ),
-                                if (_modoSelecao) const SizedBox(width: 4),
-                                Container(
-                                  width: 48,
-                                  height: 36,
-                                  decoration: BoxDecoration(
-                                    color: Colors.blueAccent.withOpacity(0.1),
-                                    borderRadius: BorderRadius.circular(8),
+                                  const SizedBox(width: 16),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Row(
+                                          children: [
+                                            Expanded(
+                                              child: Text(
+                                                produto.nome.toUpperCase(),
+                                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14, letterSpacing: 0.5),
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                            ),
+                                            IconButton(
+                                              icon: const Icon(Icons.copy_rounded, color: Colors.white30, size: 14),
+                                              tooltip: 'Copiar Descrição',
+                                              onPressed: () => _copiarDescricao(produto),
+                                              constraints: const BoxConstraints(),
+                                              padding: const EdgeInsets.only(left: 4),
+                                            ),
+                                          ],
+                                        ),
+                                        Row(
+                                          children: [
+                                            // Badge de Estoque
+                                            Container(
+                                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                              decoration: BoxDecoration(
+                                                color: estoqueBaixo ? Colors.redAccent.withOpacity(0.15) : Colors.white.withOpacity(0.08),
+                                                borderRadius: BorderRadius.circular(8),
+                                                border: Border.all(color: estoqueBaixo ? Colors.redAccent.withOpacity(0.3) : Colors.white.withOpacity(0.05)),
+                                              ),
+                                              child: Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  Icon(estoqueBaixo ? Icons.warning_amber_rounded : Icons.inventory_2_outlined, 
+                                                    size: 12, color: estoqueBaixo ? Colors.redAccent : Colors.blueAccent),
+                                                  const SizedBox(width: 6),
+                                                  Text('${produto.estoque} ${produto.unidade}', 
+                                                    style: TextStyle(
+                                                      fontSize: 11, 
+                                                      color: estoqueBaixo ? Colors.redAccent : Colors.white,
+                                                      fontWeight: FontWeight.bold,
+                                                      letterSpacing: 0.5
+                                                    )),
+                                                ],
+                                              ),
+                                            ),
+                                            const SizedBox(width: 8),
+                                            // Badge de Grupo
+                                            Container(
+                                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                              decoration: BoxDecoration(
+                                                color: Colors.blueAccent.withOpacity(0.1),
+                                                borderRadius: BorderRadius.circular(8),
+                                                border: Border.all(color: Colors.blueAccent.withOpacity(0.2)),
+                                              ),
+                                              child: Text(produto.grupo.isEmpty ? 'GERAL' : produto.grupo.toUpperCase(),
+                                                style: const TextStyle(fontSize: 10, color: Colors.blueAccent, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
+                                            ),
+                                          ],
+                                        ),
+                                        if (produto.estoquePorFornecedor.isNotEmpty)
+                                          Padding(
+                                            padding: const EdgeInsets.only(top: 6),
+                                            child: Text(
+                                              produto.estoquePorFornecedor.entries
+                                                  .where((e) => e.value > 0)
+                                                  .map((e) => '${e.value} da ${e.key}')
+                                                  .join(', '),
+                                              style: const TextStyle(fontSize: 10, color: Colors.white60, fontStyle: FontStyle.italic),
+                                            ),
+                                          ),
+                                      ],
+                                    ),
                                   ),
-                                  alignment: Alignment.center,
-                                  child: Text(
-                                    produto.codigo?.replaceAll('COD-', '') ?? '?',
-                                    style: const TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.bold, fontSize: 13),
-                                  ),
-                                ),
-                                const SizedBox(width: 16),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                  Column(
+                                    crossAxisAlignment: CrossAxisAlignment.end,
                                     children: [
                                       Text(
-                                        produto.nome,
-                                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 15),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
+                                        formatoMoeda.format(produto.precoAtual),
+                                        style: TextStyle(
+                                          color: const Color(0xFF00FF9D), // Verde cintilante/neon
+                                          fontWeight: FontWeight.bold, 
+                                          fontSize: 17,
+                                          shadows: [
+                                            Shadow(color: const Color(0xFF00FF9D).withOpacity(0.5), blurRadius: 8),
+                                            Shadow(color: const Color(0xFF00FF9D).withOpacity(0.3), blurRadius: 15),
+                                          ],
+                                        ),
                                       ),
-                                      Row(
-                                        children: [
-                                          Icon(estoqueBaixo ? Icons.warning_amber_rounded : Icons.inventory_2_outlined, 
-                                            size: 12, color: estoqueBaixo ? Colors.redAccent : Colors.white38),
-                                          const SizedBox(width: 4),
-                                          Text('Estoque: ${produto.estoque}', 
-                                            style: TextStyle(fontSize: 11, color: estoqueBaixo ? Colors.redAccent : Colors.white38)),
-                                          const SizedBox(width: 8),
-                                          Container(width: 4, height: 4, decoration: const BoxDecoration(color: Colors.white10, shape: BoxShape.circle)),
-                                          const SizedBox(width: 8),
-                                          Text(produto.grupo.isEmpty ? 'Geral' : produto.grupo,
-                                            style: const TextStyle(fontSize: 11, color: Colors.blueAccent, fontWeight: FontWeight.w500)),
-                                        ],
-                                      ),
-                                      if (produto.estoquePorFornecedor.isNotEmpty)
-                                        Padding(
-                                          padding: const EdgeInsets.only(top: 4),
-                                          child: Text(
-                                            produto.estoquePorFornecedor.entries
-                                                .where((e) => e.value > 0)
-                                                .map((e) => '${e.value} da ${e.key}')
-                                                .join(', '),
-                                            style: const TextStyle(fontSize: 10, color: Colors.white30, fontStyle: FontStyle.italic),
-                                          ),
+                                      if (produto.promocaoAtiva)
+                                        Text(
+                                          formatoMoeda.format(produto.preco),
+                                          style: const TextStyle(color: Colors.white24, fontSize: 10, decoration: TextDecoration.lineThrough),
                                         ),
                                     ],
                                   ),
-                                ),
-                                Column(
-                                  crossAxisAlignment: CrossAxisAlignment.end,
-                                  children: [
-                                    Text(
-                                      formatoMoeda.format(produto.precoAtual),
-                                      style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 16),
-                                    ),
-                                    if (produto.promocaoAtiva)
-                                      Text(
-                                        formatoMoeda.format(produto.preco),
-                                        style: const TextStyle(color: Colors.white24, fontSize: 10, decoration: TextDecoration.lineThrough),
-                                      ),
-                                  ],
-                                ),
-                                const SizedBox(width: 12),
-                                PopupMenuButton<String>(
-                                  icon: const Icon(Icons.more_vert, color: Colors.white30, size: 20),
-                                  color: const Color(0xFF1A1A2E),
-                                  onSelected: (v) {
-                                    if (v == 'edit') _showForm(context, produto: produto);
-                                    if (v == 'del') _confirmarExclusao(produto);
-                                  },
-                                  itemBuilder: (context) => [
-                                    const PopupMenuItem(value: 'edit', child: Text('Editar Detalhes', style: TextStyle(color: Colors.white))),
-                                    const PopupMenuItem(value: 'del', child: Text('Excluir Produto', style: TextStyle(color: Colors.redAccent))),
-                                  ],
-                                ),
-                              ],
+                                  const SizedBox(width: 12),
+                                  PopupMenuButton<String>(
+                                    icon: const Icon(Icons.more_vert, color: Colors.white30, size: 20),
+                                    color: const Color(0xFF1A1A2E),
+                                    onSelected: (v) {
+                                      if (v == 'edit') _showForm(context, produto: produto);
+                                      if (v == 'clone') _clonarProduto(produto);
+                                      if (v == 'copy') _copiarDescricao(produto);
+                                      if (v == 'del') _confirmarExclusao(produto);
+                                    },
+                                    itemBuilder: (context) => [
+                                      const PopupMenuItem(value: 'edit', child: Row(children: [Icon(Icons.edit, size: 16, color: Colors.white70), SizedBox(width: 8), Text('Editar Detalhes', style: TextStyle(color: Colors.white))])),
+                                      const PopupMenuItem(value: 'clone', child: Row(children: [Icon(Icons.copy_all_rounded, size: 16, color: Colors.blueAccent), SizedBox(width: 8), Text('Clonar Produto', style: TextStyle(color: Colors.white))])),
+                                      const PopupMenuItem(value: 'copy', child: Row(children: [Icon(Icons.copy_rounded, size: 16, color: Colors.white70), SizedBox(width: 8), Text('Copiar Texto', style: TextStyle(color: Colors.white))])),
+                                      const PopupMenuItem(value: 'del', child: Row(children: [Icon(Icons.delete_outline, size: 16, color: Colors.redAccent), SizedBox(width: 8), Text('Excluir Produto', style: TextStyle(color: Colors.redAccent))])),
+                                    ],
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
                         );
@@ -1013,7 +1230,14 @@ class _ProdutosPageState extends State<ProdutosPage> {
                               child: TextFormField(
                                 initialValue: atual.preco.toStringAsFixed(2),
                                 keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                                style: const TextStyle(fontSize: 13, color: Colors.greenAccent),
+                                style: const TextStyle(
+                                  fontSize: 13, 
+                                  color: Colors.greenAccent,
+                                  fontWeight: FontWeight.bold,
+                                  shadows: [
+                                    Shadow(color: Colors.greenAccent, blurRadius: 8),
+                                  ],
+                                ),
                                 decoration: const InputDecoration(border: InputBorder.none, isDense: true),
                                 onChanged: (v) => edicoes[p.id] = edicoes[p.id]!.copyWith(preco: double.tryParse(v.replaceAll(',', '.')) ?? atual.preco),
                               ),

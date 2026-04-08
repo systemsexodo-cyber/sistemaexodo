@@ -1,11 +1,11 @@
 {
-    "name": "sistema_exodo_novo",
-    "short_name": "sistema_exodo_novo",
+    "name": "Sistema Êxodo",
+    "short_name": "Êxodo",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#000000",
+    "theme_color": "#2196F3",
+    "description": "Sistema de Gestão Êxodo - Gestão completa para seu negócio.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

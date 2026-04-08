@@ -76,6 +76,7 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
   bool _exibirRedesSociais = true;
   bool _exibirHorarioFuncionamento = true;
   bool _exibirEnderecoLoja = true;
+  String _modoExibicao = 'ecommerce'; // ecommerce, delivery
   
   // Configurações do banner de frete grátis
   bool _bannerFreteGratisAtivo = true;
@@ -237,6 +238,7 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
       _slugController.text = empresa.slug;
       _exibirHorarioFuncionamento = ecommerceConfig['exibirHorarioFuncionamento'] as bool? ?? true;
       _exibirEnderecoLoja = ecommerceConfig['exibirEnderecoLoja'] as bool? ?? true;
+      _modoExibicao = ecommerceConfig['modoExibicao'] as String? ?? 'ecommerce';
       
       _emailContatoController.text = ecommerceConfig['emailContato'] as String? ?? empresa.email ?? '';
       _facebookController.text = ecommerceConfig['facebook'] as String? ?? '';
@@ -627,6 +629,7 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
       ecommerceExistente['exibirRedesSociais'] = _exibirRedesSociais;
       ecommerceExistente['exibirHorarioFuncionamento'] = _exibirHorarioFuncionamento;
       ecommerceExistente['exibirEnderecoLoja'] = _exibirEnderecoLoja;
+      ecommerceExistente['modoExibicao'] = _modoExibicao;
       ecommerceExistente['emailContato'] = _emailContatoController.text.trim();
       ecommerceExistente['facebook'] = _facebookController.text.trim();
       ecommerceExistente['instagram'] = _instagramController.text.trim();
@@ -2376,6 +2379,68 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // NOVO: Seleção de Modo de Exibição (E-commerce ou Delivery)
+          Card(
+            color: Colors.blue.withOpacity(0.15),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: BorderSide(color: Colors.blueAccent.withOpacity(0.3)),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.storefront_rounded, color: Colors.blueAccent),
+                      const SizedBox(width: 8),
+                      const Text(
+                        'Modo de Exibição da Loja',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Defina o estilo principal de navegação para seus clientes.',
+                    style: TextStyle(color: Colors.white70, fontSize: 13),
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    child: SegmentedButton<String>(
+                      segments: const [
+                        ButtonSegment(
+                          value: 'ecommerce', 
+                          label: Text('E-commerce'), 
+                          icon: Icon(Icons.grid_view_rounded, size: 20)
+                        ),
+                        ButtonSegment(
+                          value: 'delivery', 
+                          label: Text('Delivery / Cardápio'), 
+                          icon: Icon(Icons.list_alt_rounded, size: 20)
+                        ),
+                      ],
+                      selected: {_modoExibicao},
+                      onSelectionChanged: (Set<String> newSelection) {
+                        setState(() => _modoExibicao = newSelection.first);
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    _modoExibicao == 'ecommerce' 
+                      ? '💡 Ideal para lojas de roupas, eletrônicos e produtos com foco em fotos grandes.'
+                      : '💡 Ideal para restaurantes, petshops e vendas rápidas com foco em lista.',
+                    style: TextStyle(color: Colors.blue[100], fontSize: 11, fontStyle: FontStyle.italic),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          
+          const SizedBox(height: 24),
           Card(
             color: Colors.white.withOpacity(0.1),
             child: Padding(

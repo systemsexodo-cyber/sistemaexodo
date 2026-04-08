@@ -1,5 +1,6 @@
 import 'package:sistema_exodo_novo/utils/date_parser.dart';
 import 'pet.dart';
+import 'endereco_cliente.dart';
 
 
 /// Tipo de pessoa
@@ -39,6 +40,7 @@ class Cliente {
   final String? estado;
   final String? cep;
   final String? pontoReferencia;
+  final List<EnderecoCliente> enderecos; // Lista de endereços do cliente
 
   // Informações adicionais
   final DateTime? dataNascimento;
@@ -101,7 +103,9 @@ class Cliente {
     this.ativo = true,
     required this.createdAt,
     required this.updatedAt,
-  }) : pets = pets ?? [];
+    List<EnderecoCliente>? enderecos,
+  }) : pets = pets ?? [],
+       enderecos = enderecos ?? [];
 
   /// Retorna o crédito disponível (limite - saldo devedor)
   double get creditoDisponivel {
@@ -195,6 +199,9 @@ class Cliente {
       pets: map['pets'] != null
           ? (map['pets'] as List).map((p) => Pet.fromMap(p as Map<String, dynamic>)).toList()
           : [],
+      enderecos: map['enderecos'] != null
+          ? (map['enderecos'] as List).map((e) => EnderecoCliente.fromMap(e as Map<String, dynamic>)).toList()
+          : [],
       limiteCredito: (map['limiteCredito'] as num?)?.toDouble(),
       saldoDevedor: (map['saldoDevedor'] as num? ?? 0).toDouble(),
       bloqueado: map['bloqueado'] ?? false,
@@ -235,6 +242,7 @@ class Cliente {
       'fotoPath': fotoPath,
       'dadosExtras': dadosExtras,
       'pets': pets.map((p) => p.toMap()).toList(),
+      'enderecos': enderecos.map((e) => e.toMap()).toList(),
       'limiteCredito': limiteCredito,
       'saldoDevedor': saldoDevedor,
       'bloqueado': bloqueado,
@@ -273,6 +281,7 @@ class Cliente {
     String? fotoPath,
     Map<String, dynamic>? dadosExtras,
     List<Pet>? pets,
+    List<EnderecoCliente>? enderecos,
     double? limiteCredito,
     double? saldoDevedor,
     bool? bloqueado,
@@ -309,6 +318,7 @@ class Cliente {
       fotoPath: fotoPath ?? this.fotoPath,
       dadosExtras: dadosExtras ?? this.dadosExtras,
       pets: pets ?? this.pets,
+      enderecos: enderecos ?? this.enderecos,
       limiteCredito: limiteCredito ?? this.limiteCredito,
       saldoDevedor: saldoDevedor ?? this.saldoDevedor,
       bloqueado: bloqueado ?? this.bloqueado,

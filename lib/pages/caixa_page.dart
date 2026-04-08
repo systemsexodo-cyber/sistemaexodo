@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:collection/collection.dart';
 import 'package:intl/intl.dart';
 import '../services/data_service.dart';
 import '../models/caixa.dart';
@@ -7,6 +8,11 @@ import '../models/forma_pagamento.dart';
 import '../theme.dart';
 import 'home_page.dart';
 import '../widgets/sync_status_widget.dart';
+import '../services/caixa_pdf_service.dart';
+import '../services/auth_service.dart';
+import '../models/venda_balcao.dart';
+import '../models/empresa.dart';
+import 'package:printing/printing.dart';
 
 
 /// Página de gerenciamento de caixa
@@ -18,500 +24,637 @@ class CaixaPage extends StatefulWidget {
 }
 
 class _CaixaPageState extends State<CaixaPage> {
+  final NumberFormat formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+  final DateFormat formatoData = DateFormat('dd/MM/yyyy HH:mm');
+  final DateFormat formatoHora = DateFormat('HH:mm');
+
   @override
   Widget build(BuildContext context) {
-    final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
-    final formatoData = DateFormat('dd/MM/yyyy HH:mm');
-
     return AppTheme.appBackground(
       child: Scaffold(
         backgroundColor: Colors.transparent,
         appBar: AppBar(
-          title: const Text('Gerenciar Caixa'),
+          title: const Text('Fluxo de Caixa'),
           backgroundColor: Colors.transparent,
-          actions: [
-            const SyncStatusWidget(),
-          ],
+          elevation: 0,
+          actions: const [SyncStatusWidget()],
         ),
         body: Consumer<DataService>(
           builder: (context, dataService, child) {
             final caixaAberto = dataService.caixaAberto;
             final aberturaAtual = dataService.aberturaCaixaAtual;
 
-            return SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  // Card de status do caixa - Moderno e Inteligente
-                  Container(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: caixaAberto
-                            ? [
-                                Colors.green.withOpacity(0.3),
-                                Colors.greenAccent.withOpacity(0.1),
-                              ]
-                            : [
-                                Colors.grey.withOpacity(0.3),
-                                Colors.grey.withOpacity(0.1),
-                              ],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(
-                        color: caixaAberto
-                            ? Colors.green.withOpacity(0.5)
-                            : Colors.grey.withOpacity(0.3),
-                        width: 2,
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: caixaAberto
-                              ? Colors.green.withOpacity(0.3)
-                              : Colors.grey.withOpacity(0.2),
-                          blurRadius: 20,
-                          spreadRadius: 2,
-                        ),
-                      ],
-                    ),
+            return CustomScrollView(
+              slivers: [
+                // 1. Card de Status do Caixa
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: _buildStatusHeader(caixaAberto, aberturaAtual, dataService),
+                  ),
+                ),
+
+                // 2. Seção de Resumo (Apenas se aberto)
+                if (caixaAberto && aberturaAtual != null)
+                  SliverToBoxAdapter(
                     child: Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Column(
+                      padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                      child: _buildResumoSession(dataService, aberturaAtual),
+                    ),
+                  ),
+
+                // 3. Título do Fluxo de Caixa Atual
+                if (caixaAberto && aberturaAtual != null)
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 24, 16, 12),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Row(
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.all(16),
-                                decoration: BoxDecoration(
-                                  gradient: RadialGradient(
-                                    colors: caixaAberto
-                                        ? [
-                                            Colors.green.withOpacity(0.4),
-                                            Colors.greenAccent.withOpacity(0.2),
-                                          ]
-                                        : [
-                                            Colors.grey.withOpacity(0.4),
-                                            Colors.grey.withOpacity(0.2),
-                                          ],
-                                  ),
-                                  shape: BoxShape.circle,
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: caixaAberto
-                                          ? Colors.green.withOpacity(0.5)
-                                          : Colors.grey.withOpacity(0.3),
-                                      blurRadius: 15,
-                                      spreadRadius: 2,
-                                    ),
-                                  ],
-                                ),
-                                child: Icon(
-                                  caixaAberto
-                                      ? Icons.lock_open_rounded
-                                      : Icons.lock_rounded,
-                                  color: caixaAberto
-                                      ? Colors.greenAccent
-                                      : Colors.grey,
-                                  size: 40,
-                                ),
-                              ),
-                              const SizedBox(width: 20),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      children: [
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 12,
-                                            vertical: 6,
-                                          ),
-                                          decoration: BoxDecoration(
-                                            color: caixaAberto
-                                                ? Colors.green.withOpacity(0.3)
-                                                : Colors.grey.withOpacity(0.3),
-                                            borderRadius: BorderRadius.circular(8),
-                                          ),
-                                          child: Text(
-                                            caixaAberto ? 'ABERTO' : 'FECHADO',
-                                            style: TextStyle(
-                                              color: caixaAberto
-                                                  ? Colors.greenAccent
-                                                  : Colors.grey,
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.bold,
-                                              letterSpacing: 1.5,
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 8),
-                                    if (aberturaAtual != null) ...[
-                                      Text(
-                                        aberturaAtual.numero,
-                                        style: const TextStyle(
-                                          fontSize: 22,
-                                          fontWeight: FontWeight.bold,
-                                          color: Colors.white,
-                                          letterSpacing: 1,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 6),
-                                      Row(
-                                        children: [
-                                          Icon(
-                                            Icons.access_time,
-                                            size: 14,
-                                            color: Colors.white.withOpacity(0.6),
-                                          ),
-                                          const SizedBox(width: 6),
-                                          Text(
-                                            'Aberto em: ${formatoData.format(aberturaAtual.dataAbertura)}',
-                                            style: TextStyle(
-                                              fontSize: 13,
-                                              color: Colors.white.withOpacity(0.7),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                      if (aberturaAtual.valorInicial > 0) ...[
-                                        const SizedBox(height: 8),
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 12,
-                                            vertical: 8,
-                                          ),
-                                          decoration: BoxDecoration(
-                                            color: Colors.blue.withOpacity(0.2),
-                                            borderRadius: BorderRadius.circular(10),
-                                            border: Border.all(
-                                              color: Colors.blue.withOpacity(0.4),
-                                            ),
-                                          ),
-                                          child: Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              const Icon(
-                                                Icons.account_balance_wallet,
-                                                color: Colors.blue,
-                                                size: 18,
-                                              ),
-                                              const SizedBox(width: 8),
-                                              Text(
-                                                'Valor inicial: ${formatoMoeda.format(aberturaAtual.valorInicial)}',
-                                                style: const TextStyle(
-                                                  fontSize: 15,
-                                                  color: Colors.blue,
-                                                  fontWeight: FontWeight.bold,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      ],
-                                    ] else ...[
-                                      Text(
-                                        'Nenhum caixa aberto',
-                                        style: TextStyle(
-                                          fontSize: 16,
-                                          color: Colors.white.withOpacity(0.7),
-                                        ),
-                                      ),
-                                    ],
-                                  ],
-                                ),
-                              ),
-                            ],
+                          const Text(
+                            'Movimentações do Dia',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
-                          const SizedBox(height: 24),
-                          // Botões de ação modernos
-                          if (!caixaAberto)
-                            Container(
-                              width: double.infinity,
-                              decoration: BoxDecoration(
-                                gradient: LinearGradient(
-                                  colors: [
-                                    Colors.green.withOpacity(0.8),
-                                    Colors.greenAccent.withOpacity(0.6),
-                                  ],
-                                ),
-                                borderRadius: BorderRadius.circular(16),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.green.withOpacity(0.4),
-                                    blurRadius: 15,
-                                    spreadRadius: 2,
-                                  ),
-                                ],
-                              ),
-                              child: Material(
-                                color: Colors.transparent,
-                                child: InkWell(
-                                  onTap: () => _mostrarDialogoAbertura(context, dataService),
-                                  borderRadius: BorderRadius.circular(16),
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(vertical: 18),
-                                    child: Row(
-                                      mainAxisAlignment: MainAxisAlignment.center,
-                                      children: [
-                                        const Icon(
-                                          Icons.lock_open_rounded,
-                                          color: Colors.white,
-                                          size: 24,
-                                        ),
-                                        const SizedBox(width: 12),
-                                        const Text(
-                                          'Abrir Caixa',
-                                          style: TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 18,
-                                            fontWeight: FontWeight.bold,
-                                            letterSpacing: 1,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            )
-                          else ...[
-                            // Botões de Pagamento e Suprimento
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Container(
-                                    decoration: BoxDecoration(
-                                      gradient: LinearGradient(
-                                        colors: [
-                                          Colors.orange.withOpacity(0.8),
-                                          Colors.orangeAccent.withOpacity(0.6),
-                                        ],
-                                      ),
-                                      borderRadius: BorderRadius.circular(16),
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: Colors.orange.withOpacity(0.4),
-                                          blurRadius: 15,
-                                          spreadRadius: 2,
-                                        ),
-                                      ],
-                                    ),
-                                    child: Material(
-                                      color: Colors.transparent,
-                                      child: InkWell(
-                                        onTap: () => _mostrarDialogoSangria(context, dataService, isPagamento: true),
-                                        borderRadius: BorderRadius.circular(16),
-                                        child: Padding(
-                                          padding: const EdgeInsets.symmetric(vertical: 18),
-                                          child: Row(
-                                            mainAxisAlignment: MainAxisAlignment.center,
-                                            children: [
-                                              const Icon(
-                                                Icons.outbox,
-                                                color: Colors.white,
-                                                size: 24,
-                                              ),
-                                              const SizedBox(width: 12),
-                                              const Text(
-                                                'Pagamento',
-                                                style: TextStyle(
-                                                  color: Colors.white,
-                                                  fontSize: 16,
-                                                  fontWeight: FontWeight.bold,
-                                                  letterSpacing: 1,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Container(
-                                    decoration: BoxDecoration(
-                                      gradient: LinearGradient(
-                                        colors: [
-                                          Colors.blue.withOpacity(0.8),
-                                          Colors.blueAccent.withOpacity(0.6),
-                                        ],
-                                      ),
-                                      borderRadius: BorderRadius.circular(16),
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: Colors.blue.withOpacity(0.4),
-                                          blurRadius: 15,
-                                          spreadRadius: 2,
-                                        ),
-                                      ],
-                                    ),
-                                    child: Material(
-                                      color: Colors.transparent,
-                                      child: InkWell(
-                                        onTap: () => _mostrarDialogoSuprimento(context, dataService),
-                                        borderRadius: BorderRadius.circular(16),
-                                        child: Padding(
-                                          padding: const EdgeInsets.symmetric(vertical: 18),
-                                          child: Row(
-                                            mainAxisAlignment: MainAxisAlignment.center,
-                                            children: [
-                                              const Icon(
-                                                Icons.add_circle_outline,
-                                                color: Colors.white,
-                                                size: 24,
-                                              ),
-                                              const SizedBox(width: 12),
-                                              const Text(
-                                                'Suprimento',
-                                                style: TextStyle(
-                                                  color: Colors.white,
-                                                  fontSize: 16,
-                                                  fontWeight: FontWeight.bold,
-                                                  letterSpacing: 1,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ],
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(12),
                             ),
-                            const SizedBox(height: 12),
-                            Container(
-                              width: double.infinity,
-                              decoration: BoxDecoration(
-                                gradient: LinearGradient(
-                                  colors: [
-                                    Colors.red.withOpacity(0.8),
-                                    Colors.redAccent.withOpacity(0.6),
-                                  ],
-                                ),
-                                borderRadius: BorderRadius.circular(16),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.red.withOpacity(0.4),
-                                    blurRadius: 15,
-                                    spreadRadius: 2,
-                                  ),
-                                ],
-                              ),
-                              child: Material(
-                                color: Colors.transparent,
-                                child: InkWell(
-                                  onTap: () => _mostrarDialogoFechamento(context, dataService),
-                                  borderRadius: BorderRadius.circular(16),
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(vertical: 18),
-                                    child: Row(
-                                      mainAxisAlignment: MainAxisAlignment.center,
-                                      children: [
-                                        const Icon(
-                                          Icons.lock_rounded,
-                                          color: Colors.white,
-                                          size: 24,
-                                        ),
-                                        const SizedBox(width: 12),
-                                        const Text(
-                                          'Fechar Caixa',
-                                          style: TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 18,
-                                            fontWeight: FontWeight.bold,
-                                            letterSpacing: 1,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ),
+                            child: Text(
+                              'Sessão Atual',
+                              style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 12),
                             ),
-                          ],
+                          ),
                         ],
                       ),
                     ),
                   ),
-                  const SizedBox(height: 24),
-                  // Histórico de aberturas
-                  Text(
-                    'Histórico de Caixas',
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                        ),
-                  ),
-                  const SizedBox(height: 16),
-                  if (dataService.aberturasCaixa.isEmpty)
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(40),
-                        child: Center(
-                          child: Column(
-                            children: [
-                              Icon(
-                                Icons.point_of_sale_outlined,
-                                size: 64,
-                                color: Colors.white.withOpacity(0.3),
-                              ),
-                              const SizedBox(height: 16),
-                              Text(
-                                'Nenhum caixa registrado',
-                                style: TextStyle(
-                                  color: Colors.white.withOpacity(0.7),
-                                  fontSize: 16,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
+
+                // 4. Lista do Fluxo de Caixa Atual
+                if (caixaAberto && aberturaAtual != null)
+                  _buildSliverFluxoLista(dataService, aberturaAtual),
+
+                // 5. Histórico Separador
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 32, 16, 16),
+                    child: Text(
+                      'Histórico de Encerramentos',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.8),
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
                       ),
-                    )
-                  else
-                    // Mostrar todos os caixas (abertos e fechados)
-                    // Criar lista de caixas com seus fechamentos e ordenar
-                    ...() {
-                      // Criar lista de caixas com seus fechamentos
-                      final caixasComFechamento = dataService.aberturasCaixa.map((abertura) {
-                        final fechamento = dataService.fechamentosCaixa
-                            .where((f) => f.aberturaCaixaId == abertura.id)
-                            .firstOrNull;
-                        return MapEntry(abertura, fechamento);
-                      }).toList();
-                      
-                      // Ordenar: abertos primeiro, depois fechados (mais recentes primeiro em cada grupo)
-                      caixasComFechamento.sort((a, b) {
-                        // Primeiro ordenar por status: abertos primeiro, depois fechados
-                        final aAberto = a.value == null;
-                        final bAberto = b.value == null;
-                        if (aAberto != bAberto) {
-                          return aAberto ? -1 : 1; // Abertos primeiro
-                        }
-                        // Se ambos têm o mesmo status, ordenar por data (mais recente primeiro)
-                        return b.key.dataAbertura.compareTo(a.key.dataAbertura);
-                      });
-                      
-                      // Retornar lista de widgets dos caixas
-                      return caixasComFechamento.map((entry) {
-                        return _buildCardCaixa(entry.key, entry.value, formatoMoeda, formatoData);
-                      }).toList();
-                    }(),
-                ],
-              ),
+                    ),
+                  ),
+                ),
+
+                // 6. Lista do Histórico
+                _buildSliverHistorico(dataService),
+                
+                const SliverToBoxAdapter(child: SizedBox(height: 100)),
+              ],
             );
           },
         ),
       ),
     );
+  }
+
+  Widget _buildStatusHeader(bool aberto, AberturaCaixa? abertura, DataService ds) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: aberto
+              ? [Colors.blueAccent.withOpacity(0.4), Colors.blue.withOpacity(0.1)]
+              : [Colors.grey.withOpacity(0.3), Colors.black.withOpacity(0.1)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(
+          color: aberto ? Colors.blueAccent.withOpacity(0.5) : Colors.white.withOpacity(0.2),
+          width: 1.5,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: (aberto ? Colors.blueAccent : Colors.black).withOpacity(0.2),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Row(
+              children: [
+                _buildAnimatedIcon(aberto),
+                const SizedBox(width: 20),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        aberto ? 'Caixa Operacional' : 'Caixa Encerrado',
+                        style: TextStyle(
+                          color: aberto ? Colors.blueAccent : Colors.white60,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 1.2,
+                          fontSize: 12,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        abertura?.numero ?? '--',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      if (aberto && abertura != null)
+                        Text(
+                          'Iniciado em: ${formatoHora.format(abertura.dataAbertura)}',
+                          style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 13),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          _buildQuickActions(aberto, ds),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAnimatedIcon(bool aberto) {
+    return Container(
+      width: 64,
+      height: 64,
+      decoration: BoxDecoration(
+        color: (aberto ? Colors.blueAccent : Colors.grey).withOpacity(0.15),
+        shape: BoxShape.circle,
+        border: Border.all(
+          color: (aberto ? Colors.blueAccent : Colors.grey).withOpacity(0.3),
+        ),
+      ),
+      child: Icon(
+        aberto ? Icons.point_of_sale_rounded : Icons.lock_clock_rounded,
+        color: aberto ? Colors.blueAccent : Colors.grey,
+        size: 32,
+      ),
+    );
+  }
+
+  Future<void> _imprimirFechamento(AberturaCaixa ab, FechamentoCaixa fe) async {
+    try {
+      final authService = Provider.of<AuthService>(context, listen: false);
+      final dataService = Provider.of<DataService>(context, listen: false);
+      final empresa = authService.empresaAtual;
+      
+      if (empresa == null) throw Exception('Empresa não selecionada');
+
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(
+          child: Card(
+            child: Padding(
+              padding: EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 16),
+                  Text('Gerando Impressão do Caixa...'),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+
+      // Obter vendas entre abertura e fechamento
+      final vendas = dataService.vendasBalcao.where((v) {
+        return (v.dataVenda.isAfter(ab.dataAbertura) || v.dataVenda.isAtSameMomentAs(ab.dataAbertura)) &&
+               v.dataVenda.isBefore(fe.dataFechamento.add(const Duration(seconds: 1)));
+      }).toList();
+
+      await CaixaPDFService.gerarPDFTermico(
+        abertura: ab,
+        fechamento: fe,
+        empresa: empresa,
+        vendas: vendas,
+      ).then((pdfData) async {
+        if (context.mounted) Navigator.pop(context);
+        
+        await Printing.layoutPdf(
+          onLayout: (format) async => pdfData,
+          name: 'Fechamento_Caixa_${ab.numero}.pdf',
+        );
+      });
+      
+    } catch (e) {
+      if (context.mounted) {
+        if (Navigator.canPop(context)) Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erro ao imprimir: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    super.dispose();
+  }
+
+  Widget _buildQuickActions(bool aberto, DataService ds) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.3),
+        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(24)),
+        border: Border(top: BorderSide(color: Colors.white.withOpacity(0.05))),
+      ),
+      padding: const EdgeInsets.all(16),
+      child: Row(
+        children: [
+          if (!aberto)
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: () => _mostrarDialogoAbertura(context, ds),
+                icon: const Icon(Icons.play_circle_filled_rounded, size: 28),
+                label: const Text('INICIAR NOVA SESSÃO DE CAIXA', style: TextStyle(letterSpacing: 1.1, fontWeight: FontWeight.w900)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blueAccent,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 20),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  elevation: 8,
+                  shadowColor: Colors.blueAccent.withOpacity(0.4),
+                ),
+              ),
+            )
+          else ...[
+            _buildActionButton(
+              label: 'Pagamento',
+              icon: Icons.remove_circle_rounded,
+              color: Colors.orangeAccent,
+              onTap: () => _mostrarDialogoSangria(context, ds, isPagamento: true),
+            ),
+            const SizedBox(width: 12),
+            _buildActionButton(
+              label: 'Suprimento',
+              icon: Icons.add_circle_rounded,
+              color: Colors.lightBlueAccent,
+              onTap: () => _mostrarDialogoSuprimento(context, ds),
+            ),
+            const SizedBox(width: 12),
+            _buildActionButton(
+              label: 'Fechar',
+              icon: Icons.stop_circle_rounded,
+              color: Colors.redAccent,
+              onTap: () => _mostrarDialogoFechamento(context, ds),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildActionButton({
+    required String label,
+    required IconData icon,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return Expanded(
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            decoration: BoxDecoration(
+              border: Border.all(color: color.withOpacity(0.3)),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              children: [
+                Icon(icon, color: color, size: 20),
+                const SizedBox(height: 4),
+                Text(
+                  label,
+                  style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildResumoSession(DataService ds, AberturaCaixa abertura) {
+    // Pegar totais reais do DS
+    final sangrias = ds.getSangriasCaixaAtual();
+    final suprimentos = ds.getSuprimentosCaixaAtual();
+    final totalSangrias = sangrias.fold(0.0, (sum, s) => sum + s.valor);
+    final totalSuprimentos = suprimentos.fold(0.0, (sum, s) => sum + s.valor);
+
+    // Calcular Vendas
+    final vendas = ds.vendasBalcao.where((v) => !v.cancelado && (v.dataVenda.isAfter(abertura.dataAbertura) || v.dataVenda.isAtSameMomentAs(abertura.dataAbertura)));
+    final totalVendas = vendas.fold(0.0, (sum, v) => sum + v.valorTotal);
+
+    // Saldo Atual
+    final saldo = abertura.valorInicial + totalVendas + totalSuprimentos - totalSangrias;
+
+    return Row(
+      children: [
+        _buildStatCard('Entradas', formatoMoeda.format(totalVendas + totalSuprimentos), Icons.trending_up, Colors.greenAccent),
+        const SizedBox(width: 12),
+        _buildStatCard('Saídas', formatoMoeda.format(totalSangrias), Icons.trending_down, Colors.redAccent),
+        const SizedBox(width: 12),
+        _buildStatCard('Saldo', formatoMoeda.format(saldo), Icons.account_balance_wallet, Colors.blueAccent),
+      ],
+    );
+  }
+
+  Widget _buildStatCard(String label, String value, IconData icon, Color color) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.05),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: color.withOpacity(0.15)),
+          boxShadow: [
+            BoxShadow(
+              color: color.withOpacity(0.02),
+              blurRadius: 10,
+              spreadRadius: 1,
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, color: color, size: 16),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              label,
+              style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 0.5),
+            ),
+            const SizedBox(height: 4),
+            FittedBox(
+              child: Text(
+                value,
+                style: TextStyle(
+                  color: color.withOpacity(0.9), 
+                  fontWeight: FontWeight.w900, 
+                  fontSize: 16,
+                  letterSpacing: -0.5,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSliverFluxoLista(DataService ds, AberturaCaixa abertura) {
+    final movs = _getMovimentacoesExt(ds, abertura);
+
+    if (movs.isEmpty) {
+      return SliverToBoxAdapter(
+        child: Padding(
+          padding: const EdgeInsets.all(40.0),
+          child: Column(
+            children: [
+              Icon(Icons.inventory_2_outlined, color: Colors.white.withOpacity(0.1), size: 48),
+              const SizedBox(height: 12),
+              Text('Nenhuma movimentação registrada', style: TextStyle(color: Colors.white.withOpacity(0.3))),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return SliverPadding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      sliver: SliverList(
+        delegate: SliverChildBuilderDelegate(
+          (context, index) {
+            final m = movs[index];
+            return Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.03),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.white.withOpacity(0.05)),
+              ),
+              child: ListTile(
+                leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: (m['cor'] as Color).withOpacity(0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(m['icone'] as IconData, color: m['cor'] as Color, size: 20),
+                ),
+                title: Text(
+                  m['descricao'].toString(),
+                  style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+                ),
+                subtitle: Text(
+                  '${formatoHora.format(m['data'] as DateTime)} • ${m['forma']}',
+                  style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 11),
+                ),
+                trailing: Text(
+                  formatoMoeda.format(m['valor']),
+                  style: TextStyle(
+                    color: (m['valor'] as double) >= 0 ? Colors.greenAccent : Colors.redAccent,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+            );
+          },
+          childCount: movs.length,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSliverHistorico(DataService ds) {
+    final hist = ds.aberturasCaixa.map((ab) {
+      final fe = ds.fechamentosCaixa.firstWhereOrNull((f) => f.aberturaCaixaId == ab.id);
+      return MapEntry(ab, fe);
+    }).where((e) => e.value != null).toList();
+
+    hist.sort((a, b) => b.key.dataAbertura.compareTo(a.key.dataAbertura));
+
+    if (hist.isEmpty) {
+      return SliverToBoxAdapter(
+        child: Center(child: Text('Nenhum fechamento passado', style: TextStyle(color: Colors.white30))),
+      );
+    }
+
+    return SliverPadding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      sliver: SliverList(
+        delegate: SliverChildBuilderDelegate(
+          (context, index) {
+            final item = hist[index];
+            return _buildCardCaixaModerno(item.key, item.value!);
+          },
+          childCount: hist.length,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCardCaixaModerno(AberturaCaixa ab, FechamentoCaixa fe) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withOpacity(0.1)),
+      ),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                DateFormat('dd MMM').format(ab.dataAbertura),
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: (fe.diferenca >= 0 ? Colors.green : Colors.red).withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      fe.diferenca >= 0 ? 'Conforme' : 'Divergente',
+                      style: TextStyle(color: fe.diferenca >= 0 ? Colors.greenAccent : Colors.redAccent, fontSize: 10),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton(
+                      icon: const Icon(Icons.print, color: Colors.blueAccent, size: 16),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                      onPressed: () => _imprimirFechamento(ab, fe),
+                      tooltip: 'Imprimir Fechamento',
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(child: _miniInfo('Entrada', formatoMoeda.format(fe.valorEsperado))),
+              Expanded(child: _miniInfo('Real', formatoMoeda.format(fe.valorReal))),
+              Expanded(child: _miniInfo('Dif.', formatoMoeda.format(fe.diferenca))),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _miniInfo(String label, String value) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: TextStyle(color: Colors.white30, fontSize: 10)),
+        const SizedBox(height: 2),
+        Text(value, style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w600)),
+      ],
+    );
+  }
+
+  List<Map<String, dynamic>> _getMovimentacoesExt(DataService ds, AberturaCaixa ab) {
+    final list = <Map<String, dynamic>>[];
+
+    // Vendas
+    for (final v in ds.vendasBalcao) {
+      if (!v.cancelado && (v.dataVenda.isAfter(ab.dataAbertura) || v.dataVenda.isAtSameMomentAs(ab.dataAbertura))) {
+        list.add({
+          'data': v.dataVenda,
+          'descricao': 'Venda PDV ${v.numero}',
+          'valor': v.valorTotal,
+          'forma': _formatForma(v.tipoPagamento),
+          'icone': Icons.shopping_basket_rounded,
+          'cor': Colors.greenAccent,
+        });
+      }
+    }
+
+    // Sangrias
+    for (final s in ds.getSangriasCaixaAtual()) {
+      list.add({
+        'data': s.data,
+        'descricao': s.motivo,
+        'valor': -s.valor,
+        'forma': 'Dinheiro',
+        'icone': Icons.outbox_rounded,
+        'cor': Colors.orangeAccent,
+      });
+    }
+
+    // Suprimentos
+    for (final s in ds.getSuprimentosCaixaAtual()) {
+      list.add({
+        'data': s.data,
+        'descricao': s.motivo,
+        'valor': s.valor,
+        'forma': 'Dinheiro',
+        'icone': Icons.move_to_inbox_rounded,
+        'cor': Colors.blueAccent,
+      });
+    }
+
+    list.sort((a, b) => (b['data'] as DateTime).compareTo(a['data'] as DateTime));
+    return list;
+  }
+
+  String _formatForma(TipoPagamento t) {
+    switch (t) {
+      case TipoPagamento.dinheiro: return 'Dinheiro';
+      case TipoPagamento.cartaoCredito: return 'Crédito';
+      case TipoPagamento.cartaoDebito: return 'Débito';
+      case TipoPagamento.pix: return 'PIX';
+      case TipoPagamento.alimentacao: return 'Ticket';
+      default: return 'Outro';
+    }
   }
 
   Widget _buildCardCaixa(
@@ -912,62 +1055,76 @@ class _CaixaPageState extends State<CaixaPage> {
           v.dataVenda.isAtSameMomentAs(abertura.dataAbertura);
     }).toList();
 
-    // Calcular apenas vendas pagas em dinheiro ou PIX (que entram no caixa físico)
-    // IMPORTANTE: Vendas com tipoPagamento "outro" são vendas salvas e NÃO devem ser contabilizadas
-    final totalVendas = vendasDoCaixa.fold(0.0, (sum, v) {
-      // Excluir vendas canceladas e vendas salvas (tipoPagamento "outro")
-      if (v.isCancelada || v.tipoPagamento == TipoPagamento.outro) {
-        return sum;
+    // --- Novos cálculos para detalhamento ---
+    final totaisPorForma = <TipoPagamento, double>{};
+    int totalItensVendidos = 0;
+    double valorTotalProdutos = 0.0;
+    int totalVendasRealizadas = 0;
+
+    // Inicializar mapa de totais
+    for (var tipo in TipoPagamento.values) {
+      if (tipo != TipoPagamento.outro) {
+        totaisPorForma[tipo] = 0.0;
       }
-      // Somar apenas pagamentos em dinheiro ou PIX
-      if (v.tipoPagamento == TipoPagamento.dinheiro ||
-          v.tipoPagamento == TipoPagamento.pix) {
-        return sum + v.valorTotal;
-      }
-      return sum;
-    });
-    
-    // Incluir também pedidos recebidos no período
-    // IMPORTANTE: Pedidos com pagamento tipo "outro" são vendas salvas e NÃO devem ser contabilizadas
-    // Considerar apenas pagamentos em dinheiro ou PIX que foram recebidos após a abertura
-    final pedidosRecebidos = dataService.pedidos.where((p) {
-      // Excluir pedidos que têm apenas pagamento tipo "outro" (vendas salvas)
-      final temApenasOutro = p.pagamentos.isNotEmpty && 
-          p.pagamentos.every((pag) => pag.tipo == TipoPagamento.outro);
-      if (temApenasOutro) return false;
+    }
+
+    // Processar Vendas Balcão
+    for (var v in vendasDoCaixa) {
+      if (v.isCancelada || v.tipoPagamento == TipoPagamento.outro) continue;
       
-      // Verificar se tem algum pagamento recebido após a abertura do caixa
-      return p.pagamentos.any((pag) {
-        if (!pag.recebido || pag.dataRecebimento == null) return false;
-        // Verificar se o recebimento foi após a abertura do caixa
-        if (pag.dataRecebimento!.isBefore(abertura.dataAbertura)) return false;
-        // Excluir pagamentos tipo "outro" (vendas salvas)
-        if (pag.tipo == TipoPagamento.outro) return false;
-        // Considerar apenas dinheiro ou PIX
-        return pag.tipo == TipoPagamento.dinheiro || pag.tipo == TipoPagamento.pix;
-      });
-    }).toList();
-    
-    // Calcular total de pedidos recebidos em dinheiro ou PIX
-    final totalPedidosRecebidos = pedidosRecebidos.fold(0.0, (sum, p) {
-      // Somar apenas os pagamentos recebidos após a abertura em dinheiro ou PIX
-      // Excluir pagamentos tipo "outro" (vendas salvas)
-      return sum + p.pagamentos.where((pag) {
-        if (!pag.recebido || pag.dataRecebimento == null) return false;
-        if (pag.dataRecebimento!.isBefore(abertura.dataAbertura)) return false;
-        // Excluir pagamentos tipo "outro" (vendas salvas)
-        if (pag.tipo == TipoPagamento.outro) return false;
-        return pag.tipo == TipoPagamento.dinheiro || pag.tipo == TipoPagamento.pix;
-      }).fold(0.0, (pagSum, pag) => pagSum + pag.valor);
-    });
-    
+      totalVendasRealizadas++;
+      totaisPorForma[v.tipoPagamento] = (totaisPorForma[v.tipoPagamento] ?? 0.0) + v.valorTotal;
+      
+      for (var item in v.itens) {
+        totalItensVendidos += item.quantidade;
+        valorTotalProdutos += item.subtotal;
+      }
+    }
+
+    // Processar Pedidos (Mesas/Comandas)
+    for (var p in dataService.pedidos) {
+      for (var pag in p.pagamentos) {
+        if (!pag.recebido || pag.dataRecebimento == null) continue;
+        if (pag.dataRecebimento!.isBefore(abertura.dataAbertura)) continue;
+        if (pag.tipo == TipoPagamento.outro) continue;
+
+        totaisPorForma[pag.tipo] = (totaisPorForma[pag.tipo] ?? 0.0) + pag.valor;
+      }
+      
+      // Contabilizar itens dos pedidos recebidos no período
+      // (Aproximação: se o pedido teve pagamento no período, contamos seus itens)
+      final tevePagamentoNoPeriodo = p.pagamentos.any((pag) => 
+        pag.recebido && 
+        pag.dataRecebimento != null && 
+        !pag.dataRecebimento!.isBefore(abertura.dataAbertura)
+      );
+      
+      if (tevePagamentoNoPeriodo) {
+        for (var item in p.produtos) {
+          totalItensVendidos += item.quantidade.toInt();
+          valorTotalProdutos += (item.preco * item.quantidade);
+        }
+        for (var item in p.servicos) {
+          totalItensVendidos += 1;
+          valorTotalProdutos += (item.valor + item.valorAdicional);
+        }
+      }
+    }
+
     // Calcular sangrias e suprimentos do caixa atual
     final sangriasCaixaAtual = dataService.getSangriasCaixaAtual();
     final suprimentosCaixaAtual = dataService.getSuprimentosCaixaAtual();
     final totalSangrias = sangriasCaixaAtual.fold(0.0, (sum, s) => sum + s.valor);
     final totalSuprimentos = suprimentosCaixaAtual.fold(0.0, (sum, s) => sum + s.valor);
     
-    final valorEsperadoCalculado = abertura.valorInicial + totalVendas + totalPedidosRecebidos - totalSangrias + totalSuprimentos;
+    // Valor esperado no caixa FÍSICO (Dinheiro + Inicial + Suprimentos - Sangrias)
+    // Nota: PIX/Cartão não ficam no caixa físico, mas o sistema pode querer rastrear
+    // Aqui mantemos a lógica original de "Dinheiro + PIX" se assim estava,
+    // mas geralmente PIX não entra na conferência de "dinheiro na gaveta".
+    // Vou ajustar para ser apenas DINHEIRO + INICIAL para o "Esperado" físico.
+    final totalDinheiro = totaisPorForma[TipoPagamento.dinheiro] ?? 0.0;
+    final valorEsperadoCalculado = abertura.valorInicial + totalDinheiro - totalSangrias + totalSuprimentos;
+    
     valorEsperadoController.text = valorEsperadoCalculado.toStringAsFixed(2).replaceAll('.', ',');
     valorRealController.text = valorEsperadoCalculado.toStringAsFixed(2).replaceAll('.', ',');
 
@@ -1072,60 +1229,66 @@ class _CaixaPageState extends State<CaixaPage> {
                         ],
                       ),
                       const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _buildEstatsCard(
+                              'Itens Vendidos',
+                              totalItensVendidos.toString(),
+                              Icons.inventory_2,
+                              Colors.orangeAccent,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: _buildEstatsCard(
+                              'Total em Itens',
+                              formatoMoeda.format(valorTotalProdutos),
+                              Icons.monetization_on,
+                              Colors.greenAccent,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Resumo por Forma de Pagamento',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      // Lista de formas de pagamento
+                      ...totaisPorForma.entries.where((e) => e.value > 0).map((e) {
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 6),
+                          child: _buildInfoRow(
+                            e.key.nome,
+                            formatoMoeda.format(e.value),
+                            e.key.icone,
+                            e.key.cor,
+                          ),
+                        );
+                      }).toList(),
+                      const SizedBox(height: 12),
+                      const Divider(color: Colors.white10),
+                      const SizedBox(height: 12),
                       _buildInfoRow(
-                        'Data de Abertura',
-                        formatoData.format(abertura.dataAbertura),
-                        Icons.calendar_today,
+                        'Movimentações (Sangria/Sup.)',
+                        formatoMoeda.format(totalSuprimentos - totalSangrias),
+                        Icons.swap_vert,
+                        (totalSuprimentos - totalSangrias) >= 0 ? Colors.blueAccent : Colors.orangeAccent,
                       ),
                       const SizedBox(height: 8),
                       _buildInfoRow(
-                        'Valor Inicial',
+                        'Fundo de Caixa Inicial',
                         formatoMoeda.format(abertura.valorInicial),
                         Icons.account_balance_wallet,
-                        Colors.greenAccent,
+                        Colors.grey,
                       ),
-                      const SizedBox(height: 8),
-                      _buildInfoRow(
-                        'Vendas Diretas',
-                        formatoMoeda.format(totalVendas),
-                        Icons.shopping_cart,
-                        Colors.blueAccent,
-                      ),
-                      if (totalPedidosRecebidos > 0) ...[
-                        const SizedBox(height: 8),
-                        _buildInfoRow(
-                          'Pedidos Recebidos',
-                          formatoMoeda.format(totalPedidosRecebidos),
-                          Icons.receipt_long,
-                          Colors.greenAccent,
-                        ),
-                      ],
-                      const SizedBox(height: 8),
-                      _buildInfoRow(
-                        'Total de Vendas',
-                        formatoMoeda.format(totalVendas + totalPedidosRecebidos),
-                        Icons.attach_money,
-                        Colors.amber,
-                      ),
-                      if (totalSangrias > 0) ...[
-                        const SizedBox(height: 8),
-                        _buildInfoRow(
-                          'Total de Pagamentos',
-                          formatoMoeda.format(totalSangrias),
-                          Icons.remove_circle,
-                          Colors.orangeAccent,
-                        ),
-                      ],
-                      if (totalSuprimentos > 0) ...[
-                        const SizedBox(height: 8),
-                        _buildInfoRow(
-                          'Total de Suprimentos',
-                          formatoMoeda.format(totalSuprimentos),
-                          Icons.add_circle,
-                          Colors.blueAccent,
-                        ),
-                      ],
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 16),
                       Container(
                         padding: const EdgeInsets.all(8),
                         decoration: BoxDecoration(
@@ -1563,6 +1726,10 @@ class _CaixaPageState extends State<CaixaPage> {
                 }
 
                 print('>>> [Fechar Caixa] Chamando registrarFechamentoCaixa...');
+                final AberturaCaixa? aberturaParaPrint = dataService.aberturaCaixaAtual;
+                
+                print('>>> [Fechar Caixa] Abertura capturada: ${aberturaParaPrint?.numero}');
+
                 final fechamento = await dataService.registrarFechamentoCaixa(
                   valorEsperado: valorEsperado,
                   valorReal: valorReal,
@@ -1571,6 +1738,7 @@ class _CaixaPageState extends State<CaixaPage> {
                 );
                 
                 if (fechamento == null) {
+                  print('>>> [Fechar Caixa] ERRO: Fechamento retornou null');
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
@@ -1582,22 +1750,97 @@ class _CaixaPageState extends State<CaixaPage> {
                   return;
                 }
 
-                // Navegação bem-sucedida para Home
+                print('>>> [Fechar Caixa] Fechamento realizado com sucesso: ${fechamento.id}');
+
                 if (context.mounted) {
-                  Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
-                    MaterialPageRoute(builder: (_) => const HomePage()),
-                    (route) => false,
-                  );
+                  // Primeiro removemos o diálogo de formulário
+                  Navigator.pop(dialogContext);
                   
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(responsavel != null ? 'Caixa fechado por $responsavel!' : 'Caixa fechado com sucesso!'),
-                      backgroundColor: Colors.green,
-                    ),
-                  );
+                  if (aberturaParaPrint != null) {
+                    print('>>> [Fechar Caixa] Exibindo Diálogo de Sucesso e Impressão...');
+                    
+                    // Exibimos um diálogo de sucesso com opção de imprimir
+                    await showDialog(
+                      context: context,
+                      barrierDismissible: false,
+                      builder: (context) => AlertDialog(
+                        backgroundColor: const Color(0xFF1E1E2E),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+                        title: Column(
+                          children: [
+                            const Icon(Icons.check_circle_outline, color: Colors.greenAccent, size: 64),
+                            const SizedBox(height: 16),
+                            const Text(
+                              'Caixa Encerrado!',
+                              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
+                        ),
+                        content: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              'O caixa ${aberturaParaPrint.numero} foi fechado com sucesso.',
+                              style: const TextStyle(color: Colors.white70),
+                              textAlign: TextAlign.center,
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Diferença: ${formatoMoeda.format(fechamento.diferenca)}',
+                              style: TextStyle(
+                                color: fechamento.diferenca >= 0 ? Colors.greenAccent : Colors.redAccent,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                              ),
+                            ),
+                          ],
+                        ),
+                        actions: [
+                          Column(
+                            children: [
+                              SizedBox(
+                                width: double.infinity,
+                                child: ElevatedButton.icon(
+                                  onPressed: () {
+                                    _imprimirFechamento(aberturaParaPrint, fechamento);
+                                    Navigator.pop(context);
+                                  },
+                                  icon: const Icon(Icons.print),
+                                  label: const Text('IMPRIMIR FECHAMENTO', style: TextStyle(fontWeight: FontWeight.bold)),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.blueAccent,
+                                    padding: const EdgeInsets.symmetric(vertical: 16),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              SizedBox(
+                                width: double.infinity,
+                                child: TextButton(
+                                  onPressed: () => Navigator.pop(context),
+                                  child: const Text('CONCLUIR E SAIR', style: TextStyle(color: Colors.white54)),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    );
+                    
+                    print('>>> [Fechar Caixa] Diálogo de sucesso fechado, navegando para Home...');
+                  }
+
+                  if (context.mounted) {
+                    Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+                      MaterialPageRoute(builder: (_) => const HomePage()),
+                      (route) => false,
+                    );
+                  }
                 }
               } catch (e) {
-                print('>>> [Fechar Caixa] ERRO: $e');
+                print('>>> [Fechar Caixa] EXCEÇÃO: $e');
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(content: Text('Erro ao fechar caixa: $e'), backgroundColor: Colors.red),
@@ -1998,6 +2241,45 @@ class _CaixaPageState extends State<CaixaPage> {
             },
             style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
             child: const Text('Registrar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEstatsCard(String label, String value, IconData icon, Color color) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, color: color, size: 16),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.5),
+                  fontSize: 10,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+            ),
           ),
         ],
       ),

@@ -1,4 +1,6 @@
 import 'package:sistema_exodo_novo/models/forma_pagamento.dart';
+import 'package:sistema_exodo_novo/models/adicional_produto.dart';
+import 'package:sistema_exodo_novo/models/delivery_info.dart';
 
 /// Item de uma venda de balcão
 class ItemVendaBalcao {
@@ -11,6 +13,8 @@ class ItemVendaBalcao {
   final int quantidadeTrocada; // Quantidade que foi trocada por outro produto
   final String? trocadoPor; // ID do produto que substituiu este em uma troca
   final String? fornecedorNome; // Fornecedor do produto no momento da venda
+  final String? observacao;
+  final List<AdicionalProduto> adicionais;
 
   ItemVendaBalcao({
     required this.id,
@@ -22,7 +26,9 @@ class ItemVendaBalcao {
     this.quantidadeTrocada = 0,
     this.trocadoPor,
     this.fornecedorNome,
-  });
+    this.observacao,
+    List<AdicionalProduto>? adicionais,
+  }) : adicionais = adicionais ?? [];
 
   /// Quantidade efetiva (descontando devoluções e trocas)
   int get quantidadeEfetiva =>
@@ -35,10 +41,16 @@ class ItemVendaBalcao {
   /// Verifica se o item foi totalmente devolvido/trocado
   bool get foiTotalmenteDevolvido => quantidadeEfetiva <= 0;
 
-  double get subtotal => precoUnitario * quantidade;
+  double get subtotal {
+    final totalAdicionais = adicionais.fold(0.0, (sum, a) => sum + a.preco);
+    return (precoUnitario + totalAdicionais) * quantidade;
+  }
 
   /// Subtotal efetivo (descontando devoluções)
-  double get subtotalEfetivo => precoUnitario * quantidadeEfetiva;
+  double get subtotalEfetivo {
+    final totalAdicionais = adicionais.fold(0.0, (sum, a) => sum + a.preco);
+    return (precoUnitario + totalAdicionais) * quantidadeEfetiva;
+  }
 
   factory ItemVendaBalcao.fromMap(Map<String, dynamic> map) {
     return ItemVendaBalcao(
@@ -51,6 +63,10 @@ class ItemVendaBalcao {
       quantidadeTrocada: map['quantidadeTrocada'] ?? 0,
       trocadoPor: map['trocadoPor'],
       fornecedorNome: map['fornecedorNome'],
+      observacao: map['observacao'],
+      adicionais: (map['adicionais'] as List<dynamic>?)
+          ?.map((a) => AdicionalProduto.fromMap(a as Map<String, dynamic>))
+          .toList() ?? [],
     );
   }
 
@@ -65,6 +81,8 @@ class ItemVendaBalcao {
       'quantidadeTrocada': quantidadeTrocada,
       'trocadoPor': trocadoPor,
       'fornecedorNome': fornecedorNome,
+      'observacao': observacao,
+      'adicionais': adicionais.map((a) => a.toMap()).toList(),
     };
   }
 
@@ -79,6 +97,8 @@ class ItemVendaBalcao {
     int? quantidadeTrocada,
     String? trocadoPor,
     String? fornecedorNome,
+    String? observacao,
+    List<AdicionalProduto>? adicionais,
   }) {
     return ItemVendaBalcao(
       id: id ?? this.id,
@@ -90,6 +110,8 @@ class ItemVendaBalcao {
       quantidadeTrocada: quantidadeTrocada ?? this.quantidadeTrocada,
       trocadoPor: trocadoPor ?? this.trocadoPor,
       fornecedorNome: fornecedorNome ?? this.fornecedorNome,
+      observacao: observacao ?? this.observacao,
+      adicionais: adicionais ?? this.adicionais,
     );
   }
 }
@@ -112,6 +134,7 @@ class VendaBalcao {
   final String? origem; // Origem detalhada (Mesa/Comanda, Venda Direta, etc)
   final String? observacoes;
   final bool cancelado; // Indica se a venda foi cancelada
+  final DeliveryInfo? deliveryInfo; // Informações de entrega
   final DateTime createdAt;
 
   VendaBalcao({
@@ -131,6 +154,7 @@ class VendaBalcao {
     this.origem,
     this.observacoes,
     this.cancelado = false,
+    this.deliveryInfo,
     DateTime? createdAt,
   }) : createdAt = createdAt ?? DateTime.now();
 
@@ -166,6 +190,9 @@ class VendaBalcao {
       origem: map['origem'],
       observacoes: map['observacoes'],
       cancelado: map['cancelado'] ?? false,
+      deliveryInfo: map['deliveryInfo'] != null
+          ? DeliveryInfo.fromMap(map['deliveryInfo'] as Map<String, dynamic>)
+          : null,
       createdAt: map['createdAt'] != null
           ? DateTime.parse(map['createdAt'])
           : DateTime.now(),
@@ -190,6 +217,7 @@ class VendaBalcao {
       'origem': origem,
       'observacoes': observacoes,
       'cancelado': cancelado,
+      'deliveryInfo': deliveryInfo?.toMap(),
       'createdAt': createdAt.toIso8601String(),
     };
   }
@@ -230,6 +258,7 @@ class VendaBalcao {
       origem: origem ?? this.origem,
       observacoes: observacoes ?? this.observacoes,
       cancelado: cancelado ?? this.cancelado,
+      deliveryInfo: deliveryInfo ?? this.deliveryInfo,
       createdAt: createdAt ?? this.createdAt,
     );
   }

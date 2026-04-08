@@ -21,6 +21,20 @@ class AuthService extends ChangeNotifier {
   bool get isAuthenticated => _usuarioAtual != null;
   bool get temEmpresaSelecionada => _empresaAtual != null;
 
+  // Histórico de logins (últimos nomes de usuário que entraram com sucesso)
+  List<String> _historicoLogins = [];
+  List<String> get historicoLogins => List.unmodifiable(_historicoLogins);
+
+  // Modo Privacidade (Esconder valores sensíveis)
+  bool _modoPrivacidade = false;
+  bool get modoPrivacidade => _modoPrivacidade;
+
+  void toggleModoPrivacidade() {
+    _modoPrivacidade = !_modoPrivacidade;
+    _storage.salvar('modo_privacidade', _modoPrivacidade);
+    notifyListeners();
+  }
+
   // Lista de usuários (em produção, viria de um backend)
   final List<Usuario> _usuarios = [];
   final List<Empresa> _empresas = [];
@@ -108,7 +122,24 @@ class AuthService extends ChangeNotifier {
         debugPrint('>>> [AuthService] Erro ao carregar empresas: $e');
       }
       
-      // Carregar usuário e empresa atual selecionados
+      // Carregar HISTÓRICO de logins
+      try {
+        final hist = await _storage.carregarLista('historico_logins');
+        if (hist.isNotEmpty) {
+           _historicoLogins = hist.map((e) => e.toString()).toList();
+        }
+      } catch (e) {
+        debugPrint('>>> [AuthService] Erro ao carregar histórico: $e');
+      }
+
+      // SEGURANÇA: Se é uma nova sessão (navegador aberto agora), limpar login antigo
+      if (!_storage.isSessaoAtiva()) {
+        debugPrint('>>> [AuthService] 🔒 Nova sessão detectada! Limpando logins anteriores.');
+        await _storage.remover('usuario_atual');
+        await _storage.remover('empresa_atual');
+      }
+
+      // Carregar usuário e empresa atual selecionados de forma persistente
       try {
         final usuarioMap = await _storage.carregar('usuario_atual').timeout(
           const Duration(seconds: 2),
@@ -116,6 +147,7 @@ class AuthService extends ChangeNotifier {
         );
         if (usuarioMap != null && usuarioMap is Map) {
           _usuarioAtual = Usuario.fromMap(Map<String, dynamic>.from(usuarioMap));
+          debugPrint('>>> [AuthService] ✓ Usuário restaurado: ${_usuarioAtual?.nome}');
         }
       } catch (e) {
         debugPrint('>>> [AuthService] Erro ao carregar usuário atual: $e');
@@ -128,7 +160,6 @@ class AuthService extends ChangeNotifier {
         );
         if (empresaMap != null && empresaMap is Map) {
           debugPrint('>>> [AuthService] ========================================');
-          debugPrint('>>> [AuthService] Carregando empresa do localStorage...');
           _empresaAtual = Empresa.fromMap(Map<String, dynamic>.from(empresaMap));
           debugPrint('>>> [AuthService] Empresa carregada: ${_empresaAtual?.razaoSocial ?? "null"}');
           debugPrint('>>> [AuthService] ========================================');
@@ -282,6 +313,13 @@ class AuthService extends ChangeNotifier {
 
       // Salva no localStorage
       await _storage.salvar('usuario_atual', _usuarioAtual!.toMap());
+
+      // ADICIONAR AO HISTÓRICO (Gerenciar duplicados e limite de 5)
+      final loginLower = emailLower;
+      _historicoLogins.removeWhere((l) => l.toLowerCase() == loginLower); // Remove se já existir
+      _historicoLogins.insert(0, loginLower); // Insere no topo
+      if (_historicoLogins.length > 5) _historicoLogins.removeLast(); // Limita a 5
+      await _storage.salvar('historico_logins', _historicoLogins);
       
       // Se o usuário tem empresa associada, carrega ela
       if (_usuarioAtual!.empresaId != null) {

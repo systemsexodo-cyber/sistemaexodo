@@ -13,6 +13,7 @@ import '../models/usuario.dart';
 import '../models/link_vendedor.dart';
 import '../theme.dart';
 import 'lancar_pedido_page.dart';
+import '../models/delivery_info.dart';
 import 'entregas_page.dart';
 import 'pdv_page.dart';
 import 'entrega_detalhes_page.dart';
@@ -271,8 +272,8 @@ class _PedidosPageState extends State<PedidosPage> {
                 (p.linkVendedorId != null && p.linkVendedorId!.isNotEmpty) ||
                 (p.linkVendedorCodigo != null && p.linkVendedorCodigo!.isNotEmpty);
             
-            // Se for pedido válido E (não tiver serviços OU for do e-commerce)
-            return isPedidoValido && (p.servicos.isEmpty || isPedidoEcommerce);
+            // Se for pedido válido
+            return isPedidoValido;
           },
         )
         .toList();
@@ -313,6 +314,11 @@ class _PedidosPageState extends State<PedidosPage> {
         ).add(const Duration(days: 1));
         return !dataPedido.isAfter(dataFim);
       }).toList();
+    }
+
+    // Ordenar por data (mais recentes primeiro) por padrão quando não estiver buscando
+    if (_termoBusca.isEmpty) {
+      resultado.sort((a, b) => b.dataPedido.compareTo(a.dataPedido));
     }
 
     // Busca inteligente e precisa
@@ -490,7 +496,15 @@ class _PedidosPageState extends State<PedidosPage> {
   ) {
     if (pedido.status == novoStatus) return;
 
-    final pedidoAtualizado = pedido.copyWith(status: novoStatus);
+    Pedido pedidoAtualizado = pedido.copyWith(status: novoStatus);
+    
+    // Se for um delivery e o status for "Entregue", atualizar também o status do delivery
+    if (novoStatus.toLowerCase() == 'entregue' && pedido.deliveryInfo != null) {
+      pedidoAtualizado = pedidoAtualizado.copyWith(
+        deliveryInfo: pedido.deliveryInfo!.copyWith(status: 'entregue'),
+      );
+    }
+    
     dataService.updatePedido(pedidoAtualizado);
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -1002,37 +1016,52 @@ class _PedidosPageState extends State<PedidosPage> {
                       ),
                     ),
                   if (isPedidoEcommerce) const SizedBox(width: 8),
-                  // Badge PAGO
-                  if (isPago)
+
+                  
+                  // Badge Delivery vs Venda Direta
+                  if (pedido.deliveryInfo != null) ...[
                     Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 2,
-                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                       decoration: BoxDecoration(
-                        color: Colors.greenAccent,
+                        color: Colors.orange.withOpacity(0.8),
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: const Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(
-                            Icons.check_circle,
-                            color: Color(0xFF1B5E20),
-                            size: 12,
-                          ),
+                          Icon(Icons.local_shipping, color: Colors.white, size: 12),
                           SizedBox(width: 4),
                           Text(
-                            'PAGO',
-                            style: TextStyle(
-                              color: Color(0xFF1B5E20),
-                              fontWeight: FontWeight.bold,
-                              fontSize: 10,
-                            ),
+                            'DELIVERY',
+                            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 10),
                           ),
                         ],
                       ),
                     ),
+                    const SizedBox(width: 8),
+                  ] else if (!isPedidoEcommerce) ...[
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.blue.withOpacity(0.8),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.assignment, color: Colors.white, size: 12),
+                          SizedBox(width: 4),
+                          Text(
+                            'LANÇAMENTO',
+                            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 10),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+
+                  // Badge PAGO
                   // Badge EM ABERTO (Parcialmente Pago)
                   if (isParcialmentePago)
                     Container(
@@ -1250,6 +1279,7 @@ class _PedidosPageState extends State<PedidosPage> {
                                 'Pendente',
                                 'Parcialmente Pago',
                                 'Em Andamento',
+                                'Entregue',
                                 'Pago',
                                 'Cancelado',
                               ]
@@ -2203,6 +2233,8 @@ class _PedidosPageState extends State<PedidosPage> {
         return Colors.amber;
       case 'Em Andamento':
         return Colors.blue;
+      case 'Entregue':
+        return Colors.teal;
       case 'Pago':
         return Colors.green;
       case 'Cancelado':

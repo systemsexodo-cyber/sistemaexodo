@@ -10,9 +10,10 @@ if __name__ == '__main__':
         pass
 
 try:
-    import _multiprocessing
-    import multiprocessing.resource_tracker
-    import multiprocessing.popen_spawn_win32
+    if os.name == 'nt':
+        import _multiprocessing
+        import multiprocessing.resource_tracker
+        import multiprocessing.popen_spawn_win32
 except ImportError:
     pass
 
@@ -22,8 +23,8 @@ import subprocess
 import time
 import os
 import re
-import secrets
 import ctypes
+# pystray handled later for cross-platform support
 import pynfe.utils # Importar para correção de caminhos
 import platform
 import re
@@ -56,15 +57,16 @@ logging.basicConfig(
     filemode='a'
 )
 
-def log_message(msg, level="INFO"):
-    print(f"[{level}] {msg}")
-    if level == "INFO": logging.info(msg)
-    elif level == "ERROR": logging.error(msg)
-    elif level == "WARN": logging.warning(msg)
-
 def get_pystray():
-    import pystray
-    return pystray
+    try:
+        import pystray
+        return pystray
+    except ImportError:
+        return None
+
+# Variável de controle para ambientes Cloud (Docker/Linux)
+IS_CLOUD = os.environ.get("CLOUD_RUN", "false").lower() == "true"
+IS_WINDOWS = platform.system() == "Windows"
 
 # Correção de caminhos para pynfe quando compilado com PyInstaller
 if getattr(sys, 'frozen', False):
@@ -156,10 +158,19 @@ class RequisicaoEmissao(BaseModel):
     venda_numero: Optional[str | int] = None
     cpf_cliente: Optional[str] = None
 
-# --- AUXILIARES ---
 def get_base_path():
     if getattr(sys, 'frozen', False): return os.path.dirname(sys.executable)
     return os.path.dirname(os.path.abspath(__file__))
+
+# Melhora log_message para não depender de print em cloud se necessário
+def log_message(msg, level="INFO"):
+    # Em cloud (Docker), o print já vai para o stdout/Cloud Logging
+    print(f"[{level}] {msg}", flush=True)
+    try:
+        if level == "INFO": logging.info(msg)
+        elif level == "ERROR": logging.error(msg)
+        elif level == "WARN": logging.warning(msg)
+    except: pass
 
 def save_identity():
     try:
@@ -203,7 +214,8 @@ async def emitir_nfce_endpoint(req: RequisicaoEmissao):
         }
         save_identity()
         
-        try: update_tray_menu()
+        try: 
+            if not IS_CLOUD: update_tray_menu()
         except: pass
 
         return resultado
@@ -326,6 +338,8 @@ def processar_requisicao_firebase(db, doc_id, data):
                 GLOBAL_TRAY_ICON.menu = ps.Menu(*menu_items)
                 GLOBAL_TRAY_ICON.title = f"Exodo Bridge v{BRIDGE_VERSION} - {empresa_nome}"
             except: pass
+        elif IS_CLOUD:
+            log_message(f"[CLOUD] Heartbeat processado para: {LAST_PROCESSED_COMPANY['nome']}")
 
         log_message(f"[FIREBASE] Doc {doc_id} processado. Status do resultado: {resultado.get('status')}")
 
@@ -520,8 +534,20 @@ def start_firebase_listener():
             break
             
     if not cred_file:
-        log_message("[ERRO] firebase-credentials.json não encontrado em nenhum dos diretórios esperados.", "ERROR")
-        return
+        if IS_CLOUD:
+            log_message("[CLOUD] Credenciais explícitas não encontradas. Tentando ADC (Application Default Credentials)...", "INFO")
+            # Deixar o firebase_admin tentar inicializar sem cred se for cloud
+            try:
+                firebase_admin.initialize_app()
+                db = firestore.client()
+                FIREBASE_ACTIVE = True
+                _iniciar_listeners(db)
+                return
+            except Exception as e:
+                log_message(f"[CLOUD ERRO] Falha ao inicializar com ADC: {e}", "ERROR")
+        else:
+            log_message("[ERRO] firebase-credentials.json não encontrado em nenhum dos diretórios esperados.", "ERROR")
+            return
             
     try:
         try:
@@ -532,6 +558,13 @@ def start_firebase_listener():
 
         db = firestore.client()
         FIREBASE_ACTIVE = True
+        _iniciar_listeners(db)
+    except Exception as e:
+        log_message(f"Falha ao iniciar Firebase Listener: {e}", "ERROR")
+
+def _iniciar_listeners(db):
+    global FIREBASE_ACTIVE
+    try:
         log_message("Conexão com Firebase estabelecida. Iniciando listeners...")
 
         # 1. Listener de Notas Fiscais (Inicia AGORA para já receber pedidos)
@@ -624,10 +657,10 @@ def start_firebase_listener():
         FIREBASE_ACTIVE = False
         global FIREBASE_STATUS_MSG
         FIREBASE_STATUS_MSG = "🔴 Falha Crítica / Offline"
-        update_tray_menu()
+        if not IS_CLOUD: update_tray_menu()
 
-def kill_zombies():
     """Versão passiva: apenas tenta matar o watchdog para não causar suicídio."""
+    if not IS_WINDOWS: return
     try:
         log_message("Limpando Watchdog (passivo)...")
         os.system('taskkill /F /IM ExodoNfceBridgeWatchdog* /T >nul 2>&1')
@@ -661,7 +694,7 @@ def _registrar_heartbeat(db):
         log_message(f"Sinal de vida (Heartbeat) enviado com sucesso: {pc_name}")
         
         FIREBASE_STATUS_MSG = "🟢 Conectado e Operacional"
-        update_tray_menu()
+        if not IS_CLOUD: update_tray_menu()
     except Exception as e:
         err_msg = str(e)
         log_message(f"Falha ao enviar sinal de vida ao servidor: {err_msg}", "WARN")
@@ -679,14 +712,14 @@ def _registrar_heartbeat(db):
             FIREBASE_STATUS_MSG = "🔴 Erro de Permissão / Chave Off"
         else:
             FIREBASE_STATUS_MSG = f"🔴 Offline: {err_msg[:20]}..."
-        update_tray_menu()
+        if not IS_CLOUD: update_tray_menu()
 
 FIREBASE_STATUS_MSG = "🟠 Conectando..."
 
 def update_tray_menu():
-    import pystray
+    import pystray # Dependência opcional para tray
     global GLOBAL_TRAY_ICON, FIREBASE_STATUS_MSG, LAST_PROCESSED_COMPANY
-    if not GLOBAL_TRAY_ICON: return
+    if not GLOBAL_TRAY_ICON or IS_CLOUD: return
     
     empresa_nome = LAST_PROCESSED_COMPANY.get('nome') or "Nenhuma"
     cnpj = LAST_PROCESSED_COMPANY.get('cnpj') or "Aguardando..."
@@ -751,6 +784,7 @@ def update_local_status():
         f.write(f"Firebase: ATIVO\n")
 
 def is_admin():
+    if not IS_WINDOWS: return True # Em linux assumimos root ou permissão docker
     try:
         return ctypes.windll.shell32.IsUserAnAdmin()
     except:

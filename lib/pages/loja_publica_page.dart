@@ -62,6 +62,7 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
   Timer? _bannerTimer;
   int _bannerIndexAtual = 0;
   OpcaoFrete? _freteSelecionadoProduto;
+  String? _modoLojaOverride; // Para teste em tempo real
 
   @override
   void initState() {
@@ -990,27 +991,14 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
     final deveExibirBannerFreteGratis = bannerFreteGratisAtivo && totalCarrinho > 0 && totalCarrinho < valorMinimoFreteGratis;
     final faltaParaFreteGratis = valorMinimoFreteGratis - totalCarrinho;
     
+    final configModo = configEcommerce?['modoExibicao'] as String? ?? 'ecommerce';
+    final modoLoja = _modoLojaOverride ?? configModo;
+    
     // Personalizações visuais
-    final corFundoLoja = _hexToColor(configEcommerce?['corFundoLoja'] as String?);
     final corPrimariaLoja = _hexToColor(configEcommerce?['corPrimariaLoja'] as String?);
     final corSecundariaLoja = _hexToColor(configEcommerce?['corSecundariaLoja'] as String?);
-    final tamanhoLogo = configEcommerce?['tamanhoLogo'] as String? ?? 'medio';
-    final posicaoLogo = configEcommerce?['posicaoLogo'] as String? ?? 'esquerda';
-    final estiloCards = configEcommerce?['estiloCards'] as String? ?? 'padrao';
     
-    // Informações da loja
-    final emailContato = configEcommerce?['emailContato'] as String? ?? empresa?.email;
-    final facebookUrl = configEcommerce?['facebook'] as String?;
-    final instagramUrl = configEcommerce?['instagram'] as String?;
-    final horarioFuncionamento = configEcommerce?['horarioFuncionamento'] as String?;
-    final enderecoLoja = configEcommerce?['enderecoLoja'] as String?;
-    final mensagemBoasVindas = configEcommerce?['mensagemBoasVindas'] as String?;
-    final exibirRedesSociais = configEcommerce?['exibirRedesSociais'] as bool? ?? true;
-    final exibirHorarioFuncionamento = configEcommerce?['exibirHorarioFuncionamento'] as bool? ?? true;
-    final exibirEnderecoLoja = configEcommerce?['exibirEnderecoLoja'] as bool? ?? true;
-
-    // Aplicar cores personalizadas ao tema
-    // Obter cores do tema baseadas no modo dark/light
+    // Cores Premium - Baseadas no Tema e nas Cores da Empresa
     final primaryColor = _isDark ? _LojaPublicaStyle.primaryColor : (corPrimariaLoja ?? _LojaPublicaStyle.primaryColor);
     final secondaryColor = _isDark ? _LojaPublicaStyle.secondaryColor : (corSecundariaLoja ?? _LojaPublicaStyle.secondaryColor);
     final cardColor = _isDark ? _LojaPublicaStyle.cardColor : Colors.white;
@@ -1048,6 +1036,7 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
                   primaryColor: primaryColor,
                   cardColor: cardColor,
                   textColor: textColor,
+                  configEcommerce: configEcommerce,
                 ),
                 
                 // Lista de Produtos
@@ -1058,8 +1047,8 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
                     padding: const EdgeInsets.only(bottom: 100),
                     child: Column(
                       children: [
-                        // Banners Premium
-                        if (_bannerDeveSerExibido())
+                        // Banners Premium (Apenas no E-commerce por padrão)
+                        if (_bannerDeveSerExibido() && modoLoja == 'ecommerce')
                           _buildBannersPremium(configEcommerce, primaryColor),
                         
                         // Busca e Filtros Premium
@@ -1074,16 +1063,27 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
                           ),
                         ),
                         
-                        // Grid de Produtos Premium
-                        _buildGridProdutosPremium(
-                          produtos: produtos,
-                          formatoMoeda: formatoMoeda,
-                          descontoPixAtivo: descontoPixAtivo,
-                          percentualDescontoPix: percentualDescontoPix,
-                          primaryColor: primaryColor,
-                          cardColor: cardColor,
-                          textColor: textColor,
-                        ),
+                        // Grid ou Lista Dependendo do Modo
+                        if (modoLoja == 'delivery')
+                          _buildListaProdutosDelivery(
+                            produtos: produtos,
+                            formatoMoeda: formatoMoeda,
+                            descontoPixAtivo: descontoPixAtivo,
+                            percentualDescontoPix: percentualDescontoPix,
+                            primaryColor: primaryColor,
+                            cardColor: cardColor,
+                            textColor: textColor,
+                          )
+                        else
+                          _buildGridProdutosPremium(
+                            produtos: produtos,
+                            formatoMoeda: formatoMoeda,
+                            descontoPixAtivo: descontoPixAtivo,
+                            percentualDescontoPix: percentualDescontoPix,
+                            primaryColor: primaryColor,
+                            cardColor: cardColor,
+                            textColor: textColor,
+                          ),
                       ],
                     ),
                   ),
@@ -1097,43 +1097,57 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
   }
 
   Widget _buildAnimatedBackground(Color primaryColor, Color secondaryColor) {
-    return Stack(
-      children: [
-        Positioned(
-          top: -150,
-          right: -150,
-          child: Container(
-            width: 500,
-            height: 500,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: RadialGradient(
-                colors: [
-                  primaryColor.withOpacity(0.15),
-                  Colors.transparent,
-                ],
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            const Color(0xFF0F172A), // Slate 900
+            const Color(0xFF1E293B), // Slate 800
+            primaryColor.withOpacity(0.2),
+            secondaryColor.withOpacity(0.1),
+          ],
+        ),
+      ),
+      child: Stack(
+        children: [
+          Positioned(
+            top: -150,
+            right: -150,
+            child: Container(
+              width: 500,
+              height: 500,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: RadialGradient(
+                  colors: [
+                    primaryColor.withOpacity(0.3), // Mais opacidade
+                    Colors.transparent,
+                  ],
+                ),
               ),
             ),
           ),
-        ),
-        Positioned(
-          bottom: -100,
-          left: -100,
-          child: Container(
-            width: 450,
-            height: 450,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: RadialGradient(
-                colors: [
-                  secondaryColor.withOpacity(0.15),
-                  Colors.transparent,
-                ],
+          Positioned(
+            bottom: -100,
+            left: -100,
+            child: Container(
+              width: 450,
+              height: 450,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: RadialGradient(
+                  colors: [
+                    secondaryColor.withOpacity(0.2),
+                    Colors.transparent,
+                  ],
+                ),
               ),
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -1143,6 +1157,7 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
     required Color primaryColor,
     required Color cardColor,
     required Color textColor,
+    required Map<String, dynamic>? configEcommerce,
   }) {
     return AnimatedContainer(
       duration: const Duration(milliseconds: 400),
@@ -1178,7 +1193,7 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
                     style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: textColor),
                   ),
                 ),
-                
+
                 // Botão de Troca de Tema
                 IconButton(
                   icon: Icon(_isDark ? Icons.light_mode : Icons.dark_mode, color: primaryColor),
@@ -1328,7 +1343,7 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
         physics: const NeverScrollableScrollPhysics(),
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: 2,
-          childAspectRatio: 0.7,
+          childAspectRatio: 0.65, // Ajustado para não cortar o botão
           crossAxisSpacing: 16,
           mainAxisSpacing: 16,
         ),
@@ -1346,6 +1361,126 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
           );
         },
       ),
+    );
+  }
+
+  Widget _buildListaProdutosDelivery({
+    required List<Produto> produtos,
+    required NumberFormat formatoMoeda,
+    required bool descontoPixAtivo,
+    required double percentualDescontoPix,
+    required Color primaryColor,
+    required Color cardColor,
+    required Color textColor,
+  }) {
+    if (produtos.isEmpty) return const SizedBox.shrink();
+
+    return ListView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      padding: const EdgeInsets.all(20),
+      itemCount: produtos.length,
+      itemBuilder: (context, index) {
+        final produto = produtos[index];
+        final temDesconto = produto.promocaoAtiva;
+        final precoFinal = produto.precoAtual;
+        
+        return Container(
+          margin: const EdgeInsets.only(bottom: 16),
+          decoration: BoxDecoration(
+            color: cardColor.withOpacity(0.6),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: Colors.white.withOpacity(0.1)),
+          ),
+          child: InkWell(
+            onTap: () => _mostrarDetalhesProduto(context, produto, formatoMoeda, primaryColor, cardColor, textColor),
+            borderRadius: BorderRadius.circular(20),
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  // Imagem do Produto
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(15),
+                    child: Container(
+                      width: 90,
+                      height: 90,
+                      color: Colors.white.withOpacity(0.05),
+                      child: Image.network(
+                        produto.fotoPrincipalUrl ?? '',
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => const Icon(Icons.image_not_supported, color: Colors.white24),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  
+                  // Detalhes do Produto
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          produto.nome,
+                          style: TextStyle(color: textColor, fontWeight: FontWeight.bold, fontSize: 16),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        if (produto.descricao != null && produto.descricao!.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Text(
+                              produto.descricao!,
+                              style: TextStyle(color: textColor.withOpacity(0.5), fontSize: 12),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Text(
+                              formatoMoeda.format(precoFinal),
+                              style: TextStyle(color: primaryColor, fontWeight: FontWeight.bold, fontSize: 16),
+                            ),
+                            if (temDesconto)
+                              Padding(
+                                padding: const EdgeInsets.only(left: 8),
+                                child: Text(
+                                  formatoMoeda.format(produto.preco),
+                                  style: TextStyle(
+                                    color: textColor.withOpacity(0.3),
+                                    fontSize: 12,
+                                    decoration: TextDecoration.lineThrough,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  
+                  // Botão Adicionar Rápido
+                  const SizedBox(width: 10),
+                  Material(
+                    color: primaryColor,
+                    borderRadius: BorderRadius.circular(12),
+                    child: InkWell(
+                      onTap: () => _adicionarProdutoAoCarrinho(produto),
+                      borderRadius: BorderRadius.circular(12),
+                      child: const Padding(
+                        padding: EdgeInsets.all(10),
+                        child: Icon(Icons.add_shopping_cart, color: Colors.white, size: 20),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 

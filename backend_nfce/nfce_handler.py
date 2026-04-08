@@ -57,8 +57,9 @@ class ComunicacaoSefaz(OriginalComunicacaoSefaz):
 
             # Debug: Salvar o XML final enviado
             try:
-                temp_dir = os.environ.get("TEMP", "C:/temp")
-                with open(os.path.join(temp_dir, "last_outgoing_soap.xml"), "w", encoding="utf-8") as f: f.write(xml_final)
+                import tempfile
+                dbg_out = os.path.join(tempfile.gettempdir(), "last_outgoing_soap.xml")
+                with open(dbg_out, "w", encoding="utf-8") as f: f.write(xml_final)
             except: pass
 
             # Realizar a requisição SOAP
@@ -67,7 +68,9 @@ class ComunicacaoSefaz(OriginalComunicacaoSefaz):
             
             # Debug: Salvar resposta
             try:
-                with open(os.path.join(os.environ.get("TEMP", "C:/temp"), "last_sefaz_response.xml"), "w", encoding="utf-8") as f: f.write(res.text)
+                import tempfile
+                resp_dbg = os.path.join(tempfile.gettempdir(), "last_sefaz_response.xml")
+                with open(resp_dbg, "w", encoding="utf-8") as f: f.write(res.text)
             except: pass
             
             return res
@@ -467,7 +470,8 @@ def _fixed_post(self, url, xml, timeout=None):
 
         # DEBUG: Salvar XML final enviado
         try:
-            dbg_path = os.path.join(os.environ.get('TEMP', 'c:/temp'), 'last_enviNFe.xml')
+            import tempfile
+            dbg_path = os.path.join(tempfile.gettempdir(), 'last_enviNFe.xml')
             with open(dbg_path, 'w', encoding='utf-8') as _f:
                 _f.write(xml_declaration + xml_str)
             print(f"[DEBUG] enviNFe salvo em {dbg_path}")
@@ -487,7 +491,8 @@ def _fixed_post(self, url, xml, timeout=None):
         
         # FIX 4: Salvar resposta do SEFAZ para debug
         try:
-            resp_path = os.path.join(os.environ.get('TEMP', 'c:/temp'), 'last_sefaz_response.xml')
+            import tempfile
+            resp_path = os.path.join(tempfile.gettempdir(), 'last_sefaz_response.xml')
             with open(resp_path, 'w', encoding='utf-8') as _f:
                 _f.write(result.text)
             print(f"[DEBUG] Resposta SEFAZ (status {result.status_code}) salva em {resp_path}")
@@ -732,7 +737,8 @@ def emitir_nfce_pynfe(req):
 
         # DEBUG: Salvar XML final para inspeção
         try:
-            temp_path = os.path.join(os.environ.get('TEMP', 'c:/temp'), 'last_nfce.xml')
+            import tempfile
+            temp_path = os.path.join(tempfile.gettempdir(), 'last_nfce.xml')
             debug_xml = etree.tostring(xml_assinado, encoding='utf-8', xml_declaration=True).decode('utf-8')
             with open(temp_path, 'w', encoding='utf-8') as f:
                 f.write(debug_xml)

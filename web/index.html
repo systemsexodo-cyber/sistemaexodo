@@ -46,36 +46,6 @@
 </head>
 
 <body>
-  <script>
-    // SOLUÇÃO PARA LIMPEZA DE CACHE E SERVICE WORKERS OBSOLETOS
-    // Versão: 1.0.1 - Força limpeza em cada carregamento
-    (function () {
-      // 1. Desregistrar todos os Service Workers
-      if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.getRegistrations().then(function (registrations) {
-          for (let registration of registrations) {
-            registration.unregister().then(function (success) {
-              if (success) console.log('>>> [CACHE] Service Worker removido com sucesso');
-            });
-          }
-        });
-      }
-
-      // 2. Limpar Caches da API de Cache (comum em PWAs Flutter)
-      if (window.caches) {
-        caches.keys().then(function (names) {
-          for (let name of names) {
-            caches.delete(name).then(function () {
-              console.log('>>> [CACHE] Cache deletado: ' + name);
-            });
-          }
-        });
-      }
-
-      // 3. Limpeza de LocalStorage antigo se necessário (opcional)
-      // localStorage.removeItem('flutter.some_old_key');
-    })();
-  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 

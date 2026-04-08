@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'services/auth_service.dart';
+import 'services/theme_service.dart';
 
 class AppTheme {
   /// Converte hex string para Color
@@ -14,20 +15,24 @@ class AppTheme {
     }
   }
 
-  static ThemeData getTheme({Color? corPrimaria, Color? corSecundaria}) {
+  static ThemeData getTheme({Color? corPrimaria, Color? corSecundaria, Color? corFundo, Brightness brightness = Brightness.dark}) {
     final primary = corPrimaria ?? const Color(0xFF2196F3);
     final secondary = corSecundaria ?? const Color(0xFF1565C0);
+    final background = corFundo ?? (brightness == Brightness.dark ? const Color(0xFF10151B) : Colors.white);
+    
+    final isDark = brightness == Brightness.dark;
     
     final colorScheme = ColorScheme(
-      brightness: Brightness.light,
+      brightness: brightness,
       primary: primary,
       onPrimary: Colors.white,
       secondary: secondary,
       onSecondary: Colors.white,
       error: Colors.red,
       onError: Colors.white,
-      surface: const Color(0xFF10151B),
-      onSurface: Colors.white,
+      surface: background,
+      onSurface: isDark ? Colors.white : Colors.black87,
+      background: background,
     );
 
     return ThemeData(
@@ -42,7 +47,7 @@ class AppTheme {
         iconTheme: IconThemeData(color: Colors.white),
       ),
       cardTheme: CardThemeData(
-        color: Color(0xFF10151B),
+        color: background,
         elevation: 6,
         shadowColor: Colors.black26,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -50,12 +55,12 @@ class AppTheme {
       inputDecorationTheme: InputDecorationTheme(
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: Colors.white24),
+          borderSide: BorderSide(color: isDark ? Colors.white24 : Colors.black12),
         ),
         filled: true,
-        fillColor: Color(0xFF23272A),
-        labelStyle: TextStyle(color: Colors.white70),
-        hintStyle: TextStyle(color: Colors.white54),
+        fillColor: isDark ? const Color(0xFF23272A) : Colors.grey.shade100,
+        labelStyle: TextStyle(color: isDark ? Colors.white70 : Colors.black54),
+        hintStyle: TextStyle(color: isDark ? Colors.white54 : Colors.black38),
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
@@ -68,11 +73,12 @@ class AppTheme {
           padding: const EdgeInsets.symmetric(vertical: 12),
         ),
       ),
-      textTheme: ThemeData.dark().textTheme.apply(
-        bodyColor: Colors.white,
-        displayColor: Colors.white,
+      textTheme: (isDark ? ThemeData.dark() : ThemeData.light()).textTheme.apply(
+        bodyColor: isDark ? Colors.white : Colors.black87,
+        displayColor: isDark ? Colors.white : Colors.black87,
         fontFamily: 'Roboto',
       ),
+      iconTheme: IconThemeData(color: isDark ? Colors.white : Colors.black87),
     );
   }
 
@@ -122,21 +128,30 @@ class AppTheme {
     required Widget child,
     Color? corPrimaria,
     Color? corSecundaria,
+    Color? corFundo,
   }) {
-    return Consumer<AuthService>(
-      builder: (context, authService, _) {
+    return Consumer2<AuthService, ThemeService>(
+      builder: (context, authService, themeService, _) {
         // Obter cores da empresa atual se não foram fornecidas
         Color? primaria = corPrimaria;
         Color? secundaria = corSecundaria;
+        Color? fundo = corFundo;
         
         if (primaria == null || secundaria == null) {
           final empresa = authService.empresaAtual;
-          final cores = getCoresEmpresa(
+          final coresEmpresa = getCoresEmpresa(
             empresa?.corPrimaria,
             empresa?.corSecundaria,
           );
-          primaria ??= cores['primaria'];
-          secundaria ??= cores['secundaria'];
+          
+          final config = themeService.getThemeConfig(
+            coresEmpresa['primaria'],
+            coresEmpresa['secundaria'],
+          );
+          
+          primaria ??= config['primaria'] as Color?;
+          secundaria ??= config['secundaria'] as Color?;
+          fundo ??= config['fundo'] as Color?;
         }
         
         // Usar cores da empresa ou cores padrão
@@ -159,7 +174,11 @@ class AppTheme {
           child: Container(
             decoration: BoxDecoration(
               gradient: LinearGradient(
-                colors: [cor1, cor2, cor3],
+                colors: [
+                  fundo ?? cor1,
+                  cor2,
+                  cor3,
+                ],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
                 stops: const [0.0, 0.5, 1.0],
@@ -168,35 +187,35 @@ class AppTheme {
             child: Stack(
               children: [
                 // Fênix suave ao fundo (watermark) - Lado Direito Inferior
-                Positioned(
-                  right: -150,
-                  bottom: -100,
-                  child: Opacity(
-                    opacity: 0.04, // Extremamente sutil "por debaixo dos panos"
-                    child: Transform.rotate(
-                      angle: -0.2,
-                      child: Image.asset(
-                        'assets/images/phoenix.png',
-                        fit: BoxFit.contain,
+                  Positioned(
+                    right: -150,
+                    bottom: -100,
+                    child: Opacity(
+                      opacity: 0.008, // Quase invisível
+                      child: Transform.rotate(
+                        angle: -0.2,
+                        child: Image.asset(
+                          'assets/images/phoenix.png',
+                          fit: BoxFit.contain,
+                        ),
                       ),
                     ),
                   ),
-                ),
-                Positioned(
-                  left: -50,
-                  top: 100,
-                  child: Opacity(
-                    opacity: 0.02,
-                    child: Transform.rotate(
-                      angle: 0.4,
-                      child: Image.asset(
-                        'assets/images/phoenix.png',
-                        width: 400,
-                        fit: BoxFit.contain,
+                  Positioned(
+                    left: -50,
+                    top: 100,
+                    child: Opacity(
+                      opacity: 0.004, // Ainda mais discreta
+                      child: Transform.rotate(
+                        angle: 0.4,
+                        child: Image.asset(
+                          'assets/images/phoenix.png',
+                          width: 400,
+                          fit: BoxFit.contain,
+                        ),
                       ),
                     ),
                   ),
-                ),
                 Scaffold(
                   backgroundColor: Colors.transparent,
                   body: SafeArea(

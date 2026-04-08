@@ -9,11 +9,13 @@ class WhatsAppService {
   final String apiUrl;
   final String apiKey;
   final String instanceName;
+  final bool isTwilioBridge; // Nova flag
 
   WhatsAppService({
     required this.apiUrl,
     required this.apiKey,
     required this.instanceName,
+    this.isTwilioBridge = false,
   });
 
   /// Cria uma instância do serviço a partir da empresa
@@ -26,7 +28,8 @@ class WhatsAppService {
     return WhatsAppService(
       apiUrl: empresa.whatsappApiUrl!,
       apiKey: empresa.whatsappApiKey!,
-      instanceName: empresa.whatsappInstanceName!,
+      instanceName: empresa.whatsappInstanceName ?? '',
+      isTwilioBridge: empresa.whatsappTipo == 'twilio' || empresa.whatsappInstanceName == 'twilio-bridge',
     );
   }
 
@@ -42,8 +45,14 @@ class WhatsAppService {
   /// Verifica o estado da conexão do WhatsApp
   /// Retorna 'open' se conectado, 'close' se desconectado, ou null em caso de erro
   Future<String?> verificarConexao() async {
-    print('>>> [WhatsApp] Verificando conexão para: $instanceName');
+    print('>>> [WhatsApp] Verificando conexão para: $instanceName (Tipo: ${isTwilioBridge ? 'Twilio' : 'Evolution'})');
     try {
+      if (isTwilioBridge) {
+        // Para a ponte no Render, apenas verificamos se o serviço está online
+        final response = await http.get(Uri.parse(_baseUrl)).timeout(const Duration(seconds: 15));
+        return response.statusCode == 200 ? 'open' : 'close';
+      }
+
       final response = await http.get(
         Uri.parse('$_baseUrl/instance/connectionState/$instanceName'),
         headers: _headers,
@@ -197,21 +206,39 @@ class WhatsAppService {
     return limpo;
   }
 
-  /// Envia uma mensagem de texto
+  /// Envia uma mensagem de texto (Detecta se é Evolution ou Twilio)
   Future<bool> enviarMensagem(String numero, String mensagem) async {
     try {
       final numFmt = formatarNumero(numero);
-      final response = await http.post(
-        Uri.parse('$_baseUrl/message/sendText/$instanceName'),
-        headers: _headers,
-        body: jsonEncode({
-          'number': numFmt,
-          'text': mensagem,
-        }),
-      ).timeout(const Duration(seconds: 30));
-
-      return response.statusCode == 200 || response.statusCode == 201;
+      
+      if (isTwilioBridge) {
+        // Lógica para a nova Ponte no Render (Twilio)
+        final response = await http.post(
+          Uri.parse('$_baseUrl/send-message'),
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': apiKey,
+          },
+          body: jsonEncode({
+            'to': numFmt,
+            'message': mensagem,
+          }),
+        ).timeout(const Duration(seconds: 30));
+        return response.statusCode == 200;
+      } else {
+        // Lógica para Evolution API
+        final response = await http.post(
+          Uri.parse('$_baseUrl/message/sendText/$instanceName'),
+          headers: _headers,
+          body: jsonEncode({
+            'number': numFmt,
+            'text': mensagem,
+          }),
+        ).timeout(const Duration(seconds: 30));
+        return response.statusCode == 200 || response.statusCode == 201;
+      }
     } catch (e) {
+      print('>>> [WhatsApp] Erro ao enviar mensagem: $e');
       return false;
     }
   }

@@ -13,6 +13,7 @@ class ItemServico {
   final double porcentagemComissao; // Porcentagem se for o caso
   final double valorComissao; // Valor final da comissão para o funcionário
   final List<ItemMaterial> materiais; // Lista de materiais que serão consumidos
+  final String? observacao;
   // Controle de entrega do animal
   final String? tipoEntrega; // 'Taxi Dog' ou 'Cliente busca' ou null
   final double? valorTaxiDog; // Valor cobrado pelo taxi dog
@@ -28,6 +29,7 @@ class ItemServico {
     required this.valor,
     this.valorAdicional = 0.0,
     this.descricaoAdicional,
+    this.observacao,
     this.dataAgendamento,
     this.duracaoMinutos,
     this.funcionarioId,
@@ -54,6 +56,7 @@ class ItemServico {
       valor: (map['valor'] ?? 0).toDouble(),
       valorAdicional: (map['valorAdicional'] ?? 0.0).toDouble(),
       descricaoAdicional: map['descricaoAdicional'],
+      observacao: map['observacao'],
       dataAgendamento: map['dataAgendamento'] != null
           ? DateTime.parse(map['dataAgendamento'] as String)
           : null,
@@ -82,6 +85,7 @@ class ItemServico {
       'valor': valor,
       'valorAdicional': valorAdicional,
       'descricaoAdicional': descricaoAdicional,
+      'observacao': observacao,
       'dataAgendamento': dataAgendamento?.toIso8601String(),
       'duracaoMinutos': duracaoMinutos,
       'funcionarioId': funcionarioId,
@@ -105,6 +109,7 @@ class ItemServico {
     double? valor,
     double? valorAdicional,
     String? descricaoAdicional,
+    String? observacao,
     DateTime? dataAgendamento,
     int? duracaoMinutos,
     String? funcionarioId,
@@ -126,6 +131,7 @@ class ItemServico {
       valor: valor ?? this.valor,
       valorAdicional: valorAdicional ?? this.valorAdicional,
       descricaoAdicional: descricaoAdicional ?? this.descricaoAdicional,
+      observacao: observacao ?? this.observacao,
       dataAgendamento: dataAgendamento ?? this.dataAgendamento,
       duracaoMinutos: duracaoMinutos ?? this.duracaoMinutos,
       funcionarioId: funcionarioId ?? this.funcionarioId,

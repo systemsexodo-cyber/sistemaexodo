@@ -2068,6 +2068,8 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
         return Colors.red;
       case TipoPagamento.outro:
         return Colors.grey;
+      case TipoPagamento.alimentacao:
+        return Colors.teal;
     }
   }
 
@@ -2089,6 +2091,8 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
         return Icons.handshake;
       case TipoPagamento.outro:
         return Icons.more_horiz;
+      case TipoPagamento.alimentacao:
+        return Icons.restaurant;
     }
   }
 }

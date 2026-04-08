@@ -1,18 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
-import '../services/data_service.dart';
-import '../services/auth_service.dart';
-import '../models/mesa_comanda.dart';
-import '../models/empresa.dart';
-import '../models/forma_pagamento.dart';
-import '../models/venda_balcao.dart';
-import '../models/pedido.dart';
-import '../models/item_pedido.dart';
-import '../models/produto.dart';
-import '../models/conta_pagar.dart';
-import 'historico_operacoes_page.dart';
-import '../services/mesa_comanda_pdf_service.dart';
+import 'package:sistema_exodo_novo/services/data_service.dart';
+import 'package:sistema_exodo_novo/services/auth_service.dart';
+import 'package:sistema_exodo_novo/models/mesa_comanda.dart';
+import 'package:sistema_exodo_novo/models/empresa.dart';
+import 'package:sistema_exodo_novo/models/forma_pagamento.dart';
+import 'package:sistema_exodo_novo/models/venda_balcao.dart';
+import 'package:sistema_exodo_novo/models/pedido.dart';
+import 'package:sistema_exodo_novo/models/item_pedido.dart';
+import 'package:sistema_exodo_novo/models/produto.dart';
+import 'package:sistema_exodo_novo/models/adicional_produto.dart';
+import 'package:sistema_exodo_novo/models/conta_pagar.dart';
+import 'package:sistema_exodo_novo/pages/historico_operacoes_page.dart';
+import 'package:sistema_exodo_novo/services/mesa_comanda_pdf_service.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
@@ -35,6 +36,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
   late TipoControle _tipoSelecionado;
   final _buscaController = TextEditingController();
   final Set<String> _comandasExpandidas = {}; // Necessário para partes não refatoradas
+  String? _hoveredId; // Para efeitos visuais de hover
 
   @override
   void initState() {
@@ -218,76 +220,144 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
     if (temPendentes) accentColor = Colors.redAccent;
     else if (temProntos) accentColor = Colors.greenAccent;
 
-    return Card(
-      elevation: 4,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      color: const Color(0xFF1E1E2E),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: () => setState(() => _mesaSelecionada = item),
-        child: Stack(
-          children: [
-            Positioned(
-              left: 0, top: 0, bottom: 0, width: 6,
-              child: Container(color: accentColor),
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hoveredId = item.id),
+      onExit: (_) => setState(() => _hoveredId = null),
+      cursor: SystemMouseCursors.click,
+      child: AnimatedScale(
+        scale: _hoveredId == item.id ? 1.05 : 1.0,
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOutBack,
+        child: Card(
+          elevation: _hoveredId == item.id ? 12 : 4,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+            side: BorderSide(
+              color: _hoveredId == item.id ? accentColor : Colors.transparent,
+              width: 2,
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        _tipoSelecionado == TipoControle.mesa ? 'Mesa' : 'Comanda',
-                        style: TextStyle(color: Colors.grey[400], fontSize: 11),
-                      ),
-                      if (temPendentes) const Icon(Icons.priority_high, color: Colors.redAccent, size: 16),
-                    ],
-                  ),
-                  const SizedBox(height: 2),
-                  FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: Text(
-                      item.numero,
-                      style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          color: const Color(0xFF1E1E2E),
+          shadowColor: accentColor.withOpacity(0.5),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: () => setState(() => _mesaSelecionada = item),
+            hoverColor: accentColor.withOpacity(0.05),
+            splashColor: accentColor.withOpacity(0.1),
+            child: Stack(
+              children: [
+                Positioned(
+                  left: 0, top: 0, bottom: 0, width: 8,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: accentColor,
+                      boxShadow: [
+                        BoxShadow(
+                          color: accentColor.withOpacity(0.5),
+                          blurRadius: 10,
+                          spreadRadius: 2,
+                        ),
+                      ],
                     ),
-                  ),
-                  const Spacer(),
-                  if (item.clienteNome != null)
-                    Text(
-                      item.clienteNome!,
-                      maxLines: 1, overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: Colors.grey[500], fontSize: 12),
-                    ),
-                  const SizedBox(height: 4),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text('${item.itens.length} it.', style: TextStyle(color: Colors.grey[400], fontSize: 9)),
-                      Text(
-                        NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(total),
-                        style: TextStyle(color: accentColor, fontWeight: FontWeight.bold, fontSize: 13),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            if (temProntos)
-              Positioned(
-                right: 8, top: 8,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(color: Colors.greenAccent, borderRadius: BorderRadius.circular(10)),
-                  child: Text(
-                    '${item.itensProntos.length}',
-                    style: const TextStyle(color: Colors.black, fontSize: 10, fontWeight: FontWeight.bold),
                   ),
                 ),
-              ),
-          ],
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: accentColor.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              _tipoSelecionado == TipoControle.mesa ? 'Mesa' : 'Comanda',
+                              style: TextStyle(
+                                color: accentColor, 
+                                fontSize: 10, 
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 0.5,
+                              ),
+                            ),
+                          ),
+                          if (temPendentes) 
+                            const Icon(Icons.flash_on, color: Colors.redAccent, size: 16),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        item.numero,
+                        style: const TextStyle(
+                          color: Colors.white, 
+                          fontSize: 22, 
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const Spacer(),
+                      if (item.clienteNome != null)
+                        Text(
+                          item.clienteNome!,
+                          maxLines: 1, overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.7), 
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      const SizedBox(height: 6),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(Icons.layers_outlined, color: Colors.grey[500], size: 12),
+                              const SizedBox(width: 4),
+                              Text(
+                                '${item.itens.length} it.', 
+                                style: TextStyle(color: Colors.grey[500], fontSize: 11),
+                              ),
+                            ],
+                          ),
+                          Text(
+                            NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(total),
+                            style: TextStyle(
+                              color: accentColor, 
+                              fontWeight: FontWeight.w800, 
+                              fontSize: 15,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                if (temProntos)
+                  Positioned(
+                    right: 8, top: 8,
+                    child: Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: Colors.greenAccent, 
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.greenAccent.withOpacity(0.4),
+                            blurRadius: 8,
+                            spreadRadius: 1,
+                          ),
+                        ],
+                      ),
+                      child: const Icon(Icons.check, color: Colors.black, size: 12, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -1026,7 +1096,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
 
   Widget _buildItemMesa(ItemMesaComanda item) {
     final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
-    final subtotal = item.preco * item.quantidade;
+    final subtotal = item.subtotal;
     
     Color corStatus;
     String textoStatus;
@@ -1079,11 +1149,21 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                     decoration: isCancelado ? TextDecoration.lineThrough : null,
                   ),
                 ),
+                if (item.adicionais.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  ...item.adicionais.map((adicional) => Padding(
+                    padding: const EdgeInsets.only(left: 4),
+                    child: Text(
+                      '+ ${adicional.nome} (${formatoMoeda.format(adicional.preco)})',
+                      style: TextStyle(color: Colors.greenAccent.withOpacity(0.7), fontSize: 11),
+                    ),
+                  )),
+                ],
                 const SizedBox(height: 4),
                 Row(
                   children: [
                     Text(
-                      '${item.quantidade}x ${formatoMoeda.format(item.preco)}',
+                      '${item.quantidade}x ${formatoMoeda.format(item.precoUnitarioComAdicionais)}',
                       style: TextStyle(color: Colors.grey, fontSize: 12),
                     ),
                     const SizedBox(width: 8),
@@ -1111,8 +1191,8 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
             formatoMoeda.format(subtotal),
             style: TextStyle(
               color: isCancelado ? Colors.red.shade300 : Colors.white,
-              fontSize: 16,
               fontWeight: FontWeight.bold,
+              fontSize: 14,
               decoration: isCancelado ? TextDecoration.lineThrough : null,
             ),
           ),
@@ -1120,7 +1200,6 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
       ),
     );
   }
-
 
   Future<void> _cancelarItem(ItemMesaComanda item, MesaComanda mesa, DataService dataService) async {
     // Confirmar cancelamento
@@ -1218,7 +1297,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
         final mesaLiberada = mesaAtualizada.copyWith(
           itens: [],
           itensPagos: [],
-          // historicoPagamentos: PRESERVADO - não limpar para manter histórico
+          historicoPagamentos: [], // Limpar para nova sessão
           status: 'Aberta',
           dataFechamento: null,
           dataAbertura: DateTime.now(),
@@ -1226,6 +1305,11 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
           clienteId: null,
           observacao: null,
           total: 0.0,
+          valorCouvert: null,
+          quantidadePessoasCouvert: null,
+          valorCouvertPorPessoa: null,
+          valorGarcom: null,
+          garcomRetirado: false,
           updatedAt: DateTime.now(),
         );
         
@@ -1248,8 +1332,15 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
         final comandaFechada = mesaAtualizada.copyWith(
           itens: [],
           itensPagos: [],
+          historicoPagamentos: [],
           status: 'Fechada',
           dataFechamento: DateTime.now(),
+          clienteNome: null,
+          clienteId: null,
+          observacao: null,
+          valorCouvert: null,
+          quantidadePessoasCouvert: null,
+          valorGarcom: null,
           updatedAt: DateTime.now(),
         );
         
@@ -2085,7 +2176,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                       TextField(
                         controller: pessoaPagouController,
                         decoration: InputDecoration(
-                          labelText: 'Nome de quem está pagando *',
+                          labelText: 'Nome de quem está pagando (opcional)',
                           labelStyle: const TextStyle(color: Colors.grey),
                           hintText: 'Ex: João Silva',
                           hintStyle: const TextStyle(color: Colors.grey),
@@ -2109,16 +2200,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                       const SizedBox(height: 16),
                       ElevatedButton(
                         onPressed: () async {
-                          // Validar nome da pessoa
-                          if (pessoaPagouController.text.trim().isEmpty) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Por favor, informe o nome de quem está pagando'),
-                                backgroundColor: Colors.red,
-                              ),
-                            );
-                            return;
-                          }
+                          // Nome da pessoa é opcional
                           
                           // Calcular garçom como 10% apenas do valor selecionado (itens)
                           // O valor base é o valor dos itens selecionados (sem garçom e sem couvert)
@@ -2188,7 +2270,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
     final couvertSelecionadoResult = resultado['couvertSelecionado'] as bool? ?? false;
     final valorCouvert = resultado['valorCouvert'] as double? ?? 0.0;
 
-    if (pagamentos == null || pagamentos.isEmpty || pessoaPagou == null || pessoaPagou.isEmpty) {
+    if (pagamentos == null || pagamentos.isEmpty) {
       return;
     }
 
@@ -2499,6 +2581,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
               dataAbertura: DateTime.now(),
               clienteNome: null,
               clienteId: null,
+              observacao: null, // Limpar observações
               valorCouvert: null,
               quantidadePessoasCouvert: null,
               valorCouvertPorPessoa: null,
@@ -2872,7 +2955,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                       TextField(
                         controller: pessoaPagouController,
                         decoration: InputDecoration(
-                          labelText: 'Nome de quem está pagando *',
+                          labelText: 'Nome de quem está pagando (opcional)',
                           labelStyle: const TextStyle(color: Colors.grey),
                           hintText: 'Ex: João Silva',
                           hintStyle: const TextStyle(color: Colors.grey),
@@ -2906,16 +2989,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
               if (itensSelecionados.isNotEmpty || quantidadePessoasCouvertSelecionada > 0)
                 ElevatedButton(
                   onPressed: () async {
-                    // Validar nome da pessoa
-                    if (pessoaPagouController.text.trim().isEmpty) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Por favor, informe o nome de quem está pagando'),
-                          backgroundColor: Colors.red,
-                        ),
-                      );
-                      return;
-                    }
+                    // Nome da pessoa é opcional
                     
                     // Calcular garçom como 10% apenas do valor selecionado (itens)
                     // O valor base é o valor dos itens selecionados (sem garçom e sem couvert)
@@ -2971,7 +3045,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
     final couvertSelecionadoResult = resultado['couvertSelecionado'] as bool? ?? false;
     final valorCouvert = resultado['valorCouvert'] as double? ?? 0.0;
 
-    if (pagamentos == null || pagamentos.isEmpty || pessoaPagou == null || pessoaPagou.isEmpty) {
+    if (pagamentos == null || pagamentos.isEmpty) {
       return;
     }
 
@@ -3109,6 +3183,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
           garcomRetirado: false,
           clienteNome: null,
           clienteId: null,
+          observacao: null, // Limpar observações
           updatedAt: DateTime.now(),
         );
         await dataService.updateMesaComanda(comandaLiberada);
@@ -3851,7 +3926,9 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
   }
 
   Future<void> _adicionarItensMesa(MesaComanda mesa, DataService dataService) async {
-    // Verificar se é uma mesa disponível (sem itens, totalmente paga)
+    // Verificar se é uma mesa ou comanda disponível (sem itens, totalmente paga ou valor zero)
+    bool estaDisponivel = false;
+    
     if (mesa.tipo == TipoControle.mesa) {
       final comandasDaMesa = dataService.mesasComandas
           .where((c) => c.tipo == TipoControle.comanda && c.mesaId == mesa.id)
@@ -3872,119 +3949,352 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
       final totalPagoGeral = totalPagoMesa + totalPagoComandas;
       final totalPendente = totalGeral - totalPagoGeral;
       
-      final estaDisponivel = totalPendente <= 0.01 && mesa.itens.isEmpty && totalGeral <= 0.01;
-      
-      // Se a mesa estiver disponível, solicitar nome de quem abriu e nome do cliente
-      if (estaDisponivel) {
-        final quemAbriuController = TextEditingController();
-        final clienteController = TextEditingController();
-        
-        final confirmar = await showDialog<bool>(
-          context: context,
-          builder: (context) => StatefulBuilder(
-            builder: (context, setDialogState) {
-              return AlertDialog(
-                backgroundColor: const Color(0xFF1E1E2E),
-                title: const Text(
-                  'Informações da Mesa',
-                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                ),
-                content: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextField(
-                      controller: quemAbriuController,
-                      decoration: const InputDecoration(
-                        labelText: 'Nome de quem abriu a mesa *',
-                        labelStyle: TextStyle(color: Colors.grey),
-                        enabledBorder: UnderlineInputBorder(
-                          borderSide: BorderSide(color: Colors.grey),
-                        ),
-                        focusedBorder: UnderlineInputBorder(
-                          borderSide: BorderSide(color: Colors.orange),
-                        ),
-                      ),
-                      style: const TextStyle(color: Colors.white),
-                      onChanged: (_) {
-                        setDialogState(() {}); // Atualizar estado para habilitar/desabilitar botão
-                      },
-                    ),
-                    const SizedBox(height: 16),
-                    TextField(
-                      controller: clienteController,
-                      decoration: const InputDecoration(
-                        labelText: 'Nome do Cliente *',
-                        labelStyle: TextStyle(color: Colors.grey),
-                        enabledBorder: UnderlineInputBorder(
-                          borderSide: BorderSide(color: Colors.grey),
-                        ),
-                        focusedBorder: UnderlineInputBorder(
-                          borderSide: BorderSide(color: Colors.orange),
-                        ),
-                      ),
-                      style: const TextStyle(color: Colors.white),
-                      onChanged: (_) {
-                        setDialogState(() {}); // Atualizar estado para habilitar/desabilitar botão
-                      },
-                    ),
-                  ],
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context, false),
-                    child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
-                  ),
-                  ElevatedButton(
-                    onPressed: quemAbriuController.text.trim().isEmpty || clienteController.text.trim().isEmpty
-                        ? null
-                        : () {
-                            Navigator.pop(context, true);
-                          },
-                    style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
-                    child: const Text('Continuar'),
-                  ),
-                ],
-              );
-            },
-          ),
-        );
-        
-        if (confirmar != true) {
-          return; // Usuário cancelou
-        }
-        
-        // Atualizar mesa com as informações
-        try {
-          final mesaAtualizada = mesa.copyWith(
-            clienteNome: clienteController.text.trim(),
-            usuarioCriou: quemAbriuController.text.trim(),
-            dataAbertura: DateTime.now(),
-            status: 'Aberta',
-          );
-          
-          await dataService.updateMesaComanda(mesaAtualizada);
-          
-          // Atualizar referência da mesa para usar a versão atualizada
-          final mesaAtualizadaCompleta = dataService.mesasComandas.firstWhere(
-            (m) => m.id == mesa.id,
-            orElse: () => mesaAtualizada,
-          );
-          
-          // Continuar com o processo de adicionar itens usando a mesa atualizada
-          mesa = mesaAtualizadaCompleta;
-        } catch (e) {
-          if (context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('Erro ao atualizar informações da mesa: $e'),
-                backgroundColor: Colors.red,
-              ),
-            );
-          }
-          return;
+      estaDisponivel = totalPendente <= 0.01 && mesa.itens.isEmpty && totalGeral <= 0.01;
+    } else {
+      // Para comanda, também verificar se está "vazia" e paga
+      estaDisponivel = mesa.estaTotalmentePago && mesa.itens.isEmpty && mesa.totalCalculado <= 0.01;
+    }
+    
+    if (estaDisponivel) {
+      // Quando a mesa está disponível (zerada), estamos iniciando uma NOVA ocupação (sessão).
+      // Portanto, devemos limpar os nomes antigos que podem ter ficado no registro.
+      // Manter apenas se não houver palavras-chave de união e o usuário preferir (mas por padrão limpar união).
+      String obsInicial = '';
+      if (mesa.observacao != null) {
+        final obsUpper = mesa.observacao!.toUpperCase();
+        if (!obsUpper.contains('UNIÃO') && !obsUpper.contains('MESA UNIDA')) {
+          obsInicial = mesa.observacao!;
         }
       }
+
+      final quemAbriuController = TextEditingController(text: ''); // Limpar para nova sessão
+      final clienteController = TextEditingController(text: ''); // Limpar para nova sessão
+      final observacaoController = TextEditingController(text: obsInicial);
+      final numeroController = TextEditingController(text: mesa.numero);
+      final quantidadePessoasController = TextEditingController();
+      final valorPorPessoaController = TextEditingController();
+      
+      final bool isComanda = mesa.tipo == TipoControle.comanda;
+      
+      final confirmar = await showDialog<bool>(
+        context: context,
+        builder: (context) => StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF1E1E2E),
+              insetPadding: EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: MediaQuery.of(context).viewInsets.bottom + 24,
+              ),
+              title: Text(
+                isComanda ? 'Nova Comanda' : 'Informações da Mesa',
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+              ),
+              content: SingleChildScrollView(
+                keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (!isComanda) ...[
+                      TextField(
+                        controller: numeroController,
+                        readOnly: true,
+                        decoration: const InputDecoration(
+                          labelText: 'Número da Mesa',
+                          labelStyle: TextStyle(color: Colors.grey),
+                          enabledBorder: UnderlineInputBorder(
+                            borderSide: BorderSide(color: Colors.grey),
+                          ),
+                          focusedBorder: UnderlineInputBorder(
+                            borderSide: BorderSide(color: Colors.orange),
+                          ),
+                        ),
+                        style: const TextStyle(color: Colors.white70),
+                      ),
+                      const SizedBox(height: 16),
+                      TextField(
+                        controller: quemAbriuController,
+                        decoration: const InputDecoration(
+                          labelText: 'Nome de quem abriu a mesa (opcional)',
+                          labelStyle: TextStyle(color: Colors.grey),
+                          enabledBorder: UnderlineInputBorder(
+                            borderSide: BorderSide(color: Colors.grey),
+                          ),
+                          focusedBorder: UnderlineInputBorder(
+                            borderSide: BorderSide(color: Colors.orange),
+                          ),
+                        ),
+                        style: const TextStyle(color: Colors.white),
+                        onChanged: (_) => setDialogState(() {}),
+                      ),
+                      const SizedBox(height: 16),
+                      TextField(
+                        controller: clienteController,
+                        decoration: const InputDecoration(
+                          labelText: 'Nome do Cliente (opcional)',
+                          labelStyle: TextStyle(color: Colors.grey),
+                          enabledBorder: UnderlineInputBorder(
+                            borderSide: BorderSide(color: Colors.grey),
+                          ),
+                          focusedBorder: UnderlineInputBorder(
+                            borderSide: BorderSide(color: Colors.orange),
+                          ),
+                        ),
+                        style: const TextStyle(color: Colors.white),
+                        onChanged: (_) => setDialogState(() {}),
+                      ),
+                      const SizedBox(height: 16),
+                      TextField(
+                        controller: observacaoController,
+                        decoration: const InputDecoration(
+                          labelText: 'Observação (opcional)',
+                          labelStyle: TextStyle(color: Colors.grey),
+                          enabledBorder: UnderlineInputBorder(
+                            borderSide: BorderSide(color: Colors.grey),
+                          ),
+                          focusedBorder: UnderlineInputBorder(
+                            borderSide: BorderSide(color: Colors.orange),
+                          ),
+                        ),
+                        style: const TextStyle(color: Colors.white),
+                        maxLines: 3,
+                      ),
+                      const SizedBox(height: 24),
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.orange.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Row(
+                              children: [
+                                Icon(Icons.music_note, color: Colors.orange, size: 20),
+                                SizedBox(width: 8),
+                                Text(
+                                  'Couvert Artístico (opcional)',
+                                  style: TextStyle(
+                                    color: Colors.orange,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 16,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 16),
+                            TextField(
+                              controller: quantidadePessoasController,
+                              keyboardType: TextInputType.number,
+                              onChanged: (value) => setDialogState(() {}),
+                              decoration: const InputDecoration(
+                                labelText: 'Quantidade de Pessoas',
+                                labelStyle: TextStyle(color: Colors.grey),
+                                enabledBorder: UnderlineInputBorder(
+                                  borderSide: BorderSide(color: Colors.grey),
+                                ),
+                                focusedBorder: UnderlineInputBorder(
+                                  borderSide: BorderSide(color: Colors.orange),
+                                ),
+                              ),
+                              style: const TextStyle(color: Colors.white),
+                            ),
+                            const SizedBox(height: 16),
+                            TextField(
+                              controller: valorPorPessoaController,
+                              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                              onChanged: (value) => setDialogState(() {}),
+                              decoration: const InputDecoration(
+                                labelText: 'Valor por Pessoa (R\$)',
+                                labelStyle: TextStyle(color: Colors.grey),
+                                enabledBorder: UnderlineInputBorder(
+                                  borderSide: BorderSide(color: Colors.grey),
+                                ),
+                                focusedBorder: UnderlineInputBorder(
+                                  borderSide: BorderSide(color: Colors.orange),
+                                ),
+                              ),
+                              style: const TextStyle(color: Colors.white),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ] else ...[
+                      TextField(
+                        controller: numeroController,
+                        readOnly: true,
+                        decoration: const InputDecoration(
+                          labelText: 'Número da Comanda',
+                          labelStyle: TextStyle(color: Colors.grey),
+                          enabledBorder: UnderlineInputBorder(
+                            borderSide: BorderSide(color: Colors.grey),
+                          ),
+                          focusedBorder: UnderlineInputBorder(
+                            borderSide: BorderSide(color: Colors.purple),
+                          ),
+                        ),
+                        style: const TextStyle(color: Colors.white70),
+                      ),
+                      const SizedBox(height: 16),
+                      TextField(
+                        controller: clienteController,
+                        decoration: const InputDecoration(
+                          labelText: 'Cliente (opcional)',
+                          labelStyle: TextStyle(color: Colors.grey),
+                          enabledBorder: UnderlineInputBorder(
+                            borderSide: BorderSide(color: Colors.grey),
+                          ),
+                          focusedBorder: UnderlineInputBorder(
+                            borderSide: BorderSide(color: Colors.purple),
+                          ),
+                        ),
+                        style: const TextStyle(color: Colors.white),
+                      ),
+                      const SizedBox(height: 16),
+                      TextField(
+                        controller: observacaoController,
+                        decoration: const InputDecoration(
+                          labelText: 'Observação (opcional)',
+                          labelStyle: TextStyle(color: Colors.grey),
+                          enabledBorder: UnderlineInputBorder(
+                            borderSide: BorderSide(color: Colors.grey),
+                          ),
+                          focusedBorder: UnderlineInputBorder(
+                            borderSide: BorderSide(color: Colors.purple),
+                          ),
+                        ),
+                        style: const TextStyle(color: Colors.white),
+                        maxLines: 3,
+                      ),
+                      const SizedBox(height: 24),
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.purple.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.purple.withOpacity(0.3)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Row(
+                              children: [
+                                Icon(Icons.music_note, color: Colors.purple, size: 20),
+                                SizedBox(width: 8),
+                                Text(
+                                  'Couvert Artístico (opcional)',
+                                  style: TextStyle(
+                                    color: Colors.purple,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 16,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 16),
+                            TextField(
+                              controller: quantidadePessoasController,
+                              keyboardType: TextInputType.number,
+                              onChanged: (value) => setDialogState(() {}),
+                              decoration: const InputDecoration(
+                                labelText: 'Quantidade de Pessoas',
+                                labelStyle: TextStyle(color: Colors.grey),
+                                enabledBorder: UnderlineInputBorder(
+                                  borderSide: BorderSide(color: Colors.grey),
+                                ),
+                                focusedBorder: UnderlineInputBorder(
+                                  borderSide: BorderSide(color: Colors.purple),
+                                ),
+                              ),
+                              style: const TextStyle(color: Colors.white),
+                            ),
+                            const SizedBox(height: 16),
+                            TextField(
+                              controller: valorPorPessoaController,
+                              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                              onChanged: (value) => setDialogState(() {}),
+                              decoration: const InputDecoration(
+                                labelText: 'Valor por Pessoa (R\$)',
+                                labelStyle: TextStyle(color: Colors.grey),
+                                enabledBorder: UnderlineInputBorder(
+                                  borderSide: BorderSide(color: Colors.grey),
+                                ),
+                                focusedBorder: UnderlineInputBorder(
+                                  borderSide: BorderSide(color: Colors.purple),
+                                ),
+                              ),
+                              style: const TextStyle(color: Colors.white),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  style: ElevatedButton.styleFrom(backgroundColor: isComanda ? Colors.purple : Colors.orange),
+                  child: const Text('Continuar'),
+                ),
+              ],
+            );
+          },
+        ),
+      );
+      
+      if (confirmar != true) {
+        return; // Usuário cancelou
+      }
+      
+      // Atualizar mesa com as informações
+      try {
+        final authService = Provider.of<AuthService>(context, listen: false);
+        final usuarioLogado = authService.usuarioAtual?.nome ?? 'Sistema';
+
+        final qtePessoas = quantidadePessoasController.text.trim().isEmpty ? null : int.tryParse(quantidadePessoasController.text.trim());
+        final vlrPessoa = valorPorPessoaController.text.trim().isEmpty ? null : double.tryParse(valorPorPessoaController.text.trim().replaceAll(',', '.'));
+
+        final mesaAtualizada = mesa.copyWith(
+          clienteNome: clienteController.text.trim().isEmpty ? null : clienteController.text.trim(),
+          usuarioCriou: isComanda ? usuarioLogado : (quemAbriuController.text.trim().isEmpty ? null : quemAbriuController.text.trim()),
+          observacao: observacaoController.text.trim().isEmpty ? null : observacaoController.text.trim(),
+          quantidadePessoasCouvert: qtePessoas,
+          valorCouvertPorPessoa: vlrPessoa,
+          dataAbertura: DateTime.now(),
+          status: 'Aberta',
+        );
+        
+        await dataService.updateMesaComanda(mesaAtualizada);
+        
+        // Atualizar referência da mesa para usar a versão atualizada
+        final mesaAtualizadaCompleta = dataService.mesasComandas.firstWhere(
+          (m) => m.id == mesa.id,
+          orElse: () => mesaAtualizada,
+        );
+        
+        // Continuar com o processo de adicionar itens usando a mesa atualizada
+        mesa = mesaAtualizadaCompleta;
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Erro ao atualizar informações: $e'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
     }
+
     
     final buscaController = TextEditingController();
     final produtosSelecionados = <String, Map<String, dynamic>>{};
@@ -4023,17 +4333,17 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                 }).toList();
 
           // Determinar destino final para exibição
-          final destinoFinalExibicao = adicionarNaComanda 
+          final destinoFinalExibicao = (adicionarNaComanda || mesa.tipo == TipoControle.comanda)
               ? 'Comanda ${mesa.numero}'
               : (destino == 'comanda' && comandaSelecionada != null)
                   ? 'Comanda ${comandaSelecionada!.numero}'
                   : 'Mesa ${mesa.numero}';
           
-          final corDestino = adicionarNaComanda || (destino == 'comanda' && comandaSelecionada != null)
+          final corDestino = (adicionarNaComanda || mesa.tipo == TipoControle.comanda || (destino == 'comanda' && comandaSelecionada != null))
               ? Colors.purple
               : Colors.orange;
           
-          final iconeDestino = adicionarNaComanda || (destino == 'comanda' && comandaSelecionada != null)
+          final iconeDestino = (adicionarNaComanda || mesa.tipo == TipoControle.comanda || (destino == 'comanda' && comandaSelecionada != null))
               ? Icons.receipt_long
               : Icons.table_restaurant;
 
@@ -4375,11 +4685,53 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                                               icon: const Icon(Icons.add_circle, color: Colors.green),
                                               onPressed: () {
                                                 produtosSelecionados[produto.id] = {
-                                                  'produto': produto,
+                                                  ...produtosSelecionados[produto.id]!,
                                                   'quantidade': quantidade + 1,
-                                                  'categoria': categoria,
                                                 };
                                                 setDialogState(() {});
+                                              },
+                                            ),
+                                            IconButton(
+                                              icon: Icon(
+                                                itemSelecionado!['observacao'] != null && (itemSelecionado['observacao'] as String).isNotEmpty
+                                                    ? Icons.comment
+                                                    : Icons.add_comment_outlined,
+                                                color: itemSelecionado['observacao'] != null && (itemSelecionado['observacao'] as String).isNotEmpty
+                                                    ? Colors.orange
+                                                    : Colors.grey,
+                                                size: 20,
+                                              ),
+                                              onPressed: () async {
+                                                final obsController = TextEditingController(text: itemSelecionado['observacao'] ?? '');
+                                                final result = await showDialog<String>(
+                                                  context: context,
+                                                  builder: (context) => AlertDialog(
+                                                    backgroundColor: const Color(0xFF1E1E2E),
+                                                    title: Text('Observação: ${produto.nome}', style: const TextStyle(color: Colors.white, fontSize: 16)),
+                                                    content: TextField(
+                                                      controller: obsController,
+                                                      autofocus: true,
+                                                      maxLines: 2,
+                                                      style: const TextStyle(color: Colors.white),
+                                                      decoration: const InputDecoration(
+                                                        hintText: 'Ex: Sem gelo...',
+                                                        hintStyle: TextStyle(color: Colors.grey),
+                                                      ),
+                                                    ),
+                                                    actions: [
+                                                      TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancelar')),
+                                                      TextButton(onPressed: () => Navigator.pop(context, obsController.text), child: const Text('Salvar')),
+                                                    ],
+                                                  ),
+                                                );
+                                                if (result != null) {
+                                                  setDialogState(() {
+                                                    produtosSelecionados[produto.id] = {
+                                                      ...itemSelecionado,
+                                                      'observacao': result.trim().isEmpty ? null : result.trim(),
+                                                    };
+                                                  });
+                                                }
                                               },
                                             ),
                                             PopupMenuButton<String>(
@@ -4439,16 +4791,32 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                                       : IconButton(
                                           icon: const Icon(Icons.add_circle, color: Colors.green),
                                           onPressed: () {
-                                            produtosSelecionados[produto.id] = {
-                                              'produto': produto,
-                                              'quantidade': 1,
-                                              'categoria': produto.paraCozinha == true
-                                                  ? 'cozinha'
-                                                  : produto.paraBar == true
-                                                      ? 'bar'
-                                                      : 'outros',
-                                            };
-                                            setDialogState(() {});
+                                            if (produto.temAdicionais) {
+                                              _exibirDialogoAdicionaisWaiter(context, produto, (selecionados) {
+                                                setDialogState(() {
+                                                  produtosSelecionados[produto.id] = {
+                                                    'produto': produto,
+                                                    'quantidade': 1,
+                                                    'categoria': produto.paraCozinha == true ? 'cozinha' : (produto.paraBar == true ? 'bar' : 'outros'),
+                                                    'observacao': produto.observacaoPadrao,
+                                                    'adicionais': selecionados,
+                                                  };
+                                                });
+                                              });
+                                            } else {
+                                              produtosSelecionados[produto.id] = {
+                                                'produto': produto,
+                                                'quantidade': 1,
+                                                'categoria': produto.paraCozinha == true
+                                                    ? 'cozinha'
+                                                    : produto.paraBar == true
+                                                        ? 'bar'
+                                                        : 'outros',
+                                                'observacao': produto.observacaoPadrao,
+                                                'adicionais': <AdicionalProduto>[],
+                                              };
+                                              setDialogState(() {});
+                                            }
                                           },
                                         ),
                                 ),
@@ -4479,7 +4847,8 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                             final produto = item['produto'] as Produto;
                             final quantidade = item['quantidade'] as int;
                             final categoria = item['categoria'] as String? ?? 'outros'; // 'cozinha', 'bar', 'outros'
-                            final total = produto.precoAtual * quantidade;
+                            final List<AdicionalProduto> adicionais = (item['adicionais'] as List?)?.cast<AdicionalProduto>() ?? [];
+                            final total = (produto.precoAtual + adicionais.fold(0.0, (sum, a) => sum + a.preco)) * quantidade;
                             
                             return Padding(
                               padding: const EdgeInsets.only(bottom: 8),
@@ -4706,8 +5075,10 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
 
                           for (final item in produtosSelecionados.values) {
                             final produto = item['produto'] as Produto;
-                            final quantidade = item['quantidade'] as int;
-                            final categoria = item['categoria'] as String? ?? 'outros';
+                             final quantidade = item['quantidade'] as int;
+                             final categoria = item['categoria'] as String? ?? 'outros';
+                             final observacao = item['observacao'] as String?;
+                             final List<AdicionalProduto> adicionais = (item['adicionais'] as List?)?.cast<AdicionalProduto>() ?? [];
                             
                             // Determinar o local baseado na categoria
                             String? local;
@@ -4732,6 +5103,8 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                               paraCozinha: categoria == 'cozinha',
                               paraBar: categoria == 'bar',
                               local: local,
+                              observacao: observacao,
+                              adicionais: adicionais,
                               status: StatusItem.pendente,
                               dataHora: DateTime.now(),
                               usuarioCriou: usuarioLogado,
@@ -4744,7 +5117,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                             // Calcular garçom automaticamente (10% do total com couvert)
                             final totalItens = [...destinoFinal.itens, ...novosItens]
                                 .where((item) => item.status != StatusItem.cancelado)
-                                .fold(0.0, (sum, item) => sum + (item.preco * item.quantidade));
+                                .fold(0.0, (sum, item) => sum + item.subtotal);
                             final totalComCouvert = totalItens + (destinoFinal.valorCouvert ?? 0.0);
                             final valorGarcomCalculado = totalComCouvert * 0.10; // 10% de garçom
                             
@@ -4772,7 +5145,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                             // Calcular garçom automaticamente (10% do total com couvert)
                             final totalItens = [...mesa.itens, ...novosItens]
                                 .where((item) => item.status != StatusItem.cancelado)
-                                .fold(0.0, (sum, item) => sum + (item.preco * item.quantidade));
+                                .fold(0.0, (sum, item) => sum + item.subtotal);
                             final totalComCouvert = totalItens + (mesa.valorCouvert ?? 0.0);
                             final valorGarcomCalculado = totalComCouvert * 0.10; // 10% de garçom
 
@@ -6965,9 +7338,15 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
       final mesaOrigemFechada = mesaOrigemAtual.copyWith(
         itens: [],
         itensPagos: [],
+        historicoPagamentos: [], // Limpar quando fechar por união
         status: 'Fechada',
         dataFechamento: DateTime.now(),
-        observacao: observacaoOrigemComUniao,
+        observacao: null, // Limpar observação ao fechar (conforme pedido do usuário)
+        clienteNome: null,
+        clienteId: null,
+        valorCouvert: null,
+        quantidadePessoasCouvert: null,
+        valorGarcom: null,
         usuarioModificou: Provider.of<AuthService>(context, listen: false).usuarioAtual?.nome ?? 'Sistema',
         updatedAt: DateTime.now(),
       );
@@ -7817,6 +8196,8 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
         return Colors.pink;
       case TipoPagamento.outro:
         return Colors.grey;
+      case TipoPagamento.alimentacao:
+        return Colors.teal;
       default:
         return Colors.grey;
     }
@@ -7838,6 +8219,8 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
         return Icons.calendar_today;
       case TipoPagamento.outro:
         return Icons.more_horiz;
+      case TipoPagamento.alimentacao:
+        return Icons.restaurant;
       default:
         return Icons.payment;
     }
@@ -8075,6 +8458,128 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
   void dispose() {
     _buscaController.dispose();
     super.dispose();
+  }
+
+  void _exibirDialogoAdicionaisWaiter(BuildContext context, Produto produto, Function(List<AdicionalProduto>) onConfirm) {
+    List<AdicionalProduto> selecionados = [];
+    final precoBase = produto.precoAtual;
+    
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final totalAdicionais = selecionados.fold(0.0, (sum, a) => sum + a.preco);
+          
+          return AlertDialog(
+            backgroundColor: const Color(0xFF1E1E2E),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: Text(produto.nome, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+            content: SizedBox(
+              width: 320,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Selecione os adicionais:', style: TextStyle(color: Colors.grey, fontSize: 14)),
+                  const SizedBox(height: 12),
+                  Flexible(
+                    child: Consumer<DataService>(
+                      builder: (context, dataService, _) {
+                        final empresa = dataService.empresaAtual;
+                        
+                        // Combinar adicionais específicos do produto com os globais da empresa
+                        final List<AdicionalProduto> listaExibicao = [...produto.adicionais.where((a) => a.ativo)];
+                        if (empresa != null && empresa.modelosAdicionais.isNotEmpty) {
+                          for (final modelo in empresa.modelosAdicionais) {
+                            final nomeNormalizado = modelo.nome.trim().toLowerCase();
+                            if (!listaExibicao.any((a) => a.nome.trim().toLowerCase() == nomeNormalizado)) {
+                              listaExibicao.add(modelo);
+                            }
+                          }
+                        }
+
+                        if (listaExibicao.isEmpty) {
+                          return const Center(
+                            child: Padding(
+                              padding: EdgeInsets.all(20.0),
+                              child: Text('Nenhum adicional disponível', style: TextStyle(color: Colors.white24)),
+                            ),
+                          );
+                        }
+
+                        return ListView.builder(
+                          shrinkWrap: true,
+                          itemCount: listaExibicao.length,
+                          itemBuilder: (context, index) {
+                            final adicional = listaExibicao[index];
+                            final qtd = selecionados.where((s) => s.id == adicional.id).length;
+                            final estaSelecionado = qtd > 0;
+                            
+                            return ListTile(
+                              dense: true,
+                              title: Text(adicional.nome, style: const TextStyle(color: Colors.white, fontSize: 14)),
+                              subtitle: Text('+ R\$ ${adicional.preco.toStringAsFixed(2)}', style: const TextStyle(color: Colors.greenAccent, fontSize: 12)),
+                              trailing: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (estaSelecionado) ...[
+                                    IconButton(
+                                      icon: const Icon(Icons.remove_circle_outline, color: Colors.white38),
+                                      onPressed: () {
+                                        setDialogState(() {
+                                          final idx = selecionados.indexWhere((s) => s.id == adicional.id);
+                                          if (idx != -1) selecionados.removeAt(idx);
+                                        });
+                                      },
+                                    ),
+                                    Text('$qtd', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                                  ],
+                                  IconButton(
+                                    icon: Icon(estaSelecionado ? Icons.add_circle : Icons.add_circle_outline, 
+                                      color: estaSelecionado ? Colors.orange : Colors.white24),
+                                    onPressed: () {
+                                      setDialogState(() {
+                                        selecionados.add(adicional);
+                                      });
+                                    },
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        );
+                      }
+                    ),
+                  ),
+                  const Divider(color: Colors.white24),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('Total:', style: TextStyle(color: Colors.white)),
+                      Text('R\$ ${(precoBase + totalAdicionais).toStringAsFixed(2)}', 
+                        style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 16)),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('CANCELAR', style: TextStyle(color: Colors.grey)),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  onConfirm(List<AdicionalProduto>.from(selecionados));
+                  Navigator.pop(context);
+                },
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+                child: const Text('ADICIONAR'),
+              ),
+            ],
+          );
+        }
+      ),
+    );
   }
 }
 

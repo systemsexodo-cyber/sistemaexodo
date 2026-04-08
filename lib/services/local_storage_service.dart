@@ -259,6 +259,9 @@ class LocalStorageService {
     await LocalStorageWeb.remover(key);
   }
 
+  /// Verifica se a sessão atual é ativa (survive F5 no Web)
+  bool isSessaoAtiva() => LocalStorageWeb.isSessaoAtiva();
+
   // ============ Métodos SharedPreferences ============
 
   Future<void> _salvarSharedPreferences(String key, String value) async {

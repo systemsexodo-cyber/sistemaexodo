@@ -182,13 +182,35 @@ class CozinhaBarCardItem extends StatelessWidget {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        'Qtd: ${item.quantidade} x ${NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(item.preco)}',
+                        'Qtd: ${item.quantidade} x ${NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(item.precoUnitarioComAdicionais)}',
                         style: TextStyle(
                           color: isCancelado ? Colors.red.shade300 : Colors.grey,
                           fontSize: 14,
                           decoration: isCancelado ? TextDecoration.lineThrough : null,
                         ),
                       ),
+                      if (item.adicionais.isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        ...item.adicionais.map((adicional) => Padding(
+                          padding: const EdgeInsets.only(left: 8, bottom: 2),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.add_circle, size: 12, color: Colors.greenAccent),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  adicional.nome,
+                                  style: const TextStyle(
+                                    color: Colors.greenAccent,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        )),
+                      ],
                       if (item.observacao != null && item.observacao!.isNotEmpty) ...[
                         const SizedBox(height: 8),
                         Container(

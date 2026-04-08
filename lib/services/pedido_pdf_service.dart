@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import '../models/pedido.dart';
 import '../models/empresa.dart';
 import '../models/forma_pagamento.dart';
+import '../models/adicional_produto.dart';
 
 /// Serviço para geração de PDF de pedido
 class PedidoPDFService {
@@ -311,6 +312,7 @@ class PedidoPDFService {
         quantidade: produto.quantidade,
         precoUnitario: produto.preco,
         tipo: 'Produto',
+        adicionais: produto.adicionais,
       ));
     }
     
@@ -407,6 +409,11 @@ class PedidoPDFService {
                           item.nome,
                           style: const pw.TextStyle(fontSize: 9),
                         ),
+                        if (item.adicionais.isNotEmpty)
+                          ...item.adicionais.map((a) => pw.Text(
+                            '+ ${a.nome} (${formatoMoeda.format(a.preco)})',
+                            style: pw.TextStyle(fontSize: 7, color: PdfColors.grey700),
+                          )),
                         pw.Text(
                           '(${item.tipo})',
                           style: pw.TextStyle(
@@ -728,6 +735,8 @@ class PedidoPDFService {
         return 'Fiado';
       case TipoPagamento.outro:
         return 'Outro';
+      case TipoPagamento.alimentacao:
+        return 'Ticket/Alimentação';
     }
   }
 
@@ -744,36 +753,45 @@ class PedidoPDFService {
       // Configurações de impressão dinâmicas
       final config = empresa.configuracoes ?? {};
       final double larguraBobina = config['comandaLarguraBobina']?.toDouble() ?? 80.0;
-      final double margemH = config['comandaMargemH']?.toDouble() ?? 5.0;
-      final double margemV = config['comandaMargemV']?.toDouble() ?? 5.0;
-      final double fontSizeTitulo = config['comandaFonteTitulo']?.toDouble() ?? 10.0;
-      final double fontSizeCorpo = config['comandaFonteCorpo']?.toDouble() ?? 8.0;
+      final double margemEsq = config['comandaMargemEsq']?.toDouble() ?? config['comandaMargemH']?.toDouble() ?? 10.0;
+      final double margemDir = config['comandaMargemDir']?.toDouble() ?? config['comandaMargemH']?.toDouble() ?? 15.0;
+      final double margemV = config['comandaMargemV']?.toDouble() ?? 10.0;
+      final double fontSizeTitulo = config['comandaFonteTitulo']?.toDouble() ?? 10.5;
+      final double fontSizeCorpo = config['comandaFonteCorpo']?.toDouble() ?? 7.8;
       final bool usarNegrito = config['comandaNegrito'] ?? true;
+
+      // Cálculo de largura útil (mm -> pt) com compensação de segurança
+      final double pageWidth = (larguraBobina - 2) * 2.83465;
 
       pdf.addPage(
         pw.Page(
-          pageFormat: PdfPageFormat(larguraBobina * 2.83465, 297 * 2.83465),
-          margin: pw.EdgeInsets.symmetric(horizontal: margemH, vertical: margemV),
+          pageFormat: PdfPageFormat(pageWidth, 2000),
+          margin: pw.EdgeInsets.only(
+            left: margemEsq,
+            right: margemDir,
+            top: 2,
+            bottom: 2,
+          ),
           build: (pw.Context context) {
             return pw.Column(
               crossAxisAlignment: pw.CrossAxisAlignment.center,
               children: [
                 _buildCabecalhoTermico(empresa, fontSizeTitulo, fontSizeCorpo, usarNegrito),
-                pw.SizedBox(height: 8),
+                pw.SizedBox(height: 2),
                 _buildDadosPedidoTermico(pedido, formatoData, fontSizeCorpo, usarNegrito),
-                pw.SizedBox(height: 8),
+                pw.SizedBox(height: 2),
                 _buildClienteTermico(pedido, fontSizeCorpo),
-                pw.SizedBox(height: 8),
+                pw.SizedBox(height: 3),
                 _buildItensTermico(pedido, formatoMoeda, fontSizeCorpo, usarNegrito),
-                pw.SizedBox(height: 8),
+                pw.SizedBox(height: 2),
                 _buildTotalTermico(pedido, formatoMoeda, fontSizeCorpo),
-                pw.SizedBox(height: 8),
+                pw.SizedBox(height: 2),
                 _buildPagamentosTermico(pedido, formatoMoeda, fontSizeCorpo),
                 if (pedido.observacoes != null && pedido.observacoes!.isNotEmpty) ...[
-                  pw.SizedBox(height: 8),
+                  pw.SizedBox(height: 2),
                   _buildObservacoesTermico(pedido, fontSizeCorpo),
                 ],
-                pw.SizedBox(height: 8),
+                pw.SizedBox(height: 4),
                 _buildRodapeTermico(empresa, formatoData, fontSizeCorpo),
               ],
             );
@@ -792,74 +810,22 @@ class PedidoPDFService {
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.center,
       children: [
-        pw.Text(
-          'PEDIDO',
-          style: pw.TextStyle(
-            fontSize: fontSizeTitulo,
-            fontWeight: pw.FontWeight.bold,
-          ),
-          textAlign: pw.TextAlign.center,
-        ),
-        pw.SizedBox(height: 5),
-        pw.Divider(thickness: 1),
-        pw.SizedBox(height: 5),
+        pw.SizedBox(height: 3),
         pw.Text(
           empresa.nomeExibicao,
           style: pw.TextStyle(
-            fontSize: fontSizeTitulo + 2,
+            fontSize: fontSizeTitulo,
             fontWeight: usarNegrito ? pw.FontWeight.bold : pw.FontWeight.normal,
           ),
           textAlign: pw.TextAlign.center,
         ),
-        if (empresa.cnpj != null) ...[
-          pw.SizedBox(height: 3),
-          pw.Text(
-            'CNPJ: ${_formatarCNPJ(empresa.cnpj!)}',
-            style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
-            textAlign: pw.TextAlign.center,
-          ),
-        ],
-        if (empresa.endereco != null && empresa.endereco!.isNotEmpty) ...[
-          pw.SizedBox(height: 2),
-          pw.Text(
-            empresa.endereco!,
-            style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
-            textAlign: pw.TextAlign.center,
-          ),
-        ],
-        if (empresa.numero != null && empresa.numero!.isNotEmpty) ...[
-          pw.Text(
-            'Nº ${empresa.numero}',
-            style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
-            textAlign: pw.TextAlign.center,
-          ),
-        ],
-        if (empresa.bairro != null && empresa.bairro!.isNotEmpty) ...[
-          pw.Text(
-            empresa.bairro!,
-            style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
-            textAlign: pw.TextAlign.center,
-          ),
-        ],
-        if (empresa.cidade != null && empresa.cidade!.isNotEmpty) ...[
-          pw.Text(
-            empresa.estado != null && empresa.estado!.isNotEmpty
-                ? '${empresa.cidade} - ${empresa.estado}'
-                : empresa.cidade!,
-            style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
-            textAlign: pw.TextAlign.center,
-          ),
-        ],
-        if (empresa.telefone != null && empresa.telefone!.isNotEmpty) ...[
-          pw.SizedBox(height: 2),
-          pw.Text(
-            'Tel: ${empresa.telefone}',
-            style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
-            textAlign: pw.TextAlign.center,
-          ),
-        ],
-        pw.SizedBox(height: 5),
-        pw.Divider(thickness: 1),
+        pw.Text(
+          'CNPJ: ${_formatarCNPJ(empresa.cnpj ?? "")} - Tel: ${empresa.telefone ?? ""}',
+          style: pw.TextStyle(fontSize: fontSizeCorpo - 2),
+          textAlign: pw.TextAlign.center,
+        ),
+        pw.SizedBox(height: 2),
+        pw.Divider(thickness: 0.5),
       ],
     );
   }
@@ -870,83 +836,45 @@ class PedidoPDFService {
       crossAxisAlignment: pw.CrossAxisAlignment.center,
       children: [
         pw.Text(
-          'PEDIDO',
-          style: pw.TextStyle(
-            fontSize: fontSizeCorpo + 2,
-            fontWeight: pw.FontWeight.bold,
-          ),
+          'PEDIDO Nº: ${pedido.numero}',
+          style: pw.TextStyle(fontSize: fontSizeCorpo + 1, fontWeight: pw.FontWeight.bold),
           textAlign: pw.TextAlign.center,
         ),
         pw.SizedBox(height: 3),
         pw.Text(
-          'Nº: ${pedido.numero}',
-          style: pw.TextStyle(fontSize: fontSizeCorpo + 1),
+          '${pedido.status} - ${formatoData.format(pedido.dataPedido)}',
+          style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
           textAlign: pw.TextAlign.center,
         ),
         pw.SizedBox(height: 3),
-        pw.Text(
-          'Status: ${pedido.status}',
-          style: pw.TextStyle(fontSize: fontSizeCorpo),
-          textAlign: pw.TextAlign.center,
-        ),
-        pw.SizedBox(height: 3),
-        pw.Text(
-          formatoData.format(pedido.dataPedido),
-          style: pw.TextStyle(fontSize: fontSizeCorpo),
-          textAlign: pw.TextAlign.center,
-        ),
-        pw.SizedBox(height: 5),
-        pw.Divider(thickness: 1),
+        pw.Divider(thickness: 0.5),
       ],
     );
   }
 
   /// Constrói informações do cliente térmico
   static pw.Widget _buildClienteTermico(Pedido pedido, double fontSizeCorpo) {
-    if (pedido.clienteNome == null || pedido.clienteNome!.isEmpty) {
-      return pw.Column(
-        crossAxisAlignment: pw.CrossAxisAlignment.start,
-        children: [
-          pw.Text(
-            'Cliente: CONSUMIDOR FINAL',
-            style: pw.TextStyle(fontSize: fontSizeCorpo),
-          ),
-          pw.SizedBox(height: 5),
-          pw.Divider(thickness: 1),
-        ],
-      );
-    }
-
+    String? enderecoExibicao = pedido.deliveryInfo?.enderecoCompleto ?? pedido.clienteEndereco;
+    
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
         pw.Text(
-          'Cliente: ${pedido.clienteNome!}',
-          style: pw.TextStyle(fontSize: fontSizeCorpo),
+          'CLIENTE: ${pedido.clienteNome ?? "CONSUMIDOR FINAL"}',
+          style: pw.TextStyle(fontSize: fontSizeCorpo, fontWeight: pw.FontWeight.bold),
         ),
-        if (pedido.clienteCpfCnpj != null && pedido.clienteCpfCnpj!.isNotEmpty) ...[
-          pw.SizedBox(height: 2),
+        if (pedido.clienteTelefone != null && pedido.clienteTelefone!.isNotEmpty)
           pw.Text(
-            '${pedido.clienteCpfCnpj!.replaceAll(RegExp(r'[^\d]'), '').length == 11 ? 'CPF' : 'CNPJ'}: ${_formatarCpfCnpj(pedido.clienteCpfCnpj!)}',
-            style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
+            'TEL: ${pedido.clienteTelefone!}',
+            style: pw.TextStyle(fontSize: fontSizeCorpo),
           ),
-        ],
-        if (pedido.clienteTelefone != null && pedido.clienteTelefone!.isNotEmpty) ...[
-          pw.SizedBox(height: 2),
+        if (enderecoExibicao != null && enderecoExibicao.isNotEmpty)
           pw.Text(
-            'Tel: ${pedido.clienteTelefone!}',
-            style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
+            'ENTREGA: $enderecoExibicao',
+            style: pw.TextStyle(fontSize: fontSizeCorpo, fontWeight: pw.FontWeight.bold),
           ),
-        ],
-        if (pedido.clienteEndereco != null && pedido.clienteEndereco!.isNotEmpty) ...[
-          pw.SizedBox(height: 2),
-          pw.Text(
-            'End: ${pedido.clienteEndereco!}',
-            style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
-          ),
-        ],
-        pw.SizedBox(height: 5),
-        pw.Divider(thickness: 1),
+        pw.SizedBox(height: 2),
+        pw.Divider(thickness: 0.5),
       ],
     );
   }
@@ -962,6 +890,7 @@ class PedidoPDFService {
         quantidade: produto.quantidade,
         precoUnitario: produto.preco,
         tipo: 'Produto',
+        adicionais: produto.adicionais,
       ));
     }
     
@@ -989,7 +918,7 @@ class PedidoPDFService {
         ...todosItens.map((item) {
           final subtotal = item.precoUnitario * item.quantidade;
           return pw.Padding(
-            padding: const pw.EdgeInsets.only(bottom: 6),
+            padding: const pw.EdgeInsets.only(bottom: 1.5),
             child: pw.Column(
               crossAxisAlignment: pw.CrossAxisAlignment.start,
               children: [
@@ -997,11 +926,11 @@ class PedidoPDFService {
                   item.nome,
                   style: pw.TextStyle(fontSize: fontSizeCorpo, fontWeight: usarNegrito ? pw.FontWeight.bold : pw.FontWeight.normal),
                 ),
-                pw.Text(
-                  '(${item.tipo})',
-                  style: pw.TextStyle(fontSize: fontSizeCorpo - 2, color: PdfColors.grey600),
-                ),
-                pw.SizedBox(height: 2),
+                if (item.adicionais.isNotEmpty)
+                  ...item.adicionais.map((a) => pw.Text(
+                    '+ ${a.nome} (${formatoMoeda.format(a.preco)})',
+                    style: pw.TextStyle(fontSize: fontSizeCorpo - 2, color: PdfColors.grey700),
+                  )),
                 pw.Row(
                   mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                   children: [
@@ -1022,8 +951,8 @@ class PedidoPDFService {
             ),
           );
         }),
-        pw.SizedBox(height: 5),
-        pw.Divider(thickness: 1),
+        pw.SizedBox(height: 3),
+        pw.Divider(thickness: 0.5),
       ],
     );
   }
@@ -1037,49 +966,62 @@ class PedidoPDFService {
           mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
           children: [
             pw.Text(
-              'Produtos:',
-              style: pw.TextStyle(fontSize: fontSizeCorpo),
+              'PRODUTOS:',
+              style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
             ),
             pw.Text(
               formatoMoeda.format(pedido.totalProdutos),
-              style: pw.TextStyle(fontSize: fontSizeCorpo),
+              style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
             ),
           ],
         ),
-        pw.SizedBox(height: 3),
         pw.Row(
           mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
           children: [
             pw.Text(
-              'Serviços:',
-              style: pw.TextStyle(fontSize: fontSizeCorpo),
+              'SERVIÇOS:',
+              style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
             ),
             pw.Text(
               formatoMoeda.format(pedido.totalServicos),
-              style: pw.TextStyle(fontSize: fontSizeCorpo),
+              style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
             ),
           ],
         ),
-        pw.SizedBox(height: 5),
+        if (pedido.deliveryInfo?.taxaEntrega != null && pedido.deliveryInfo!.taxaEntrega > 0)
+        pw.Row(
+          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+          children: [
+            pw.Text(
+              'ENTREGA:',
+              style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
+            ),
+            pw.Text(
+              formatoMoeda.format(pedido.deliveryInfo!.taxaEntrega),
+              style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
+            ),
+          ],
+        ),
+        pw.SizedBox(height: 1),
         pw.Container(
-          padding: const pw.EdgeInsets.symmetric(vertical: 8, horizontal: 5),
-          decoration: pw.BoxDecoration(
-            border: pw.Border.all(color: PdfColors.black, width: 1),
+          padding: const pw.EdgeInsets.symmetric(vertical: 2, horizontal: 2),
+          decoration: const pw.BoxDecoration(
+            border: pw.Border(top: pw.BorderSide(width: 0.5), bottom: pw.BorderSide(width: 0.5)),
           ),
           child: pw.Row(
             mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
             children: [
               pw.Text(
-                'TOTAL',
+                'TOTAL GERAL',
                 style: pw.TextStyle(
-                  fontSize: fontSizeCorpo + 3,
+                  fontSize: fontSizeCorpo + 1,
                   fontWeight: pw.FontWeight.bold,
                 ),
               ),
               pw.Text(
                 formatoMoeda.format(pedido.totalGeral),
                 style: pw.TextStyle(
-                  fontSize: fontSizeCorpo + 4,
+                  fontSize: fontSizeCorpo + 1,
                   fontWeight: pw.FontWeight.bold,
                 ),
               ),
@@ -1201,23 +1143,26 @@ class PedidoPDFService {
 
   /// Constrói observações térmico
   static pw.Widget _buildObservacoesTermico(Pedido pedido, double fontSizeCorpo) {
+    if (pedido.observacoes == null || pedido.observacoes!.trim().isEmpty) return pw.SizedBox.shrink();
+    
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
+        pw.Divider(thickness: 0.5),
+        pw.SizedBox(height: 1),
         pw.Text(
-          'OBSERVAÇÕES',
+          'OBSERVAÇÕES:',
           style: pw.TextStyle(
             fontSize: fontSizeCorpo,
             fontWeight: pw.FontWeight.bold,
           ),
         ),
-        pw.SizedBox(height: 3),
+        pw.SizedBox(height: 1),
         pw.Text(
           pedido.observacoes!,
-          style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
+          style: pw.TextStyle(fontSize: fontSizeCorpo),
         ),
-        pw.SizedBox(height: 5),
-        pw.Divider(thickness: 1),
+        pw.SizedBox(height: 2),
       ],
     );
   }
@@ -1227,22 +1172,22 @@ class PedidoPDFService {
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.center,
       children: [
-        pw.SizedBox(height: 10),
+        pw.SizedBox(height: 4),
         pw.Text(
           '--------------------------------',
-          style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
+          style: pw.TextStyle(fontSize: fontSizeCorpo - 2),
           textAlign: pw.TextAlign.center,
         ),
-        pw.SizedBox(height: 5),
+        pw.SizedBox(height: 2),
         pw.Text(
           'Obrigado pela preferência!',
           style: pw.TextStyle(
-            fontSize: fontSizeCorpo + 1,
+            fontSize: fontSizeCorpo,
             fontWeight: pw.FontWeight.bold,
           ),
           textAlign: pw.TextAlign.center,
         ),
-        pw.SizedBox(height: 3),
+        pw.SizedBox(height: 1),
         pw.Text(
           'Documento gerado em ${formatoData.format(DateTime.now())}',
           style: pw.TextStyle(fontSize: fontSizeCorpo - 2),
@@ -1318,12 +1263,14 @@ class _ItemLinha {
   final int quantidade;
   final double precoUnitario;
   final String tipo;
+  final List<AdicionalProduto> adicionais;
 
   _ItemLinha({
     required this.nome,
     required this.quantidade,
     required this.precoUnitario,
     required this.tipo,
+    this.adicionais = const [],
   });
 }
 

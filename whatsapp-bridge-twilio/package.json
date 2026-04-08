@@ -1,0 +1,16 @@
+{
+  "name": "whatsapp-bridge-twilio",
+  "version": "1.0.0",
+  "description": "Bridge for Twilio WhatsApp API",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "twilio": "^4.2.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.0.3"
+  }
+}

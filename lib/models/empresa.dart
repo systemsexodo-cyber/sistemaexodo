@@ -1,3 +1,4 @@
+import 'package:sistema_exodo_novo/models/adicional_produto.dart';
 /// Modelo para representar uma empresa
 class Empresa {
   final String id;
@@ -52,8 +53,10 @@ class Empresa {
   final String? whatsappApiUrl;       // URL da Evolution API (ex: https://xxx.up.railway.app)
   final String? whatsappApiKey;       // API Key da Evolution API
   final String? whatsappInstanceName; // Nome da instância (ex: empresa_principal)
+  final String? whatsappTipo;         // 'evolution' ou 'twilio'
   final bool whatsappAtivo;           // Se as notificações WhatsApp estão ativas
   final bool moduloPet;               // Se o módulo Pet Shop está ativo
+  final List<AdicionalProduto> modelosAdicionais; // Modelos de adicionais reutilizáveis
 
   Empresa({
     required this.id,
@@ -94,8 +97,10 @@ class Empresa {
     this.whatsappApiUrl,
     this.whatsappApiKey,
     this.whatsappInstanceName,
+    this.whatsappTipo = 'evolution',
     this.whatsappAtivo = false,
     this.moduloPet = false,
+    this.modelosAdicionais = const [],
   });
 
   /// Retorna o nome de exibição (nome fantasia ou razão social)
@@ -168,8 +173,10 @@ class Empresa {
     String? whatsappApiUrl,
     String? whatsappApiKey,
     String? whatsappInstanceName,
+    String? whatsappTipo,
     bool? whatsappAtivo,
     bool? moduloPet,
+    List<AdicionalProduto>? modelosAdicionais,
   }) {
     return Empresa(
       id: id ?? this.id,
@@ -214,8 +221,10 @@ class Empresa {
       whatsappApiUrl: whatsappApiUrl ?? this.whatsappApiUrl,
       whatsappApiKey: whatsappApiKey ?? this.whatsappApiKey,
       whatsappInstanceName: whatsappInstanceName ?? this.whatsappInstanceName,
+      whatsappTipo: whatsappTipo ?? this.whatsappTipo,
       whatsappAtivo: whatsappAtivo ?? this.whatsappAtivo,
       moduloPet: moduloPet ?? this.moduloPet,
+      modelosAdicionais: modelosAdicionais ?? this.modelosAdicionais,
     );
   }
 
@@ -273,8 +282,12 @@ class Empresa {
       whatsappApiUrl: map['whatsappApiUrl'],
       whatsappApiKey: map['whatsappApiKey'],
       whatsappInstanceName: map['whatsappInstanceName'],
+      whatsappTipo: map['whatsappTipo'] ?? 'evolution',
       whatsappAtivo: map['whatsappAtivo'] ?? false,
       moduloPet: map['moduloPet'] ?? false,
+      modelosAdicionais: (map['modelosAdicionais'] as List?)
+          ?.map((e) => AdicionalProduto.fromMap(e as Map<String, dynamic>))
+          .toList() ?? [],
     );
   }
 
@@ -318,8 +331,10 @@ class Empresa {
       'whatsappApiUrl': whatsappApiUrl,
       'whatsappApiKey': whatsappApiKey,
       'whatsappInstanceName': whatsappInstanceName,
+      'whatsappTipo': whatsappTipo,
       'whatsappAtivo': whatsappAtivo,
       'moduloPet': moduloPet,
+      'modelosAdicionais': modelosAdicionais.map((e) => e.toMap()).toList(),
     };
   }
 

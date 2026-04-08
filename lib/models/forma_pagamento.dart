@@ -1,3 +1,5 @@
+import 'package:flutter/material.dart';
+
 /// Tipos de forma de pagamento disponíveis
 enum TipoPagamento {
   dinheiro,
@@ -8,6 +10,7 @@ enum TipoPagamento {
   crediario,
   fiado,
   outro,
+  alimentacao,
 }
 
 /// Extensão para obter informações do tipo de pagamento
@@ -30,27 +33,54 @@ extension TipoPagamentoExtension on TipoPagamento {
         return 'Fiado';
       case TipoPagamento.outro:
         return 'Outro';
+      case TipoPagamento.alimentacao:
+        return 'Alimentação';
     }
   }
 
-  String get icone {
+  IconData get icone {
     switch (this) {
       case TipoPagamento.dinheiro:
-        return 'money';
+        return Icons.money;
       case TipoPagamento.pix:
-        return 'pix';
+        return Icons.qr_code;
       case TipoPagamento.cartaoCredito:
-        return 'credit_card';
+        return Icons.credit_card;
       case TipoPagamento.cartaoDebito:
-        return 'credit_card';
+        return Icons.credit_card;
       case TipoPagamento.boleto:
-        return 'receipt';
+        return Icons.receipt;
       case TipoPagamento.crediario:
-        return 'calendar_month';
+        return Icons.calendar_month;
       case TipoPagamento.fiado:
-        return 'handshake';
+        return Icons.handshake;
       case TipoPagamento.outro:
-        return 'more_horiz';
+        return Icons.more_horiz;
+      case TipoPagamento.alimentacao:
+        return Icons.restaurant;
+    }
+  }
+
+  Color get cor {
+    switch (this) {
+      case TipoPagamento.dinheiro:
+        return Colors.green;
+      case TipoPagamento.pix:
+        return Colors.teal;
+      case TipoPagamento.cartaoCredito:
+        return Colors.purple;
+      case TipoPagamento.cartaoDebito:
+        return Colors.blue;
+      case TipoPagamento.boleto:
+        return Colors.orange;
+      case TipoPagamento.crediario:
+        return Colors.pink;
+      case TipoPagamento.fiado:
+        return Colors.red;
+      case TipoPagamento.outro:
+        return Colors.grey;
+      case TipoPagamento.alimentacao:
+        return Colors.teal;
     }
   }
 
@@ -59,7 +89,8 @@ extension TipoPagamentoExtension on TipoPagamento {
     return this == TipoPagamento.dinheiro ||
         this == TipoPagamento.pix ||
         this == TipoPagamento.cartaoCredito ||
-        this == TipoPagamento.cartaoDebito;
+        this == TipoPagamento.cartaoDebito ||
+        this == TipoPagamento.alimentacao;
   }
 
   /// Verifica se é pagamento a prazo (fiado, boleto, crediário)

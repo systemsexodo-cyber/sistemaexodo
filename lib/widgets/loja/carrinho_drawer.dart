@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'dart:ui';
 import '../../services/carrinho_service.dart';
-import '../../services/auth_service.dart';
 import '../../services/data_service.dart';
 
 class CarrinhoDrawer extends StatelessWidget {
@@ -25,230 +26,165 @@ class CarrinhoDrawer extends StatelessWidget {
 
     return Container(
       width: MediaQuery.of(context).size.width * 0.85,
-      constraints: const BoxConstraints(maxWidth: 400),
-      decoration: BoxDecoration(
-        color: Theme.of(context).cardColor,
-        borderRadius: const BorderRadius.horizontal(left: Radius.circular(24)),
-      ),
-      child: Column(
-        children: [
-          // Header
-          Container(
-            padding: const EdgeInsets.fromLTRB(20, 60, 12, 20),
+      constraints: const BoxConstraints(maxWidth: 420),
+      child: ClipRRect(
+        borderRadius: const BorderRadius.horizontal(left: Radius.circular(32)),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+          child: Container(
             decoration: BoxDecoration(
-              color: corP.withOpacity(0.05),
-              borderRadius: const BorderRadius.only(topLeft: Radius.circular(24)),
+              color: const Color(0xFF0F172A).withOpacity(0.85),
+              borderRadius: const BorderRadius.horizontal(left: Radius.circular(32)),
+              border: Border.all(color: Colors.white.withOpacity(0.1), width: 1.5),
             ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            child: Column(
               children: [
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: corP.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Icon(Icons.shopping_bag_outlined, color: corP, size: 24),
-                    ),
-                    const SizedBox(width: 14),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Meu Carrinho',
-                          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                // HEADER
+                _buildHeader(context, carrinho),
+                
+                // LISTA
+                Expanded(
+                  child: carrinho.isEmpty
+                      ? _buildEmptyState()
+                      : ListView.builder(
+                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                          itemCount: carrinho.itens.length,
+                          itemBuilder: (context, index) {
+                            final item = carrinho.itens[index];
+                            String? fotoUrl;
+                            try {
+                              final produto = dataService.produtos.firstWhere((p) => p.id == item.itemId);
+                              fotoUrl = produto.fotoPrincipalUrl ?? (produto.fotosUrls.isNotEmpty ? produto.fotosUrls.first : null);
+                            } catch (_) {}
+                            return _buildItem(context, item, fotoUrl, carrinho, corP);
+                          },
                         ),
-                        Text(
-                          '${carrinho.totalItens} ${carrinho.totalItens == 1 ? 'item' : 'itens'}',
-                          style: TextStyle(fontSize: 14, color: Colors.grey[600]),
-                        ),
-                      ],
-                    ),
-                  ],
                 ),
-                IconButton(
-                  icon: const Icon(Icons.close_rounded),
-                  onPressed: () => Navigator.pop(context),
-                ),
+
+                // SUMMARY
+                if (!carrinho.isEmpty) _buildSummary(context, carrinho, corP),
               ],
             ),
           ),
-          
-          const Divider(height: 1),
+        ),
+      ),
+    );
+  }
 
-          // Lista de Itens
-          Expanded(
-            child: carrinho.isEmpty
-                ? _buildEmptyState()
-                : ListView.builder(
-                    padding: const EdgeInsets.all(16),
-                    itemCount: carrinho.itens.length,
-                    itemBuilder: (context, index) {
-                      final item = carrinho.itens[index];
-                      // Buscar foto do produto
-                      String? fotoUrl;
-                      try {
-                        final produto = dataService.produtos.firstWhere((p) => p.id == item.itemId);
-                        fotoUrl = produto.fotoPrincipalUrl ?? (produto.fotosUrls.isNotEmpty ? produto.fotosUrls.first : null);
-                      } catch (_) {}
-
-                      return _buildCarrinhoItem(context, item, fotoUrl, carrinho);
-                    },
-                  ),
+  Widget _buildHeader(BuildContext context, CarrinhoService carrinho) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(24, 60, 16, 24),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Sacola',
+                style: GoogleFonts.outfit(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.white),
+              ),
+              Text(
+                '${carrinho.totalItens} ${carrinho.totalItens == 1 ? 'item' : 'itens'}',
+                style: TextStyle(color: Colors.white.withOpacity(0.4)),
+              ),
+            ],
           ),
+          IconButton(
+            icon: const Icon(Icons.close_rounded, color: Colors.white),
+            onPressed: () => Navigator.pop(context),
+            style: IconButton.styleFrom(backgroundColor: Colors.white10),
+          ),
+        ],
+      ),
+    );
+  }
 
-          // Bottom Summary
-          if (!carrinho.isEmpty)
-            Container(
-              decoration: BoxDecoration(
-                color: Theme.of(context).cardColor,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.05),
-                    blurRadius: 10,
-                    offset: const Offset(0, -4),
-                  ),
+  Widget _buildSummary(BuildContext context, CarrinhoService carrinho, Color corP) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(24, 24, 24, 40),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.02),
+        border: Border(top: BorderSide(color: Colors.white.withOpacity(0.1))),
+      ),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('Total', style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 18)),
+              Text(
+                formatoMoeda.format(carrinho.valorTotal),
+                style: GoogleFonts.outfit(fontSize: 32, fontWeight: FontWeight.bold, color: Colors.white),
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+          SizedBox(
+            width: double.infinity,
+            height: 64,
+            child: ElevatedButton(
+              onPressed: onCheckout,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: corP,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                elevation: 10,
+                shadowColor: corP.withOpacity(0.5),
+              ),
+              child: const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text('FINALIZAR PEDIDO', style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1)),
+                  SizedBox(width: 12),
+                  Icon(Icons.arrow_forward_ios_rounded, size: 16),
                 ],
               ),
-              child: SafeArea(
-                top: false,
-                child: Column(
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'Subtotal',
-                          style: TextStyle(fontSize: 16),
-                        ),
-                        Text(
-                          formatoMoeda.format(carrinho.valorTotal),
-                          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w500),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'Total',
-                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                        ),
-                        Text(
-                          formatoMoeda.format(carrinho.valorTotal),
-                          style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: corP),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 20),
-                    ElevatedButton(
-                      onPressed: onCheckout,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: corP,
-                        foregroundColor: Colors.white,
-                        minimumSize: const Size(double.infinity, 56),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                        elevation: 4,
-                        shadowColor: corP.withOpacity(0.4),
-                      ),
-                      child: const Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text('Finalizar Compra', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                          SizedBox(width: 12),
-                          Icon(Icons.arrow_forward_rounded),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
             ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildEmptyState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.shopping_basket_outlined, size: 80, color: Colors.grey[300]),
-          const SizedBox(height: 24),
-          const Text(
-            'Carrinho Vazio',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black54),
-          ),
-          const SizedBox(height: 12),
-          const Text(
-            'Você ainda não adicionou\nnenhum produto.',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.grey, height: 1.5),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildCarrinhoItem(BuildContext context, dynamic item, String? fotoUrl, CarrinhoService carrinho) {
+  Widget _buildItem(BuildContext context, dynamic item, String? fotoUrl, CarrinhoService carrinho, Color corP) {
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Theme.of(context).cardColor,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white.withOpacity(0.1)),
-        boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 4, offset: const Offset(0, 2)),
-        ],
+        color: Colors.white.withOpacity(0.03),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.white.withOpacity(0.05)),
       ),
       child: Row(
         children: [
-          // Imagem
           ClipRRect(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(14),
             child: Container(
-              width: 70,
-              height: 70,
-              color: Colors.grey[50],
-              child: fotoUrl != null
-                  ? Image.network(fotoUrl, fit: BoxFit.cover)
-                  : const Icon(Icons.image, color: Colors.grey),
+              width: 70, height: 70,
+              color: Colors.white10,
+              child: fotoUrl != null ? Image.network(fotoUrl, fit: BoxFit.cover) : const Icon(Icons.image, color: Colors.white24),
             ),
           ),
           const SizedBox(width: 16),
-          // Info
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  item.nome,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  formatoMoeda.format(item.preco),
-                  style: TextStyle(color: corPrimaria ?? Theme.of(context).colorScheme.primary, fontWeight: FontWeight.w600),
-                ),
-                const SizedBox(height: 8),
+                Text(item.nome, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16), maxLines: 1, overflow: TextOverflow.ellipsis),
+                Text(formatoMoeda.format(item.preco), style: TextStyle(color: corP, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 10),
                 Row(
                   children: [
-                    _buildQuantidadeBtn(Icons.remove, () => carrinho.atualizarQuantidade(item.id, item.quantidade - 1)),
+                    _qtyBtn(Icons.remove, () => carrinho.atualizarQuantidade(item.id, item.quantidade - 1), Colors.white10),
                     Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      child: Text('${item.quantidade}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                      child: Text('${item.quantidade}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                     ),
-                    _buildQuantidadeBtn(Icons.add, () => carrinho.atualizarQuantidade(item.id, item.quantidade + 1)),
+                    _qtyBtn(Icons.add, () => carrinho.atualizarQuantidade(item.id, item.quantidade + 1), corP.withOpacity(0.2)),
                     const Spacer(),
                     IconButton(
-                      icon: const Icon(Icons.delete_outline, color: Colors.red, size: 20),
+                      icon: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent, size: 20),
                       onPressed: () => carrinho.removerItem(item.id),
                     ),
                   ],
@@ -261,17 +197,27 @@ class CarrinhoDrawer extends StatelessWidget {
     );
   }
 
-  Widget _buildQuantidadeBtn(IconData icon, VoidCallback onTap) {
-    return Material(
-      color: Colors.grey[100],
+  Widget _qtyBtn(IconData icon, VoidCallback onTap, Color color) {
+    return InkWell(
+      onTap: onTap,
       borderRadius: BorderRadius.circular(8),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
-        child: Container(
-          padding: const EdgeInsets.all(4),
-          child: Icon(icon, size: 16, color: Colors.black87),
-        ),
+      child: Container(
+        padding: const EdgeInsets.all(6),
+        decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(8)),
+        child: Icon(icon, size: 14, color: Colors.white),
+      ),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.shopping_bag_outlined, size: 80, color: Colors.white.withOpacity(0.05)),
+          const SizedBox(height: 20),
+          Text('Seu carrinho está vazio', style: TextStyle(color: Colors.white.withOpacity(0.3))),
+        ],
       ),
     );
   }

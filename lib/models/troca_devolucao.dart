@@ -14,6 +14,7 @@ class TrocaDevolucao {
   final double diferenca; // Diferença a pagar ou receber
   final String? observacao;
   final String status; // Pendente, Concluído, Cancelado
+  final String? metodoEstorno; // fiado, dinheiro, ou null
   final DateTime createdAt;
 
   TrocaDevolucao({
@@ -31,6 +32,7 @@ class TrocaDevolucao {
     required this.diferenca,
     this.observacao,
     this.status = 'Concluído',
+    this.metodoEstorno,
     DateTime? createdAt,
   }) : createdAt = createdAt ?? DateTime.now();
 
@@ -63,6 +65,7 @@ class TrocaDevolucao {
       diferenca: (map['diferenca'] ?? 0).toDouble(),
       observacao: map['observacao'],
       status: map['status'] ?? 'Concluído',
+      metodoEstorno: map['metodoEstorno'],
       createdAt: map['createdAt'] != null
           ? DateTime.parse(map['createdAt'])
           : DateTime.now(),
@@ -85,6 +88,7 @@ class TrocaDevolucao {
       'diferenca': diferenca,
       'observacao': observacao,
       'status': status,
+      'metodoEstorno': metodoEstorno,
       'createdAt': createdAt.toIso8601String(),
     };
   }
@@ -104,6 +108,7 @@ class TrocaDevolucao {
     double? diferenca,
     String? observacao,
     String? status,
+    String? metodoEstorno,
     DateTime? createdAt,
   }) {
     return TrocaDevolucao(
@@ -121,6 +126,7 @@ class TrocaDevolucao {
       diferenca: diferenca ?? this.diferenca,
       observacao: observacao ?? this.observacao,
       status: status ?? this.status,
+      metodoEstorno: metodoEstorno ?? this.metodoEstorno,
       createdAt: createdAt ?? this.createdAt,
     );
   }

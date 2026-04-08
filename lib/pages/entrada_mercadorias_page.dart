@@ -1280,6 +1280,7 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
           var produtoAtualizado = produtoAtual.copyWith(
             precoCusto: item.precoCusto,
             preco: item.precoVenda,
+            estoqueMinimo: item.estoqueMinimo,
             // NÃO incrementamos estoque aqui manualmente, registrarEntradaEstoque fará isso
             updatedAt: DateTime.now(),
           );
@@ -1318,6 +1319,7 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
             precoVenda: item.precoVenda,
             unidade: item.unidade,
             produtoId: produtoAtual.id,
+            estoqueMinimo: item.estoqueMinimo,
             precoCustoAnterior: precoCustoAnterior,
             precoVendaAnterior: precoVendaAnterior,
             estoqueAnterior: estoqueAnterior,
@@ -1373,6 +1375,7 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
             codigosFornecedor: codigosFornecedor,
             fornecedorId: _fornecedorCNPJ,
             fornecedorNome: fornecedorFinal,
+            estoqueMinimo: item.estoqueMinimo,
           );
 
           service.addProduto(novoProduto);
@@ -1399,6 +1402,7 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
             precoVenda: item.precoVenda,
             unidade: item.unidade,
             produtoId: novoProduto.id,
+            estoqueMinimo: item.estoqueMinimo,
             produtoNovo: true,
           ));
 
@@ -3467,6 +3471,7 @@ class _ItemEntrada {
   double quantidadePorEmbalagem; // Quantidade dentro de cada embalagem
   double precoCusto;
   double precoVenda;
+  int estoqueMinimo; // Adicionado: estoque mínimo configurado para o produto
   String unidade;
   String grupo; // Grupo/Categoria do produto
   Produto? produtoExistente;
@@ -3483,6 +3488,7 @@ class _ItemEntrada {
   final TextEditingController _unidadeController = TextEditingController();
   final TextEditingController _grupoController = TextEditingController();
   final TextEditingController _fornecedorController = TextEditingController();
+  final TextEditingController _estoqueMinimoController = TextEditingController();
 
   _ItemEntrada({
     required this.codigo,
@@ -3499,6 +3505,7 @@ class _ItemEntrada {
     double? margemAtual,
     this.fornecedorNome,
   }) : precoVenda = precoVenda ?? 0,
+       estoqueMinimo = produtoExistente?.estoqueMinimo ?? 0,
        margemAtual = margemAtual,
        quantidadeEmbalagens = quantidadeEmbalagens ?? 0,
        quantidadePorEmbalagem = quantidadePorEmbalagem ?? 1,
@@ -3513,6 +3520,7 @@ class _ItemEntrada {
     _unidadeController.text = unidade;
     _grupoController.text = this.grupo;
     _fornecedorController.text = fornecedorNome ?? '';
+    _estoqueMinimoController.text = estoqueMinimo.toString();
     _calcularQuantidadeTotal();
   }
 
@@ -3537,6 +3545,7 @@ class _ItemEntrada {
     _unidadeController.dispose();
     _grupoController.dispose();
     _fornecedorController.dispose();
+    _estoqueMinimoController.dispose();
   }
 }
 
@@ -4048,6 +4057,21 @@ class _ItemEntradaWidgetState extends State<_ItemEntradaWidget> {
                 ),
               ),
             ],
+            const SizedBox(height: 8),
+            // Estoque mínimo
+            TextField(
+              controller: item._estoqueMinimoController,
+              decoration: const InputDecoration(
+                labelText: 'Estoque Mínimo',
+                prefixIcon: Icon(Icons.notifications_active),
+                helperText: 'Alerta quando o estoque atingir este valor',
+              ),
+              keyboardType: TextInputType.number,
+              onChanged: (value) {
+                item.estoqueMinimo = int.tryParse(value) ?? 0;
+                setState(() {});
+              },
+            ),
           ],
         ),
       ),

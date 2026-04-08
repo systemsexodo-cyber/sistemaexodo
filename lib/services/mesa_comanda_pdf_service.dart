@@ -23,17 +23,26 @@ class MesaComandaPdfService {
       // Configurações de impressão dinâmicas
       final config = empresa.configuracoes ?? {};
       final double larguraBobina = config['comandaLarguraBobina']?.toDouble() ?? 80.0;
-      final double margemH = config['comandaMargemH']?.toDouble() ?? 12.0;
-      final double margemV = config['comandaMargemV']?.toDouble() ?? 8.0;
+      final double margemEsq = config['comandaMargemEsq']?.toDouble() ?? config['comandaMargemH']?.toDouble() ?? 10.0;
+      final double margemDir = config['comandaMargemDir']?.toDouble() ?? config['comandaMargemH']?.toDouble() ?? 15.0;
+      final double margemV = config['comandaMargemV']?.toDouble() ?? 10.0;
       final double fontSizeTitulo = config['comandaFonteTitulo']?.toDouble() ?? 14.0;
       final double fontSizeCorpo = config['comandaFonteCorpo']?.toDouble() ?? 9.0;
       final double fontSizeStatus = config['comandaFonteStatus']?.toDouble() ?? 8.0;
       final bool usarNegrito = config['comandaNegrito'] ?? true;
 
+      // Cálculo de largura útil (mm -> pt) com compensação de segurança
+      final double pageWidth = (larguraBobina - 2) * 2.83465; // Desconto de 2mm para segurança
+
       pdf.addPage(
         pw.Page(
-          pageFormat: PdfPageFormat(larguraBobina * 2.83465, 297 * 2.83465), // Largura dinâmica (mm -> pt)
-          margin: pw.EdgeInsets.symmetric(horizontal: margemH, vertical: margemV),
+          pageFormat: PdfPageFormat(pageWidth, 2000), // Usando altura grande para permitir rolo contínuo
+          margin: pw.EdgeInsets.only(
+            left: margemEsq,
+            right: margemDir,
+            top: margemV,
+            bottom: margemV,
+          ),
           build: (pw.Context context) {
             return pw.Column(
               crossAxisAlignment: pw.CrossAxisAlignment.center,
@@ -244,7 +253,7 @@ class MesaComandaPdfService {
         pw.SizedBox(height: 4),
         pw.Divider(),
         ...mesaComanda.itens.map((item) {
-          final itemTotal = item.preco * item.quantidade;
+          final itemTotal = item.subtotal; // Usar subtotal que inclui adicionais
           final statusTexto = _getStatusTexto(item.status);
           
           return pw.Padding(
@@ -272,17 +281,6 @@ class MesaComandaPdfService {
                       ),
                     ),
                   ],
-                ),
-                if (item.local != null)
-                  pw.Text(
-                    'Local: ${item.local}',
-                    style: pw.TextStyle(fontSize: fontSizeCorpo),
-                  ),
-                pw.Text(
-                  'Status: $statusTexto',
-                  style: pw.TextStyle(
-                    fontSize: fontSizeCorpo,
-                  ),
                 ),
                 if (item.observacao != null && item.observacao!.isNotEmpty)
                   pw.Text(
@@ -329,16 +327,13 @@ class MesaComandaPdfService {
     // Calcular subtotal dos itens (sem couvert e garçom)
     double subtotalItensMesa = mesaComanda.itens
         .where((item) => item.status != StatusItem.cancelado)
-        .fold(0.0, (sum, item) => sum + (item.preco * item.quantidade));
+        .fold(0.0, (sum, item) => sum + item.subtotal);
     
     // Valor do couvert
     double valorCouvertMesa = mesaComanda.valorCouvertCalculado;
     
-    // Valor do garçom (10% sobre subtotal + couvert, se não foi retirado)
-    double valorGarcomMesa = 0.0;
-    if (!mesaComanda.garcomRetirado && mesaComanda.valorGarcom != null) {
-      valorGarcomMesa = mesaComanda.valorGarcom!;
-    }
+    // Valor do garçom (Taxa de serviço)
+    double valorGarcomMesa = mesaComanda.valorTaxaServicoCalculado;
     
     double totalMesa = mesaComanda.totalCalculado;
     double totalComandas = 0.0;
@@ -351,12 +346,10 @@ class MesaComandaPdfService {
         totalComandas += comanda.totalCalculado;
         subtotalItensComandas += comanda.itens
             .where((item) => item.status != StatusItem.cancelado)
-            .fold(0.0, (sum, item) => sum + (item.preco * item.quantidade));
+            .fold(0.0, (sum, item) => sum + item.subtotal);
         valorCouvertComandas += comanda.valorCouvertCalculado;
-        if (!comanda.garcomRetirado && comanda.valorGarcom != null) {
-          valorGarcomComandas += comanda.valorGarcom!;
+        valorGarcomComandas += comanda.valorTaxaServicoCalculado;
       }
-    }
     }
     
     final subtotalItensGeral = subtotalItensMesa + subtotalItensComandas;
@@ -568,24 +561,28 @@ class MesaComandaPdfService {
           pw.SizedBox(height: 4),
           pw.Divider(),
           pw.SizedBox(height: 4),
-          pw.Row(
-            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-            children: [
-              pw.Text(
-                'TOTAL GERAL:',
-                style: pw.TextStyle(
-                  fontSize: fontSizeCorpo + 2,
-                  fontWeight: pw.FontWeight.bold,
+          // TOTAIS GERAIS
+          pw.Padding(
+            padding: const pw.EdgeInsets.symmetric(vertical: 4),
+            child: pw.Row(
+              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+              children: [
+                pw.Text(
+                  'TOTAL GERAL:',
+                  style: pw.TextStyle(
+                    fontSize: fontSizeCorpo + 4,
+                    fontWeight: pw.FontWeight.bold,
+                  ),
                 ),
-              ),
-              pw.Text(
-                formatoMoeda.format(totalGeral),
-                style: pw.TextStyle(
-                  fontSize: fontSizeCorpo + 2,
-                  fontWeight: pw.FontWeight.bold,
+                pw.Text(
+                  formatoMoeda.format(totalGeral),
+                  style: pw.TextStyle(
+                    fontSize: fontSizeCorpo + 4,
+                    fontWeight: pw.FontWeight.bold,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ],
       ),
@@ -719,42 +716,42 @@ class MesaComandaPdfService {
                         fontWeight: pw.FontWeight.bold,
                       ),
                     ),
-                  // Mostrar itens pagos
-                  if (itensPagosNestePagamento.isNotEmpty) ...[
-                    pw.SizedBox(height: 4),
-                    pw.Text(
-                      'Itens pagos:',
-                      style: pw.TextStyle(
-                        fontSize: fontSizeCorpo,
-                        fontWeight: pw.FontWeight.bold,
-                      ),
-                    ),
-                    pw.SizedBox(height: 2),
-                    ...itensPagosNestePagamento.map((item) {
-                      final itemTotal = item.preco * item.quantidade;
-                      return pw.Padding(
-                        padding: const pw.EdgeInsets.only(left: 8, bottom: 2),
-                        child: pw.Row(
-                          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                          children: [
-                            pw.Expanded(
-                              child: pw.Text(
-                                '${item.quantidade}x ${item.nome}',
-                                style: pw.TextStyle(fontSize: fontSizeCorpo),
-                              ),
-                            ),
-                            pw.Text(
-                              formatoMoeda.format(itemTotal),
-                              style: pw.TextStyle(
-                                fontSize: fontSizeCorpo,
-                                fontWeight: pw.FontWeight.bold,
-                              ),
-                            ),
-                          ],
+                    // Mostrar itens pagos
+                    if (itensPagosNestePagamento.isNotEmpty) ...[
+                      pw.SizedBox(height: 4),
+                      pw.Text(
+                        'Itens pagos:',
+                        style: pw.TextStyle(
+                          fontSize: fontSizeCorpo,
+                          fontWeight: pw.FontWeight.bold,
                         ),
-                      );
-                    }),
-                  ],
+                      ),
+                      pw.SizedBox(height: 2),
+                      ...itensPagosNestePagamento.map((item) {
+                        final itemTotal = item.subtotal; // Usar subtotal
+                        return pw.Padding(
+                          padding: const pw.EdgeInsets.only(left: 8, bottom: 2),
+                          child: pw.Row(
+                            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                            children: [
+                              pw.Expanded(
+                                child: pw.Text(
+                                  '${item.quantidade}x ${item.nome}',
+                                  style: pw.TextStyle(fontSize: fontSizeCorpo),
+                                ),
+                              ),
+                              pw.Text(
+                                formatoMoeda.format(itemTotal),
+                                style: pw.TextStyle(
+                                  fontSize: fontSizeCorpo,
+                                  fontWeight: pw.FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }),
+                    ],
                   if (pagamento.observacao != null && pagamento.observacao!.isNotEmpty) ...[
                     pw.SizedBox(height: 2),
                     pw.Text(

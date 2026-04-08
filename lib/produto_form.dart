@@ -12,6 +12,8 @@ import 'package:sistema_exodo_novo/services/auth_service.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'dart:io';
+import 'package:sistema_exodo_novo/models/adicional_produto.dart';
+import 'package:uuid/uuid.dart';
 
 class ProdutoServicoForm extends StatefulWidget {
   final dynamic item; // Produto ou Servico
@@ -38,6 +40,7 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
   final _precoPromocionalController = TextEditingController();
   final _fornecedorNomeController = TextEditingController();
   final _estoqueMinimoController = TextEditingController();
+  final _observacaoPadraoController = TextEditingController();
   
   // Controllers para impostos
   final _ncmController = TextEditingController();
@@ -122,6 +125,11 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
   bool _paraBar = false;
   List<String> _codigosFornecedor = [];
   
+  // Campos para Adicionais
+  List<AdicionalProduto> _adicionais = [];
+  bool _temAdicionais = false;
+  final _uuid = const Uuid();
+  
   // Variáveis para a aba de estoque
   DateTime? _estoqueDataInicial;
   DateTime? _estoqueDataFinal;
@@ -133,7 +141,7 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
     super.initState();
     _estoqueDataInicial = DateTime.now().subtract(const Duration(days: 30));
     _estoqueDataFinal = DateTime.now();
-    _tabController = TabController(length: 4, vsync: this);
+    _tabController = TabController(length: 5, vsync: this);
     // Adicionar listener para atualizar contador de caracteres
     _descricaoController.addListener(() {
       if (mounted) {
@@ -143,7 +151,12 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
     if (widget.item != null) {
       // Editando produto existente
       _codigo = widget.item?.codigo ?? '';
-      _codigoEditavel = false; // Código não é editável em edição
+      _codigoEditavel = (widget.item?.id ?? '').isEmpty; // Editável se for um clone (ID vazio)
+      if (_codigo.isEmpty) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _gerarProximoCodigo();
+        });
+      }
       _codigoBarras = widget.item?.codigoBarras ?? '';
       _nome = widget.item?.nome ?? '';
       _descricao = widget.item?.descricao ?? '';
@@ -177,9 +190,17 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
       }
       
       // Carregar campos de preparação
-      _paraCozinha = widget.item?.paraCozinha ?? false;
       _paraBar = widget.item?.paraBar ?? false;
       _codigosFornecedor = List<String>.from(widget.item?.codigosFornecedor ?? []);
+      _observacaoPadraoController.text = widget.item is Produto ? ((widget.item as Produto).observacaoPadrao ?? '') : '';
+      
+      // Carregar adicionais
+      _adicionais = widget.item is Produto 
+          ? List<AdicionalProduto>.from((widget.item as Produto).adicionais)
+          : [];
+      _temAdicionais = widget.item is Produto 
+          ? (widget.item as Produto).temAdicionais
+          : false;
     } else {
       // Novo produto
       _nome = '';
@@ -212,9 +233,9 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
       _cest = null;
       _csosn = null;
       _simplesNacionalAliquota = null;
-      _paraCozinha = false;
       _paraBar = false;
       _codigosFornecedor = [];
+      _observacaoPadraoController.text = '';
       
       // Gerar código automaticamente para novo produto
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -520,6 +541,7 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
                   Tab(text: 'Fiscal'),
                   Tab(text: 'E-commerce'),
                   Tab(text: 'Estoque'),
+                  Tab(text: 'Adicionais'),
                 ],
               ),
               // Conteúdo
@@ -543,6 +565,10 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
                     SingleChildScrollView(
                       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
                       child: _buildAbaEstoque(),
+                    ),
+                    SingleChildScrollView(
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                      child: _buildAbaAdicionais(),
                     ),
                   ],
                 ),
@@ -679,10 +705,11 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
       variacoes: _temVariacoes ? _variacoes : [],
       temVariacoes: _temVariacoes,
       fornecedorId: _fornecedorId,
-      fornecedorNome: _fornecedorNomeController.text.trim().isNotEmpty 
-          ? _fornecedorNomeController.text.trim() 
-          : null,
+      fornecedorNome: _fornecedorNomeController.text.trim(),
       estoquePorFornecedor: _estoquePorFornecedor,
+      adicionais: _adicionais,
+      temAdicionais: _adicionais.isNotEmpty,
+      observacaoPadrao: _observacaoPadraoController.text.trim().isNotEmpty ? _observacaoPadraoController.text.trim() : null,
     );
     
     // DEBUG CRÍTICO: Verificar produto criado
@@ -969,12 +996,20 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
           ),
           _buildField(
             label: 'Código de Barras (EAN)',
-            last: true,
             child: TextFormField(
               controller: _codigoBarrasController,
               style: TextStyle(color: Colors.white.withOpacity(0.8), fontSize: 15),
               decoration: _minimalInput('Ex: 789000...'),
               onChanged: (v) => _codigoBarras = v,
+            ),
+          ),
+          _buildField(
+            label: 'Observação Padrão (PDV)',
+            last: true,
+            child: TextFormField(
+              controller: _observacaoPadraoController,
+              style: TextStyle(color: Colors.white.withOpacity(0.8), fontSize: 15),
+              decoration: _minimalInput('Ex: Sem cebola, Bem passado'),
             ),
           ),
         ]),
@@ -2365,6 +2400,390 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
         _estoqueDataFinal = picked.end;
       });
     }
+  }
+
+  Widget _buildAbaAdicionais() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Gerenciar Adicionais',
+                  style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+                Text(
+                  'Configure acompanhamentos extras para este produto',
+                  style: TextStyle(color: Colors.white54, fontSize: 12),
+                ),
+              ],
+            ),
+            Row(
+              children: [
+                TextButton.icon(
+                  onPressed: _exibirDialogoImportarAdicionais,
+                  icon: const Icon(Icons.download_rounded, size: 18, color: Colors.cyanAccent),
+                  label: const Text('IMPORTAR'),
+                  style: TextButton.styleFrom(foregroundColor: Colors.cyanAccent),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton.icon(
+                  onPressed: _exibirDialogoAdicional,
+                  icon: const Icon(Icons.add_rounded, size: 20),
+                  label: const Text('ADICIONAR'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blueAccent.withOpacity(0.1),
+                    foregroundColor: Colors.blueAccent,
+                    elevation: 0,
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      side: const BorderSide(color: Colors.blueAccent, width: 1),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+        const SizedBox(height: 20),
+        if (_adicionais.isEmpty)
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 40),
+              child: Column(
+                children: [
+                  Icon(Icons.add_task_rounded, size: 48, color: Colors.white.withOpacity(0.1)),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Nenhum adicional cadastrado',
+                    style: TextStyle(color: Colors.white38),
+                  ),
+                ],
+              ),
+            ),
+          )
+        else
+          ListView.separated(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: _adicionais.length,
+            separatorBuilder: (context, index) => const SizedBox(height: 8),
+            itemBuilder: (context, index) {
+              final adicional = _adicionais[index];
+              return Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.03),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.white.withOpacity(0.05)),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.05),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Icon(Icons.playlist_add_rounded, color: Colors.blueAccent, size: 20),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            adicional.nome,
+                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                          ),
+                          Text(
+                            'Preço: R\$ ${adicional.preco.toStringAsFixed(2)}',
+                            style: const TextStyle(color: Colors.greenAccent, fontSize: 12, fontWeight: FontWeight.bold),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Switch(
+                      value: adicional.ativo,
+                      onChanged: (value) {
+                        setState(() {
+                          _adicionais[index] = adicional.copyWith(ativo: value);
+                        });
+                      },
+                      activeColor: Colors.blueAccent,
+                    ),
+                    const SizedBox(width: 4),
+                    IconButton(
+                      onPressed: () => _exibirDialogoAdicional(index: index),
+                      icon: const Icon(Icons.edit_rounded, color: Colors.white38, size: 20),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    IconButton(
+                      onPressed: () {
+                        setState(() {
+                          _adicionais.removeAt(index);
+                        });
+                      },
+                      icon: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent, size: 20),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+      ],
+    );
+  }
+
+  void _exibirDialogoAdicional({int? index}) {
+    final nomeController = TextEditingController(text: index != null ? _adicionais[index].nome : '');
+    final precoController = TextEditingController(text: index != null ? _adicionais[index].preco.toString() : '0.00');
+    final formKey = GlobalKey<FormState>();
+    bool salvarComoModelo = false;
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: const Color(0xFF1E293B),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Text(
+            index == null ? 'Novo Adicional' : 'Editar Adicional',
+            style: const TextStyle(color: Colors.white, fontSize: 18),
+          ),
+          content: Form(
+            key: formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextFormField(
+                  controller: nomeController,
+                  autofocus: true,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    labelText: 'Nome do Adicional',
+                    labelStyle: const TextStyle(color: Colors.white54),
+                    hintText: 'Ex: Leite Ninho',
+                    hintStyle: const TextStyle(color: Colors.white24),
+                    filled: true,
+                    fillColor: Colors.white.withOpacity(0.05),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                  ),
+                  validator: (v) => v == null || v.trim().isEmpty ? 'Informe o nome' : null,
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: precoController,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold),
+                  decoration: InputDecoration(
+                    labelText: 'Preço Adicional (R\$)',
+                    labelStyle: const TextStyle(color: Colors.white54),
+                    hintText: '0.00',
+                    hintStyle: const TextStyle(color: Colors.white24),
+                    prefixIcon: const Icon(Icons.attach_money_rounded, color: Colors.greenAccent),
+                    filled: true,
+                    fillColor: Colors.white.withOpacity(0.05),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                  ),
+                  validator: (v) {
+                    if (v == null || v.trim().isEmpty) return 'Informe o preço';
+                    if (double.tryParse(v.replaceAll(',', '.')) == null) return 'Valor inválido';
+                    return null;
+                  },
+                ),
+                if (index == null) ...[
+                  const SizedBox(height: 24),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.blueAccent.withOpacity(0.05),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.blueAccent.withOpacity(0.2)),
+                    ),
+                    child: CheckboxListTile(
+                      title: const Text(
+                        'Deseja que outros produtos usem esse adicional?', 
+                        style: TextStyle(color: Colors.blueAccent, fontSize: 13, fontWeight: FontWeight.bold)
+                      ),
+                      subtitle: const Text(
+                        'Isso salvará este item como um modelo global para reutilização.',
+                        style: TextStyle(color: Colors.white38, fontSize: 11),
+                      ),
+                      value: salvarComoModelo,
+                      onChanged: (val) => setDialogState(() => salvarComoModelo = val ?? false),
+                      controlAffinity: ListTileControlAffinity.leading,
+                      contentPadding: EdgeInsets.zero,
+                      activeColor: Colors.blueAccent,
+                      dense: true,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('CANCELAR', style: TextStyle(color: Colors.white38)),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                if (formKey.currentState?.validate() ?? false) {
+                  final novoAdicional = AdicionalProduto(
+                    id: index != null ? _adicionais[index].id : _uuid.v4(),
+                    nome: nomeController.text.trim(),
+                    preco: double.parse(precoController.text.replaceAll(',', '.')),
+                    ativo: index != null ? _adicionais[index].ativo : true,
+                  );
+                  
+                  setState(() {
+                    if (index != null) {
+                      _adicionais[index] = novoAdicional;
+                    } else {
+                      _adicionais.add(novoAdicional);
+                    }
+                  });
+
+                  // Salvar como modelo global se solicitado
+                  if (salvarComoModelo) {
+                    final dataService = Provider.of<DataService>(context, listen: false);
+                    final empresa = dataService.empresaAtual;
+                    if (empresa != null) {
+                      // Evitar duplicados pelo nome no global
+                      if (!empresa.modelosAdicionais.any((m) => m.nome.toLowerCase() == novoAdicional.nome.toLowerCase())) {
+                        debugPrint('>>> [CENTRALIZAR] Salvando novo modelo global: ${novoAdicional.nome}');
+                        final novosModelos = List<AdicionalProduto>.from(empresa.modelosAdicionais)..add(novoAdicional);
+                        debugPrint('>>> [CENTRALIZAR] Total de modelos agora: ${novosModelos.length}');
+                        
+                        final authService = Provider.of<AuthService>(context, listen: false);
+                        authService.atualizarEmpresa(empresa.copyWith(
+                          modelosAdicionais: novosModelos,
+                          updatedAt: DateTime.now(),
+                        ));
+
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('✓ Adicional salvo na biblioteca global!'),
+                            backgroundColor: Colors.blueAccent,
+                            duration: Duration(seconds: 2),
+                          ),
+                        );
+                      } else {
+                        debugPrint('>>> [CENTRALIZAR] Modelo ${novoAdicional.nome} já existe no global.');
+                      }
+                    }
+                  }
+
+                  Navigator.pop(context);
+                }
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
+              child: const Text('SALVAR', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _exibirDialogoImportarAdicionais() {
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final empresa = dataService.empresaAtual;
+    final modelos = empresa?.modelosAdicionais ?? [];
+    
+    debugPrint('>>> [IMPORT] Abrindo diálogo. Modelos globais encontrados: ${modelos.length}');
+    for (var m in modelos) debugPrint('>>> [IMPORT] Modelo disponível: ${m.nome}');
+
+    if (modelos.isEmpty) {
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          backgroundColor: const Color(0xFF1E293B),
+          title: const Text('Biblioteca Vazia', style: TextStyle(color: Colors.white)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Você ainda não salvou nenhum adicional como modelo global.', style: TextStyle(color: Colors.white70)),
+              const SizedBox(height: 12),
+              Text('Dica: Ao criar um adicional comum, marque "Deseja que outros produtos usem esse adicional?" para salvá-lo aqui.', 
+                style: TextStyle(color: Colors.blueAccent.withOpacity(0.7), fontSize: 12)),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('ENTENDIDO', style: TextStyle(color: Colors.blueAccent))),
+          ],
+        ),
+      );
+      return;
+    }
+
+    List<AdicionalProduto> selecionados = [];
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: const Color(0xFF1E293B),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Text('Importar Modelos', style: TextStyle(color: Colors.white, fontSize: 18)),
+          content: SizedBox(
+            width: 400,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: modelos.map((modelo) {
+                  final estaSelecionado = selecionados.contains(modelo);
+                  return CheckboxListTile(
+                    title: Text(modelo.nome, style: const TextStyle(color: Colors.white)),
+                    subtitle: Text('R\$ ${modelo.preco.toStringAsFixed(2)}', style: const TextStyle(color: Colors.greenAccent)),
+                    value: estaSelecionado,
+                    onChanged: (val) {
+                      setDialogState(() {
+                        if (val == true) {
+                          selecionados.add(modelo);
+                        } else {
+                          selecionados.remove(modelo);
+                        }
+                      });
+                    },
+                    activeColor: Colors.blueAccent,
+                  );
+                }).toList(),
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('CANCELAR', style: TextStyle(color: Colors.white38)),
+            ),
+            ElevatedButton(
+              onPressed: selecionados.isEmpty ? null : () {
+                setState(() {
+                  for (var s in selecionados) {
+                    if (!_adicionais.any((a) => a.nome.toLowerCase() == s.nome.toLowerCase())) {
+                       _adicionais.add(s.copyWith(id: _uuid.v4()));
+                    }
+                  }
+                });
+                Navigator.pop(context);
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.cyanAccent),
+              child: Text('IMPORTAR (${selecionados.length})', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.black87)),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 

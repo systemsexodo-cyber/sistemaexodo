@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
-import '../services/data_service.dart';
-import '../services/auth_service.dart';
-import '../models/mesa_comanda.dart';
-import '../models/produto.dart';
-import 'venda_direta_page.dart';
+import 'package:sistema_exodo_novo/models/adicional_produto.dart';
+import 'package:sistema_exodo_novo/services/data_service.dart';
+import 'package:sistema_exodo_novo/services/auth_service.dart';
+import 'package:sistema_exodo_novo/models/mesa_comanda.dart';
+import 'package:sistema_exodo_novo/models/produto.dart';
+import 'package:sistema_exodo_novo/pages/venda_direta_page.dart';
 import 'package:uuid/uuid.dart';
 
 const uuid = Uuid();
@@ -701,7 +702,7 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        '${mesaComanda.quantidadePessoasCouvert} pessoa(s) × ${NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(mesaComanda.valorCouvertPorPessoa)} = ${NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(mesaComanda.valorCouvertCalculado)}',
+                        '${mesaComanda.quantidadePessoasCouvert} pessoa(s) × ${NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(mesaComanda.valorCouvertPorPessoa)} = ${NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(mesaComanda.valorCouvertCalculado)}${mesaComanda.nomeQuemPagouCouvert != null ? " • Pago por: ${mesaComanda.nomeQuemPagouCouvert}" : ""}',
                         style: const TextStyle(
                           color: Colors.white70,
                           fontSize: 14,
@@ -899,6 +900,21 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
                     ],
                   ),
                 ),
+                // Botão Editar Observação
+                IconButton(
+                  icon: Icon(
+                    item.observacao != null && item.observacao!.isNotEmpty 
+                      ? Icons.comment 
+                      : Icons.add_comment_outlined,
+                    color: item.observacao != null && item.observacao!.isNotEmpty
+                      ? Colors.orange
+                      : Colors.grey.withOpacity(0.5),
+                    size: 20,
+                  ),
+                  onPressed: () => _editarObservacaoItemMesa(item, mesaComanda, dataService),
+                  tooltip: 'Adicionar observação ao item',
+                ),
+                const SizedBox(width: 8),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(
@@ -924,6 +940,35 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
                 ),
               ],
             ),
+            if (item.observacao != null && item.observacao!.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withOpacity(0.05),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.orange.withOpacity(0.2)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.info_outline, color: Colors.orange, size: 14),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          item.observacao!,
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.7),
+                            fontSize: 12,
+                            fontStyle: FontStyle.italic,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             const SizedBox(height: 12),
             Row(
               children: [
@@ -1070,12 +1115,87 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
     }
   }
 
+  Future<void> _editarObservacaoItemMesa(ItemMesaComanda item, MesaComanda mesaComanda, DataService dataService) async {
+    final controller = TextEditingController(text: item.observacao ?? '');
+    final authService = Provider.of<AuthService>(context, listen: false);
+
+    await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            const Icon(Icons.notes, color: Colors.orange),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Observação: ${item.nome}',
+                style: const TextStyle(color: Colors.white, fontSize: 18),
+              ),
+            ),
+          ],
+        ),
+        content: TextField(
+          controller: controller,
+          maxLines: 3,
+          autofocus: true,
+          style: const TextStyle(color: Colors.white),
+          decoration: InputDecoration(
+            hintText: 'Ex: Bem passado, sem cebola...',
+            hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
+            filled: true,
+            fillColor: Colors.black.withOpacity(0.2),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide.none,
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('CANCELAR', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              try {
+                await dataService.atualizarObservacaoItemMesaComanda(
+                  mesaComanda.id,
+                  item.id,
+                  controller.text.trim(),
+                  usuarioModificou: authService.usuarioAtual?.nome,
+                );
+                
+                if (mounted) {
+                  Navigator.pop(context);
+                  setState(() {
+                    _mesaComandaSelecionada = dataService.mesasComandas.firstWhere((m) => m.id == mesaComanda.id);
+                  });
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Erro: $e'), backgroundColor: Colors.red),
+                  );
+                }
+              }
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+            child: const Text('SALVAR'),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _abrirNovaMesaComanda(BuildContext context, DataService dataService) {
     final numeroController = TextEditingController();
     final clienteController = TextEditingController();
     final observacaoController = TextEditingController();
     final quantidadePessoasController = TextEditingController();
     final valorCouvertPorPessoaController = TextEditingController();
+    final nomeQuemPagouCouvertController = TextEditingController();
 
     showDialog(
       context: context,
@@ -1224,6 +1344,20 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
                         ),
                       ),
                       style: const TextStyle(color: Colors.white),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: nomeQuemPagouCouvertController,
+                      decoration: const InputDecoration(
+                        labelText: 'Nome de quem pagou',
+                        labelStyle: TextStyle(color: Colors.grey),
+                        enabledBorder: UnderlineInputBorder(
+                          borderSide: BorderSide(color: Colors.grey),
+                        ),
+                        focusedBorder: UnderlineInputBorder(
+                          borderSide: BorderSide(color: Colors.orange),
+                        ),
+                      ),
+                      style: const TextStyle(color: Colors.white),
                     ),
                   ],
                 ),
@@ -1237,20 +1371,25 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
             child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
           ),
           ElevatedButton(
-            onPressed: numeroExiste || numeroController.text.trim().isEmpty
+            onPressed: numeroExiste
                 ? null
                 : () async {
-                    // Validação final antes de criar (dupla verificação)
-                    final numeroFinal = numeroController.text.trim();
+                    // Se o número estiver vazio, gerar um automaticamente
+                    String numeroFinal = numeroController.text.trim();
                     if (numeroFinal.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Por favor, informe o número'),
-                    backgroundColor: Colors.red,
-                  ),
-                );
-                return;
-              }
+                      final totalDesseTipo = dataService.mesasComandas
+                          .where((m) => m.tipo == _tipoSelecionado)
+                          .length;
+                      final prefixo = _tipoSelecionado == TipoControle.mesa ? 'MESA' : 'CMD';
+                      numeroFinal = '$prefixo-${(totalDesseTipo + 1).toString().padLeft(2, '0')}';
+                      
+                      // Garantir que o gerado não existe (evitar colisão se deletou algum)
+                      int tentativa = 1;
+                      while (dataService.mesasComandas.any((m) => m.numero == numeroFinal)) {
+                        numeroFinal = '$prefixo-${(totalDesseTipo + 1 + tentativa).toString().padLeft(2, '0')}';
+                        tentativa++;
+                      }
+                    }
 
                     // Verificar se número já existe (em mesas ou comandas)
                     final numeroExisteFinal = dataService.mesasComandas.any(
@@ -1274,6 +1413,9 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
               final valorPorPessoaFinal = valorCouvertPorPessoaController.text.trim().isEmpty
                   ? null
                   : double.tryParse(valorCouvertPorPessoaController.text.trim().replaceAll(',', '.'));
+              final nomeQuemPagouFinal = nomeQuemPagouCouvertController.text.trim().isEmpty
+                  ? null
+                  : nomeQuemPagouCouvertController.text.trim();
 
               final novaMesaComanda = MesaComanda(
                 id: uuid.v4(),
@@ -1289,6 +1431,7 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
                     : observacaoController.text.trim(),
                 quantidadePessoasCouvert: quantidadePessoasFinal,
                 valorCouvertPorPessoa: valorPorPessoaFinal,
+                nomeQuemPagouCouvert: nomeQuemPagouFinal,
               );
 
               try {
@@ -1331,6 +1474,9 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
       text: mesaComanda.valorCouvertPorPessoa != null
           ? mesaComanda.valorCouvertPorPessoa!.toStringAsFixed(2).replaceAll('.', ',')
           : '',
+    );
+    final nomeQuemPagouController = TextEditingController(
+      text: mesaComanda.nomeQuemPagouCouvert ?? '',
     );
 
     await showDialog(
@@ -1377,18 +1523,32 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
                     ),
                     style: const TextStyle(color: Colors.white),
                   ),
-                  const SizedBox(height: 24),
-                  TextField(
+                       TextField(
                     controller: valorCouvertPorPessoaController,
                     keyboardType: const TextInputType.numberWithOptions(decimal: true),
                     onChanged: (value) => setDialogState(() {}),
                     decoration: InputDecoration(
-                      labelText: 'Valor por Pessoa (R\$)',
+                      labelText: 'Valor por Pessoa (R$)',
                       labelStyle: const TextStyle(color: Colors.grey),
                       enabledBorder: const UnderlineInputBorder(
                         borderSide: BorderSide(color: Colors.grey),
                       ),
                       focusedBorder: const UnderlineInputBorder(
+                        borderSide: BorderSide(color: Colors.orange),
+                      ),
+                    ),
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  const SizedBox(height: 24),
+                  TextField(
+                    controller: nomeQuemPagouController,
+                    decoration: const InputDecoration(
+                      labelText: 'Nome de quem pagou',
+                      labelStyle: TextStyle(color: Colors.grey),
+                      enabledBorder: UnderlineInputBorder(
+                        borderSide: BorderSide(color: Colors.grey),
+                      ),
+                      focusedBorder: UnderlineInputBorder(
                         borderSide: BorderSide(color: Colors.orange),
                       ),
                     ),
@@ -1414,7 +1574,7 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
                             ),
                           ),
                           Text(
-                            NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(valorTotalCouvert),
+                            NumberFormat.currency(locale: 'pt_BR', symbol: 'R$').format(valorTotalCouvert),
                             style: const TextStyle(
                               color: Colors.greenAccent,
                               fontSize: 18,
@@ -1441,14 +1601,18 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
                   final valorPorPessoaFinal = valorCouvertPorPessoaController.text.trim().isEmpty
                       ? null
                       : double.tryParse(valorCouvertPorPessoaController.text.trim().replaceAll(',', '.'));
+                  final nomeFinal = nomeQuemPagouController.text.trim().isEmpty
+                      ? null
+                      : nomeQuemPagouController.text.trim();
 
-                  // Validar se pelo menos um campo está preenchido
+                  // Validar se pelo menos um campo está preenchido (exceto o nome que é opcional)
                   if (quantidadePessoasFinal == null && valorPorPessoaFinal == null) {
                     // Se ambos estiverem vazios, remover o couvert
                     try {
                       final mesaAtualizada = mesaComanda.copyWith(
                         quantidadePessoasCouvert: null,
                         valorCouvertPorPessoa: null,
+                        nomeQuemPagouCouvert: null,
                       );
                       await dataService.updateMesaComanda(mesaAtualizada);
                       if (context.mounted) {
@@ -1476,21 +1640,11 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
                     return;
                   }
 
-                  // Validar que ambos os campos devem estar preenchidos
-                  if (quantidadePessoasFinal == null || valorPorPessoaFinal == null || quantidadePessoasFinal <= 0 || valorPorPessoaFinal <= 0) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Informe a quantidade de pessoas e o valor por pessoa'),
-                        backgroundColor: Colors.red,
-                      ),
-                    );
-                    return;
-                  }
-
                   try {
                     final mesaAtualizada = mesaComanda.copyWith(
                       quantidadePessoasCouvert: quantidadePessoasFinal,
                       valorCouvertPorPessoa: valorPorPessoaFinal,
+                      nomeQuemPagouCouvert: nomeFinal,
                     );
                     await dataService.updateMesaComanda(mesaAtualizada);
                     if (context.mounted) {
@@ -1500,7 +1654,7 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
                       });
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
-                          content: Text('Couvert atualizado: ${quantidadePessoasFinal} pessoa(s) × ${NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(valorPorPessoaFinal)}'),
+                          content: Text('Couvert atualizado!'),
                           backgroundColor: Colors.green,
                         ),
                       );
@@ -1514,6 +1668,8 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
                         ),
                       );
                     }
+                  }
+                },   }
                   }
                 },
                 style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
@@ -1667,514 +1823,17 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
     MesaComanda mesaComanda,
     DataService dataService,
   ) async {
-    final buscaController = TextEditingController();
-    final produtosSelecionados = <String, Map<String, dynamic>>{};
-    String termoBusca = '';
+    // Sugestão de couvert removida (não é mais obrigatório ao adicionar produtos)
 
-    await showDialog(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) {
-          final produtosFiltrados = termoBusca.isEmpty
-              ? dataService.produtos
-              : dataService.produtos.where((p) {
-                  final buscaLower = termoBusca.toLowerCase();
-                  return p.nome.toLowerCase().contains(buscaLower) ||
-                      (p.codigo != null && p.codigo!.toLowerCase().contains(buscaLower));
-                }).toList();
-
-          return AlertDialog(
-            backgroundColor: const Color(0xFF1E1E2E),
-            title: const Text(
-              'Adicionar Produtos',
-              style: TextStyle(color: Colors.white),
-            ),
-            content: SizedBox(
-              width: double.maxFinite,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // Campo de busca
-                  TextField(
-                    controller: buscaController,
-                    autofocus: true,
-                    decoration: InputDecoration(
-                      hintText: 'Buscar produto...',
-                      hintStyle: const TextStyle(color: Colors.grey),
-                      prefixIcon: const Icon(Icons.search, color: Colors.orange),
-                      suffixIcon: termoBusca.isNotEmpty
-                          ? IconButton(
-                              icon: const Icon(Icons.clear, color: Colors.grey),
-                              onPressed: () {
-                                buscaController.clear();
-                                setDialogState(() {
-                                  termoBusca = '';
-                                });
-                              },
-                            )
-                          : null,
-                      filled: true,
-                      fillColor: const Color(0xFF2A2A3E),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide: const BorderSide(color: Colors.grey),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide: const BorderSide(color: Colors.orange),
-                      ),
-                    ),
-                    style: const TextStyle(color: Colors.white),
-                    onChanged: (value) {
-                      setDialogState(() {
-                        termoBusca = value;
-                      });
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                  // Lista de produtos
-                  Flexible(
-                    child: produtosFiltrados.isEmpty
-                        ? Center(
-                            child: Text(
-                              termoBusca.isEmpty
-                                  ? 'Nenhum produto cadastrado'
-                                  : 'Nenhum produto encontrado',
-                              style: const TextStyle(color: Colors.grey),
-                            ),
-                          )
-                        : ListView.builder(
-                            shrinkWrap: true,
-                            itemCount: produtosFiltrados.length,
-                            itemBuilder: (context, index) {
-                              final produto = produtosFiltrados[index];
-                              final quantidade = produtosSelecionados[produto.id]?['quantidade'] ?? 0;
-                              final isSelected = quantidade > 0;
-
-                              return Card(
-                                color: isSelected
-                                    ? Colors.orange.withOpacity(0.2)
-                                    : const Color(0xFF2A2A3E),
-                                margin: const EdgeInsets.only(bottom: 8),
-                                child: ListTile(
-                                  title: Text(
-                                    produto.nome,
-                                    style: TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                                    ),
-                                  ),
-                                  subtitle: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      if (produto.codigo != null)
-                                        Text(
-                                          'Código: ${produto.codigo}',
-                                          style: const TextStyle(color: Colors.grey, fontSize: 12),
-                                        ),
-                                      Text(
-                                        'Preço: ${NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(produto.precoAtual)}',
-                                        style: const TextStyle(color: Colors.green, fontSize: 12),
-                                      ),
-                                      if (produto.paraCozinha == true || produto.paraBar == true)
-                                        Row(
-                                          children: [
-                                            if (produto.paraCozinha == true)
-                                              Container(
-                                                margin: const EdgeInsets.only(top: 4, right: 4),
-                                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                                decoration: BoxDecoration(
-                                                  color: Colors.orange.withOpacity(0.2),
-                                                  borderRadius: BorderRadius.circular(4),
-                                                ),
-                                                child: const Text(
-                                                  'Cozinha',
-                                                  style: TextStyle(color: Colors.orange, fontSize: 10),
-                                                ),
-                                              ),
-                                            if (produto.paraBar == true)
-                                              Container(
-                                                margin: const EdgeInsets.only(top: 4),
-                                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                                decoration: BoxDecoration(
-                                                  color: Colors.blue.withOpacity(0.2),
-                                                  borderRadius: BorderRadius.circular(4),
-                                                ),
-                                                child: const Text(
-                                                  'Bar',
-                                                  style: TextStyle(color: Colors.blue, fontSize: 10),
-                                                ),
-                                              ),
-                                          ],
-                                        ),
-                                    ],
-                                  ),
-                                  trailing: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      if (isSelected) ...[
-                                        IconButton(
-                                          icon: const Icon(Icons.remove_circle, color: Colors.red),
-                                          onPressed: () {
-                                            setDialogState(() {
-                                              if (quantidade > 1) {
-                                                produtosSelecionados[produto.id] = {
-                                                  'produto': produto,
-                                                  'quantidade': quantidade - 1,
-                                                };
-                                              } else {
-                                                produtosSelecionados.remove(produto.id);
-                                              }
-                                            });
-                                          },
-                                        ),
-                                        Text(
-                                          '$quantidade',
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 16,
-                                          ),
-                                        ),
-                                      ],
-                                      IconButton(
-                                        icon: Icon(
-                                          isSelected ? Icons.add_circle : Icons.add_circle_outline,
-                                          color: Colors.greenAccent,
-                                        ),
-                                        onPressed: () {
-                                          setDialogState(() {
-                                            final quantidadeAtual = produtosSelecionados[produto.id]?['quantidade'] ?? 0;
-                                            // Usar categoria padrão do produto ou 'outros' se não tiver
-                                            final categoriaPadrao = produto.paraCozinha == true
-                                                ? 'cozinha'
-                                                : produto.paraBar == true
-                                                    ? 'bar'
-                                                    : 'outros';
-                                            produtosSelecionados[produto.id] = {
-                                              'produto': produto,
-                                              'quantidade': quantidadeAtual + 1,
-                                              'categoria': produtosSelecionados[produto.id]?['categoria'] ?? categoriaPadrao,
-                                            };
-                                          });
-                                        },
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                  ),
-                  // Resumo dos produtos selecionados
-                  if (produtosSelecionados.isNotEmpty) ...[
-                    const Divider(color: Colors.grey),
-                    const SizedBox(height: 8),
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.orange.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Produtos selecionados:',
-                            style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold),
-                          ),
-                          const SizedBox(height: 8),
-                          ...produtosSelecionados.entries.map((entry) {
-                            final item = entry.value;
-                            final produto = item['produto'] as Produto;
-                            final quantidade = item['quantidade'] as int;
-                            final categoria = item['categoria'] as String? ?? 'outros'; // 'cozinha', 'bar', 'outros'
-                            final total = produto.precoAtual * quantidade;
-                            
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 8),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(
-                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          '$quantidade x ${produto.nome}',
-                                          style: const TextStyle(color: Colors.white, fontSize: 12),
-                                        ),
-                                      ),
-                                      Text(
-                                        NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(total),
-                                        style: const TextStyle(color: Colors.green, fontSize: 12),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 4),
-                                  // Seletor de categoria
-                                  Row(
-                                    children: [
-                                      Expanded(
-                                        child: GestureDetector(
-                                          onTap: () {
-                                            setDialogState(() {
-                                              produtosSelecionados[entry.key] = {
-                                                ...item,
-                                                'categoria': 'cozinha',
-                                              };
-                                            });
-                                          },
-                                          child: Container(
-                                            padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
-                                            decoration: BoxDecoration(
-                                              color: categoria == 'cozinha'
-                                                  ? Colors.orange.withOpacity(0.3)
-                                                  : Colors.transparent,
-                                              borderRadius: BorderRadius.circular(6),
-                                              border: Border.all(
-                                                color: categoria == 'cozinha'
-                                                    ? Colors.orange
-                                                    : Colors.grey.withOpacity(0.3),
-                                              ),
-                                            ),
-                                            child: Row(
-                                              mainAxisAlignment: MainAxisAlignment.center,
-                                              children: [
-                                                Icon(
-                                                  Icons.restaurant,
-                                                  size: 14,
-                                                  color: categoria == 'cozinha'
-                                                      ? Colors.orange
-                                                      : Colors.grey,
-                                                ),
-                                                const SizedBox(width: 4),
-                                                Text(
-                                                  'Cozinha',
-                                                  style: TextStyle(
-                                                    color: categoria == 'cozinha'
-                                                        ? Colors.orange
-                                                        : Colors.grey,
-                                                    fontSize: 11,
-                                                    fontWeight: categoria == 'cozinha'
-                                                        ? FontWeight.bold
-                                                        : FontWeight.normal,
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                      const SizedBox(width: 6),
-                                      Expanded(
-                                        child: GestureDetector(
-                                          onTap: () {
-                                            setDialogState(() {
-                                              produtosSelecionados[entry.key] = {
-                                                ...item,
-                                                'categoria': 'bar',
-                                              };
-                                            });
-                                          },
-                                          child: Container(
-                                            padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
-                                            decoration: BoxDecoration(
-                                              color: categoria == 'bar'
-                                                  ? Colors.blue.withOpacity(0.3)
-                                                  : Colors.transparent,
-                                              borderRadius: BorderRadius.circular(6),
-                                              border: Border.all(
-                                                color: categoria == 'bar'
-                                                    ? Colors.blue
-                                                    : Colors.grey.withOpacity(0.3),
-                                              ),
-                                            ),
-                                            child: Row(
-                                              mainAxisAlignment: MainAxisAlignment.center,
-                                              children: [
-                                                Icon(
-                                                  Icons.local_bar,
-                                                  size: 14,
-                                                  color: categoria == 'bar'
-                                                      ? Colors.blue
-                                                      : Colors.grey,
-                                                ),
-                                                const SizedBox(width: 4),
-                                                Text(
-                                                  'Bar',
-                                                  style: TextStyle(
-                                                    color: categoria == 'bar'
-                                                        ? Colors.blue
-                                                        : Colors.grey,
-                                                    fontSize: 11,
-                                                    fontWeight: categoria == 'bar'
-                                                        ? FontWeight.bold
-                                                        : FontWeight.normal,
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                      const SizedBox(width: 6),
-                                      Expanded(
-                                        child: GestureDetector(
-                                          onTap: () {
-                                            setDialogState(() {
-                                              produtosSelecionados[entry.key] = {
-                                                ...item,
-                                                'categoria': 'outros',
-                                              };
-                                            });
-                                          },
-                                          child: Container(
-                                            padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
-                                            decoration: BoxDecoration(
-                                              color: categoria == 'outros'
-                                                  ? Colors.grey.withOpacity(0.3)
-                                                  : Colors.transparent,
-                                              borderRadius: BorderRadius.circular(6),
-                                              border: Border.all(
-                                                color: categoria == 'outros'
-                                                    ? Colors.grey
-                                                    : Colors.grey.withOpacity(0.3),
-                                              ),
-                                            ),
-                                            child: Row(
-                                              mainAxisAlignment: MainAxisAlignment.center,
-                                              children: [
-                                                Icon(
-                                                  Icons.inventory,
-                                                  size: 14,
-                                                  color: categoria == 'outros'
-                                                      ? Colors.grey
-                                                      : Colors.grey.withOpacity(0.5),
-                                                ),
-                                                const SizedBox(width: 4),
-                                                Text(
-                                                  'Outros',
-                                                  style: TextStyle(
-                                                    color: categoria == 'outros'
-                                                        ? Colors.white
-                                                        : Colors.grey,
-                                                    fontSize: 11,
-                                                    fontWeight: categoria == 'outros'
-                                                        ? FontWeight.bold
-                                                        : FontWeight.normal,
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                            );
-                          }),
-                          const Divider(color: Colors.grey),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              const Text(
-                                'Total:',
-                                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                              ),
-                              Text(
-                                NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(
-                                  produtosSelecionados.values.fold<double>(
-                                    0.0,
-                                    (sum, item) => sum + ((item['produto'] as Produto).precoAtual * (item['quantidade'] as int)),
-                                  ),
-                                ),
-                                style: const TextStyle(
-                                  color: Colors.green,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 16,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
-              ),
-              ElevatedButton(
-                onPressed: produtosSelecionados.isEmpty
-                    ? null
-                    : () async {
-                        try {
-                          final novosItens = <ItemMesaComanda>[];
-
-                          for (final item in produtosSelecionados.values) {
-                            final produto = item['produto'] as Produto;
-                            final quantidade = item['quantidade'] as int;
-                            final categoria = item['categoria'] as String? ?? 'outros';
-
-                            novosItens.add(ItemMesaComanda(
-                              id: uuid.v4(),
-                              itemId: produto.id,
-                              nome: produto.nome,
-                              quantidade: quantidade,
-                              preco: produto.precoAtual,
-                              isServico: false,
-                              paraCozinha: categoria == 'cozinha',
-                              paraBar: categoria == 'bar',
-                              status: StatusItem.pendente,
-                              dataHora: DateTime.now(),
-                            ));
-                          }
-
-                          final mesaComandaAtualizada = mesaComanda.copyWith(
-                            itens: [...mesaComanda.itens, ...novosItens],
-                          );
-
-                          await dataService.updateMesaComanda(mesaComandaAtualizada);
-
-                          if (context.mounted) {
-                            Navigator.pop(context);
-                            setState(() {
-                              _mesaComandaSelecionada = mesaComandaAtualizada;
-                            });
-
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('${novosItens.length} produto(s) adicionado(s) à ${mesaComanda.numero}'),
-                                backgroundColor: Colors.green,
-                              ),
-                            );
-                          }
-                        } catch (e) {
-                          if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('Erro ao adicionar produtos: $e'),
-                                backgroundColor: Colors.red,
-                              ),
-                            );
-                          }
-                        }
-                      },
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
-                child: Text('Adicionar (${produtosSelecionados.values.fold<int>(0, (sum, item) => sum + (item['quantidade'] as int))})'),
-              ),
-            ],
-          );
-        },
-      ),
-    );
+    // Navegar para o PDV (VendaDiretaPage) para gerenciar produtos, observações e adicionais.
+    if (context.mounted) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => VendaDiretaPage(mesaComanda: mesaComanda),
+        ),
+      );
+    }
   }
 }
 

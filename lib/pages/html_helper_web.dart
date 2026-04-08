@@ -1,5 +1,6 @@
 // Helper para hard refresh no Web
 import 'dart:html' as html;
+import 'package:flutter/foundation.dart';
 
 /// Faz hard refresh da página no navegador
 void fazerHardRefresh() {
@@ -76,6 +77,33 @@ void downloadFile(String content, String fileName, String mimeType) {
     html.Url.revokeObjectUrl(url);
   } catch (e) {
     print('Erro ao baixar arquivo: $e');
+  }
+}
+
+/// Faz o download de um arquivo binário no navegador
+void downloadBytes(List<int> bytes, String fileName, String mimeType) {
+  try {
+    debugPrint('>>> [HtmlHelper] Iniciando download de ${bytes.length} bytes: $fileName ($mimeType)');
+    final blob = html.Blob([bytes], mimeType);
+    final url = html.Url.createObjectUrlFromBlob(blob);
+    
+    final anchor = html.AnchorElement(href: url);
+    anchor.setAttribute("download", fileName);
+    anchor.style.display = 'none'; // Garantir que não interfira no layout
+    html.document.body?.append(anchor); // Adicionar ao body para garantir visibilidade ao clique
+    
+    anchor.click(); // Clique programático
+    
+    // Remover do DOM após um pequeno delay para garantir que o Chrome processou
+    Future.delayed(const Duration(milliseconds: 500), () {
+      anchor.remove();
+      html.Url.revokeObjectUrl(url);
+      debugPrint('>>> [HtmlHelper] URL de download revogada e limpa.');
+    });
+    
+    debugPrint('>>> [HtmlHelper] Clique de download disparado!');
+  } catch (e) {
+    debugPrint('>>> [HtmlHelper] ❌ ERRO ao baixar arquivo binário: $e');
   }
 }
 

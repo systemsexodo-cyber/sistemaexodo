@@ -15,7 +15,7 @@ class ExodoLogo extends StatefulWidget {
     this.color,
     this.showSubtitle = false,
     this.isVertical = true,
-    this.showPhoenix = true,
+    this.showPhoenix = false,
   });
 
   @override

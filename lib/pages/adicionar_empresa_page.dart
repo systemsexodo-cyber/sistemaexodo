@@ -16,6 +16,7 @@ import '../models/tela_sistema.dart';
 import '../theme.dart';
 import '../services/data_service.dart';
 import '../services/whatsapp_service.dart';
+import 'package:sistema_exodo_novo/pages/whatsapp_gerenciamento_page.dart';
 
 /// Página para adicionar ou editar uma empresa
 class AdicionarEmpresaPage extends StatefulWidget {
@@ -72,8 +73,9 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
   final _nfceFonteEscalaController = TextEditingController(text: '1.0');
 
   // Customizações de Impressão Comanda/Mesa
-  final _comandaMargemHController = TextEditingController(text: '12.0');
-  final _comandaMargemVController = TextEditingController(text: '8.0');
+  final _comandaMargemEsqController = TextEditingController(text: '10.0');
+  final _comandaMargemDirController = TextEditingController(text: '15.0');
+  final _comandaMargemVController = TextEditingController(text: '10.0');
   final _comandaLarguraBobinaController = TextEditingController(text: '80.0');
   final _comandaFonteTituloController = TextEditingController(text: '14.0');
   final _comandaFonteCorpoController = TextEditingController(text: '9.0');
@@ -92,6 +94,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
   final _whatsappApiKeyController = TextEditingController();
   final _whatsappInstanceNameController = TextEditingController();
   bool _whatsappAtivo = false;
+  String _whatsappTipo = 'evolution'; // 'evolution' ou 'twilio'
   bool _moduloPet = false;
   String? _whatsappConnectionState; // 'open', 'close', ou null
   bool _whatsappTestando = false;
@@ -166,8 +169,11 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
     _nfceLarguraBobinaController.text = empresa.configuracoes?['nfceLarguraBobina']?.toString() ?? '80.0';
     _nfceMargemDireitaController.text = empresa.configuracoes?['nfceMargemDireita']?.toString() ?? '15.0';
     _nfceFonteEscalaController.text = empresa.configuracoes?['nfceFonteEscala']?.toString() ?? '1.0';
-    _comandaMargemHController.text = empresa.configuracoes?['comandaMargemH']?.toString() ?? '12.0';
-    _comandaMargemVController.text = empresa.configuracoes?['comandaMargemV']?.toString() ?? '8.0';
+    _comandaMargemEsqController.text = empresa.configuracoes?['comandaMargemEsq']?.toString() ?? 
+                                       empresa.configuracoes?['comandaMargemH']?.toString() ?? '10.0';
+    _comandaMargemDirController.text = empresa.configuracoes?['comandaMargemDir']?.toString() ?? 
+                                       empresa.configuracoes?['comandaMargemH']?.toString() ?? '15.0';
+    _comandaMargemVController.text = empresa.configuracoes?['comandaMargemV']?.toString() ?? '10.0';
     _comandaLarguraBobinaController.text = empresa.configuracoes?['comandaLarguraBobina']?.toString() ?? '80.0';
     _comandaFonteTituloController.text = empresa.configuracoes?['comandaFonteTitulo']?.toString() ?? '14.0';
     _comandaFonteCorpoController.text = empresa.configuracoes?['comandaFonteCorpo']?.toString() ?? '9.0';
@@ -193,6 +199,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
     _whatsappApiKeyController.text = empresa.whatsappApiKey ?? '';
     _whatsappInstanceNameController.text = empresa.whatsappInstanceName ?? '';
     _whatsappAtivo = empresa.whatsappAtivo;
+    _whatsappTipo = empresa.whatsappTipo ?? 'evolution';
     _moduloPet = empresa.moduloPet;
   }
 
@@ -331,6 +338,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
       whatsappInstanceName: _whatsappInstanceNameController.text.trim().isEmpty
           ? null
           : _whatsappInstanceNameController.text.trim(),
+      whatsappTipo: _whatsappTipo,
       whatsappAtivo: _whatsappAtivo,
       moduloPet: _moduloPet,
       configuracoes: {
@@ -349,8 +357,9 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
         'nfceMargemDireita': double.tryParse(_nfceMargemDireitaController.text.trim()) ?? 15.0,
         'nfceFonteEscala': double.tryParse(_nfceFonteEscalaController.text.trim()) ?? 1.0,
 
-        'comandaMargemH': double.tryParse(_comandaMargemHController.text.trim()) ?? 12.0,
-        'comandaMargemV': double.tryParse(_comandaMargemVController.text.trim()) ?? 8.0,
+        'comandaMargemEsq': double.tryParse(_comandaMargemEsqController.text.trim()) ?? 10.0,
+        'comandaMargemDir': double.tryParse(_comandaMargemDirController.text.trim()) ?? 15.0,
+        'comandaMargemV': double.tryParse(_comandaMargemVController.text.trim()) ?? 10.0,
         'comandaLarguraBobina': double.tryParse(_comandaLarguraBobinaController.text.trim()) ?? 80.0,
         'comandaFonteTitulo': double.tryParse(_comandaFonteTituloController.text.trim()) ?? 14.0,
         'comandaFonteCorpo': double.tryParse(_comandaFonteCorpoController.text.trim()) ?? 9.0,
@@ -832,37 +841,46 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
 
               const SizedBox(height: 24),
 
-              _buildSectionTitle('Ajustes de Impressão (Fechamento de Conta)'),
+              _buildSectionTitle('Ajuste de Todas as Impressões (Geral)'),
               Row(
                 children: [
                   Expanded(
                     child: _buildTextField(
-                      controller: _comandaMargemHController,
-                      label: 'Margem Horiz. (pt)',
-                      icon: Icons.unfold_more_double,
-                      hintText: '12.0',
+                      controller: _comandaMargemEsqController,
+                      label: 'Margem Esquerda',
+                      icon: Icons.format_align_left,
+                      hintText: '10.0',
                       keyboardType: TextInputType.number,
                     ),
                   ),
                   const SizedBox(width: 16),
                   Expanded(
                     child: _buildTextField(
-                      controller: _comandaMargemVController,
-                      label: 'Margem Vert. (pt)',
-                      icon: Icons.height,
-                      hintText: '8.0',
+                      controller: _comandaMargemDirController,
+                      label: 'Margem Direita',
+                      icon: Icons.format_align_right,
+                      hintText: '15.0',
                       keyboardType: TextInputType.number,
+                      helperText: 'Aumente se o valor estiver cortando à direita.',
                     ),
                   ),
                 ],
               ),
               const SizedBox(height: 16),
               _buildTextField(
+                controller: _comandaMargemVController,
+                label: 'Margem Superior/Inferior',
+                icon: Icons.height,
+                hintText: '10.0',
+                keyboardType: TextInputType.number,
+              ),
+              const SizedBox(height: 16),
+              _buildTextField(
                 controller: _comandaLarguraBobinaController,
-                label: 'Largura da Bobina (mm)',
+                label: 'Largura Física da Bobina (mm)',
                 icon: Icons.print,
                 hintText: '80.0 ou 58.0',
-                helperText: 'A largura do papel para o fechamento (80.0 ou 58.0).',
+                helperText: 'Largura do papel da impressora. Padrão: 80.0 (grande) ou 58.0 (pequena).',
                 keyboardType: TextInputType.number,
               ),
               const SizedBox(height: 16),
@@ -871,7 +889,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                   Expanded(
                     child: _buildTextField(
                       controller: _comandaFonteTituloController,
-                      label: 'Fonte Título',
+                      label: 'Tam. Fonte Título',
                       icon: Icons.title,
                       hintText: '14.0',
                       keyboardType: TextInputType.number,
@@ -881,7 +899,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                   Expanded(
                     child: _buildTextField(
                       controller: _comandaFonteCorpoController,
-                      label: 'Fonte Corpo',
+                      label: 'Tam. Fonte Itens',
                       icon: Icons.text_fields,
                       hintText: '9.0',
                       keyboardType: TextInputType.number,
@@ -891,7 +909,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                   Expanded(
                     child: _buildTextField(
                       controller: _comandaFonteStatusController,
-                      label: 'Fonte Status',
+                      label: 'Tam. Fonte Info',
                       icon: Icons.info_outline,
                       hintText: '8.0',
                       keyboardType: TextInputType.number,
@@ -901,7 +919,8 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
               ),
               const SizedBox(height: 16),
               SwitchListTile(
-                title: const Text('Usar Negrito nos Títulos/Itens', style: TextStyle(color: Colors.white)),
+                title: const Text('Usar Negrito nos Textos Principais', style: TextStyle(color: Colors.white)),
+                subtitle: const Text('Melhora a leitura em algumas impressoras térmicas', style: TextStyle(color: Colors.white60, fontSize: 11)),
                 value: _comandaNegrito,
                 onChanged: (value) => setState(() => _comandaNegrito = value),
                 activeColor: Colors.purple,
@@ -1072,33 +1091,66 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                       const Divider(color: Colors.white24),
                       const SizedBox(height: 16),
                       
+                      // Seletor de Tipo
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.05),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.white12),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Serviço de WhatsApp:',
+                              style: TextStyle(color: Colors.white70, fontSize: 13),
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                _buildTipoWhatsAppChip('evolution', 'Evolution API (Gratuito/Self-host)'),
+                                const SizedBox(width: 8),
+                                _buildTipoWhatsAppChip('twilio', 'Twilio Bridge (Pagamento p/ uso)'),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      
                       // URL da API
                       _buildTextField(
                         controller: _whatsappApiUrlController,
-                        label: 'URL da Evolution API',
+                        label: _whatsappTipo == 'evolution' ? 'URL da Evolution API' : 'URL da Ponte no Render',
                         icon: Icons.link,
-                        hintText: 'https://sua-api.up.railway.app',
-                        helperText: 'URL da sua instância Evolution API no Railway',
+                        hintText: _whatsappTipo == 'evolution' ? 'https://sua-api.up.railway.app' : 'https://seu-bridge.onrender.com',
+                        helperText: _whatsappTipo == 'evolution' 
+                          ? 'URL da sua instância Evolution' 
+                          : 'URL do serviço que você criou no Render',
                       ),
                       
                       // API Key
                       _buildTextField(
                         controller: _whatsappApiKeyController,
-                        label: 'API Key',
+                        label: _whatsappTipo == 'evolution' ? 'API Key' : 'BRIDGE_API_SECRET',
                         icon: Icons.vpn_key,
-                        hintText: 'Sua API Key',
-                        helperText: 'Chave de autenticação da Evolution API',
+                        hintText: _whatsappTipo == 'evolution' ? 'Sua API Key' : 'Sua senha do Bridge',
+                        helperText: _whatsappTipo == 'evolution' 
+                          ? 'Chave de autenticação' 
+                          : 'A senha que você configurou no Render',
                         obscureText: true,
                       ),
                       
-                      // Nome da Instância
-                      _buildTextField(
-                        controller: _whatsappInstanceNameController,
-                        label: 'Nome da Instância',
-                        icon: Icons.phone_android,
-                        hintText: 'empresa_principal',
-                        helperText: 'Nome da instância criada na Evolution API',
-                      ),
+                      // Nome da Instância (Opcional para Twilio)
+                      if (_whatsappTipo == 'evolution') 
+                        _buildTextField(
+                          controller: _whatsappInstanceNameController,
+                          label: 'Nome da Instância',
+                          icon: Icons.phone_android,
+                          hintText: 'empresa_principal',
+                          helperText: 'Nome da instância criada na Evolution API',
+                        ),
                       
                       const SizedBox(height: 16),
                       
@@ -1113,119 +1165,39 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                                 padding: const EdgeInsets.symmetric(vertical: 12),
                                 side: BorderSide(color: Colors.green.shade400),
                               ),
-                              icon: _whatsappTestando
-                                  ? SizedBox(
-                                      width: 16,
-                                      height: 16,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: Colors.green.shade400,
-                                      ),
-                                    )
-                                  : Icon(Icons.wifi_find, color: Colors.green.shade400),
-                              label: Text(
-                                _whatsappTestando ? 'Testando...' : 'Testar Conexão',
-                                style: TextStyle(color: Colors.green.shade400),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          // Botão Ver QR Code
-                          Expanded(
-                            child: OutlinedButton.icon(
-                              onPressed: _whatsappTestando ? null : _mostrarQRCodeWhatsApp,
-                              style: OutlinedButton.styleFrom(
-                                padding: const EdgeInsets.symmetric(vertical: 12),
-                                side: BorderSide(color: Colors.blue.shade400),
-                              ),
-                              icon: Icon(Icons.qr_code, color: Colors.blue.shade400),
-                              label: Text(
-                                'Ver QR Code',
-                                style: TextStyle(color: Colors.blue.shade400),
-                              ),
+                              icon: _whatsappTestando 
+                                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                                : const Icon(Icons.refresh, color: Colors.green),
+                              label: const Text('TESTAR CONEXÃO', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
                             ),
                           ),
                         ],
                       ),
                       
+                      // Botão para Gerenciamento Avançado
+                      const SizedBox(height: 16),
+                      ElevatedButton.icon(
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => WhatsAppGerenciamentoPage()),
+                          );
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF25D366),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        icon: const Icon(Icons.qr_code_scanner),
+                        label: const Text('ABRIR PAINEL DE CONEXÃO (QR CODE)', style: TextStyle(fontWeight: FontWeight.bold)),
+                      ),
+
                       const SizedBox(height: 12),
-
-                      // Botões Avançados (Desconectar/Deletar)
-                      if (_whatsappConnectionState == 'open') ...[
-                        Row(
-                          children: [
-                            Expanded(
-                              child: OutlinedButton.icon(
-                                onPressed: _whatsappTestando ? null : _desconectarWhatsApp,
-                                style: OutlinedButton.styleFrom(
-                                  padding: const EdgeInsets.symmetric(vertical: 12),
-                                  side: const BorderSide(color: Colors.orange),
-                                ),
-                                icon: const Icon(Icons.logout, color: Colors.orange, size: 18),
-                                label: const Text(
-                                  'Desconectar',
-                                  style: TextStyle(color: Colors.orange, fontSize: 13),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: OutlinedButton.icon(
-                                onPressed: _whatsappTestando ? null : _deletarInstanciaWhatsApp,
-                                style: OutlinedButton.styleFrom(
-                                  padding: const EdgeInsets.symmetric(vertical: 12),
-                                  side: const BorderSide(color: Colors.redAccent),
-                                ),
-                                icon: const Icon(Icons.delete_forever, color: Colors.redAccent, size: 18),
-                                label: const Text(
-                                  'Limpar Instância',
-                                  style: TextStyle(color: Colors.redAccent, fontSize: 13),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                      ],
-
-                      // Informações sobre como configurar
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.05),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Icon(Icons.info_outline, size: 16, color: Colors.white54),
-                                const SizedBox(width: 8),
-                                Text(
-                                  'Como configurar:',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.white70,
-                                    fontSize: 13,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              '1. Crie uma conta no Railway (railway.app)\n'
-                              '2. Deploy o template "Evolution API"\n'
-                              '3. Copie a URL e API Key geradas\n'
-                              '4. Crie uma instância e escaneie o QR Code',
-                              style: TextStyle(
-                                color: Colors.white54,
-                                fontSize: 12,
-                                height: 1.5,
-                              ),
-                            ),
-                          ],
-                        ),
+                      const Text(
+                        'Recomendamos utilizar o painel de conexão acima para configurar seu aparelho via QR Code.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.white38, fontSize: 11),
                       ),
                     ],
                   ],
@@ -1668,6 +1640,37 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
             child: Text('Fechar'),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildTipoWhatsAppChip(String value, String label) {
+    final isSelected = _whatsappTipo == value;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => setState(() => _whatsappTipo = value),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          decoration: BoxDecoration(
+            color: isSelected ? Colors.green.withOpacity(0.2) : Colors.white.withOpacity(0.05),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: isSelected ? Colors.green : Colors.white12,
+              width: isSelected ? 2 : 1,
+            ),
+          ),
+          child: Center(
+            child: Text(
+              label,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: isSelected ? Colors.green.shade200 : Colors.white54,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                fontSize: 11,
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

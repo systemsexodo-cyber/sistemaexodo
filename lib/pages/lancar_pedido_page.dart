@@ -9,7 +9,11 @@ import '../models/cliente.dart';
 import '../models/item_pedido.dart';
 import '../models/forma_pagamento.dart';
 import '../widgets/pagamento_widget.dart';
+import '../models/adicional_produto.dart';
+import 'package:intl/intl.dart';
+import 'package:uuid/uuid.dart';
 import '../theme.dart';
+import '../models/delivery_info.dart';
 import '../widgets/sync_status_widget.dart';
 
 /// Item no carrinho de compras
@@ -17,14 +21,22 @@ class ItemCarrinho {
   final Produto produto;
   int quantidade;
   double precoUnitario;
+  String? observacao;
+  List<AdicionalProduto> adicionais;
 
   ItemCarrinho({
     required this.produto,
     this.quantidade = 1,
     double? precoUnitario,
-  }) : precoUnitario = precoUnitario ?? produto.preco;
+    this.observacao,
+    List<AdicionalProduto>? adicionais,
+  }) : precoUnitario = precoUnitario ?? produto.preco,
+       adicionais = adicionais ?? [];
 
-  double get subtotal => quantidade * precoUnitario;
+  double get subtotal {
+    final totalAdicionais = adicionais.fold(0.0, (sum, a) => sum + a.preco);
+    return quantidade * (precoUnitario + totalAdicionais);
+  }
 
   ItemPedido toItemPedido() {
     return ItemPedido(
@@ -32,6 +44,8 @@ class ItemCarrinho {
       nome: produto.nome,
       quantidade: quantidade,
       preco: precoUnitario,
+      observacao: observacao,
+      adicionais: adicionais,
     );
   }
 }
@@ -100,18 +114,15 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
       }
       // Gerar próximo número de pedido
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        _gerarNumeroPedido();
+        final dataService = Provider.of<DataService>(context, listen: false);
+        setState(() {
+          _numeroPedido = dataService.getProximoNumeroPedido();
+        });
       });
     }
   }
 
-  void _gerarNumeroPedido() {
-    final dataService = Provider.of<DataService>(context, listen: false);
-    final numerosExistentes = dataService.pedidos.map((p) => p.numero).toList();
-    setState(() {
-      _numeroPedido = PedidoService.gerarProximoNumeroPedido(numerosExistentes);
-    });
-  }
+
 
   void _carregarPedidoExistente() {
     final pedido = widget.pedidoExistente!;
@@ -371,10 +382,15 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
   }
 
   void _adicionarProduto(Produto produto, {int quantidade = 1}) {
+    if (produto.temAdicionais) {
+      _exibirSelecaoAdicionais(produto, quantidade: quantidade);
+      return;
+    }
+
     setState(() {
-      // Verifica se o produto já está no carrinho
+      // Verifica se o produto já está no carrinho (apenas se não tiver adicionais)
       final index = _carrinho.indexWhere(
-        (item) => item.produto.id == produto.id,
+        (item) => item.produto.id == produto.id && item.adicionais.isEmpty,
       );
 
       if (index != -1) {
@@ -390,7 +406,13 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
       _mostrarResultadosBusca = false;
     });
 
-    // Mostra feedback
+    _mostrarFeedbackAdicao(produto);
+    
+    // Foca novamente na busca
+    _buscaFocusNode.requestFocus();
+  }
+
+  void _mostrarFeedbackAdicao(Produto produto) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('${produto.nome} adicionado ao pedido'),
@@ -399,9 +421,140 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
         behavior: SnackBarBehavior.floating,
       ),
     );
+  }
 
-    // Foca novamente na busca
-    _buscaFocusNode.requestFocus();
+  void _exibirSelecaoAdicionais(Produto produto, {int quantidade = 1}) {
+    List<AdicionalProduto> selecionados = [];
+    final precoBase = produto.preco;
+    
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final totalAdicionais = selecionados.fold(0.0, (sum, a) => sum + a.preco);
+          
+          return AlertDialog(
+            backgroundColor: const Color(0xFF1E1E2E),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: Text(produto.nome, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+            content: SizedBox(
+              width: 320,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Selecione os adicionais:', style: TextStyle(color: Colors.grey, fontSize: 14)),
+                  const SizedBox(height: 12),
+                  Flexible(
+                    child: Consumer<DataService>(
+                      builder: (context, dataService, _) {
+                        final empresa = dataService.empresaAtual;
+                        final List<AdicionalProduto> listaExibicao = [...produto.adicionais.where((a) => a.ativo)];
+                        
+                        if (empresa != null && empresa.modelosAdicionais.isNotEmpty) {
+                          for (final modelo in empresa.modelosAdicionais) {
+                            final nomeNormalizado = modelo.nome.trim().toLowerCase();
+                            if (!listaExibicao.any((a) => a.nome.trim().toLowerCase() == nomeNormalizado)) {
+                              listaExibicao.add(modelo);
+                            }
+                          }
+                        }
+
+                        if (listaExibicao.isEmpty) {
+                          return const Center(
+                            child: Padding(
+                              padding: EdgeInsets.all(20.0),
+                              child: Text('Nenhum adicional disponível', style: TextStyle(color: Colors.white24)),
+                            ),
+                          );
+                        }
+
+                        return ListView.builder(
+                          shrinkWrap: true,
+                          itemCount: listaExibicao.length,
+                          itemBuilder: (context, index) {
+                            final adicional = listaExibicao[index];
+                            final qtd = selecionados.where((s) => s.id == adicional.id).length;
+                            final estaSelecionado = qtd > 0;
+                            
+                            return ListTile(
+                              dense: true,
+                              title: Text(adicional.nome, style: const TextStyle(color: Colors.white, fontSize: 14)),
+                              subtitle: Text('+ R\$ ${adicional.preco.toStringAsFixed(2)}', style: const TextStyle(color: Colors.greenAccent, fontSize: 12)),
+                              trailing: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (estaSelecionado) ...[
+                                    IconButton(
+                                      icon: const Icon(Icons.remove_circle_outline, color: Colors.white38),
+                                      onPressed: () {
+                                        setDialogState(() {
+                                          final idx = selecionados.indexWhere((s) => s.id == adicional.id);
+                                          if (idx != -1) selecionados.removeAt(idx);
+                                        });
+                                      },
+                                    ),
+                                    Text('$qtd', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                                  ],
+                                  IconButton(
+                                    icon: Icon(estaSelecionado ? Icons.add_circle : Icons.add_circle_outline, 
+                                      color: estaSelecionado ? Colors.orange : Colors.white24),
+                                    onPressed: () {
+                                      setDialogState(() {
+                                        selecionados.add(adicional);
+                                      });
+                                    },
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        );
+                      }
+                    ),
+                  ),
+                  const Divider(color: Colors.white24),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('Total Item:', style: TextStyle(color: Colors.white)),
+                      Text('R\$ ${(precoBase + totalAdicionais).toStringAsFixed(2)}', 
+                        style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 16)),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('CANCELAR', style: TextStyle(color: Colors.grey)),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  setState(() {
+                    _carrinho.add(
+                      ItemCarrinho(
+                        produto: produto,
+                        quantidade: quantidade,
+                        adicionais: List<AdicionalProduto>.from(selecionados),
+                        observacao: produto.observacaoPadrao,
+                      ),
+                    );
+                    _buscaController.clear();
+                    _mostrarResultadosBusca = false;
+                  });
+                  Navigator.pop(context);
+                  _mostrarFeedbackAdicao(produto);
+                  _buscaFocusNode.requestFocus();
+                },
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+                child: const Text('ADICIONAR'),
+              ),
+            ],
+          );
+        }
+      ),
+    );
   }
 
   void _removerItem(int index) {
@@ -446,6 +599,69 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
 
   int get _totalItens {
     return _carrinho.fold(0, (sum, item) => sum + item.quantidade);
+  }
+
+  void _editarObservacaoItem(int index) {
+    final item = _carrinho[index];
+    final controller = TextEditingController(text: item.observacao ?? '');
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1a237e),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            const Icon(Icons.notes, color: Colors.white),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Observação: ${item.produto.nome}',
+                style: const TextStyle(color: Colors.white, fontSize: 18),
+              ),
+            ),
+          ],
+        ),
+        content: TextField(
+          controller: controller,
+          maxLines: 3,
+          autofocus: true,
+          style: const TextStyle(color: Colors.white),
+          decoration: InputDecoration(
+            hintText: 'Ex: Sem cebola, gelo e limão...',
+            hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
+            filled: true,
+            fillColor: Colors.black.withOpacity(0.2),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide.none,
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('CANCELAR', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              setState(() {
+                _carrinho[index].observacao = controller.text.trim().isEmpty 
+                    ? null 
+                    : controller.text.trim();
+              });
+              Navigator.pop(context);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.greenAccent.shade700,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            child: const Text('SALVAR'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _salvarPedido() async {
@@ -505,6 +721,7 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
       produtos: _carrinho.map((item) => item.toItemPedido()).toList(),
       servicos: widget.pedidoExistente?.servicos ?? [],
       pagamentos: _pagamentos,
+      deliveryInfo: widget.pedidoExistente?.deliveryInfo, // Preserva deliveryInfo se existir
       createdAt: widget.pedidoExistente?.createdAt ?? DateTime.now(),
       updatedAt: DateTime.now(),
     );
@@ -584,7 +801,7 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
             onPressed: () => Navigator.of(context).pop(),
           ),
           actions: [
-            const SyncStatusWidget(),
+            SyncStatusWidget(),
             TextButton.icon(
               onPressed: _carrinho.isNotEmpty ? _salvarPedido : null,
               icon: const Icon(Icons.save, color: Colors.white),
@@ -1127,14 +1344,66 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'R\$ ${item.precoUnitario.toStringAsFixed(2)} / ${item.produto.unidade}',
+                    'Subtotal: R\$ ${(item.precoUnitario + item.adicionais.fold(0.0, (sum, a) => sum + a.preco)).toStringAsFixed(2)} / ${item.produto.unidade}',
                     style: TextStyle(
                       color: Colors.white.withOpacity(0.7),
                       fontSize: 14,
                     ),
                   ),
+                  if (item.adicionais.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    ...item.adicionais.map((adicional) => Padding(
+                      padding: const EdgeInsets.only(left: 4),
+                      child: Text(
+                        '+ ${adicional.nome} (R\$ ${adicional.preco.toStringAsFixed(2)})',
+                        style: const TextStyle(color: Colors.greenAccent, fontSize: 11),
+                      ),
+                    )),
+                  ],
+                  if (item.observacao != null && item.observacao!.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.yellow.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: Colors.yellow.withOpacity(0.3)),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.info_outline, color: Colors.yellow, size: 12),
+                            const SizedBox(width: 4),
+                            Flexible(
+                              child: Text(
+                                item.observacao!,
+                                style: const TextStyle(color: Colors.yellow, fontSize: 11),
+                                overflow: TextOverflow.ellipsis,
+                                maxLines: 2,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                 ],
               ),
+            ),
+
+            // Botão Observação
+            IconButton(
+              icon: Icon(
+                item.observacao != null && item.observacao!.isNotEmpty 
+                  ? Icons.comment 
+                  : Icons.add_comment_outlined,
+                color: item.observacao != null && item.observacao!.isNotEmpty
+                  ? Colors.yellow
+                  : Colors.white.withOpacity(0.4),
+                size: 20,
+              ),
+              onPressed: () => _editarObservacaoItem(index),
+              tooltip: 'Adicionar observação ao item',
             ),
 
             // Controle de quantidade

@@ -504,47 +504,58 @@ class _DashboardPageState extends State<DashboardPage> {
     DateTime inicioMes,
     DateTime fimMes,
   ) {
-    // Receitas: Vendas do balcão + Pedidos recebidos do mês
-    // IMPORTANTE: Excluir vendas e pedidos cancelados
+    double totalEntradas = 0;
+    double totalSaidas = 0;
+
+    // 1. Vendas Balcão (Entradas)
     final vendasMes = dataService.vendasBalcao.where((v) {
-      if (v.isCancelada) return false; // Não incluir vendas canceladas
-      return v.dataVenda.isAfter(inicioMes) &&
-          v.dataVenda.isBefore(fimMes);
+      if (v.isCancelada) return false;
+      return v.dataVenda.isAfter(inicioMes) && v.dataVenda.isBefore(fimMes);
     }).toList();
+    totalEntradas += vendasMes.fold(0.0, (sum, v) => sum + v.valorTotal);
 
-    final pedidosMes = dataService.pedidos.where((p) {
-      if (p.status.toLowerCase() == 'cancelado') return false; // Não incluir pedidos cancelados
-      return p.dataPedido.isAfter(inicioMes) &&
-          p.dataPedido.isBefore(fimMes);
-    }).toList();
+    // 2. Pedidos - Recebimentos no período (Entradas)
+    for (var p in dataService.pedidos.where((p) => p.status.toLowerCase() != 'cancelado')) {
+      for (var pag in p.pagamentos.where((pag) => pag.recebido && pag.dataRecebimento != null)) {
+        if (pag.dataRecebimento!.isAfter(inicioMes) && pag.dataRecebimento!.isBefore(fimMes)) {
+          totalEntradas += pag.valor;
+        }
+      }
+    }
 
-    // Total de receitas = vendas + pedidos recebidos
-    double totalVendas = vendasMes.fold(0.0, (sum, v) => sum + v.valorTotal);
-    double totalPedidosRecebidos = pedidosMes.fold(
-      0.0,
-      (sum, p) => sum + p.totalRecebido,
-    );
-    double totalReceitas = totalVendas + totalPedidosRecebidos;
+    // 3. Suprimentos de Caixa (Entradas)
+    final suprimentos = dataService.suprimentos.where((s) => s.data.isAfter(inicioMes) && s.data.isBefore(fimMes));
+    totalEntradas += suprimentos.fold(0.0, (sum, s) => sum + s.valor);
 
-    // Despesas: Contas a pagar que foram pagas no mês
+    // 4. Sangrias de Caixa (Saídas)
+    final sangrias = dataService.sangrias.where((s) => s.data.isAfter(inicioMes) && s.data.isBefore(fimMes));
+    totalSaidas += sangrias.fold(0.0, (sum, s) => sum + s.valor);
+
+    // 5. Contas Pagas (Saídas) - Apenas se não estiverem já na sangria
     final contasPagas = dataService.contasPagar.where((c) {
-      if (c.status != StatusContaPagar.pago) return false;
-      if (c.dataPagamento == null) return false;
-      return c.dataPagamento!.isAfter(inicioMes) &&
-          c.dataPagamento!.isBefore(fimMes);
+      if (c.status != StatusContaPagar.pago || c.dataPagamento == null) return false;
+      return c.dataPagamento!.isAfter(inicioMes) && c.dataPagamento!.isBefore(fimMes);
     }).toList();
 
-    double totalDespesas = contasPagas.fold(0.0, (sum, c) => sum + (c.valorPago ?? c.valor));
+    for (var cp in contasPagas) {
+      bool jaContabilizadoSgr = dataService.sangrias.any((s) => 
+        s.data.day == cp.dataPagamento!.day && 
+        s.valor == (cp.valorPago ?? cp.valor) && 
+        s.motivo.contains(cp.descricao));
+      
+      if (!jaContabilizadoSgr) {
+        totalSaidas += cp.valorPago ?? cp.valor;
+      }
+    }
 
-    // Lucro líquido = Receitas - Despesas
-    double lucroLiquido = totalReceitas - totalDespesas;
+    double lucroLiquido = totalEntradas - totalSaidas;
 
     return {
-      'receitas': totalReceitas,
-      'despesas': totalDespesas,
+      'receitas': totalEntradas,
+      'despesas': totalSaidas,
       'lucroLiquido': lucroLiquido,
-      'vendas': totalVendas,
-      'pedidosRecebidos': totalPedidosRecebidos,
+      'vendas': totalEntradas, // Legado
+      'pedidosRecebidos': 0.0, // Legado
     };
   }
 
@@ -1343,7 +1354,7 @@ class _DashboardPageState extends State<DashboardPage> {
             // Gráfico de barras
             if (maxValor > 0) ...[
               SizedBox(
-                height: alturaGrafico,
+                height: alturaGrafico + 60, // Aumentado para evitar overflow dos textos abaixo das barras
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [

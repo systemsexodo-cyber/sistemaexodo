@@ -11,6 +11,7 @@ import 'package:sistema_exodo_novo/services/data_service.dart';
 import 'package:sistema_exodo_novo/services/auth_service.dart';
 import 'package:sistema_exodo_novo/services/cliente_auth_service.dart';
 import 'package:sistema_exodo_novo/services/carrinho_service.dart';
+import 'package:sistema_exodo_novo/services/theme_service.dart';
 
 import 'dart:async';
 import 'package:sistema_exodo_novo/services/firebase_init_service.dart';
@@ -18,6 +19,7 @@ import 'package:provider/provider.dart';
 import 'package:sistema_exodo_novo/widgets/exodo_loading.dart';
 import 'package:sistema_exodo_novo/pages/loja_publica_wrapper.dart';
 import 'package:flutter/foundation.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'dart:html' as html show window;
 
 void main() async {
@@ -26,9 +28,13 @@ void main() async {
   if (kIsWeb) {
     try {
       print('>>> [SISTEMA] Iniciando Boot em modo Web');
+      await Hive.initFlutter();
+      print('>>> ✓ Hive inicializado com sucesso no Web');
     } catch (e) {
-      print('>>> [SISTEMA] Erro no Boot: $e');
+      print('>>> [SISTEMA] Erro no Boot / Hive: $e');
     }
+  } else {
+     await Hive.initFlutter();
   }
 
   print('>>> [APLICATIVO] Iniciando Versão 1.0.8 (Fix: Cache & Sync)...');
@@ -68,7 +74,6 @@ void main() async {
   // Carregar dados em background (não bloqueia a UI)
   _carregarDadosEmBackground(dataService, authService);
 
-  // Iniciar app IMEDIATAMENTE (não espera carregamento)
   runApp(
     MultiProvider(
       providers: [
@@ -76,7 +81,7 @@ void main() async {
         ChangeNotifierProvider.value(value: authService),
         ChangeNotifierProvider.value(value: clienteAuthService),
         ChangeNotifierProvider.value(value: carrinhoService),
-
+        ChangeNotifierProvider(create: (_) => ThemeService()),
       ],
       child: const MyApp(),
     ),
@@ -262,8 +267,8 @@ class _MyAppState extends State<MyApp> {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<AuthService>(
-      builder: (context, authService, _) {
+    return Consumer2<AuthService, ThemeService>(
+      builder: (context, authService, themeService, _) {
         // 1. USAR ROTA CACHEADA - Não recalcular a cada rebuild do Consumer!
         final rotaMap = _rotaInicialCache ?? AppRouter.analisarUrl();
         
@@ -273,9 +278,12 @@ class _MyAppState extends State<MyApp> {
         final String? subRotaInterna = rotaMap['interna'];
         final String? codigoLink = null;
 
-        // 2. CONFIGURAR TEMA (Baseado na empresa se disponível)
+        // 2. CONFIGURAR TEMA (Baseado no ThemeService e empresa)
         final empresaCores = authService.empresaAtual;
-        final cores = AppTheme.getCoresEmpresa(empresaCores?.corPrimaria, empresaCores?.corSecundaria);
+        final config = themeService.getThemeConfig(
+          AppTheme.getCoresEmpresa(empresaCores?.corPrimaria, empresaCores?.corSecundaria)['primaria'],
+          AppTheme.getCoresEmpresa(empresaCores?.corPrimaria, empresaCores?.corSecundaria)['secundaria'],
+        );
 
         // LOG DE DIAGNÓSTICO FINAL
         debugPrint('>>> [SISTEMA-ROTA] Montando MaterialApp (cache):');
@@ -288,8 +296,10 @@ class _MyAppState extends State<MyApp> {
           title: isAgendamentoRoute ? 'Agendamento Online' : 'Exodo',
           debugShowCheckedModeBanner: false,
           theme: AppTheme.getTheme(
-            corPrimaria: cores['primaria'],
-            corSecundaria: cores['secundaria'],
+            corPrimaria: config['primaria'],
+            corSecundaria: config['secundaria'],
+            corFundo: config['fundo'],
+            brightness: config['brightness'] ?? Brightness.dark,
           ),
           darkTheme: AppTheme.darkTheme,
           themeMode: ThemeMode.system,

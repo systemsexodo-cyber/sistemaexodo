@@ -37,8 +37,11 @@ import 'historico_operacoes_page.dart';
 import 'gerenciar_usuarios_page.dart';
 import 'trocas_devolucoes_page.dart';
 import 'configuracoes_agenda_page.dart';
+import 'whatsapp_gerenciamento_page.dart';
 import '../services/data_service.dart';
+import '../services/theme_service.dart';
 import '../widgets/sync_status_widget.dart';
+import 'adicionar_empresa_page.dart';
 
 // Import condicional para Web
 import 'html_helper_stub.dart' if (dart.library.html) 'html_helper_web.dart' as html_helper;
@@ -54,6 +57,186 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   final PageController _pageController = PageController();
   int _currentPage = 0;
+  List<String>? _customOrder;
+  bool _isReordering = false;
+
+  // Lista mestre de itens do menu (conforme estão hoje no grid)
+  late final List<Map<String, dynamic>> _menuItems;
+
+  void _inicializarMenu() {
+    _menuItems = [
+      {
+        'id': 'pdv',
+        'title': 'PDV',
+        'subtitle': 'Ponto de Venda',
+        'icon': Icons.point_of_sale,
+        'color': const Color(0xFF00BCD4),
+        'tela': TelaSistema.pdv,
+        'permissao': TipoPermissao.vendasVisualizar,
+        'page': (BuildContext context) => VendaDiretaPage(),
+      },
+      {
+        'id': 'pedidos',
+        'title': 'Pedidos',
+        'subtitle': 'Central de Pedidos',
+        'icon': Icons.receipt_long,
+        'color': const Color(0xFF9C27B0),
+        'tela': TelaSistema.pedidos,
+        'page': (BuildContext context) => const PedidosPage(),
+      },
+      {
+        'id': 'clientes',
+        'title': 'Clientes',
+        'icon': Icons.person,
+        'color': const Color(0xFF2196F3),
+        'tela': TelaSistema.clientes,
+        'permissao': TipoPermissao.clientesVisualizar,
+        'page': (BuildContext context) => const ClientesPage(),
+      },
+      {
+        'id': 'produtos',
+        'title': 'Produtos',
+        'icon': Icons.shopping_bag,
+        'color': const Color(0xFF4CAF50),
+        'tela': TelaSistema.produtos,
+        'permissao': TipoPermissao.produtosVisualizar,
+        'page': (BuildContext context) => ProdutosPage(),
+      },
+      {
+        'id': 'servicos',
+        'title': 'Serviços',
+        'icon': Icons.build,
+        'color': const Color(0xFFFF9800),
+        'tela': TelaSistema.servicos,
+        'page': (BuildContext context) => ServicosPage(),
+      },
+      {
+        'id': 'funcionarios',
+        'title': 'Funcionários',
+        'subtitle': 'Vendedores',
+        'icon': Icons.people,
+        'color': const Color(0xFF607D8B),
+        'tela': TelaSistema.funcionarios,
+        'page': (BuildContext context) => const FuncionariosPage(),
+      },
+      {
+        'id': 'entrada',
+        'title': 'Entrada',
+        'subtitle': 'Mercadorias',
+        'icon': Icons.inventory,
+        'color': const Color(0xFFE91E63),
+        'tela': TelaSistema.entradaMercadorias,
+        'page': (BuildContext context) => const EntradaMercadoriasPage(),
+      },
+      {
+        'id': 'caixa',
+        'title': 'Fluxo de Caixa',
+        'subtitle': 'Entradas e Saídas',
+        'icon': Icons.account_balance_wallet,
+        'color': const Color(0xFF4DB6AC),
+        'tela': TelaSistema.caixa,
+        'page': (BuildContext context) => const CaixaPage(),
+      },
+      {
+        'id': 'contas_pagar',
+        'title': 'Contas a Pagar',
+        'subtitle': 'Despesas',
+        'icon': Icons.payment,
+        'color': const Color(0xFFD32F2F),
+        'tela': TelaSistema.contasPagar,
+        'page': (BuildContext context) => const ContasPagarPage(),
+      },
+      {
+        'id': 'agenda_contas',
+        'title': 'Agenda',
+        'subtitle': 'Contas Semanais',
+        'icon': Icons.calendar_today,
+        'color': const Color(0xFF1976D2),
+        'tela': TelaSistema.agendaContas,
+        'page': (BuildContext context) => const AgendaContasPage(),
+      },
+      {
+        'id': 'cozinha',
+        'title': 'Cozinha e Bar',
+        'subtitle': 'Pedidos',
+        'icon': Icons.restaurant,
+        'color': const Color(0xFFFF5722),
+        'tela': TelaSistema.cozinhaBar,
+        'permissao': TipoPermissao.cozinhaVisualizar,
+        'page': (BuildContext context) => const CozinhaBarPage(),
+      },
+      {
+        'id': 'mesas',
+        'title': 'Mesas/Comandas',
+        'subtitle': 'Gerenciamento',
+        'icon': Icons.table_restaurant,
+        'color': const Color(0xFFFF9800),
+        'tela': TelaSistema.mesas,
+        'permissao': TipoPermissao.cozinhaFuncionario,
+        'page': (BuildContext context) => CozinhaMesasFuncionarioPage(),
+      },
+      {
+        'id': 'personalizar',
+        'title': 'Personalizar',
+        'subtitle': 'Loja Online',
+        'icon': Icons.palette,
+        'color': const Color(0xFFFF6B6B),
+        'tela': TelaSistema.personalizarLoja,
+        'page': (BuildContext context) => const PersonalizarLojaPage(),
+      },
+      {
+        'id': 'whatsapp',
+        'title': 'WhatsApp',
+        'subtitle': 'Automação',
+        'icon': Icons.chat_bubble_outline,
+        'color': const Color(0xFF25D366),
+        'page': (BuildContext context) => const WhatsAppGerenciamentoPage(),
+      },
+      {
+        'id': 'vendedor_dash',
+        'title': 'Vendedor',
+        'subtitle': 'Dashboard',
+        'icon': Icons.dashboard_customize,
+        'color': const Color(0xFF00BCD4),
+        'tela': TelaSistema.vendedorDashboard,
+        'page': (BuildContext context) => const VendedorDashboardPage(),
+      },
+    ];
+  }
+
+  Future<void> _carregarOrdem() async {
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final savedOrder = await dataService.storage.carregarLista('home_button_order');
+    if (savedOrder.isNotEmpty) {
+      setState(() {
+        _customOrder = savedOrder.map((e) => e.toString()).toList();
+      });
+    }
+  }
+
+  Future<void> _salvarOrdem() async {
+    if (_customOrder == null) return;
+    final dataService = Provider.of<DataService>(context, listen: false);
+    await dataService.storage.salvar('home_button_order', _customOrder);
+  }
+
+  List<Map<String, dynamic>> get _orderedMenuItems {
+    if (_customOrder == null || _customOrder!.isEmpty) return _menuItems;
+    
+    // Ordenar baseado no customOrder, mantendo novos itens no final se surgirem
+    List<Map<String, dynamic>> ordered = [];
+    for (var id in _customOrder!) {
+      final item = _menuItems.where((i) => i['id'] == id).firstOrNull;
+      if (item != null) ordered.add(item);
+    }
+    
+    for (var item in _menuItems) {
+      if (!ordered.any((i) => i['id'] == item['id'])) {
+        ordered.add(item);
+      }
+    }
+    return ordered;
+  }
 
   void _fazerHardRefresh(BuildContext context) {
     if (kIsWeb) {
@@ -184,34 +367,34 @@ class _HomePageState extends State<HomePage> {
           actions: [
             const SyncStatusWidget(),
 
-            // Bridge Monitor Global
-            Consumer2<AuthService, DataService>(
-              builder: (context, authService, dataService, _) {
-                final bool isOnline = dataService.isEmpresaBridgeOnline(authService.empresaAtual?.cnpj);
-                final int totalBridges = dataService.bridgeOnlineCount;
-                if (totalBridges == 0 && !isOnline) return const SizedBox.shrink();
-                
-                return Tooltip(
-                  message: isOnline 
-                    ? 'Emissor NFC-e ONLINE' 
-                    : '$totalBridges terminal(is) detectado(s)',
-                  child: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: isOnline 
-                        ? Colors.green.withOpacity(0.1) 
-                        : Colors.orange.withOpacity(0.1),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(
-                      Icons.print,
-                      size: 20,
-                      color: isOnline ? Colors.green : Colors.orange,
-                    ),
-                  ),
+            // Botão de Reordenar (Feedback Visual)
+            if (_customOrder != null)
+              IconButton(
+                icon: const Icon(Icons.restore, color: Colors.orangeAccent),
+                tooltip: 'Votar Ordem Padrão',
+                onPressed: () {
+                  setState(() {
+                    _customOrder = null;
+                  });
+                  _salvarOrdem();
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Ordem dos botões resetada para o padrão')),
+                  );
+                },
+              ),
+
+            // Botão de Troca de Tema
+            Consumer<ThemeService>(
+              builder: (context, themeService, _) {
+                return IconButton(
+                  icon: Icon(themeService.getThemeIcon(themeService.currentTheme), color: Colors.blueAccent),
+                  tooltip: 'Trocar Tema Visual',
+                  onPressed: () => _mostrarSeletorTema(context, themeService),
                 );
               },
             ),
+
+
 
             IconButton(
               icon: Icon(
@@ -307,6 +490,34 @@ class _HomePageState extends State<HomePage> {
                 tooltip: 'Hard Refresh (Limpar Cache)',
                 onPressed: () => _fazerHardRefresh(context),
               ),
+            // Botão Configuração da Empresa (Atalho Rápido)
+            Builder(
+              builder: (context) {
+                final authService = Provider.of<AuthService>(context);
+                final dataService = Provider.of<DataService>(context);
+                final usuarioAtual = authService.usuarioAtual;
+                
+                final podeAcessar = usuarioAtual != null && 
+                    (usuarioAtual.email.toLowerCase() == 'user' || usuarioAtual.isMaster);
+                
+                if (!podeAcessar || dataService.empresaAtual == null) {
+                  return const SizedBox.shrink();
+                }
+
+                return IconButton(
+                  icon: const Icon(Icons.business, color: Colors.amber),
+                  tooltip: 'Configurações de Impressão e Empresa',
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => AdicionarEmpresaPage(empresa: dataService.empresaAtual),
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
             IconButton(
               icon: const Icon(Icons.logout),
               tooltip: 'Sair do sistema',
@@ -357,7 +568,8 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
-    // Inicializar locale
+    _inicializarMenu();
+    _carregarOrdem();
     
     // Se temos uma página inicial via URL, navegar para ela após o build
     if (widget.initialPage != null && widget.initialPage != 'home' && widget.initialPage != '') {
@@ -420,6 +632,7 @@ class _HomePageState extends State<HomePage> {
         break;
       case 'trocas-devolucoes': page = const TrocasDevolucoesBuscarPage(); urlPath = '/trocas-devolucoes'; break;
       case 'configuracoes-agenda': page = const ConfiguracoesAgendaPage(); urlPath = '/configuracoes-agenda'; break;
+      case 'whatsapp': page = const WhatsAppGerenciamentoPage(); urlPath = '/whatsapp'; break;
     }
 
     if (page != null) {
@@ -443,6 +656,97 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  void _mostrarSeletorTema(BuildContext context, ThemeService themeService) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: const Column(
+          children: [
+            Icon(Icons.palette_outlined, color: Colors.blueAccent, size: 40),
+            SizedBox(height: 12),
+            Text('Escolha o Visual', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            Text('Selecione uma paleta para o sistema', style: TextStyle(color: Colors.white54, fontSize: 13, fontWeight: FontWeight.normal)),
+          ],
+        ),
+        content: SizedBox(
+          width: 320,
+          child: ListView.separated(
+            shrinkWrap: true,
+            itemCount: AppThemeType.values.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 12),
+            itemBuilder: (context, index) {
+              final type = AppThemeType.values[index];
+              final isSelected = themeService.currentTheme == type;
+              
+              final config = themeService.getThemeConfig(Colors.blue, Colors.blueGrey);
+              
+              // Cores estáticas para o preview para evitar recursão ou complexidade desnecessária no loop
+              Color prim, sec, bg;
+              bool isLight = false;
+              
+              if (type == AppThemeType.purple) { prim = const Color(0xFF6200EE); sec = const Color(0xFF9575CD); bg = const Color(0xFF0F0E17); }
+              else if (type == AppThemeType.ocean) { prim = const Color(0xFF00BFA5); sec = const Color(0xFF01579B); bg = const Color(0xFF010B13); }
+              else if (type == AppThemeType.emerald) { prim = const Color(0xFF43A047); sec = const Color(0xFFC0CA33); bg = const Color(0xFF0A140B); }
+              else if (type == AppThemeType.snow) { prim = const Color(0xFF2196F3); sec = const Color(0xFF64B5F6); bg = const Color(0xFFF8F9FA); isLight = true; }
+              else if (type == AppThemeType.sand) { prim = const Color(0xFF795548); sec = const Color(0xFFA1887F); bg = const Color(0xFFF5F5F0); isLight = true; }
+              else if (type == AppThemeType.diamond) { prim = const Color(0xFF1976D2); sec = const Color(0xFF0D47A1); bg = const Color(0xFF010A1A); }
+              else { prim = Colors.blue; sec = Colors.blueGrey; bg = const Color(0xFF10151B); }
+
+              return InkWell(
+                onTap: () {
+                  themeService.setTheme(type);
+                  Navigator.pop(context);
+                },
+                borderRadius: BorderRadius.circular(16),
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: isSelected ? Colors.blueAccent.withOpacity(0.1) : Colors.white.withOpacity(0.05),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: isSelected ? Colors.blueAccent : Colors.white10, width: 2),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 48,
+                        height: 48,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(colors: [bg, prim, sec]),
+                          borderRadius: BorderRadius.circular(12),
+                          border: isLight ? Border.all(color: Colors.black12) : null,
+                        ),
+                        child: Icon(themeService.getThemeIcon(type), color: isLight ? Colors.black54 : Colors.white70, size: 24),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              themeService.getThemeName(type),
+                              style: TextStyle(color: isSelected ? Colors.blueAccent : Colors.white, fontWeight: FontWeight.bold),
+                            ),
+                            Text(
+                              isLight ? 'Claro / Minimalista' : 'Escuro / Moderno',
+                              style: TextStyle(color: Colors.white54, fontSize: 10),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (isSelected) const Icon(Icons.check_circle, color: Colors.blueAccent),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _pageController.dispose();
@@ -450,258 +754,115 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildNavigationGrid(BuildContext context) {
+    final items = _orderedMenuItems;
+    
     return Column(
       children: [
-        // PRIMEIRA LINHA (OS PRINCIPAIS): PDV e Pedidos
-        Row(
-          children: [
-            Expanded(
-              child: TelaAccessWidget(
-                tela: TelaSistema.pdv,
-                child: PermissionWidget(
-                  permissao: TipoPermissao.vendasVisualizar,
-                  child: _buildNavButton(
-                    context,
-                    title: 'PDV',
-                    subtitle: 'Ponto de Venda',
-                    icon: Icons.point_of_sale,
-                    color: const Color(0xFF00BCD4),
-                    page: VendaDiretaPage(),
+        // Instrução rápida se estiver em modo de reordenação (pc)
+        if (_isReordering)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.blue.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.blue.withOpacity(0.3)),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.info_outline, color: Colors.blue, size: 20),
+                  SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      "Pressione e segure para arrastar os botões. Clique em 'Concluir' no topo para salvar.",
+                      style: TextStyle(color: Colors.white, fontSize: 13),
+                    ),
                   ),
-                ),
+                ],
               ),
             ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: TelaAccessWidget(
-                tela: TelaSistema.pedidos,
-                child: _buildNavButton(
-                  context,
-                  title: 'Pedidos',
-                  subtitle: 'Central de Pedidos',
-                  icon: Icons.receipt_long,
-                  color: const Color(0xFF9C27B0),
-                  page: const PedidosPage(),
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        
-        // SEGUNDA LINHA (CADASTROS): Clientes e Produtos
-        Row(
-          children: [
-            Expanded(
-              child: TelaAccessWidget(
-                tela: TelaSistema.clientes,
-                child: PermissionWidget(
-                  permissao: TipoPermissao.clientesVisualizar,
-                  child: _buildNavButton(
-                    context,
-                    title: 'Clientes',
-                    icon: Icons.person,
-                    color: const Color(0xFF2196F3),
-                    page: const ClientesPage(),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: TelaAccessWidget(
-                tela: TelaSistema.produtos,
-                child: PermissionWidget(
-                  permissao: TipoPermissao.produtosVisualizar,
-                  child: _buildNavButton(
-                    context,
-                    title: 'Produtos',
-                    icon: Icons.shopping_bag,
-                    color: const Color(0xFF4CAF50),
-                    page: ProdutosPage(),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        
-        // TERCEIRA LINHA: Serviços e Funcionários (RAXADO NO MEIO)
-        Row(
-          children: [
-            Expanded(
-              child: TelaAccessWidget(
-                tela: TelaSistema.servicos,
-                child: _buildNavButton(
-                  context,
-                  title: 'Serviços',
-                  icon: Icons.build,
-                  color: const Color(0xFFFF9800),
-                  page: ServicosPage(),
-                ),
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: TelaAccessWidget(
-                tela: TelaSistema.funcionarios,
-                child: _buildNavButton(
-                  context,
-                  title: 'Funcionários',
-                  subtitle: 'Vendedores',
-                  icon: Icons.people,
-                  color: const Color(0xFF607D8B),
-                  page: const FuncionariosPage(),
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        
-        // QUARTA LINHA (OPERAÇÕES): Entrada e Caixa
-        Row(
-          children: [
-            Expanded(
-              child: TelaAccessWidget(
-                tela: TelaSistema.entradaMercadorias,
-                child: _buildNavButton(
-                  context,
-                  title: 'Entrada',
-                  subtitle: 'Mercadorias',
-                  icon: Icons.inventory,
-                  color: const Color(0xFFE91E63),
-                  page: const EntradaMercadoriasPage(),
-                ),
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: TelaAccessWidget(
-                tela: TelaSistema.caixa,
-                child: _buildNavButton(
-                  context,
-                  title: 'Fluxo de Caixa',
-                  subtitle: 'Entradas e Saídas',
-                  icon: Icons.account_balance_wallet,
-                  color: const Color(0xFF4DB6AC),
-                  page: const CaixaPage(),
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        
-        // QUINTA LINHA: Contas a Pagar e Agenda
-        Row(
-          children: [
-            Expanded(
-              child: TelaAccessWidget(
-                tela: TelaSistema.contasPagar,
-                child: _buildNavButton(
-                  context,
-                  title: 'Contas a Pagar',
-                  subtitle: 'Despesas',
-                  icon: Icons.payment,
-                  color: const Color(0xFFD32F2F),
-                  page: const ContasPagarPage(),
-                ),
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: TelaAccessWidget(
-                tela: TelaSistema.agendaContas,
-                child: _buildNavButton(
-                  context,
-                  title: 'Agenda',
-                  subtitle: 'Contas Semanais',
-                  icon: Icons.calendar_today,
-                  color: const Color(0xFF1976D2),
-                  page: const AgendaContasPage(),
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        
-        // SEXTA LINHA: Restaurante / Atendimento
-        Row(
-          children: [
-            Expanded(
-              child: TelaAccessWidget(
-                tela: TelaSistema.cozinhaBar,
-                child: PermissionWidget(
-                  permissao: TipoPermissao.cozinhaVisualizar,
-                  child: _buildNavButton(
-                    context,
-                    title: 'Cozinha e Bar',
-                    subtitle: 'Pedidos',
-                    icon: Icons.restaurant,
-                    color: const Color(0xFFFF5722),
-                    page: const CozinhaBarPage(),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: TelaAccessWidget(
-                tela: TelaSistema.mesas,
-                child: PermissionWidget(
-                  permissao: TipoPermissao.cozinhaFuncionario,
-                  child: _buildNavButton(
-                    context,
-                    title: 'Mesas/Comandas',
-                    subtitle: 'Gerenciamento',
-                    icon: Icons.table_restaurant,
-                    color: const Color(0xFFFF9800),
-                    page: CozinhaMesasFuncionarioPage(),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        
-        // SÉTIMA LINHA: E-commerce
-        Row(
-          children: [
-            Expanded(
-              child: TelaAccessWidget(
-                tela: TelaSistema.personalizarLoja,
-                child: _buildNavButton(
-                  context,
-                  title: 'Personalizar',
-                  subtitle: 'Loja Online',
-                  icon: Icons.palette,
-                  color: const Color(0xFFFF6B6B),
-                  page: const PersonalizarLojaPage(),
-                ),
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: TelaAccessWidget(
-                tela: TelaSistema.vendedorDashboard,
-                child: _buildNavButton(
-                  context,
-                  title: 'Vendedor',
-                  subtitle: 'Dashboard',
-                  icon: Icons.dashboard_customize,
-                  color: const Color(0xFF00BCD4),
-                  page: const VendedorDashboardPage(),
-                ),
-              ),
-            ),
-          ],
+          ),
+
+        // Grid com ReorderableWrap (simulado via ReorderableListView em grid se possível, ou Wrap customizado)
+        // Para simplificar e garantir estabilidade sem pacotes externos, usaremos uma estratégia de troca
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final double width = constraints.maxWidth;
+            const double spacing = 16.0;
+            final double itemWidth = (width - spacing) / 2;
+
+            return Wrap(
+              spacing: spacing,
+              runSpacing: spacing,
+              children: List.generate(items.length, (index) {
+                final item = items[index];
+                
+                return DragTarget<int>(
+                  onWillAccept: (data) => data != index,
+                  onAccept: (fromIndex) {
+                    setState(() {
+                      final movedItem = items.removeAt(fromIndex);
+                      items.insert(index, movedItem);
+                      _customOrder = items.map((i) => i['id'] as String).toList();
+                    });
+                    _salvarOrdem();
+                  },
+                  builder: (context, candidateData, rejectedData) {
+                    return LongPressDraggable<int>(
+                      data: index,
+                      feedback: SizedBox(
+                        width: itemWidth,
+                        child: Opacity(
+                          opacity: 0.8,
+                          child: _buildItemWidget(context, item, isFullWidth: false, dragFeedback: true),
+                        ),
+                      ),
+                      childWhenDragging: SizedBox(
+                        width: itemWidth,
+                        child: Opacity(
+                          opacity: 0.1,
+                          child: _buildItemWidget(context, item, isFullWidth: false),
+                        ),
+                      ),
+                      onDragStarted: () => setState(() => _isReordering = true),
+                      onDragEnd: (_) => setState(() => _isReordering = false),
+                      child: SizedBox(
+                        width: itemWidth,
+                        child: _buildItemWidget(context, item, isFullWidth: false),
+                      ),
+                    );
+                  },
+                );
+              }),
+            );
+          },
         ),
       ],
     );
+  }
+
+  Widget _buildItemWidget(BuildContext context, Map<String, dynamic> item, {bool isFullWidth = false, bool dragFeedback = false}) {
+    Widget content = _buildNavButton(
+      context,
+      title: item['title'],
+      subtitle: item['subtitle'],
+      icon: item['icon'],
+      color: item['color'],
+      page: item['page'](context),
+      isFullWidth: isFullWidth,
+      isDragging: dragFeedback,
+    );
+
+    if (item['tela'] != null) {
+      content = TelaAccessWidget(tela: item['tela'], child: content);
+    }
+    
+    if (item['permissao'] != null) {
+      content = PermissionWidget(permissao: item['permissao'], child: content);
+    }
+
+    return content;
   }
 
   Widget _buildNavButton(
@@ -712,6 +873,7 @@ class _HomePageState extends State<HomePage> {
     required Color color,
     required Widget page,
     bool isFullWidth = false,
+    bool isDragging = false,
   }) {
     // Tamanhos reduzidos para economizar espaço
     final iconSize = isFullWidth ? 48.0 : 28.0;
@@ -721,123 +883,153 @@ class _HomePageState extends State<HomePage> {
     final containerPadding = isFullWidth ? 24.0 : 14.0;
     final spacing = isFullWidth ? 16.0 : 12.0;
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 0),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: () async {
-            // Sincronizar URL se estiver no Web
-            String? urlPath;
-            if (page is ClientesPage) urlPath = '/clientes';
-            else if (page is ProdutosPage) urlPath = '/produtos';
-            else if (page is ServicosPage) urlPath = '/servicos';
-            else if (page is PedidosPage) urlPath = '/pedidos';
-            else if (page is VendaDiretaPage) urlPath = '/pdv';
-            else if (page is EntradaMercadoriasPage) urlPath = '/entrada-mercadorias';
-            else if (page is ContasPagarPage) urlPath = '/contas-pagar';
-            else if (page is AgendaContasPage) urlPath = '/agenda-contas';
-            else if (page is CozinhaBarPage) urlPath = '/cozinha-bar';
-            else if (page is CozinhaMesasFuncionarioPage) urlPath = '/mesas';
-            else if (page is GerenciarLinksVendedoresPage) urlPath = '/links-vendedores';
-            else if (page is VendedorDashboardPage) urlPath = '/vendedor-dashboard';
-            else if (page is FuncionariosPage) urlPath = '/funcionarios';
-            else if (page is PersonalizarLojaPage) urlPath = '/personalizar-loja';
-            else if (page is AgendaServicosPage) urlPath = '/agenda-pet';
-            else if (page is GerenciarImagensPage) urlPath = '/gerenciar-imagens';
+    bool isHovered = false;
 
-            if (kIsWeb && urlPath != null) {
-              html_helper.updateUrl(urlPath);
-            }
+    return StatefulBuilder(
+      builder: (context, setState) {
+        return MouseRegion(
+          onEnter: (_) => setState(() => isHovered = true),
+          onExit: (_) => setState(() => isHovered = false),
+          cursor: SystemMouseCursors.click,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 250),
+            curve: Curves.easeOutCubic,
+            transform: Matrix4.identity()
+              ..translate(isHovered ? 4.0 : 0.0, isHovered ? -2.0 : 0.0) // Leve movimento
+              ..scale(isDragging ? 1.05 : (isHovered ? 1.02 : 1.0)),
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: () async {
+                  // Sincronizar URL se estiver no Web
+                  String? urlPath;
+                  if (page is ClientesPage) urlPath = '/clientes';
+                  else if (page is ProdutosPage) urlPath = '/produtos';
+                  else if (page is ServicosPage) urlPath = '/servicos';
+                  else if (page is PedidosPage) urlPath = '/pedidos';
+                  else if (page is VendaDiretaPage) urlPath = '/pdv';
+                  else if (page is EntradaMercadoriasPage) urlPath = '/entrada-mercadorias';
+                  else if (page is ContasPagarPage) urlPath = '/contas-pagar';
+                  else if (page is AgendaContasPage) urlPath = '/agenda-contas';
+                  else if (page is CozinhaBarPage) urlPath = '/cozinha-bar';
+                  else if (page is CozinhaMesasFuncionarioPage) urlPath = '/mesas';
+                  else if (page is GerenciarLinksVendedoresPage) urlPath = '/links-vendedores';
+                  else if (page is VendedorDashboardPage) urlPath = '/vendedor-dashboard';
+                  else if (page is FuncionariosPage) urlPath = '/funcionarios';
+                  else if (page is PersonalizarLojaPage) urlPath = '/personalizar-loja';
+                  else if (page is AgendaServicosPage) urlPath = '/agenda-pet';
+                  else if (page is GerenciarImagensPage) urlPath = '/gerenciar-imagens';
+                  else if (page is TrocasDevolucoesBuscarPage) urlPath = '/trocas-devolucoes';
+                  else if (page is HistoricoVendasPage) urlPath = '/historico-vendas';
 
-            await Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => page),
-            );
+                  if (kIsWeb && urlPath != null) {
+                    html_helper.updateUrl(urlPath);
+                  }
 
-            // Ao retornar, volta a URL para a home (/)
-            if (kIsWeb) {
-               html_helper.updateUrl('/');
-            }
-          },
-          borderRadius: BorderRadius.circular(16),
-          child: Container(
-            padding: EdgeInsets.all(containerPadding),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  const Color(0xFF1E1E2E).withOpacity(0.9),
-                  const Color(0xFF161625).withOpacity(0.95),
-                ],
-              ),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: color.withOpacity(0.2),
-                width: 1.0,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: color.withOpacity(0.05),
-                  blurRadius: 10,
-                  spreadRadius: 1,
-                ),
-              ],
-            ),
-            child: Row(
-              children: [
-                Container(
-                  padding: EdgeInsets.all(iconPadding),
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => page),
+                  );
+
+                  // Ao retornar, volta a URL para a home (/)
+                  if (kIsWeb) {
+                     html_helper.updateUrl('/');
+                  }
+                },
+                borderRadius: BorderRadius.circular(16),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 250),
+                  padding: EdgeInsets.all(containerPadding),
                   decoration: BoxDecoration(
-                    color: color.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(12),
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        (isHovered ? color.withOpacity(0.15) : const Color(0xFF1E1E2E).withOpacity(0.9)),
+                        (isHovered ? const Color(0xFF1E1E2E).withOpacity(0.95) : const Color(0xFF161625).withOpacity(0.95)),
+                      ],
+                    ),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: isHovered ? color : color.withOpacity(0.2),
+                      width: isHovered ? 2.0 : 1.0,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: isHovered ? color.withOpacity(0.2) : color.withOpacity(0.05),
+                        blurRadius: isHovered ? 15 : 10,
+                        spreadRadius: isHovered ? 2 : 1,
+                      ),
+                    ],
                   ),
-                  child: Icon(
-                    icon,
-                    size: iconSize,
-                    color: color,
-                  ),
-                ),
-                SizedBox(width: spacing),
-                Expanded(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  child: Row(
                     children: [
-                      Text(
-                        title,
-                        style: TextStyle(
-                          fontSize: titleFontSize,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
+                      AnimatedContainer(
+                        duration: const Duration(milliseconds: 250),
+                        padding: EdgeInsets.all(iconPadding),
+                        decoration: BoxDecoration(
+                          color: isHovered ? color.withOpacity(0.2) : color.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(12),
+                          boxShadow: isHovered ? [
+                            BoxShadow(
+                              color: color.withOpacity(0.3),
+                              blurRadius: 8,
+                              spreadRadius: 0,
+                            )
+                          ] : [],
+                        ),
+                        child: Icon(
+                          icon,
+                          size: iconSize,
+                          color: color,
                         ),
                       ),
-                      if (subtitle != null) ...[
-                        const SizedBox(height: 2),
-                        Text(
-                          subtitle,
-                          style: TextStyle(
-                            fontSize: subtitleFontSize,
-                            color: Colors.white.withOpacity(0.5),
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                      SizedBox(width: spacing),
+                      Expanded(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              title,
+                              style: TextStyle(
+                                fontSize: titleFontSize,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ),
+                            if (subtitle != null) ...[
+                              const SizedBox(height: 2),
+                              Text(
+                                subtitle,
+                                style: TextStyle(
+                                  fontSize: subtitleFontSize,
+                                  color: isHovered ? Colors.white.withOpacity(0.8) : Colors.white.withOpacity(0.5),
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ],
                         ),
-                      ],
+                      ),
+                      AnimatedOpacity(
+                        duration: const Duration(milliseconds: 250),
+                        opacity: isHovered ? 1.0 : 0.2,
+                        child: Icon(
+                          Icons.chevron_right,
+                          size: 18,
+                          color: isHovered ? color : Colors.white,
+                        ),
+                      ),
                     ],
                   ),
                 ),
-                Icon(
-                  Icons.chevron_right,
-                  size: 18,
-                  color: Colors.white.withOpacity(0.2),
-                ),
-              ],
+              ),
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
