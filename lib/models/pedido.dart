@@ -3,6 +3,7 @@ import 'package:sistema_exodo_novo/models/item_servico.dart';
 import 'package:sistema_exodo_novo/models/item_material.dart';
 import 'package:sistema_exodo_novo/models/forma_pagamento.dart';
 import 'package:sistema_exodo_novo/models/delivery_info.dart';
+import 'package:sistema_exodo_novo/utils/date_parser.dart';
 
 class Pedido {
   final String id;
@@ -78,11 +79,19 @@ class Pedido {
   }
 
   // Calcula o total geral
-  double get totalGeral => totalProdutos + totalServicos + (deliveryInfo?.taxaEntrega ?? 0.0);
+  double get totalGeral {
+    final subtotal = totalProdutos + totalServicos + (deliveryInfo?.taxaEntrega ?? 0.0);
+    // Se não há itens mas o total foi definido manualmente (ex: vindo de venda balcão compacta), usar o total.
+    // Isso evita que vendas salvas sejam marcadas como "pagas" no PDV por terem total geral calculado como 0.
+    if (subtotal < 0.01 && total > 0.01) {
+      return total;
+    }
+    return subtotal;
+  }
 
   // Quantidade total de itens
-  int get quantidadeItens =>
-      produtos.fold(0, (sum, item) => sum + item.quantidade) + servicos.length;
+  double get quantidadeItens =>
+      produtos.fold(0.0, (sum, item) => sum + item.quantidade) + servicos.length;
 
   // Total de pagamentos já lançados
   double get totalPagamentos =>
@@ -144,47 +153,65 @@ class Pedido {
   }
 
   factory Pedido.fromMap(Map<String, dynamic> map) {
+    // Helpers para suportar camelCase (localStorage) e snake_case (Supabase)
+    T? get<T>(String camel, String snake) {
+      if (map.containsKey(camel)) return map[camel] as T?;
+      if (map.containsKey(snake)) return map[snake] as T?;
+      return null;
+    }
+    String? getStr(String camel, String snake) => get<String>(camel, snake);
+    bool? getBool(String camel, String snake) => get<bool>(camel, snake);
+    List? getList(String camel, String snake) => get<List>(camel, snake);
+    Map? getMap(String camel, String snake) => get<Map>(camel, snake);
+
+    double? parseDouble(dynamic value) {
+      if (value == null) return null;
+      if (value is num) return value.toDouble();
+      if (value is String) return double.tryParse(value);
+      return null;
+    }
+
+    DateTime getDate(String camel, String snake, DateTime fallback) {
+      final val = map[camel] ?? map[snake];
+      if (val == null) return fallback;
+      return DateParser.parse(val, defaultValue: fallback);
+    }
+
     return Pedido(
       id: map['id'] ?? '',
       numero: map['numero'] ?? '',
-      clienteId: map['clienteId'],
-      clienteNome: map['clienteNome'],
-      clienteTelefone: map['clienteTelefone'],
-      clienteEndereco: map['clienteEndereco'],
-      clienteCpfCnpj: map['clienteCpfCnpj'],
-      vendedorId: map['vendedorId'],
-      vendedorNome: map['vendedorNome'],
-      linkVendedorId: map['linkVendedorId'],
-      linkVendedorCodigo: map['linkVendedorCodigo'],
-      origemEcommerce: map['origemEcommerce'] ?? false, 
+      clienteId: getStr('clienteId', 'cliente_id'),
+      clienteNome: getStr('clienteNome', 'cliente_nome'),
+      clienteTelefone: getStr('clienteTelefone', 'cliente_telefone'),
+      clienteEndereco: getStr('clienteEndereco', 'cliente_endereco'),
+      clienteCpfCnpj: getStr('clienteCpfCnpj', 'cliente_cpf_cnpj'),
+      vendedorId: getStr('vendedorId', 'vendedor_id'),
+      vendedorNome: getStr('vendedorNome', 'vendedor_nome'),
+      linkVendedorId: getStr('linkVendedorId', 'link_vendedor_id'),
+      linkVendedorCodigo: getStr('linkVendedorCodigo', 'link_vendedor_codigo'),
+      origemEcommerce: getBool('origemEcommerce', 'origem_ecommerce') ?? false, 
       origem: map['origem'],
-      dataPedido: map['dataPedido'] != null
-          ? DateTime.parse(map['dataPedido'])
-          : DateTime.now(),
+      dataPedido: getDate('dataPedido', 'data_pedido', DateTime.now()),
       status: map['status'] ?? 'Pendente',
-      total: (map['total'] ?? 0).toDouble(),
+      total: parseDouble(map['total']) ?? 0.0,
       observacoes: map['observacoes'],
-      produtos: (map['produtos'] as List<dynamic>? ?? [])
+      produtos: (getList('produtos', 'produtos') ?? [])
           .map((p) => ItemPedido.fromMap(p as Map<String, dynamic>))
           .toList(),
-      servicos: (map['servicos'] as List<dynamic>? ?? [])
+      servicos: (getList('servicos', 'servicos') ?? [])
           .map((s) => ItemServico.fromMap(s as Map<String, dynamic>))
           .toList(),
-      pagamentos: (map['pagamentos'] as List<dynamic>? ?? [])
+      pagamentos: (getList('pagamentos', 'pagamentos') ?? [])
           .map((p) => PagamentoPedido.fromMap(p as Map<String, dynamic>))
           .toList(),
-      materiaisConsumidos: (map['materiaisConsumidos'] as List<dynamic>? ?? [])
+      materiaisConsumidos: (getList('materiaisConsumidos', 'materiais_consumidos') ?? [])
           .map((m) => ItemMaterial.fromMap(m as Map<String, dynamic>))
           .toList(),
-      deliveryInfo: map['deliveryInfo'] != null
-          ? DeliveryInfo.fromMap(map['deliveryInfo'] as Map<String, dynamic>)
+      deliveryInfo: getMap('deliveryInfo', 'delivery_info') != null
+          ? DeliveryInfo.fromMap(getMap('deliveryInfo', 'delivery_info')! as Map<String, dynamic>)
           : null,
-      createdAt: map['createdAt'] != null
-          ? DateTime.parse(map['createdAt'])
-          : DateTime.now(),
-      updatedAt: map['updatedAt'] != null
-          ? DateTime.parse(map['updatedAt'])
-          : DateTime.now(),
+      createdAt: getDate('createdAt', 'created_at', DateTime.now()),
+      updatedAt: getDate('updatedAt', 'updated_at', DateTime.now()),
     );
   }
 
@@ -192,28 +219,28 @@ class Pedido {
     return {
       'id': id,
       'numero': numero,
-      'clienteId': clienteId,
-      'clienteNome': clienteNome,
-      'clienteTelefone': clienteTelefone,
-      'clienteEndereco': clienteEndereco,
-      'clienteCpfCnpj': clienteCpfCnpj,
-      'vendedorId': vendedorId,
-      'vendedorNome': vendedorNome,
-      'linkVendedorId': linkVendedorId,
-      'linkVendedorCodigo': linkVendedorCodigo,
-      'origemEcommerce': origemEcommerce,
+      'cliente_id': clienteId,
+      'cliente_nome': clienteNome,
+      'cliente_telefone': clienteTelefone,
+      'cliente_endereco': clienteEndereco,
+      'cliente_cpf_cnpj': clienteCpfCnpj,
+      'vendedor_id': vendedorId,
+      'vendedor_nome': vendedorNome,
+      'link_vendedor_id': linkVendedorId,
+      'link_vendedor_codigo': linkVendedorCodigo,
+      'origem_ecommerce': origemEcommerce,
       'origem': origem,
-      'dataPedido': dataPedido.toIso8601String(),
+      'data_pedido': dataPedido.toIso8601String(),
       'status': status,
       'total': total,
       'observacoes': observacoes,
       'produtos': produtos.map((p) => p.toMap()).toList(),
       'servicos': servicos.map((s) => s.toMap()).toList(),
       'pagamentos': pagamentos.map((p) => p.toMap()).toList(),
-      'materiaisConsumidos': materiaisConsumidos.map((m) => m.toMap()).toList(),
-      'deliveryInfo': deliveryInfo?.toMap(),
-      'createdAt': createdAt.toIso8601String(),
-      'updatedAt': updatedAt.toIso8601String(),
+      'materiais_consumidos': materiaisConsumidos.map((m) => m.toMap()).toList(),
+      'delivery_info': deliveryInfo?.toMap(),
+      'created_at': createdAt.toIso8601String(),
+      'updated_at': updatedAt.toIso8601String(),
     };
   }
 

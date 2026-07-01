@@ -1,29 +1,38 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_web_plugins/url_strategy.dart';
 
 import 'package:sistema_exodo_novo/theme.dart';
 import 'package:sistema_exodo_novo/pages/home_page.dart';
 import 'package:sistema_exodo_novo/pages/login_page.dart';
 import 'package:sistema_exodo_novo/pages/selecionar_empresa_page.dart';
-import 'package:firebase_core/firebase_core.dart';
-import 'package:sistema_exodo_novo/firebase_options.dart';
 import 'package:sistema_exodo_novo/services/data_service.dart';
 import 'package:sistema_exodo_novo/services/auth_service.dart';
 import 'package:sistema_exodo_novo/services/cliente_auth_service.dart';
 import 'package:sistema_exodo_novo/services/carrinho_service.dart';
 import 'package:sistema_exodo_novo/services/theme_service.dart';
+import 'package:sistema_exodo_novo/services/supabase_service.dart';
+import 'package:sistema_exodo_novo/services/app_update_service.dart';
 
 import 'dart:async';
-import 'package:sistema_exodo_novo/services/firebase_init_service.dart';
+import 'dart:io';
 import 'package:provider/provider.dart';
 import 'package:sistema_exodo_novo/widgets/exodo_loading.dart';
-import 'package:sistema_exodo_novo/pages/loja_publica_wrapper.dart';
+import 'package:sistema_exodo_novo/widgets/exodo_logo.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-import 'dart:html' as html show window;
+import 'package:sistema_exodo_novo/services/native_db_init_stub.dart'
+    if (dart.library.io) 'package:sistema_exodo_novo/services/native_db_init.dart';
+import 'package:sistema_exodo_novo/pages/loja_publica_wrapper.dart';
+import 'package:sistema_exodo_novo/pages/html_helper_stub.dart'
+    if (dart.library.html) 'package:sistema_exodo_novo/pages/html_helper_web.dart' as html_helper;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // Inicialização do Banco Local Nativo se for Desktop
+  NativeDbInit.initialize();
+  
+  // Inicialização do Supabase
+  await SupabaseService.initialize();
   
   if (kIsWeb) {
     try {
@@ -37,32 +46,16 @@ void main() async {
      await Hive.initFlutter();
   }
 
-  print('>>> [APLICATIVO] Iniciando Versão 1.0.8 (Fix: Cache & Sync)...');
+  print('>>> [APLICATIVO] Iniciando Versão ${AppUpdateService.currentAppVersion} (Fix: Cache & Sync)...');
   
   if (kIsWeb) {
-    usePathUrlStrategy();
+    // No Web, podemos tentar usar o pathUrlStrategy se necessário,
+    // mas para evitar crash nativo, vamos apenas comentar ou remover 
+    // até que esteja corretamente isolado.
+    // usePathUrlStrategy();
   }
   
-  // Inicializar Firebase com timeout curto e tratamento de erro
-  try {
-    await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform)
-        .timeout(
-      const Duration(seconds: 10),
-      onTimeout: () {
-        print('>>> ⚠ Timeout ao inicializar Firebase (10s)');
-        throw TimeoutException('Firebase timeout');
-      },
-    );
-    print('>>> ✓ Firebase inicializado com sucesso');
-    
-    // Inicializar estrutura do Firebase em background (não bloqueia)
-    FirebaseInitService.inicializarEstrutura().catchError((e) {
-      print('>>> ⚠ Erro ao inicializar estrutura do Firebase: $e');
-    });
-  } catch (e) {
-    print('>>> ⚠ Erro ao inicializar Firebase: $e');
-    // Continua mesmo se o Firebase falhar - app funciona offline
-  }
+  debugPrint('>>> [SISTEMA] Sistema inicializado com Supabase');
 
   // Inicializa os serviços
   final dataService = DataService();
@@ -71,8 +64,7 @@ void main() async {
   final carrinhoService = CarrinhoService();
 
   
-  // Carregar dados em background (não bloqueia a UI)
-  _carregarDadosEmBackground(dataService, authService);
+
 
   runApp(
     MultiProvider(
@@ -88,43 +80,7 @@ void main() async {
   );
 }
 
-/// Carrega dados em background sem bloquear a UI
-void _carregarDadosEmBackground(DataService dataService, AuthService authService) {
-  // Executa em background
-  Future.microtask(() async {
-    try {
-      // Inicializar sincronização com timeout curto
-      await dataService.iniciarSincronizacao().timeout(
-        const Duration(seconds: 30),
-        onTimeout: () {
-          print('>>> ⚠ Timeout na sincronização (30s) - continuando offline...');
-        },
-      );
-    } catch (e) {
-      print('>>> ⚠ Erro ao sincronizar: $e - continuando offline...');
-    }
-    
-    try {
-      await authService.carregarUsuarios().timeout(
-        const Duration(seconds: 3),
-        onTimeout: () => print('>>> ⚠ Timeout ao carregar usuários'),
-      );
-      await authService.carregarEmpresas().timeout(
-        const Duration(seconds: 3),
-        onTimeout: () => print('>>> ⚠ Timeout ao carregar empresas'),
-      );
-    } catch (e) {
-      print('>>> ⚠ Erro ao carregar usuários/empresas: $e');
-    }
 
-    // Migrar pedidos em background
-    try {
-      dataService.migrarPedidosSemNumero();
-    } catch (e) {
-      print('>>> ⚠ Erro ao migrar pedidos: $e');
-    }
-  });
-}
 
 class AppRouter {
   static const internos = {
@@ -142,16 +98,15 @@ class AppRouter {
     if (!kIsWeb) return {'publico': false, 'slug': null, 'agenda': false, 'loja': false, 'interna': null};
     
     try {
-      final String href = html.window.location.href;
-      final String pathOrig = (html.window.location.pathname ?? '');
+      final String href = html_helper.getWindowOrigin(); 
+      final String pathOrig = html_helper.getWindowPathname();
       final String path = pathOrig.toLowerCase();
-      final String hashOrig = html.window.location.hash;
-      final String hash = hashOrig.toLowerCase();
+      final String hashOrig = ""; // Simplificado para Windows
+      final String hash = ""; 
       
       debugPrint('>>> [AppRouter] ANÁLISE URL:');
       debugPrint('    href: $href');
       debugPrint('    path: $pathOrig');
-      debugPrint('    hash: $hashOrig');
       
       final List<String> segmentsOrig = [];
       segmentsOrig.addAll(pathOrig.split('/').where((s) => s.isNotEmpty));
@@ -234,23 +189,21 @@ class _MyAppState extends State<MyApp> {
     super.initState();
     
     // Analisar a rota APENAS UMA VEZ no início
-    if (kIsWeb) {
-      _rotaInicialCache = AppRouter.analisarUrl();
-      debugPrint('>>> [MyApp] Rota inicial cacheada: $_rotaInicialCache');
-    }
+    _rotaInicialCache = AppRouter.analisarUrl();
+    debugPrint('>>> [MyApp] Rota inicial cacheada: $_rotaInicialCache');
 
     if (kIsWeb) {
       // 1. Ouvir mudanças no Hash (#)
-      _hashChangeSubscription = html.window.onHashChange.listen((event) {
-        debugPrint('>>> [Routing] Hash alterado: ${html.window.location.hash}');
+      _hashChangeSubscription = html_helper.onWindowFocus.listen((event) {
+        debugPrint('>>> [Routing] Navegação detectada');
         // Reanalisar a URL somente se a mudança veio de navegação real do browser
         _rotaInicialCache = AppRouter.analisarUrl();
         if (mounted) setState(() {});
       });
 
       // 2. Ouvir mudanças no Path (sem #) - Necessário para usePathUrlStrategy
-      _popStateSubscription = html.window.onPopState.listen((event) {
-        debugPrint('>>> [Routing] PopState alterado: ${html.window.location.pathname}');
+      _popStateSubscription = html_helper.onWindowFocus.listen((event) {
+        debugPrint('>>> [Routing] Navegação detectada');
         // Reanalisar a URL somente quando o usuário navega pelo browser (back/forward)
         _rotaInicialCache = AppRouter.analisarUrl();
         if (mounted) setState(() {});
@@ -333,8 +286,258 @@ class AuthWrapper extends StatefulWidget {
 }
 
 class _AuthWrapperState extends State<AuthWrapper> {
+  bool _verificandoAtualizacao = false;
+  bool _baixandoAtualizacao = false;
+  double _progressoAtualizacao = 0.0;
+  String _versaoRemota = '';
+  String _erroAtualizacao = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _checarAtualizacoes();
+  }
+
+  Future<void> _checarAtualizacoes() async {
+    if (kIsWeb) return;
+    if (!Platform.isWindows) return;
+
+    setState(() {
+      _verificandoAtualizacao = true;
+      _erroAtualizacao = '';
+    });
+
+    try {
+      final config = await AppUpdateService.verificarAtualizacao();
+      if (config != null) {
+        final String downloadUrl = config['download_url'] ?? '';
+        final String version = config['version'] ?? '';
+        if (downloadUrl.isNotEmpty && version.isNotEmpty) {
+          setState(() {
+            _verificandoAtualizacao = false;
+            _baixandoAtualizacao = true;
+            _versaoRemota = version;
+            _progressoAtualizacao = 0.0;
+          });
+
+          final success = await AppUpdateService.baixarEAplicarAtualizacao(
+            downloadUrl,
+            (progress) {
+              if (mounted) {
+                setState(() {
+                  _progressoAtualizacao = progress;
+                });
+              }
+            },
+          );
+
+          if (!success && mounted) {
+            setState(() {
+              _baixandoAtualizacao = false;
+              _erroAtualizacao = 'Falha ao baixar ou aplicar a atualização.';
+            });
+          }
+        } else {
+          if (mounted) {
+            setState(() {
+              _verificandoAtualizacao = false;
+            });
+          }
+        }
+      } else {
+        if (mounted) {
+          setState(() {
+            _verificandoAtualizacao = false;
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('>>> [AuthWrapper] Erro no fluxo de atualizacao: $e');
+      if (mounted) {
+        setState(() {
+          _verificandoAtualizacao = false;
+          _baixandoAtualizacao = false;
+          _erroAtualizacao = 'Erro de conexão ao buscar atualizações.';
+        });
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (_verificandoAtualizacao) {
+      return AppTheme.appBackground(
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const ExodoLogo(fontSize: 60, showSubtitle: true, showPhoenix: true),
+              const SizedBox(height: 48),
+              SizedBox(
+                width: 40,
+                height: 40,
+                child: CircularProgressIndicator(
+                  strokeWidth: 3,
+                  valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFFFF9800)),
+                  backgroundColor: const Color(0xFFFF9800).withOpacity(0.15),
+                ),
+              ),
+              const SizedBox(height: 24),
+              const Text(
+                'Buscando novas atualizações...',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (_baixandoAtualizacao) {
+      return AppTheme.appBackground(
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const ExodoLogo(fontSize: 60, showSubtitle: true, showPhoenix: true),
+              const SizedBox(height: 48),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFF9800).withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: const Color(0xFFFF9800).withOpacity(0.3)),
+                ),
+                child: Text(
+                  'Nova Versão Disponível: $_versaoRemota',
+                  style: const TextStyle(
+                    color: Color(0xFFFF9800),
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
+              const Text(
+                'Baixando atualização do sistema...',
+                style: TextStyle(color: Colors.white70, fontSize: 15),
+              ),
+              const SizedBox(height: 16),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: SizedBox(
+                  width: 300,
+                  height: 8,
+                  child: LinearProgressIndicator(
+                    value: _progressoAtualizacao,
+                    valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFFFF9800)),
+                    backgroundColor: Colors.white.withOpacity(0.1),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                '${(_progressoAtualizacao * 100).toStringAsFixed(0)}% concluído',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'O aplicativo será reiniciado automaticamente.',
+                style: TextStyle(color: Colors.white30, fontSize: 12),
+              ),
+              const SizedBox(height: 32),
+              TextButton.icon(
+                onPressed: () {
+                  setState(() {
+                    _baixandoAtualizacao = false;
+                  });
+                },
+                icon: const Icon(Icons.close, color: Colors.white60, size: 16),
+                label: const Text(
+                  'Cancelar e Entrar',
+                  style: TextStyle(color: Colors.white60, fontSize: 13),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (_erroAtualizacao.isNotEmpty) {
+      return AppTheme.appBackground(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 32),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(
+                  Icons.warning_amber_rounded,
+                  color: Color(0xFFFF9800),
+                  size: 64,
+                ),
+                const SizedBox(height: 24),
+                const Text(
+                  'Ops! Não foi possível atualizar.',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  _erroAtualizacao,
+                  style: const TextStyle(color: Colors.white54, fontSize: 14),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 40),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFFF9800),
+                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                      ),
+                      onPressed: _checarAtualizacoes,
+                      child: const Text('Tentar Novamente'),
+                    ),
+                    const SizedBox(width: 16),
+                    OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: Colors.white30),
+                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                      ),
+                      onPressed: () {
+                        setState(() {
+                          _erroAtualizacao = '';
+                        });
+                      },
+                      child: const Text(
+                        'Continuar sem Atualizar',
+                        style: TextStyle(color: Colors.white),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
     if (kIsWeb) {
       final rotaMap = AppRouter.analisarUrl();
       if (rotaMap['publico'] == true) {
@@ -365,7 +568,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
             // Se não está autenticado, mostra a página de login
             if (authService.isAuthenticated != true) {
               // Limpar empresa do DataService se não estiver autenticado
-              if (dataService.empresaIdAtual != null) {
+              if (dataService.currentEmpresaId != null) {
                 Future.microtask(() => dataService.definirEmpresaAtual(null));
               }
               return const LoginPage();
@@ -374,7 +577,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
             // Se está autenticado mas não tem empresa selecionada, mostra seleção de empresa
             if (authService.temEmpresaSelecionada != true) {
               // Limpar empresa do DataService se não tiver empresa selecionada
-              if (dataService.empresaIdAtual != null) {
+              if (dataService.currentEmpresaId != null) {
                 Future.microtask(() => dataService.definirEmpresaAtual(null));
               }
               // Importar SelecionarEmpresaPage aqui
@@ -383,22 +586,35 @@ class _AuthWrapperState extends State<AuthWrapper> {
 
             // Se está autenticado e tem empresa, definir empresa no DataService e mostrar home
             final empresaAtual = authService.empresaAtual;
-            if (empresaAtual != null && dataService.empresaIdAtual != empresaAtual.id) {
-              // Definir empresa no DataService de forma assíncrona
-              Future.microtask(() {
-                 dataService.definirEmpresaAtual(empresaAtual.id);
-                 dataService.setEmpresaAtual(empresaAtual);
+            if (empresaAtual != null && dataService.currentEmpresaId != empresaAtual.id) {
+              // Só dispara o setup se realmente a empresa mudou
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (dataService.currentEmpresaId != empresaAtual.id) {
+                  dataService.definirEmpresaAtual(empresaAtual.id);
+                  dataService.setEmpresaAtual(empresaAtual);
+                }
               });
-              // Mostrar loading enquanto carrega
-              return ExodoLoading(mensagem: 'Carregando dados da empresa...');
+              // Retornar loading enquanto o setup acontece (evita flash de tela)
+              return const ExodoLoading(mensagem: 'Sincronizando empresa...');
             }
             
-            // Garantir que a empresa está sempre atualizada no DataService
-            if (empresaAtual != null && dataService.empresaAtual != empresaAtual) {
-              Future.microtask(() => dataService.setEmpresaAtual(empresaAtual));
+            // Garantir que a empresa está sincronizada sem disparar rebuild infinito
+            if (empresaAtual != null && dataService.empresaAtual?.id != empresaAtual.id) {
+               WidgetsBinding.instance.addPostFrameCallback((_) {
+                 dataService.setEmpresaAtual(empresaAtual);
+               });
+            }
+
+            // Sincronizar o usuário logado no DataService para auditoria
+            if (authService.isAuthenticated && authService.usuarioAtual != null) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                dataService.setUsuarioAtual(authService.usuarioAtual);
+              });
             }
 
             
+            
+            // SE ESTÁ TUDO OK, MOSTRA A HOME PAGE
             return HomePage(initialPage: rotaInicial);
           } catch (e, stackTrace) {
             print('>>> ⚠ Erro no AuthWrapper: $e');

@@ -1,8 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/entrega.dart';
+import '../models/pedido.dart';
 import '../models/item_servico.dart';
 import '../services/data_service.dart';
+import '../services/auth_service.dart';
+import '../models/forma_pagamento.dart';
+import 'package:sistema_exodo_novo/models/motorista.dart';
+import 'package:intl/intl.dart';
+import '../widgets/signature_pad.dart';
 import '../theme.dart';
 
 class EntregaDetalhesPage extends StatefulWidget {
@@ -26,10 +33,12 @@ class _EntregaDetalhesPageState extends State<EntregaDetalhesPage> {
   late TextEditingController _observacoesController;
   late TextEditingController _volumesController;
   late TextEditingController _taxaManualController;
+  late TextEditingController _comissaoController;
 
   String? _tipoEntrega;
   String? _periodoEntrega;
   DateTime? _dataPrevisao;
+  TimeOfDay? _horaPrevisao;
   String? _motoristaId;
   String? _taxaEntregaId;
   bool _usarTaxaManual = false;
@@ -71,10 +80,14 @@ class _EntregaDetalhesPageState extends State<EntregaDetalhesPage> {
     _taxaManualController = TextEditingController(
       text: e?.taxaEntrega != null ? e!.taxaEntrega!.toStringAsFixed(2) : '',
     );
+    _comissaoController = TextEditingController(
+      text: e?.comissaoMotorista != null ? e!.comissaoMotorista!.toStringAsFixed(2) : '0.00',
+    );
     _tipoEntrega = e?.tipoEntrega ?? 'Normal';
     _periodoEntrega = e?.periodoEntrega ?? 'Qualquer';
     _dataPrevisao =
         e?.dataPrevisao ?? DateTime.now().add(const Duration(days: 1));
+    _horaPrevisao = TimeOfDay.fromDateTime(_dataPrevisao!);
     _motoristaId = e?.motoristaId;
     
     // Verificar se está usando taxa manual (quando tem valor mas não tem ID de taxa cadastrada)
@@ -206,11 +219,24 @@ class _EntregaDetalhesPageState extends State<EntregaDetalhesPage> {
                   required: true,
                 ),
                 const SizedBox(height: 12),
-                _buildTextField(
-                  controller: _telefoneController,
-                  label: 'Telefone',
-                  icon: Icons.phone,
-                  keyboardType: TextInputType.phone,
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildTextField(
+                        controller: _telefoneController,
+                        label: 'Telefone',
+                        icon: Icons.phone,
+                        keyboardType: TextInputType.phone,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    if (isEditing)
+                      IconButton(
+                        icon: const Icon(Icons.chat, color: Colors.greenAccent),
+                        tooltip: 'Avisar pelo WhatsApp',
+                        onPressed: _abrirWhatsApp,
+                      ),
+                  ],
                 ),
               ]),
 
@@ -222,11 +248,24 @@ class _EntregaDetalhesPageState extends State<EntregaDetalhesPage> {
                 Icons.location_on,
                 Colors.green,
                 [
-                  _buildTextField(
-                    controller: _enderecoController,
-                    label: 'Endereço',
-                    icon: Icons.home,
-                    required: true,
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildTextField(
+                          controller: _enderecoController,
+                          label: 'Endereço',
+                          icon: Icons.home,
+                          required: true,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      if (isEditing)
+                        IconButton(
+                          icon: const Icon(Icons.map, color: Colors.blueAccent),
+                          tooltip: 'Traçar Rota no Mapa',
+                          onPressed: _abrirMapa,
+                        ),
+                    ],
                   ),
                   const SizedBox(height: 12),
                   Row(
@@ -310,13 +349,27 @@ class _EntregaDetalhesPageState extends State<EntregaDetalhesPage> {
                 Row(
                   children: [
                     Expanded(
+                      flex: 3,
                       child: _buildDatePicker(
-                        label: 'Data Prevista',
+                        label: 'Data de Entrega',
                         value: _dataPrevisao,
                         onChanged: (d) => setState(() => _dataPrevisao = d),
                       ),
                     ),
-                    const SizedBox(width: 12),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      flex: 2,
+                      child: _buildTimePicker(
+                        label: 'Horário',
+                        value: _horaPrevisao,
+                        onChanged: (t) => setState(() => _horaPrevisao = t),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
                     Expanded(
                       child: _buildTextField(
                         controller: _volumesController,
@@ -333,6 +386,9 @@ class _EntregaDetalhesPageState extends State<EntregaDetalhesPage> {
                 _buildTaxaEntregaSelector(dataService),
               ]),
 
+              const SizedBox(height: 20),
+
+              _buildFinanceiroSection(dataService),
               const SizedBox(height: 20),
 
               // Observações
@@ -436,6 +492,55 @@ class _EntregaDetalhesPageState extends State<EntregaDetalhesPage> {
         ],
       ),
     );
+  }
+
+  Future<void> _abrirWhatsApp() async {
+    final telefone = _telefoneController.text.replaceAll(RegExp(r'\D'), '');
+    if (telefone.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Telefone não informado'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+    
+    final mensagem = 'Olá ${_clienteController.text}, seu pedido saiu para entrega e deve chegar em breve!';
+    final url = Uri.parse('https://wa.me/55$telefone?text=${Uri.encodeComponent(mensagem)}');
+    
+    if (await canLaunchUrl(url)) {
+      await launchUrl(url);
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Não foi possível abrir o WhatsApp'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Future<void> _abrirMapa() async {
+    final endereco = _enderecoController.text;
+    final bairro = _bairroController.text;
+    final cidade = _cidadeController.text;
+    
+    if (endereco.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Endereço não informado'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+    
+    final enderecoCompleto = '$endereco, $bairro, $cidade';
+    final url = Uri.parse('https://www.google.com/maps/search/?api=1&query=${Uri.encodeComponent(enderecoCompleto)}');
+    
+    if (await canLaunchUrl(url)) {
+      await launchUrl(url);
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Não foi possível abrir o Google Maps'), backgroundColor: Colors.red),
+        );
+      }
+    }
   }
 
   Widget _buildStatusSection(DataService dataService) {
@@ -678,6 +783,23 @@ class _EntregaDetalhesPageState extends State<EntregaDetalhesPage> {
                 ),
               ),
             ),
+            const SizedBox(height: 16),
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Assinatura do Recebedor:',
+                style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold),
+              ),
+            ),
+            const SizedBox(height: 8),
+            SignaturePad(onChanged: (_) {}),
+            const SizedBox(height: 12),
+            TextButton.icon(
+              onPressed: () {},
+              icon: const Icon(Icons.camera_alt),
+              label: const Text('Tirar Foto do Comprovante'),
+              style: TextButton.styleFrom(foregroundColor: Colors.blueAccent),
+            ),
             ],
           ),
         ),
@@ -693,12 +815,16 @@ class _EntregaDetalhesPageState extends State<EntregaDetalhesPage> {
             onPressed: () {
               Navigator.pop(context);
 
+              final authService = Provider.of<AuthService>(context, listen: false);
+              final usuario = authService.usuarioAtual;
+
               final evento = EventoEntrega(
                 id: DateTime.now().millisecondsSinceEpoch.toString(),
                 dataHora: DateTime.now(),
                 status: StatusEntrega.entregue,
                 descricao:
-                    'Entregue para: ${nomeController.text.isNotEmpty ? nomeController.text : "Não informado"}',
+                    'Entregue para: ${nomeController.text.isNotEmpty ? nomeController.text : "Não informado"} por ${usuario?.nome ?? "Sistema"}',
+                responsavel: usuario?.nome,
               );
 
               final entregaAtualizada = entrega
@@ -870,6 +996,143 @@ class _EntregaDetalhesPageState extends State<EntregaDetalhesPage> {
     );
   }
 
+  Widget _buildPagamentosSection(Entrega entrega, DataService dataService) {
+    final pedido = dataService.pedidos
+        .where((p) => p.id == entrega.pedidoId || p.numero == entrega.pedidoNumero)
+        .firstOrNull;
+
+    if (pedido == null) return const SizedBox.shrink();
+
+    return _buildSection(
+      'Financeiro / Pagamentos',
+      Icons.payments_outlined,
+      Colors.greenAccent,
+      [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text('Valor Total do Pedido:', style: TextStyle(color: Colors.white70)),
+            Text(
+              'R\$ ${pedido.totalGeral.toStringAsFixed(2)}',
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
+            ),
+          ],
+        ),
+        const Divider(color: Colors.white10, height: 20),
+        const Text(
+          'Formas de Recebimento:',
+          style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        ...pedido.pagamentos.asMap().entries.map((entry) {
+          final idx = entry.key;
+          final pag = entry.value;
+          return Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.05),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Row(
+              children: [
+                Icon(pag.tipo.icone, color: pag.tipo.cor, size: 20),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        pag.tipo.nome,
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                      ),
+                      Text(
+                        pag.recebido ? 'Já recebido' : 'A receber na entrega',
+                        style: TextStyle(
+                          color: pag.recebido ? Colors.greenAccent : Colors.orangeAccent,
+                          fontSize: 10,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Text(
+                  'R\$ ${pag.valor.toStringAsFixed(2)}',
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(width: 8),
+                PopupMenuButton<TipoPagamento>(
+                  icon: const Icon(Icons.edit, color: Colors.white54, size: 18),
+                  tooltip: 'Alterar forma de pagamento',
+                  onSelected: (novoTipo) {
+                    _alterarFormaPagamento(pedido, idx, novoTipo, entrega, dataService);
+                  },
+                  itemBuilder: (context) => TipoPagamento.values
+                      .map((t) => PopupMenuItem(
+                            value: t,
+                            child: Row(
+                              children: [
+                                Icon(t.icone, color: t.cor, size: 18),
+                                const SizedBox(width: 8),
+                                Text(t.nome),
+                              ],
+                            ),
+                          ))
+                      .toList(),
+                ),
+              ],
+            ),
+          );
+        }),
+      ],
+    );
+  }
+
+  void _alterarFormaPagamento(
+    Pedido pedido,
+    int pagamentoIdx,
+    TipoPagamento novoTipo,
+    Entrega entrega,
+    DataService dataService,
+  ) {
+    final pagAntigo = pedido.pagamentos[pagamentoIdx];
+    if (pagAntigo.tipo == novoTipo) return;
+
+    // 1. Atualizar o pedido
+    final novosPagamentos = List<PagamentoPedido>.from(pedido.pagamentos);
+    novosPagamentos[pagamentoIdx] = pagAntigo.copyWith(
+      tipo: novoTipo,
+      tipoOriginal: pagAntigo.tipoOriginal ?? pagAntigo.tipo,
+    );
+    
+    final pedidoAtualizado = pedido.copyWith(pagamentos: novosPagamentos);
+    dataService.updatePedido(pedidoAtualizado);
+
+    // 2. Registrar no histórico da entrega
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final usuario = authService.usuarioAtual;
+    
+    final evento = EventoEntrega(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      dataHora: DateTime.now(),
+      status: entrega.status,
+      descricao: 'Alterada forma de pagamento de ${pagAntigo.tipo.nome} para ${novoTipo.nome} por ${usuario?.nome ?? "Sistema"}',
+      responsavel: usuario?.nome,
+    );
+
+    final entregaAtualizada = entrega.adicionarEvento(evento);
+    dataService.updateEntrega(entregaAtualizada);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Forma de pagamento alterada para ${novoTipo.nome}'),
+        backgroundColor: Colors.green,
+      ),
+    );
+    
+    setState(() {});
+  }
+
   Widget _buildHistoricoSection() {
     final historico = widget.entrega!.historico.reversed.toList();
 
@@ -1019,7 +1282,7 @@ class _EntregaDetalhesPageState extends State<EntregaDetalhesPage> {
         final data = await showDatePicker(
           context: context,
           initialDate: value ?? DateTime.now(),
-          firstDate: DateTime.now(),
+          firstDate: DateTime(2020), // Permitir datas passadas para edição de históricos
           lastDate: DateTime.now().add(const Duration(days: 365)),
           builder: (context, child) {
             return Theme(
@@ -1048,10 +1311,61 @@ class _EntregaDetalhesPageState extends State<EntregaDetalhesPage> {
             Expanded(
               child: Text(
                 value != null
-                    ? '${value.day}/${value.month}/${value.year}'
+                    ? 'Data: ${DateFormat('dd/MM/yyyy').format(value)}'
                     : label,
                 style: TextStyle(
                   color: value != null ? Colors.white : Colors.white54,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTimePicker({
+    required String label,
+    required TimeOfDay? value,
+    required Function(TimeOfDay?) onChanged,
+  }) {
+    return InkWell(
+      onTap: () async {
+        final time = await showTimePicker(
+          context: context,
+          initialTime: value ?? TimeOfDay.now(),
+          builder: (context, child) {
+            return Theme(
+              data: Theme.of(context).copyWith(
+                colorScheme: const ColorScheme.dark(
+                  primary: Colors.greenAccent,
+                  surface: Color(0xFF1E1E2E),
+                ),
+              ),
+              child: child!,
+            );
+          },
+        );
+        if (time != null) onChanged(time);
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+        decoration: BoxDecoration(
+          color: Colors.black26,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.access_time, color: Colors.white54, size: 18),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                value != null
+                    ? 'Hora: ${value.format(context)}'
+                    : label,
+                style: TextStyle(
+                  color: value != null ? Colors.white : Colors.white54,
+                  fontSize: 13,
                 ),
               ),
             ),
@@ -1453,6 +1767,18 @@ class _EntregaDetalhesPageState extends State<EntregaDetalhesPage> {
           )
         : null;
 
+    // Combinar data e hora de previsão
+    DateTime dataFinalPrevisao = _dataPrevisao ?? DateTime.now();
+    if (_horaPrevisao != null) {
+      dataFinalPrevisao = DateTime(
+        dataFinalPrevisao.year,
+        dataFinalPrevisao.month,
+        dataFinalPrevisao.day,
+        _horaPrevisao!.hour,
+        _horaPrevisao!.minute,
+      );
+    }
+
     final entrega = Entrega(
       id:
           widget.entrega?.id ??
@@ -1475,7 +1801,7 @@ class _EntregaDetalhesPageState extends State<EntregaDetalhesPage> {
           : null,
       status: widget.entrega?.status ?? StatusEntrega.aguardando,
       dataCriacao: widget.entrega?.dataCriacao ?? DateTime.now(),
-      dataPrevisao: _dataPrevisao,
+      dataPrevisao: dataFinalPrevisao,
       dataEntrega: widget.entrega?.dataEntrega,
       motoristaId: _motoristaId,
       motoristaNome: motorista?.nome,
@@ -1504,13 +1830,14 @@ class _EntregaDetalhesPageState extends State<EntregaDetalhesPage> {
           widget.entrega?.historico ??
           [
             EventoEntrega(
-              id: '1',
+              id: DateTime.now().millisecondsSinceEpoch.toString(),
               dataHora: DateTime.now(),
               status: StatusEntrega.aguardando,
               descricao: 'Entrega criada',
-            ),
+            )
           ],
-      quantidadeVolumes: int.tryParse(_volumesController.text) ?? 1,
+      quantidadeVolumes: double.tryParse(_volumesController.text) ?? 1.0,
+      comissaoMotorista: double.tryParse(_comissaoController.text.replaceAll(',', '.')) ?? 0.0,
       nomeRecebedor: widget.entrega?.nomeRecebedor,
       documentoRecebedor: widget.entrega?.documentoRecebedor,
       motivoFalha: widget.entrega?.motivoFalha,
@@ -1636,8 +1963,14 @@ class _EntregaDetalhesPageState extends State<EntregaDetalhesPage> {
     switch (status) {
       case StatusEntrega.aguardando:
         return Colors.orange;
+      case StatusEntrega.romaneioCriado:
+        return Colors.blue;
+      case StatusEntrega.emEntrega:
+        return Colors.deepPurple;
       case StatusEntrega.entregue:
         return Colors.green;
+      case StatusEntrega.cancelado:
+        return Colors.red;
     }
   }
 
@@ -1645,8 +1978,45 @@ class _EntregaDetalhesPageState extends State<EntregaDetalhesPage> {
     switch (status) {
       case StatusEntrega.aguardando:
         return Icons.hourglass_empty;
+      case StatusEntrega.romaneioCriado:
+        return Icons.assignment;
+      case StatusEntrega.emEntrega:
+        return Icons.local_shipping;
       case StatusEntrega.entregue:
         return Icons.done_all;
+      case StatusEntrega.cancelado:
+        return Icons.cancel;
     }
+  }
+
+  Widget _buildFinanceiroSection(DataService dataService) {
+    return _buildSection(
+      'Financeiro & Comissão',
+      Icons.monetization_on,
+      Colors.greenAccent,
+      [
+        Row(
+          children: [
+            Expanded(
+              child: _buildTextField(
+                controller: _taxaManualController,
+                label: 'Taxa Entrega (R\$)',
+                icon: Icons.delivery_dining,
+                keyboardType: TextInputType.number,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildTextField(
+                controller: _comissaoController,
+                label: 'Comissão (R\$)',
+                icon: Icons.payments,
+                keyboardType: TextInputType.number,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
   }
 }

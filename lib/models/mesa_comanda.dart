@@ -2,6 +2,7 @@ library mesa_comanda;
 
 import 'package:sistema_exodo_novo/models/conta_pagar.dart';
 import 'package:sistema_exodo_novo/models/adicional_produto.dart';
+import 'package:sistema_exodo_novo/utils/date_parser.dart';
 
 /// Status de um item em uma mesa/comanda
 enum StatusItem {
@@ -23,7 +24,7 @@ class ItemMesaComanda {
   final String id;
   final String itemId; // ID do produto ou serviço
   final String nome;
-  final int quantidade;
+  final double quantidade;
   final double preco;
   final bool isServico;
   final bool? paraCozinha; // Mantido para compatibilidade
@@ -66,7 +67,7 @@ class ItemMesaComanda {
     String? id,
     String? itemId,
     String? nome,
-    int? quantidade,
+    double? quantidade,
     double? preco,
     bool? isServico,
     bool? paraCozinha,
@@ -106,52 +107,59 @@ class ItemMesaComanda {
   Map<String, dynamic> toMap() {
     return {
       'id': id,
-      'itemId': itemId,
+      'item_id': itemId,
       'nome': nome,
       'quantidade': quantidade,
       'preco': preco,
-      'isServico': isServico,
-      'paraCozinha': paraCozinha,
-      'paraBar': paraBar,
+      'is_servico': isServico,
+      'para_cozinha': paraCozinha,
+      'para_bar': paraBar,
       'local': local,
       'status': status.toString().split('.').last,
-      'dataHora': dataHora.toIso8601String(),
-      'dataHoraPronto': dataHoraPronto?.toIso8601String(),
+      'data_hora': dataHora.toIso8601String(),
+      'data_hora_pronto': dataHoraPronto?.toIso8601String(),
       'observacao': observacao,
-      'usuarioCriou': usuarioCriou,
-      'usuarioModificou': usuarioModificou,
-      'dataModificacao': dataModificacao?.toIso8601String(),
-      'acaoRealizada': acaoRealizada,
+      'usuario_criou': usuarioCriou,
+      'usuario_modificou': usuarioModificou,
+      'data_modificacao': dataModificacao?.toIso8601String(),
+      'acao_realizada': acaoRealizada,
       'adicionais': adicionais.map((a) => a.toMap()).toList(),
     };
   }
 
   factory ItemMesaComanda.fromMap(Map<String, dynamic> map) {
+    double? parseDouble(dynamic value) {
+      if (value == null) return null;
+      if (value is num) return value.toDouble();
+      if (value is String) return double.tryParse(value);
+      return null;
+    }
+
     return ItemMesaComanda(
       id: map['id'] as String,
-      itemId: map['itemId'] as String,
+      itemId: (map['item_id'] ?? map['itemId']) as String,
       nome: map['nome'] as String,
-      quantidade: map['quantidade'] as int,
-      preco: (map['preco'] as num).toDouble(),
-      isServico: map['isServico'] as bool? ?? false,
-      paraCozinha: map['paraCozinha'] as bool?,
-      paraBar: map['paraBar'] as bool?,
+      quantidade: parseDouble(map['quantidade']) ?? 0.0,
+      preco: parseDouble(map['preco']) ?? 0.0,
+      isServico: (map['is_servico'] ?? map['isServico']) as bool? ?? false,
+      paraCozinha: (map['para_cozinha'] ?? map['paraCozinha']) as bool?,
+      paraBar: (map['para_bar'] ?? map['paraBar']) as bool?,
       local: map['local'] as String?,
       status: StatusItem.values.firstWhere(
         (e) => e.toString().split('.').last == map['status'],
         orElse: () => StatusItem.pendente,
       ),
-      dataHora: DateTime.parse(map['dataHora'] as String),
-      dataHoraPronto: map['dataHoraPronto'] != null
-          ? DateTime.parse(map['dataHoraPronto'] as String)
+      dataHora: DateParser.parse(map['data_hora'] ?? map['dataHora']),
+      dataHoraPronto: (map['data_hora_pronto'] ?? map['dataHoraPronto']) != null
+          ? DateParser.parse(map['data_hora_pronto'] ?? map['dataHoraPronto'])
           : null,
       observacao: map['observacao'] as String?,
-      usuarioCriou: map['usuarioCriou'] as String?,
-      usuarioModificou: map['usuarioModificou'] as String?,
-      dataModificacao: map['dataModificacao'] != null
-          ? DateTime.parse(map['dataModificacao'] as String)
+      usuarioCriou: (map['usuario_criou'] ?? map['usuarioCriou']) as String?,
+      usuarioModificou: (map['usuario_modificou'] ?? map['usuarioModificou']) as String?,
+      dataModificacao: (map['data_modificacao'] ?? map['dataModificacao']) != null
+          ? DateParser.parse(map['data_modificacao'] ?? map['dataModificacao'])
           : null,
-      acaoRealizada: map['acaoRealizada'] as String?,
+      acaoRealizada: (map['acao_realizada'] ?? map['acaoRealizada']) as String?,
       adicionais: (map['adicionais'] as List<dynamic>?)
           ?.map((a) => AdicionalProduto.fromMap(a as Map<String, dynamic>))
           .toList() ?? [],
@@ -443,32 +451,39 @@ class MesaComanda {
       'id': id,
       'tipo': tipo.toString().split('.').last,
       'numero': numero,
-      'clienteId': clienteId,
-      'clienteNome': clienteNome,
-      'mesaId': mesaId,
+      'cliente_id': clienteId,
+      'cliente_nome': clienteNome,
+      'mesa_id': mesaId,
       'itens': itens.map((i) => i.toMap()).toList(),
-      'dataAbertura': dataAbertura.toIso8601String(),
-      'dataFechamento': dataFechamento?.toIso8601String(),
+      'data_abertura': dataAbertura.toIso8601String(),
+      'data_fechamento': dataFechamento?.toIso8601String(),
       'status': status,
       'observacao': observacao,
       'total': total,
-      'historicoPagamentos': historicoPagamentos.map((p) => p.toMap()).toList(),
-      'itensPagos': itensPagos,
-      'couvertPago': couvertPago,
-      'createdAt': createdAt.toIso8601String(),
-      'updatedAt': updatedAt.toIso8601String(),
-      'usuarioCriou': usuarioCriou,
-      'usuarioModificou': usuarioModificou,
-      'valorCouvert': valorCouvert,
-      'quantidadePessoasCouvert': quantidadePessoasCouvert,
-      'valorCouvertPorPessoa': valorCouvertPorPessoa,
-      'nomeQuemPagouCouvert': nomeQuemPagouCouvert,
-      'valorGarcom': valorGarcom,
-      'garcomRetirado': garcomRetirado,
+      'historico_pagamentos': historicoPagamentos.map((p) => p.toMap()).toList(),
+      'itens_pagos': itensPagos,
+      'couvert_pago': couvertPago,
+      'created_at': createdAt.toIso8601String(),
+      'updated_at': updatedAt.toIso8601String(),
+      'usuario_criou': usuarioCriou,
+      'usuario_modificou': usuarioModificou,
+      'valor_couvert': valorCouvert,
+      'quantidade_pessoas_couvert': quantidadePessoasCouvert,
+      'valor_couvert_por_pessoa': valorCouvertPorPessoa,
+      'nome_quem_pagou_couvert': nomeQuemPagouCouvert,
+      'valor_garcom': valorGarcom,
+      'garcom_retirado': garcomRetirado,
     };
   }
 
   factory MesaComanda.fromMap(Map<String, dynamic> map) {
+    double? parseDouble(dynamic value) {
+      if (value == null) return null;
+      if (value is num) return value.toDouble();
+      if (value is String) return double.tryParse(value);
+      return null;
+    }
+
     return MesaComanda(
       id: map['id'] as String,
       tipo: TipoControle.values.firstWhere(
@@ -476,41 +491,43 @@ class MesaComanda {
         orElse: () => TipoControle.mesa,
       ),
       numero: map['numero'] as String,
-      clienteId: map['clienteId'] as String?,
-      clienteNome: map['clienteNome'] as String?,
-      mesaId: map['mesaId'] as String?,
+      clienteId: (map['cliente_id'] ?? map['clienteId']) as String?,
+      clienteNome: (map['cliente_nome'] ?? map['clienteNome']) as String?,
+      mesaId: (map['mesa_id'] ?? map['mesaId']) as String?,
       itens: (map['itens'] as List<dynamic>?)
               ?.map((i) => ItemMesaComanda.fromMap(i as Map<String, dynamic>))
               .toList() ??
           [],
-      dataAbertura: DateTime.parse(map['dataAbertura'] as String),
-      dataFechamento: map['dataFechamento'] != null
-          ? DateTime.parse(map['dataFechamento'] as String)
+      dataAbertura: DateParser.parse(map['data_abertura'] ?? map['dataAbertura']),
+      dataFechamento: (map['data_fechamento'] ?? map['dataFechamento']) != null
+          ? DateParser.parse(map['data_fechamento'] ?? map['dataFechamento'])
           : null,
       status: map['status'] as String? ?? 'Aberta',
       observacao: map['observacao'] as String?,
-      total: (map['total'] as num?)?.toDouble() ?? 0.0,
-      historicoPagamentos: (map['historicoPagamentos'] as List<dynamic>?)
-              ?.map((p) => RegistroPagamento.fromMap(p as Map<String, dynamic>))
-              .toList() ??
-          [],
-      itensPagos: (map['itensPagos'] as List<dynamic>?)
-              ?.map((i) => i as String)
-              .toList() ??
-          [],
-      couvertPago: (map['couvertPago'] as num?)?.toDouble() ?? 0.0,
-      createdAt: DateTime.parse(map['createdAt'] as String),
-      updatedAt: DateTime.parse(map['updatedAt'] as String),
-      usuarioCriou: map['usuarioCriou'] as String?,
-      usuarioModificou: map['usuarioModificou'] as String?,
-      valorCouvert: (map['valorCouvert'] as num?)?.toDouble(),
-      quantidadePessoasCouvert: map['quantidadePessoasCouvert'] != null 
-          ? (map['quantidadePessoasCouvert'] as num).toInt()
+      total: parseDouble(map['total']) ?? 0.0,
+      historicoPagamentos: ((map['historico_pagamentos'] ?? map['historicoPagamentos']) != null && (map['historico_pagamentos'] ?? map['historicoPagamentos']) is List)
+              ? ((map['historico_pagamentos'] ?? map['historicoPagamentos']) as List<dynamic>)
+                  .map((p) => RegistroPagamento.fromMap(p as Map<String, dynamic>))
+                  .toList()
+              : [],
+      itensPagos: ((map['itens_pagos'] ?? map['itensPagos']) != null && (map['itens_pagos'] ?? map['itensPagos']) is List)
+              ? ((map['itens_pagos'] ?? map['itensPagos']) as List<dynamic>)
+                  .map((i) => i as String)
+                  .toList()
+              : [],
+      couvertPago: parseDouble(map['couvert_pago'] ?? map['couvertPago']) ?? 0.0,
+      createdAt: DateParser.parse(map['created_at'] ?? map['createdAt']),
+      updatedAt: DateParser.parse(map['updated_at'] ?? map['updatedAt']),
+      usuarioCriou: (map['usuario_criou'] ?? map['usuarioCriou']) as String?,
+      usuarioModificou: (map['usuario_modificou'] ?? map['usuarioModificou']) as String?,
+      valorCouvert: parseDouble(map['valor_couvert'] ?? map['valorCouvert']),
+      quantidadePessoasCouvert: (map['quantidade_pessoas_couvert'] ?? map['quantidadePessoasCouvert']) != null 
+          ? ((map['quantidade_pessoas_couvert'] ?? map['quantidadePessoasCouvert']) as num).toInt()
           : null,
-      valorCouvertPorPessoa: (map['valorCouvertPorPessoa'] as num?)?.toDouble(),
-      nomeQuemPagouCouvert: map['nomeQuemPagouCouvert'] as String?,
-      valorGarcom: (map['valorGarcom'] as num?)?.toDouble(),
-      garcomRetirado: map['garcomRetirado'] as bool? ?? false,
+      valorCouvertPorPessoa: parseDouble(map['valor_couvert_por_pessoa'] ?? map['valorCouvertPorPessoa']),
+      nomeQuemPagouCouvert: (map['nome_quem_pagou_couvert'] ?? map['nomeQuemPagouCouvert']) as String?,
+      valorGarcom: parseDouble(map['valor_garcom'] ?? map['valorGarcom']),
+      garcomRetirado: (map['garcom_retirado'] ?? map['garcomRetirado']) as bool? ?? false,
     );
   }
 }

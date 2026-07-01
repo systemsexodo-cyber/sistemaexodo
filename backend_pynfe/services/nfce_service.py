@@ -20,8 +20,9 @@ try:
     from nfelib.nfe.bindings.v4_0 import nfe_v4_00 as nfe
     import requests
     from signxml import XMLSigner
-    from cryptography.hazmat.primitives.serialization import pkcs12
+    from cryptography.hazmat.primitives.serialization import pkcs12, Encoding, PrivateFormat, NoEncryption
     from cryptography.hazmat.backends import default_backend
+    import tempfile
     NFELIB_DISPONIVEL = True
     print("[OK] nfelib e dependencias importadas com sucesso!")
 except ImportError as e:
@@ -6122,9 +6123,6 @@ class NFCeService:
                 if os.path.exists(cert_path):
                     try:
                         # Carregar certificado PKCS12
-                        from cryptography.hazmat.primitives.serialization import pkcs12
-                        from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption
-                        import tempfile
                         
                         with open(cert_path, 'rb') as f:
                             pfx_data = f.read()

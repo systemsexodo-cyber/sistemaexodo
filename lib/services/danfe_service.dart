@@ -7,7 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:firebase_storage/firebase_storage.dart';
+import '../services/supabase_service.dart';
 import '../models/nfce.dart';
 import '../models/empresa.dart';
 
@@ -529,45 +529,30 @@ Sistema Exodo
     }
   }
 
-  /// Faz backup do PDF no Firebase Storage
-  static Future<String> fazerBackupFirebase({
+  /// Faz backup do PDF no Supabase Storage
+  static Future<String> fazerBackupSupabase({
     required NFCe nfce,
     required Empresa empresa,
   }) async {
     try {
       final pdfBytes = await gerarPDF(nfce: nfce, empresa: empresa);
       
-      // Criar referência no Firebase Storage
-      final storage = FirebaseStorage.instance;
       final dataFormatada = '${nfce.dataEmissao.year}${nfce.dataEmissao.month.toString().padLeft(2, '0')}${nfce.dataEmissao.day.toString().padLeft(2, '0')}';
       final nomeArquivo = 'NFCe_${nfce.numero}_${nfce.serie}_$dataFormatada.pdf';
-      final caminhoStorage = 'nfce_pdfs/${empresa.id}/$nomeArquivo';
+      final caminhoStorage = '${empresa.id}/$nomeArquivo';
       
-      final ref = storage.ref().child(caminhoStorage);
-      
-      // Upload do PDF
-      final uploadTask = ref.putData(
+      final publicUrl = await SupabaseService.instance.uploadFile(
+        'nfces', // Bucket específico para NFC-e
+        caminhoStorage,
         pdfBytes,
-        SettableMetadata(
-          contentType: 'application/pdf',
-          customMetadata: {
-            'numero': nfce.numero,
-            'serie': nfce.serie,
-            'empresa_id': empresa.id,
-            'data_emissao': nfce.dataEmissao.toIso8601String(),
-            'valor_total': nfce.valorTotal.toString(),
-            'chave_acesso': nfce.chaveAcesso ?? '',
-          },
-        ),
+        contentType: 'application/pdf',
       );
       
-      // Aguardar conclusão do upload
-      final snapshot = await uploadTask;
-      final downloadUrl = await snapshot.ref.getDownloadURL();
+      if (publicUrl == null) throw Exception('Falha ao obter URL pública do PDF');
       
-      return downloadUrl;
+      return publicUrl;
     } catch (e) {
-      throw Exception('Erro ao fazer backup no Firebase: $e');
+      throw Exception('Erro ao fazer backup no Supabase: $e');
     }
   }
 }

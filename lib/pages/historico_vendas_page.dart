@@ -11,9 +11,11 @@ import '../models/nfce.dart';
 import '../models/conta_pagar.dart';
 import 'trocas_devolucoes_page.dart';
 import 'home_page.dart';
+import 'package:printing/printing.dart';
 import '../widgets/sync_status_widget.dart';
 import '../widgets/historico_nfce_pdv_dialog.dart';
 import '../services/auth_service.dart';
+import '../services/caixa_pdf_service.dart';
 
 class _ProdutoVendido {
   final String nome;
@@ -273,7 +275,16 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
     }
 
     // 1. Vendas Balcão (Prioridade para exibição correta de valores do PDV)
+    // Apenas incluir vendas que JA FORAM RECEBIDAS (finalizadas no PDV)
+    // Vendas pendentes (salvas para receber depois) devem aparecer apenas no PDV, não no histórico
     for (var v in dataService.vendasBalcao.where((v) => v.dataVenda.isAfter(_dataInicio) && v.dataVenda.isBefore(_dataFim))) {
+      // Verificar se a venda já foi recebida (tem valor recebido > 0)
+      final foiRecebida = (v.valorRecebido ?? 0) > 0;
+      final isCancelada = v.isCancelada;
+      
+      // Só incluir no histórico se foi recebida ou cancelada (não incluir pendentes)
+      if (!foiRecebida && !isCancelada) continue;
+      
       bool isNfce = mapNfces.containsKey(v.id) || mapNfces.containsKey(v.numero);
       mapItens[v.id] = ItemHistorico.fromVendaBalcao(v, isNfce: isNfce);
     }
@@ -344,21 +355,18 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
     // 6. Pagamentos avulsos/posteriores de pedidos (Pagamentos recebidos hoje para pedidos antigos)
     for (var p in dataService.pedidos) {
       for (var pag in p.pagamentos.where((pag) => pag.recebido && pag.dataRecebimento != null && pag.dataRecebimento!.isAfter(_dataInicio) && pag.dataRecebimento!.isBefore(_dataFim))) {
-         // Se o pedido já está no histórico pelo item 2 (mesma data do pedido), não adicionamos novamente como linha separada para evitar confusão 
-         // A MENOS que a data do recebimento seja significativamente diferente da data do pedido
-         if (p.dataPedido.year != pag.dataRecebimento!.year || p.dataPedido.month != pag.dataRecebimento!.month || p.dataPedido.day != pag.dataRecebimento!.day) {
-            mapItens['PAG-${pag.id}'] = ItemHistorico(
-              id: pag.id,
-              numero: '${p.numero} (PAG)',
-              data: pag.dataRecebimento!,
-              clienteNome: p.clienteNome,
-              valorTotal: pag.valor,
-              tipo: 'Recebimento',
-              tipoPagamento: pag.tipo,
-              pedido: p,
-              responsavel: p.vendedorNome,
-            );
-         }
+         // Adicionamos como linha separada para o fluxo de caixa de HOJE ser real
+         mapItens['PAG-${pag.id}'] = ItemHistorico(
+           id: pag.id,
+           numero: '${p.numero} (PAG)',
+           data: pag.dataRecebimento!,
+           clienteNome: p.clienteNome,
+           valorTotal: pag.valor,
+           tipo: 'Recebimento',
+           tipoPagamento: pag.tipo,
+           pedido: p,
+           responsavel: p.vendedorNome,
+         );
       }
     }
 
@@ -421,12 +429,26 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
            continue; 
         }
 
+        // BUG FIX: Se for uma linha de RECEBIMENTO avulso, usamos apenas o valorTotal da linha
+        // para evitar somar o pedido inteiro múltiplas vezes no dashboard
+        if (i.tipo == 'Recebimento' || i.id.startsWith('PAG-')) {
+          final tp = i.tipoPagamento ?? TipoPagamento.dinheiro;
+          totaisPorPagamento[tp] = (totaisPorPagamento[tp] ?? 0) + i.valorTotal;
+          totalEntradas += i.valorTotal;
+          continue;
+        }
+
         // Se tem pedido (Mesa/Comanda ou Venda Salva), somar apenas o que foi marcado como recebido
-        if (i.pedido != null && i.pedido!.pagamentos.isNotEmpty) {
+        if (i.pedido != null) {
            double somaRecebidaPedido = 0;
+           // Aqui filtramos pagamentos que ocorreram NO PERIODO selecionado
+           // para que o total do dashboard reflita apenas o dinheiro que entrou hoje
            for (final pag in i.pedido!.pagamentos.where((p) => p.recebido)) {
-              totaisPorPagamento[pag.tipo] = (totaisPorPagamento[pag.tipo] ?? 0) + pag.valor;
-              somaRecebidaPedido += pag.valor;
+              final dataPag = pag.dataRecebimento ?? i.pedido!.dataPedido;
+              if (dataPag.isAfter(_dataInicio) && dataPag.isBefore(_dataFim)) {
+                totaisPorPagamento[pag.tipo] = (totaisPorPagamento[pag.tipo] ?? 0) + pag.valor;
+                somaRecebidaPedido += pag.valor;
+              }
            }
            totalEntradas += somaRecebidaPedido;
         } else {
@@ -507,21 +529,31 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 16),
               children: totaisPorPagamento.entries.map((e) {
-                return Container(
-                  margin: const EdgeInsets.only(right: 8),
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1E1E2E),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: Colors.white10),
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(e.key.nome.toUpperCase(), style: const TextStyle(color: Colors.white38, fontSize: 9, fontWeight: FontWeight.bold)),
-                      Text(_formatoMoeda.format(e.value), style: const TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold)),
-                    ],
+                return InkWell(
+                  onTap: () => _mostrarVendasDoTipo(context, e.key, itens),
+                  borderRadius: BorderRadius.circular(10),
+                  child: Container(
+                    margin: const EdgeInsets.only(right: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1E1E2E),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Colors.white10),
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Text(e.key.nome.toUpperCase(), style: const TextStyle(color: Colors.white38, fontSize: 9, fontWeight: FontWeight.bold)),
+                            const SizedBox(width: 4),
+                            const Icon(Icons.open_in_new, color: Colors.white12, size: 8),
+                          ],
+                        ),
+                        Text(_formatoMoeda.format(e.value), style: const TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold)),
+                      ],
+                    ),
                   ),
                 );
               }).toList(),
@@ -1263,8 +1295,7 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
               width: double.infinity,
               child: ElevatedButton.icon(
                 onPressed: () {
-                  Navigator.pop(context);
-                  _confirmarFechamentoInteligente(context, dataService, abertura, totaisPorTipo, totalSup, totalS);
+                  _confirmarFechamentoInteligente(context, dataService, aberturaCaixa!, totaisPorTipo, totalSup, totalS);
                 },
                 icon: const Icon(Icons.lock_outline, color: Colors.white),
                 label: const Text('REALIZAR FECHAMENTO DETALHADO', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
@@ -1304,30 +1335,130 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
   }
 
   void _mostrarVendasDoTipo(BuildContext context, TipoPagamento tipo, List<ItemHistorico> vendas) {
-    final filtradas = vendas.where((v) => v.tipoPagamento == tipo).toList();
+    // Filtrar vendas que possuem este tipo de pagamento
+    final filtradas = vendas.where((v) {
+      if (v.isCancelada) return false;
+      
+      // Se for Sangria ou Suprimento, verificar o tipoPagamento (geralmente dinheiro)
+      if (v.isSangria || v.isSuprimento || v.isPagamento) {
+        return (v.tipoPagamento ?? TipoPagamento.dinheiro) == tipo;
+      }
+      
+      // Se for Venda Direta
+      if (v.vendaBalcao != null) {
+        return v.vendaBalcao!.tipoPagamento == tipo;
+      }
+      
+      // Se for Pedido, verificar se algum dos pagamentos recebidos é do tipo
+      if (v.pedido != null) {
+        return v.pedido!.pagamentos.any((p) => p.recebido && p.tipo == tipo);
+      }
+      
+      // Fallback
+      return v.tipoPagamento == tipo;
+    }).toList();
+
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF1E1E2E),
-      builder: (context) => Container(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          children: [
-            Text('Vendas em ${tipo.toString().split('.').last.toUpperCase()}', style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-            const Divider(color: Colors.white10),
-            Expanded(
-              child: ListView.builder(
-                itemCount: filtradas.length,
-                itemBuilder: (context, index) {
-                  final v = filtradas[index];
-                  return ListTile(
-                    title: Text(v.numero, style: const TextStyle(color: Colors.white)),
-                    subtitle: Text(DateFormat('HH:mm').format(v.data), style: const TextStyle(color: Colors.white38)),
-                    trailing: Text(_formatoMoeda.format(v.valorTotal), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                  );
-                },
+      backgroundColor: const Color(0xFF161621),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (context) => DraggableScrollableSheet(
+        initialChildSize: 0.6,
+        minChildSize: 0.4,
+        maxChildSize: 0.9,
+        expand: false,
+        builder: (context, scrollController) => Container(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 20),
+                decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(2)),
               ),
-            ),
-          ],
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(color: tipo.cor.withOpacity(0.1), borderRadius: BorderRadius.circular(12)),
+                    child: Icon(tipo.icone, color: tipo.cor, size: 24),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Vendas em ${tipo.nome.toUpperCase()}', style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                        Text('${filtradas.length} itens encontrados', style: const TextStyle(color: Colors.white38, fontSize: 12)),
+                      ],
+                    ),
+                  ),
+                  IconButton(icon: const Icon(Icons.close, color: Colors.white38), onPressed: () => Navigator.pop(context)),
+                ],
+              ),
+              const Divider(color: Colors.white10, height: 32),
+              Expanded(
+                child: ListView.builder(
+                  controller: scrollController,
+                  itemCount: filtradas.length,
+                  itemBuilder: (context, index) {
+                    final v = filtradas[index];
+                    
+                    // Calcular o valor específico deste tipo de pagamento se for pedido multi-pagamento
+                    double valorNesteTipo = v.valorTotal;
+                    if (v.pedido != null) {
+                      valorNesteTipo = v.pedido!.pagamentos
+                          .where((p) => p.recebido && p.tipo == tipo)
+                          .fold(0.0, (sum, p) => sum + p.valor);
+                    } else if (v.isSangria || v.isPagamento) {
+                      valorNesteTipo = -v.valorTotal;
+                    }
+
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.03),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: ListTile(
+                        onTap: () {
+                          Navigator.pop(context);
+                          _mostrarDetalhesVenda(v);
+                        },
+                        leading: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(color: Colors.white.withOpacity(0.05), borderRadius: BorderRadius.circular(8)),
+                          child: Icon(
+                            v.isSangria || v.isPagamento ? Icons.remove_circle_outline : Icons.add_circle_outline, 
+                            color: v.isSangria || v.isPagamento ? Colors.redAccent : Colors.greenAccent, 
+                            size: 20
+                          ),
+                        ),
+                        title: Text(
+                          v.numero, 
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)
+                        ),
+                        subtitle: Text(
+                          '${DateFormat('HH:mm').format(v.data)} • ${v.clienteNome ?? "Consumidor"}', 
+                          style: const TextStyle(color: Colors.white38, fontSize: 12)
+                        ),
+                        trailing: Text(
+                          _formatoMoeda.format(valorNesteTipo), 
+                          style: TextStyle(
+                            color: valorNesteTipo < 0 ? Colors.redAccent : Colors.white, 
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15
+                          )
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1363,15 +1494,116 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
     );
   }
 
-  void _confirmarFechamentoInteligente(BuildContext context, DataService ds, double abertura, Map<TipoPagamento, double> totaisEsperados, double suprimentos, double sangriasTotais) {
+  void _confirmarFechamentoInteligente(BuildContext context, DataService ds, AberturaCaixa abertura, Map<TipoPagamento, double> totaisEsperados, double suprimentos, double sangriasTotais) {
     final Map<TipoPagamento, TextEditingController> controllers = {};
     for (var tipo in TipoPagamento.values) {
        double esperado = totaisEsperados[tipo] ?? 0.0;
        if (tipo == TipoPagamento.dinheiro) {
-         esperado += abertura + suprimentos - sangriasTotais;
+         esperado += abertura.valorInicial + suprimentos - sangriasTotais;
        }
        controllers[tipo] = TextEditingController(text: esperado > 0 ? esperado.toStringAsFixed(2).replaceAll('.', ',') : '0,00');
     }
+
+    final TextEditingController responsavelController = TextEditingController();
+    final TextEditingController observacaoController = TextEditingController();
+
+    Future<void> fecharHistorico() async {
+      try {
+        debugPrint('>>> [fecharHistorico] Iniciando fechamento');
+        
+        final String obsDetalhada = observacaoController.text.trim();
+
+        if (responsavelController.text.trim().isEmpty) {
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Informe o nome de quem está fechando o caixa.'), backgroundColor: Colors.orange),
+            );
+          }
+          return;
+        }
+
+        final double somaReal = controllers.values.fold(0.0, (sum, ctrl) => sum + (double.tryParse(ctrl.text.replaceAll(',', '.')) ?? 0));
+        final double somaEsperada = TipoPagamento.values.fold(0.0, (sum, tipo) {
+          double esperado = totaisEsperados[tipo] ?? 0;
+          if (tipo == TipoPagamento.dinheiro) esperado += abertura.valorInicial + suprimentos - sangriasTotais;
+          return sum + esperado;
+        });
+
+        debugPrint('>>> [fecharHistorico] Registrando: soma_esperada=$somaEsperada, soma_real=$somaReal');
+        
+        final fechamento = await ds.registrarFechamentoCaixa(
+          valorEsperado: somaEsperada,
+          valorReal: somaReal,
+          diferenca: somaReal - somaEsperada,
+          observacao: obsDetalhada.isNotEmpty ? obsDetalhada : null,
+          responsavel: responsavelController.text.trim(),
+          abertura: abertura,
+        );
+
+        if (fechamento == null) {
+          debugPrint('>>> [fecharHistorico] Erro: fechamento é null');
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Erro ao fechar caixa.'), backgroundColor: Colors.red),
+            );
+          }
+          return;
+        }
+
+        if (!context.mounted) {
+          debugPrint('>>> [fecharHistorico] Context não montado, abortando');
+          return;
+        }
+
+        debugPrint('>>> [fecharHistorico] Mostrando pergunta de impressão');
+        final bool imprimirEscolhido = await showDialog<bool>(
+          context: context,
+          useRootNavigator: true,
+          barrierDismissible: false,
+          builder: (ctx) => AlertDialog(
+            backgroundColor: const Color(0xFF1E1E2E),
+            title: const Text('Imprimir Fechamento?', style: TextStyle(color: Colors.white)),
+            content: const Text('Deseja imprimir o recibo do fechamento de caixa?', style: TextStyle(color: Colors.white70)),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(false),
+                child: const Text('NÃO', style: TextStyle(color: Colors.red)),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.of(ctx).pop(true),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
+                child: const Text('SIM, IMPRIMIR', style: TextStyle(color: Colors.white)),
+              ),
+            ],
+          ),
+        ) ?? false;
+
+        if (imprimirEscolhido) {
+          _imprimirFechamentoCaixa(context, abertura, fechamento, ds);
+        }
+
+        debugPrint('>>> [fecharHistorico] Fechando diálogo de conferência');
+        Navigator.pop(context);
+
+        debugPrint('>>> [fecharHistorico] Navegando para HomePage');
+        Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const HomePage()),
+          (route) => false,
+        );
+
+        debugPrint('>>> [fecharHistorico] Completado');
+      } catch (e, stack) {
+        debugPrint('>>> [fecharHistorico] ERRO: $e');
+        debugPrintStack(stackTrace: stack);
+        if (context.mounted) {
+          Navigator.pop(context);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Erro: $e'), backgroundColor: Colors.red),
+          );
+        }
+      }
+    }
+
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -1381,7 +1613,7 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
           controllers.forEach((tipo, ctrl) {
             somaReal += double.tryParse(ctrl.text.replaceAll(',', '.')) ?? 0;
             double esperado = totaisEsperados[tipo] ?? 0;
-            if (tipo == TipoPagamento.dinheiro) esperado += abertura + suprimentos - sangriasTotais;
+            if (tipo == TipoPagamento.dinheiro) esperado += abertura.valorInicial + suprimentos - sangriasTotais;
             somaEsperada += esperado;
           });
           return AlertDialog(
@@ -1395,7 +1627,7 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                   children: [
                     ...TipoPagamento.values.map((tipo) {
                       double esperado = totaisEsperados[tipo] ?? 0;
-                      if (tipo == TipoPagamento.dinheiro) esperado += abertura + suprimentos - sangriasTotais;
+                      if (tipo == TipoPagamento.dinheiro) esperado += abertura.valorInicial + suprimentos - sangriasTotais;
                       if (esperado <= 0 && (double.tryParse(controllers[tipo]!.text) ?? 0) == 0) return const SizedBox.shrink();
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 16),
@@ -1430,6 +1662,33 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                     _tileResumoDialog('TOTAL ESPERADO', somaEsperada, Colors.white38),
                     _tileResumoDialog('TOTAL INFORMADO', somaReal, Colors.white),
                     _tileResumoDialog('DIFERENÇA GERAL', somaReal - somaEsperada, (somaReal - somaEsperada) >= 0 ? Colors.greenAccent : Colors.redAccent, isTotal: true),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: responsavelController,
+                      keyboardType: TextInputType.text,
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                      decoration: InputDecoration(
+                        labelText: 'Responsável pelo fechamento',
+                        labelStyle: const TextStyle(color: Colors.white70),
+                        filled: true,
+                        fillColor: Colors.white.withOpacity(0.05),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: observacaoController,
+                      keyboardType: TextInputType.text,
+                      maxLines: 3,
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                      decoration: InputDecoration(
+                        labelText: 'Observações (opcional)',
+                        labelStyle: const TextStyle(color: Colors.white70),
+                        filled: true,
+                        fillColor: Colors.white.withOpacity(0.05),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -1438,36 +1697,49 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
               TextButton(onPressed: () => Navigator.pop(context), child: const Text('VOLTAR', style: TextStyle(color: Colors.white38))),
               ElevatedButton(
                 onPressed: () async {
-                  String obsDetalhada = 'Fechamento Inteligente:\n';
-                  controllers.forEach((tipo, ctrl) {
-                     double real = double.tryParse(ctrl.text.replaceAll(',', '.')) ?? 0;
-                     double esp = totaisEsperados[tipo] ?? 0;
-                     if (tipo == TipoPagamento.dinheiro) esp += abertura + suprimentos - sangriasTotais;
-                     if (esp > 0 || real > 0) {
-                        obsDetalhada += '${tipo.toString().split('.').last.toUpperCase()}: Real ${_formatoMoeda.format(real)} (Exp ${_formatoMoeda.format(esp)})\n';
-                     }
-                  });
-
-                  await ds.registrarFechamentoCaixa(
-                    valorEsperado: somaEsperada,
-                    valorReal: somaReal,
-                    diferenca: somaReal - somaEsperada,
-                    observacao: obsDetalhada,
-                  );
-                  
-                  if (context.mounted) {
-                    Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Caixa fechado com sucesso!'), backgroundColor: Colors.green));
-                  }
+                  await fecharHistorico();
                 },
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.greenAccent),
-                child: const Text('CONFIRMAR E FECHAR', style: TextStyle(color: Color(0xFF1E1E2E), fontWeight: FontWeight.bold)),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+                child: const Text('FECHAR CAIXA', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
               ),
             ],
           );
         }
       ),
     );
+  }
+
+  void _imprimirFechamentoCaixa(BuildContext context, AberturaCaixa abertura, FechamentoCaixa fechamento, DataService ds) {
+    try {
+      final authService = Provider.of<AuthService>(context, listen: false);
+      final empresa = authService.empresaAtual;
+      if (empresa == null) return;
+
+      final vendas = ds.vendasBalcao.where((v) {
+        return (v.dataVenda.isAfter(abertura.dataAbertura) || v.dataVenda.isAtSameMomentAs(abertura.dataAbertura)) &&
+               v.dataVenda.isBefore(fechamento.dataFechamento.add(const Duration(seconds: 1)));
+      }).toList();
+
+      CaixaPDFService.gerarPDFTermico(
+        abertura: abertura,
+        fechamento: fechamento,
+        empresa: empresa,
+        vendas: vendas,
+      ).then((pdfData) async {
+        try {
+          await Printing.layoutPdf(
+            onLayout: (format) async => pdfData,
+            name: 'Fechamento_Caixa_${abertura.numero}.pdf',
+          );
+        } catch (e) {
+          debugPrint('Erro ao exibir PDF: $e');
+        }
+      }).catchError((e) {
+        debugPrint('Erro ao gerar PDF: $e');
+      });
+    } catch (e) {
+      debugPrint('Erro na impressão: $e');
+    }
   }
 
   Widget _tileResumoDialog(String L, double v, Color c, {bool isTotal = false}) => Padding(

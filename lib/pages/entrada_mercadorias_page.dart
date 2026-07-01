@@ -1280,7 +1280,7 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
           var produtoAtualizado = produtoAtual.copyWith(
             precoCusto: item.precoCusto,
             preco: item.precoVenda,
-            estoqueMinimo: item.estoqueMinimo,
+            estoqueMinimo: item.estoqueMinimo?.toDouble(),
             // NÃO incrementamos estoque aqui manualmente, registrarEntradaEstoque fará isso
             updatedAt: DateTime.now(),
           );
@@ -1301,7 +1301,7 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
 
           await service.registrarEntradaEstoque(
             produtoId: produtoAtual.id,
-            quantidade: item.quantidade.toInt(),
+            quantidade: item.quantidade,
             observacao: 'Entrada por ${_modo == 'xml' ? 'XML' : 'Manual'}',
             fornecedorId: _fornecedorCNPJ,
             fornecedorNome: fornecedorFinal,
@@ -1322,7 +1322,7 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
             estoqueMinimo: item.estoqueMinimo,
             precoCustoAnterior: precoCustoAnterior,
             precoVendaAnterior: precoVendaAnterior,
-            estoqueAnterior: estoqueAnterior,
+            estoqueAnterior: estoqueAnterior?.toInt(),
             produtoNovo: false,
           ));
 
@@ -1375,7 +1375,7 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
             codigosFornecedor: codigosFornecedor,
             fornecedorId: _fornecedorCNPJ,
             fornecedorNome: fornecedorFinal,
-            estoqueMinimo: item.estoqueMinimo,
+            estoqueMinimo: item.estoqueMinimo?.toDouble() ?? 0.0,
           );
 
           service.addProduto(novoProduto);
@@ -1384,7 +1384,7 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
           // Registrar entrada no histórico e gerenciar estoque
           await service.registrarEntradaEstoque(
             produtoId: novoProduto.id,
-            quantidade: item.quantidade.toInt(),
+            quantidade: item.quantidade,
             observacao: 'Entrada por ${_modo == 'xml' ? 'XML' : 'Manual'} - Produto novo',
             fornecedorId: _fornecedorCNPJ,
             fornecedorNome: fornecedorFinal,
@@ -3505,7 +3505,7 @@ class _ItemEntrada {
     double? margemAtual,
     this.fornecedorNome,
   }) : precoVenda = precoVenda ?? 0,
-       estoqueMinimo = produtoExistente?.estoqueMinimo ?? 0,
+       estoqueMinimo = (produtoExistente?.estoqueMinimo ?? 0).toInt(),
        margemAtual = margemAtual,
        quantidadeEmbalagens = quantidadeEmbalagens ?? 0,
        quantidadePorEmbalagem = quantidadePorEmbalagem ?? 1,

@@ -2,7 +2,7 @@ class EstoqueHistorico {
   final String id;
   final String produtoId;
   final DateTime data;
-  final int quantidade;
+  final double quantidade;
   final String tipo; // 'entrada', 'saida', 'ajuste'
   final String? usuario;
   final String? observacao;
@@ -24,30 +24,29 @@ class EstoqueHistorico {
   factory EstoqueHistorico.fromMap(Map<String, dynamic> map) {
     return EstoqueHistorico(
       id: map['id'] ?? '',
-      produtoId: map['produtoId'] ?? '',
+      produtoId: map['produto_id'] ?? map['produtoId'] ?? '',
       data: map['data'] != null
-          ? DateTime.parse(map['data'])
+          ? (map['data'] is DateTime ? map['data'] as DateTime : DateTime.parse(map['data'].toString()))
           : DateTime.now(),
-      quantidade: map['quantidade'] ?? 0,
+      quantidade: map['quantidade'] != null ? (map['quantidade'] as num).toDouble() : 0.0,
       tipo: map['tipo'] ?? '',
       usuario: map['usuario'],
       observacao: map['observacao'],
-      fornecedorId: map['fornecedorId'],
-      fornecedorNome: map['fornecedorNome'],
+      fornecedorId: map['fornecedor_id'] ?? map['fornecedorId'],
+      fornecedorNome: map['fornecedor_nome'] ?? map['fornecedorNome'],
     );
   }
 
   Map<String, dynamic> toMap() {
     return {
       'id': id,
-      'produtoId': produtoId,
+      'produto_id': produtoId,
       'data': data.toIso8601String(),
       'quantidade': quantidade,
       'tipo': tipo,
       'usuario': usuario,
       'observacao': observacao,
-      'fornecedorId': fornecedorId,
-      'fornecedorNome': fornecedorNome,
+      'fornecedor_nome': fornecedorNome,
     };
   }
 }

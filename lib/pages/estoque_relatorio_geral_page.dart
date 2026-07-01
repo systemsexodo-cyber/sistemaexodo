@@ -75,8 +75,8 @@ class _EstoqueRelatorioGeralPageState extends State<EstoqueRelatorioGeralPage> w
 
     filtrado.sort((a, b) => b.data.compareTo(a.data));
 
-    final totalEntradas = filtrado.where((h) => h.tipo == 'entrada').fold<int>(0, (p, e) => p + e.quantidade);
-    final totalSaidas = filtrado.where((h) => h.tipo == 'saida').fold<int>(0, (p, e) => p + e.quantidade);
+    final totalEntradas = filtrado.where((h) => h.tipo == 'entrada').fold<double>(0.0, (p, e) => p + e.quantidade);
+    final totalSaidas = filtrado.where((h) => h.tipo == 'saida').fold<double>(0.0, (p, e) => p + e.quantidade);
 
     return AppTheme.appBackground(
       child: Scaffold(
@@ -99,7 +99,7 @@ class _EstoqueRelatorioGeralPageState extends State<EstoqueRelatorioGeralPage> w
             Column(
               children: [
                 _buildFiltros(fornecedores, true),
-                _buildResumoMovimentacao(totalEntradas, totalSaidas),
+                _buildResumoMovimentacao(totalEntradas.toInt(), totalSaidas.toInt()),
                 const SizedBox(height: 10),
                 Expanded(
                   child: filtrado.isEmpty
@@ -123,9 +123,19 @@ class _EstoqueRelatorioGeralPageState extends State<EstoqueRelatorioGeralPage> w
   Produto _produtoExcluido() => Produto(id: '', nome: 'Produto Excluído', preco: 0, estoque: 0, unidade: 'un', grupo: 'Geral', createdAt: DateTime.now(), updatedAt: DateTime.now());
 
   Widget _buildAbaInventario(List<Produto> todosProdutos, List<EstoqueHistorico> historico) {
+    // OTIMIZAÇÃO CRÍTICA: Agrupar histórico por produto ID uma única vez O(N)
+    final Map<String, List<EstoqueHistorico>> historicoPorProduto = {};
+    for (final h in historico) {
+      if (h.produtoId != null) {
+        historicoPorProduto.putIfAbsent(h.produtoId!, () => []).add(h);
+      }
+    }
+
     // 1. Calcular giro e autonomia para TODOS antes de filtrar
     final List<Map<String, dynamic>> analiseCompleta = todosProdutos.map((p) {
-      final saidasTotal = historico.where((h) => h.produtoId == p.id && h.tipo == 'saida').toList();
+      final saidasTotal = (historicoPorProduto[p.id] ?? [])
+          .where((h) => h.tipo == 'saida')
+          .toList();
       saidasTotal.sort((a, b) => b.data.compareTo(a.data));
       
       DateTime? ultimaSaida = saidasTotal.isNotEmpty ? saidasTotal.first.data : null;

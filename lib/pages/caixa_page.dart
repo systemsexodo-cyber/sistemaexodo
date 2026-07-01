@@ -1057,7 +1057,7 @@ class _CaixaPageState extends State<CaixaPage> {
 
     // --- Novos cálculos para detalhamento ---
     final totaisPorForma = <TipoPagamento, double>{};
-    int totalItensVendidos = 0;
+    double totalItensVendidos = 0.0;
     double valorTotalProdutos = 0.0;
     int totalVendasRealizadas = 0;
 
@@ -1101,7 +1101,7 @@ class _CaixaPageState extends State<CaixaPage> {
       
       if (tevePagamentoNoPeriodo) {
         for (var item in p.produtos) {
-          totalItensVendidos += item.quantidade.toInt();
+          totalItensVendidos += item.quantidade;
           valorTotalProdutos += (item.preco * item.quantidade);
         }
         for (var item in p.servicos) {
@@ -1127,6 +1127,174 @@ class _CaixaPageState extends State<CaixaPage> {
     
     valorEsperadoController.text = valorEsperadoCalculado.toStringAsFixed(2).replaceAll('.', ',');
     valorRealController.text = valorEsperadoCalculado.toStringAsFixed(2).replaceAll('.', ',');
+
+    Future<void> fecharCaixa(BuildContext dialogContext, {required bool imprimir}) async {
+      print('>>> [Fechar Caixa] ========== BOTÃO PRESSIONADO ==========');
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Processando fechamento...'),
+            backgroundColor: Colors.blue,
+            duration: Duration(seconds: 1),
+          ),
+        );
+      }
+
+      if (formKey.currentState == null) {
+        print('>>> [Fechar Caixa] ERRO: formKey.currentState é null!');
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Erro: Formulário não inicializado'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      final isValid = formKey.currentState!.validate();
+      if (!isValid) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Por favor, preencha todos os campos obrigatórios corretamente'),
+              backgroundColor: Colors.orange,
+              duration: Duration(seconds: 3),
+            ),
+          );
+        }
+        return;
+      }
+
+      formKey.currentState!.save();
+
+      try {
+        final valorEsperadoStr = valorEsperadoController.text.replaceAll('.', '').replaceAll(',', '.');
+        final valorRealStr = valorRealController.text.replaceAll('.', '').replaceAll(',', '.');
+
+        final valorEsperado = double.tryParse(valorEsperadoStr) ?? 0.0;
+        final valorReal = double.tryParse(valorRealStr) ?? 0.0;
+
+        final responsavel = responsavelController.text.trim().isEmpty
+            ? null
+            : responsavelController.text.trim();
+
+        final fechamento = await dataService.registrarFechamentoCaixa(
+          valorEsperado: valorEsperado,
+          valorReal: valorReal,
+          observacao: observacaoController.text.trim().isEmpty ? null : observacaoController.text.trim(),
+          responsavel: responsavel,
+        );
+
+        if (fechamento == null) {
+          print('>>> [Fechar Caixa] ERRO: Fechamento retornou null');
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Erro ao fechar caixa.'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+          return;
+        }
+
+        if (context.mounted) {
+          Navigator.pop(dialogContext);
+
+          if (imprimir && abertura != null) {
+            await _imprimirFechamento(abertura, fechamento);
+          } else if (!imprimir && abertura != null) {
+            await showDialog(
+              context: context,
+              barrierDismissible: false,
+              builder: (context) => AlertDialog(
+                backgroundColor: const Color(0xFF1E1E2E),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+                title: Column(
+                  children: [
+                    const Icon(Icons.check_circle_outline, color: Colors.greenAccent, size: 64),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Caixa Encerrado!',
+                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'O caixa ${abertura.numero} foi fechado com sucesso.',
+                      style: const TextStyle(color: Colors.white70),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Diferença: ${formatoMoeda.format(fechamento.diferenca)}',
+                      style: TextStyle(
+                        color: fechamento.diferenca >= 0 ? Colors.greenAccent : Colors.redAccent,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
+                  ],
+                ),
+                actions: [
+                  Column(
+                    children: [
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: () async {
+                            await _imprimirFechamento(abertura, fechamento);
+                            if (context.mounted) Navigator.pop(context);
+                          },
+                          icon: const Icon(Icons.print),
+                          label: const Text('IMPRIMIR FECHAMENTO', style: TextStyle(fontWeight: FontWeight.bold)),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.blueAccent,
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: double.infinity,
+                        child: TextButton(
+                          onPressed: () {
+                            if (context.mounted) Navigator.pop(context);
+                          },
+                          child: const Text('CONCLUIR E SAIR', style: TextStyle(color: Colors.white54)),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            );
+          }
+
+          if (context.mounted) {
+            Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+              MaterialPageRoute(builder: (_) => const HomePage()),
+              (route) => false,
+            );
+          }
+        }
+      } catch (e) {
+        print('>>> [Fechar Caixa] EXCEÇÃO: $e');
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Erro ao fechar caixa: $e'), backgroundColor: Colors.red),
+          );
+        }
+      }
+    }
 
     showDialog(
       context: context,
@@ -1630,224 +1798,7 @@ class _CaixaPageState extends State<CaixaPage> {
             child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
           ),
           ElevatedButton(
-            onPressed: () async {
-              print('>>> [Fechar Caixa] ========== BOTÃO PRESSIONADO ==========');
-              
-              if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Processando fechamento...'),
-                    backgroundColor: Colors.blue,
-                    duration: Duration(seconds: 1),
-                  ),
-                );
-              }
-              
-              if (formKey.currentState == null) {
-                print('>>> [Fechar Caixa] ERRO: formKey.currentState é null!');
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Erro: Formulário não inicializado'),
-                      backgroundColor: Colors.red,
-                    ),
-                  );
-                }
-                return;
-              }
-              
-              final isValid = formKey.currentState!.validate();
-              if (!isValid) {
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Por favor, preencha todos os campos obrigatórios corretamente'),
-                      backgroundColor: Colors.orange,
-                      duration: Duration(seconds: 3),
-                    ),
-                  );
-                }
-                return;
-              }
-              
-              formKey.currentState!.save();
-              
-              try {
-                final valorEsperadoStr = valorEsperadoController.text.replaceAll('.', '').replaceAll(',', '.');
-                final valorRealStr = valorRealController.text.replaceAll('.', '').replaceAll(',', '.');
-                
-                final valorEsperado = double.tryParse(valorEsperadoStr) ?? 0.0;
-                final valorReal = double.tryParse(valorRealStr) ?? 0.0;
-                
-                final diferenca = valorReal - valorEsperado;
-                final responsavel = responsavelController.text.trim().isEmpty 
-                    ? null 
-                    : responsavelController.text.trim();
-                
-                if (diferenca.abs() > 0.01) {
-                  final confirmar = await showDialog<bool>(
-                      context: context,
-                      builder: (confirmContext) => AlertDialog(
-                        backgroundColor: const Color(0xFF1E1E2E),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                        title: Row(
-                          children: [
-                            Icon(
-                              diferenca > 0 ? Icons.add_circle : Icons.remove_circle,
-                              color: diferenca > 0 ? Colors.green : Colors.red,
-                            ),
-                            const SizedBox(width: 12),
-                            const Text('Diferença Detectada', style: TextStyle(color: Colors.white)),
-                          ],
-                        ),
-                        content: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text('Diferença detectada: ${formatoMoeda.format(diferenca.abs())}', style: const TextStyle(color: Colors.white)),
-                            const SizedBox(height: 12),
-                            const Text('Deseja continuar?', style: TextStyle(color: Colors.white70)),
-                          ],
-                        ),
-                        actions: [
-                          TextButton(
-                            onPressed: () => Navigator.pop(confirmContext, false),
-                            child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
-                          ),
-                          ElevatedButton(
-                            onPressed: () => Navigator.pop(confirmContext, true),
-                            style: ElevatedButton.styleFrom(backgroundColor: diferenca > 0 ? Colors.green : Colors.red),
-                            child: const Text('Confirmar'),
-                          ),
-                        ],
-                      ),
-                    );
-
-                  if (confirmar != true) return;
-                }
-
-                print('>>> [Fechar Caixa] Chamando registrarFechamentoCaixa...');
-                final AberturaCaixa? aberturaParaPrint = dataService.aberturaCaixaAtual;
-                
-                print('>>> [Fechar Caixa] Abertura capturada: ${aberturaParaPrint?.numero}');
-
-                final fechamento = await dataService.registrarFechamentoCaixa(
-                  valorEsperado: valorEsperado,
-                  valorReal: valorReal,
-                  observacao: observacaoController.text.trim().isEmpty ? null : observacaoController.text.trim(),
-                  responsavel: responsavel,
-                );
-                
-                if (fechamento == null) {
-                  print('>>> [Fechar Caixa] ERRO: Fechamento retornou null');
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Erro ao fechar caixa.'),
-                        backgroundColor: Colors.red,
-                      ),
-                    );
-                  }
-                  return;
-                }
-
-                print('>>> [Fechar Caixa] Fechamento realizado com sucesso: ${fechamento.id}');
-
-                if (context.mounted) {
-                  // Primeiro removemos o diálogo de formulário
-                  Navigator.pop(dialogContext);
-                  
-                  if (aberturaParaPrint != null) {
-                    print('>>> [Fechar Caixa] Exibindo Diálogo de Sucesso e Impressão...');
-                    
-                    // Exibimos um diálogo de sucesso com opção de imprimir
-                    await showDialog(
-                      context: context,
-                      barrierDismissible: false,
-                      builder: (context) => AlertDialog(
-                        backgroundColor: const Color(0xFF1E1E2E),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-                        title: Column(
-                          children: [
-                            const Icon(Icons.check_circle_outline, color: Colors.greenAccent, size: 64),
-                            const SizedBox(height: 16),
-                            const Text(
-                              'Caixa Encerrado!',
-                              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                              textAlign: TextAlign.center,
-                            ),
-                          ],
-                        ),
-                        content: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              'O caixa ${aberturaParaPrint.numero} foi fechado com sucesso.',
-                              style: const TextStyle(color: Colors.white70),
-                              textAlign: TextAlign.center,
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              'Diferença: ${formatoMoeda.format(fechamento.diferenca)}',
-                              style: TextStyle(
-                                color: fechamento.diferenca >= 0 ? Colors.greenAccent : Colors.redAccent,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 16,
-                              ),
-                            ),
-                          ],
-                        ),
-                        actions: [
-                          Column(
-                            children: [
-                              SizedBox(
-                                width: double.infinity,
-                                child: ElevatedButton.icon(
-                                  onPressed: () {
-                                    _imprimirFechamento(aberturaParaPrint, fechamento);
-                                    Navigator.pop(context);
-                                  },
-                                  icon: const Icon(Icons.print),
-                                  label: const Text('IMPRIMIR FECHAMENTO', style: TextStyle(fontWeight: FontWeight.bold)),
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.blueAccent,
-                                    padding: const EdgeInsets.symmetric(vertical: 16),
-                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              SizedBox(
-                                width: double.infinity,
-                                child: TextButton(
-                                  onPressed: () => Navigator.pop(context),
-                                  child: const Text('CONCLUIR E SAIR', style: TextStyle(color: Colors.white54)),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    );
-                    
-                    print('>>> [Fechar Caixa] Diálogo de sucesso fechado, navegando para Home...');
-                  }
-
-                  if (context.mounted) {
-                    Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
-                      MaterialPageRoute(builder: (_) => const HomePage()),
-                      (route) => false,
-                    );
-                  }
-                }
-              } catch (e) {
-                print('>>> [Fechar Caixa] EXCEÇÃO: $e');
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Erro ao fechar caixa: $e'), backgroundColor: Colors.red),
-                  );
-                }
-              }
-            },
+            onPressed: () => fecharCaixa(dialogContext, imprimir: false),
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.redAccent,
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
@@ -1861,6 +1812,30 @@ class _CaixaPageState extends State<CaixaPage> {
                 SizedBox(width: 8),
                 Text(
                   'Fechar Caixa',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () => fecharCaixa(dialogContext, imprimir: true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blueAccent,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              minimumSize: const Size(double.infinity, 50),
+            ),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.print, size: 20, color: Colors.white),
+                SizedBox(width: 8),
+                Text(
+                  'Fechar e Imprimir',
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,

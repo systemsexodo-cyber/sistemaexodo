@@ -1,6 +1,8 @@
 import 'dart:math' as math;
 import 'dart:async';
-import 'dart:html' as html if (dart.library.html) 'dart:html';
+import 'dart:convert';
+
+import 'html_helper_stub.dart' if (dart.library.html) 'html_helper_web.dart' as html_helper;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -11,6 +13,8 @@ import 'package:uuid/uuid.dart';
 import 'package:sistema_exodo_novo/models/conta_pagar.dart';
 import 'package:sistema_exodo_novo/services/data_service.dart';
 import 'package:sistema_exodo_novo/services/local_storage_service.dart';
+import 'package:sistema_exodo_novo/services/balanca_service.dart';
+import 'package:audioplayers/audioplayers.dart';
 import 'package:sistema_exodo_novo/models/produto.dart';
 import 'package:sistema_exodo_novo/models/servico.dart';
 import 'package:sistema_exodo_novo/models/cliente.dart';
@@ -36,6 +40,7 @@ import 'package:sistema_exodo_novo/services/nfce_service.dart';
 import 'package:sistema_exodo_novo/models/nfce.dart';
 import 'package:sistema_exodo_novo/models/carrinho_item.dart';
 import 'package:sistema_exodo_novo/models/mesa_comanda.dart';
+import 'package:sistema_exodo_novo/models/comissao_vendedor.dart';
 import 'package:sistema_exodo_novo/widgets/exodo_logo.dart';
 import 'package:sistema_exodo_novo/widgets/exodo_loading.dart';
 import 'package:sistema_exodo_novo/widgets/exodo_error_dialog.dart';
@@ -50,6 +55,8 @@ import 'package:sistema_exodo_novo/services/venda_pdf_service.dart';
 import 'package:printing/printing.dart';
 import 'package:pdf/pdf.dart';
 import 'package:sistema_exodo_novo/services/pedido_pdf_service.dart';
+import '../models/funcionario.dart';
+import 'package:sistema_exodo_novo/models/motorista.dart';
 
 /// Item no carrinho da venda direta
 class ItemCarrinho {
@@ -57,33 +64,37 @@ class ItemCarrinho {
   final String nome;
   final String? descricao; // Descrição do produto/serviço
   final double preco;
-  int quantidade;
+  double quantidade;
   final bool isServico;
   double desconto; // Desconto em valor (R$)
   final String? fornecedorNome; // Fornecedor do produto
   final String? fornecedorId; // ID do fornecedor do produto
   String? observacao;
   final List<AdicionalProduto> adicionais;
+  bool isBrinde; // Identifica se o produto é vendido como brinde (grátis)
 
   ItemCarrinho({
     required this.id,
     required this.nome,
     this.descricao,
     required this.preco,
-    this.quantidade = 1,
+    this.quantidade = 1.0,
     this.isServico = false,
     this.desconto = 0.0,
     this.fornecedorNome,
     this.fornecedorId,
     this.observacao,
     List<AdicionalProduto>? adicionais,
+    this.isBrinde = false,
   }) : adicionais = adicionais ?? [];
 
   double get subtotal {
+    if (isBrinde) return 0.0;
     final totalAdicionais = adicionais.fold(0.0, (sum, a) => sum + a.preco);
     return ((preco + totalAdicionais) * quantidade) - desconto;
   }
   double get subtotalSemDesconto {
+    if (isBrinde) return 0.0;
     final totalAdicionais = adicionais.fold(0.0, (sum, a) => sum + a.preco);
     return (preco + totalAdicionais) * quantidade;
   }
@@ -102,6 +113,7 @@ class ItemCarrinho {
       'fornecedorId': fornecedorId,
       'observacao': observacao,
       'adicionais': adicionais.map((a) => a.toMap()).toList(),
+      'isBrinde': isBrinde,
     };
   }
 
@@ -111,7 +123,7 @@ class ItemCarrinho {
       nome: map['nome'] ?? '',
       descricao: map['descricao'],
       preco: (map['preco'] ?? 0.0).toDouble(),
-      quantidade: map['quantidade'] ?? 1,
+      quantidade: (map['quantidade'] ?? 1.0).toDouble(),
       isServico: map['isServico'] ?? false,
       desconto: (map['desconto'] ?? 0.0).toDouble(),
       fornecedorNome: map['fornecedorNome'],
@@ -120,6 +132,7 @@ class ItemCarrinho {
       adicionais: (map['adicionais'] as List<dynamic>?)
           ?.map((a) => AdicionalProduto.fromMap(a as Map<String, dynamic>))
           .toList() ?? [],
+      isBrinde: map['isBrinde'] ?? false,
     );
   }
 }
@@ -148,16 +161,56 @@ class VendaDiretaPage extends StatefulWidget {
 }
 
 enum SortOption { codigo, nome, recentes, grupo }
+enum ViewMode { grid, list }
 
 class _VendaDiretaPageState extends State<VendaDiretaPage> {
+  ViewMode _viewMode = ViewMode.grid;
   final _buscaController = TextEditingController();
   final _buscaFocusNode = FocusNode();
   String _termoBusca = '';
   SortOption _sortOption = SortOption.codigo;
+
+  // Cache de performance para evitar rebuilds pesados (6k+ itens)
+  bool _estaComPopupAberto = false;
+  List<dynamic>? _cachedItens;
+  List<String>? _cachedCategorias;
+  List<Produto>? _cachedProdutosCategoria;
+  String? _ultimoTermoCache;
+  String? _ultimaCategoriaCache;
+  DateTime? _ultimaAtualizacaoCache;
   final List<ItemCarrinho> _carrinho = [];
+  final NumberFormat _formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
   Cliente? _clienteSelecionado;
+  Funcionario? _vendedorSelecionado;
   String? _categoriaAtiva;
-  int _quantidadeDigitada = 1;
+  double _quantidadeDigitada = 1.0;
+  final AudioPlayer _audioPlayerPDV = AudioPlayer();
+
+  Future<void> _tocarSomPDV(String filename, {required String tipo}) async {
+    if (!_somHabilitado) return;
+    if (tipo == 'adicionar' && !_somAdicionarHabilitado) return;
+    if (tipo == 'remover' && !_somRemoverHabilitado) return;
+    if (tipo == 'finalizar' && !_somFinalizarHabilitado) return;
+
+    String audioFile = filename;
+    if (tipo == 'adicionar') audioFile = 'add.wav';
+    if (tipo == 'remover') audioFile = 'remove.wav';
+    if (tipo == 'finalizar') audioFile = 'success.wav';
+
+    try {
+      await _audioPlayerPDV.stop();
+      await _audioPlayerPDV.setVolume(0.5);
+      if (kIsWeb) {
+        final origin = html_helper.getWindowOrigin();
+        final url = '$origin/assets/sounds/$audioFile';
+        await _audioPlayerPDV.play(UrlSource(url));
+      } else {
+        await _audioPlayerPDV.play(AssetSource('sounds/$audioFile'));
+      }
+    } catch (e) {
+      debugPrint('>>> [Audio PDV] Erro ao tocar som: $e');
+    }
+  }
   Pedido? _pedidoOriginal; // Pedido original sendo editado
   List<PagamentoPedido> _pagamentosSalvos =
       []; // Pagamentos do pedido sendo editado
@@ -175,7 +228,15 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   Timer? _timerFullscreen;
   int _segundosSemFullscreen = 0;
   final ScrollController _carrinhoScrollController = ScrollController();
+  final ScrollController _gridScrollController = ScrollController();
   String? _ultimoItemAdicionadoId; // ID do último item adicionado (para destaque)
+  bool _dialogAberto = false; // Flag para evitar duplos F9 (múltiplas telas de pagamento)
+  int _itensVisiveisPDV = 500; // Aumentado de 100 para 500 para carregar um catálogo maior inicialmente
+  static const int _itensPorPaginaPDV = 100;
+  List<Produto> _cacheProdutosCategoria = [];
+  String? _cacheCategoriaAtiva;
+  SortOption _cacheSortPDV = SortOption.codigo;
+  int _cacheTotalProdutosPDV = 0;
 
   // ESTADO DE DELIVERY
   bool _isDelivery = false;
@@ -183,6 +244,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   double _taxaEntrega = 0.0;
   String? _motoristaId;
   String? _motoristaNome;
+  double _valorParaTroco = 0.0; // Valor informado pelo cliente para troco
+  TipoPagamento? _formaPagamentoDelivery = TipoPagamento.dinheiro; // Forma de pagamento registrada para a entrega
 
   bool _estaFinalizando = false; // Flag para evitar duplos cliques e concorrência
   final LocalStorageService _storage = LocalStorageService();
@@ -191,6 +254,16 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   static const String _keyCpfNfcePDV = 'exodo_cpf_nfce_pdv';
   static const String _keyNomeNfcePDV = 'exodo_nome_nfce_pdv';
   static const String _keyDescontoTotalPDV = 'exodo_desconto_total_pdv';
+  static const String _keySomPDV = 'exodo_som_pdv';
+  static const String _keySomAdicionar = 'exodo_som_adicionar';
+  static const String _keySomRemover = 'exodo_som_remover';
+  static const String _keySomFinalizar = 'exodo_som_finalizar';
+  bool _somHabilitado = true;
+  bool _somAdicionarHabilitado = true;
+  bool _somRemoverHabilitado = true;
+  bool _somFinalizarHabilitado = true;
+  bool _mostrarBarraLegenda = false; // Controle de visibilidade da legenda (hover)
+  Timer? _debounce; // Timer para suavizar a busca e evitar lag na digitação do PDV
 
   // Getters para facilitar identificação de Mesa/Comanda
   String get tipoNome {
@@ -211,7 +284,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     // Auto Fullscreen Watcher: garante que o PDV sempre volte para tela cheia após 5s se for reduzido
     _timerFullscreen = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (kIsWeb) {
-        if (html.document.fullscreenElement == null) {
+        if (!html_helper.isFullscreen()) {
           _segundosSemFullscreen++;
           if (_segundosSemFullscreen >= 5) {
             _segundosSemFullscreen = 0;
@@ -234,6 +307,46 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       // Iniciar em tela cheia por padrão (no web)
       if (kIsWeb) {
         _entrarTelaCheia();
+      }
+
+      // Carregar configurações de visualização (Grade ou Lista)
+      final empresa = dataService.empresaAtual;
+      
+      // Carregar configurações de som
+      _storage.carregar(_keySomPDV).then((value) {
+        if (value != null && value is bool) {
+          setState(() {
+            _somHabilitado = value;
+          });
+        }
+      });
+      _storage.carregar(_keySomAdicionar).then((value) {
+        if (value != null && value is bool) {
+          setState(() {
+            _somAdicionarHabilitado = value;
+          });
+        }
+      });
+      _storage.carregar(_keySomRemover).then((value) {
+        if (value != null && value is bool) {
+          setState(() {
+            _somRemoverHabilitado = value;
+          });
+        }
+      });
+      _storage.carregar(_keySomFinalizar).then((value) {
+        if (value != null && value is bool) {
+          setState(() {
+            _somFinalizarHabilitado = value;
+          });
+        }
+      });
+      if (empresa != null && empresa.configuracoes?['venda_direta_view_mode'] != null) {
+        setState(() {
+          _viewMode = empresa.configuracoes!['venda_direta_view_mode'] == 'list' 
+              ? ViewMode.list 
+              : ViewMode.grid;
+        });
       }
 
       // Focar automaticamente no campo de busca ao abrir o PDV
@@ -266,8 +379,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         _carrinho.add(ItemCarrinho(
           id: 'couvert',
           nome: 'Couvert Artístico',
-          preco: widget.mesaComanda!.valorCouvertCalculado / (widget.mesaComanda!.quantidadePessoasCouvert ?? 1),
-          quantidade: widget.mesaComanda!.quantidadePessoasCouvert ?? 1,
+          quantidade: (widget.mesaComanda!.quantidadePessoasCouvert ?? 1).toDouble(),
+          preco: widget.mesaComanda!.valorCouvertPorPessoa ?? 0.0,
           isServico: true,
         ));
       }
@@ -371,6 +484,21 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         });
       }
     }
+
+    // Registrar handler global na inicialização
+    HardwareKeyboard.instance.addHandler(_globalKeyHandler);
+
+    // Listener para scroll infinito no grid de produtos
+    _gridScrollController.addListener(() {
+      if (_gridScrollController.position.pixels >= _gridScrollController.position.maxScrollExtent - 400) {
+        if (_termoBusca.isEmpty) {
+           // Só aumenta se não estiver em busca, ou se o total for maior que o visível
+           setState(() {
+             _itensVisiveisPDV += _itensPorPaginaPDV;
+           });
+        }
+      }
+    });
   }
 
   void _carregarItensParaRepetir() {
@@ -407,9 +535,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   void _entrarTelaCheia() {
     try {
       if (kIsWeb) {
-        final doc = html.window.document;
-        if (doc.fullscreenElement == null) {
-          doc.documentElement?.requestFullscreen();
+        if (!html_helper.isFullscreen()) {
+          html_helper.requestFullscreen();
         }
       } else {
         // Para mobile/desktop nativo, usar SystemUiMode
@@ -423,11 +550,10 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   void _toggleTelaCheia() {
     try {
       if (kIsWeb) {
-        final doc = html.window.document;
-        if (doc.fullscreenElement == null) {
-          doc.documentElement?.requestFullscreen();
+        if (!html_helper.isFullscreen()) {
+          html_helper.requestFullscreen();
         } else {
-          doc.exitFullscreen();
+          html_helper.exitFullscreen();
         }
       } else {
         // Toggle básico para mobile nativo (sem usar dart:html)
@@ -482,6 +608,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       _taxaEntrega = pedido.deliveryInfo!.taxaEntrega;
       _motoristaId = pedido.deliveryInfo!.motoristaId;
       _motoristaNome = pedido.deliveryInfo!.motoristaNome;
+      _valorParaTroco = pedido.deliveryInfo!.valorParaTroco;
+      _formaPagamentoDelivery = pedido.pagamentos.isNotEmpty ? pedido.pagamentos.first.tipo : null;
       _enderecoEntrega = EnderecoCliente(
         id: pedido.deliveryInfo!.enderecoId,
         tipo: 'Entrega',
@@ -529,12 +657,54 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
 
   @override
   void dispose() {
+    _debounce?.cancel();
     _timerFullscreen?.cancel();
     _buscaController.dispose();
     _buscaFocusNode.dispose();
     _atalhosFocusNode.dispose();
     _carrinhoScrollController.dispose();
+    _gridScrollController.dispose();
+    HardwareKeyboard.instance.removeHandler(_globalKeyHandler);
     super.dispose();
+  }
+
+  /// Scrolla o grid para mostrar o item selecionado
+  void _scrollToSelectedGridItem(int index, int crossAxisCount, double itemHeight) {
+    if (!_gridScrollController.hasClients) return;
+
+    // Caso especial: voltando para categorias
+    if (index == -1) {
+      _gridScrollController.animateTo(0.0, duration: const Duration(milliseconds: 300), curve: Curves.easeOutQuart);
+      return;
+    }
+    
+    final effectiveCrossAxisCount = _viewMode == ViewMode.list ? 1 : crossAxisCount;
+    // ALTURA MATEMÁTICA: 82.0 (itemExtent) + 0 (spacing na lista)
+    // Se for grade, usamos 82.0 + 4.0 do spacing
+    final effectiveItemHeight = _viewMode == ViewMode.list ? 82.0 : 86.0;
+    
+    // Lazy loading antecipado
+    if (_termoBusca.isEmpty && index >= _itensVisiveisPDV - 100) {
+      setState(() => _itensVisiveisPDV += 1000); // Carregar blocos maiores (1000)
+    }
+
+    final row = index ~/ effectiveCrossAxisCount;
+    final scrollPosition = row * effectiveItemHeight; 
+    final viewportHeight = _gridScrollController.position.viewportDimension;
+    final currentOffset = _gridScrollController.offset;
+    
+    // Só rola se o item sair da "zona de conforto" (margem de 5px)
+    const margin = 5.0;
+    if (scrollPosition < (currentOffset + margin) || (scrollPosition + effectiveItemHeight) > (currentOffset + viewportHeight - margin)) {
+      final targetScroll = (scrollPosition - (viewportHeight / 2) + (effectiveItemHeight / 2))
+          .clamp(0.0, _gridScrollController.position.maxScrollExtent);
+          
+      _gridScrollController.animateTo(
+        targetScroll,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOutQuart,
+      );
+    }
   }
 
   // ============ Métodos de Persistência do Carrinho ============
@@ -652,6 +822,17 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   void _resetarTodaVenda() {
     setState(() {
       _carrinho.clear();
+      // Limpeza completa de todos os caches (PDV e Build)
+      _cachedItens = null;
+      _cachedCategorias = null;
+      _cachedProdutosCategoria = null;
+      _ultimoTermoCache = null;
+      _ultimaCategoriaCache = null;
+      _ultimaAtualizacaoCache = null;
+      _cacheProdutosCategoria = [];
+      _cacheCategoriaAtiva = null;
+      _cacheTotalProdutosPDV = 0;
+
       _clienteSelecionado = null;
       _descontoTotal = 0.0;
       _observacoesVenda = null;
@@ -659,6 +840,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       _gridSelectedIndex = -1;
       _cartSelectedIndex = -1;
       _categoriaSelectedIndex = -1;
+      _categoriaAtiva = null; // Limpa o filtro de categoria (incluindo "Todos")
       _focoNoCarrinho = false;
       _focoNasCategorias = false;
       _quantidadeDigitada = 1;
@@ -672,6 +854,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       _taxaEntrega = 0.0;
       _motoristaId = null;
       _motoristaNome = null;
+      _valorParaTroco = 0.0;
+      _formaPagamentoDelivery = TipoPagamento.dinheiro;
     });
     _buscaController.clear();
     // Limpar storage persistente
@@ -759,8 +943,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     return _isDelivery ? base + _taxaEntrega : base;
   }
 
-  int get _totalItens =>
-      _carrinho.fold(0, (sum, item) => sum + item.quantidade);
+  double get _totalItens =>
+      _carrinho.fold(0.0, (sum, item) => sum + item.quantidade);
 
   void _exibirSelecaoAdicionais(Produto produto, {bool manterFoco = false, String? fornecedorPreSelecionado}) {
     List<AdicionalProduto> selecionados = [];
@@ -1069,6 +1253,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       });
     }
 
+    _tocarSomPDV('notification.mp3', tipo: 'adicionar');
     _posAdicaoAoCarrinho(item, nome, preco, isServico, jaExistia, index, manterFoco);
   }
 
@@ -1099,7 +1284,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     }
 
     // Mostrar notificação inteligente
-    final int quantidadeAtual = jaExistia
+    final double quantidadeAtual = jaExistia
         ? _carrinho[index].quantidade
         : _quantidadeDigitada;
     _mostrarNotificacaoItemAdicionado(
@@ -1114,16 +1299,30 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
 
     // Resetar quantidade
     setState(() {
-      _quantidadeDigitada = 1;
+      _quantidadeDigitada = 1.0;
+      _focoNoCarrinho = false; // Garante que o foco saia do carrinho
     });
 
-    if (!manterFoco) {
-      setState(() {
-        _termoBusca = '';
-      });
-      _buscaController.clear();
-      _buscaFocusNode.requestFocus();
-    }
+    // Sempre limpa e foca na busca após adicionar, a menos que explicitamente solicitado o contrário
+    // No contexto do PDV, manterFoco=true geralmente significa que queremos continuar na busca
+    setState(() {
+      _termoBusca = '';
+    });
+    _buscaController.clear();
+    
+    // Força o foco persistente no campo de busca agendando após a renderização do frame
+    // e com pequeno delay para garantir o foco mesmo após o fechamento de modais (ex: diálogos de quantidade/fornecedor)
+    _buscaFocusNode.requestFocus();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _buscaFocusNode.canRequestFocus) {
+        _buscaFocusNode.requestFocus();
+      }
+    });
+    Future.delayed(const Duration(milliseconds: 50), () {
+      if (mounted && _buscaFocusNode.canRequestFocus) {
+        _buscaFocusNode.requestFocus();
+      }
+    });
 
     // Salvar carrinho automaticamente
     _salvarCarrinho();
@@ -1185,7 +1384,268 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       return;
     }
 
+    // 3. DIÁLOGO DE QUANTIDADE AUTOMÁTICO (Para produtos fracionáveis: KG, L, M, etc)
+    // Se o usuário já digitou uma quantidade na barra de busca (ex: 0,200), respeitamos e não abrimos o dialog.
+    final unidadesFracionaveis = [
+      'KG', 'KILO', 'KILOS', 'KILOGRAMA', 'KILOGRAMAS', 'G', 'GR', 'GRAMA', 'GRAMAS', 
+      'L', 'LT', 'LITRO', 'LITROS', 'ML', 'MILILITRO', 'MILILITROS', 
+      'METRO', 'METROS', 'M', 'CM', 'MM'
+    ];
+    final unidadeProd = produto.unidade.trim().toUpperCase();
+    final ehFracionavel = unidadesFracionaveis.contains(unidadeProd) || 
+                          unidadeProd.startsWith('KG') || 
+                          unidadeProd.startsWith('KIL') || 
+                          unidadeProd.startsWith('LIT') ||
+                          unidadeProd.startsWith('MET');
+    
+    debugPrint('>>> [PDV] Adicionando item: ${produto.nome}, Unidade: "$unidadeProd", EhFracionavel: $ehFracionavel, QtdDigitada: $_quantidadeDigitada');
+
+    if (ehFracionavel && _quantidadeDigitada == 1.0) {
+      _exibirDialogoQuantidade(produto, manterFoco: manterFoco);
+      return;
+    }
+
     _efetivarAdicaoAoCarrinho(item, manterFoco: manterFoco);
+  }
+
+  /// Exibe um diálogo rápido para digitar a quantidade (ideal para itens pesáveis/fracionados)
+  void _exibirDialogoQuantidade(Produto produto, {bool manterFoco = false}) async {
+    final TextEditingController qtdController = TextEditingController();
+    final focusNode = FocusNode();
+
+    // Carregar configurações locais da balança
+    final balancaService = BalancaService();
+    final config = await balancaService.obterConfiguracao();
+    final bool balancaAtiva = config['ativo'] == true;
+
+    if (!mounted) return;
+
+    bool iniciouLeitura = false;
+    bool lendo = false;
+    String? statusText;
+    bool pesoSimulado = false;
+
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          
+          // Função interna para ler da balança
+          Future<void> lerDaBalanca() async {
+            setDialogState(() {
+              lendo = true;
+              statusText = "Lendo peso da balança...";
+            });
+            
+            final res = await balancaService.lerPeso();
+            final peso = (res['peso'] as num?)?.toDouble() ?? 0.0;
+            final simulado = res['simulado'] == true;
+            final erro = res['erro'] as String?;
+            
+            setDialogState(() {
+              lendo = false;
+              pesoSimulado = simulado;
+              if (peso > 0) {
+                qtdController.text = peso.toStringAsFixed(3).replaceAll('.', ',');
+                statusText = simulado 
+                    ? "Peso Simulado: ${peso.toStringAsFixed(3)} kg"
+                    : "Peso Lido: ${peso.toStringAsFixed(3)} kg";
+                if (erro != null) {
+                  statusText = "Simulado: ${peso.toStringAsFixed(3)} kg\n(Porta COM indisponível)";
+                }
+              } else {
+                statusText = erro ?? "Erro ao ler peso da balança.";
+              }
+            });
+          }
+
+          // Auto-iniciar leitura na primeira renderização se ativa
+          if (balancaAtiva && !iniciouLeitura) {
+            iniciouLeitura = true;
+            Future.microtask(() => lerDaBalanca());
+          }
+
+          return AlertDialog(
+            backgroundColor: const Color(0xFF1A1A2E),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: BorderSide(
+                color: balancaAtiva ? Colors.tealAccent : Colors.blueAccent, 
+                width: 1.5
+              ),
+            ),
+            title: Row(
+              children: [
+                Icon(
+                  balancaAtiva ? Icons.scale_rounded : Icons.edit_note_rounded, 
+                  color: balancaAtiva ? Colors.tealAccent : Colors.blueAccent
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Quantidade: ${produto.nome}',
+                    style: const TextStyle(color: Colors.white, fontSize: 18),
+                  ),
+                ),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Unidade: ${produto.unidade.toUpperCase()}',
+                      style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 14),
+                    ),
+                    if (balancaAtiva)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: pesoSimulado ? Colors.orange.withOpacity(0.15) : Colors.teal.withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color: pesoSimulado ? Colors.orangeAccent : Colors.tealAccent,
+                            width: 0.5
+                          ),
+                        ),
+                        child: Text(
+                          pesoSimulado ? 'SIMULADOR ATIVO' : 'BALANÇA ONLINE',
+                          style: TextStyle(
+                            color: pesoSimulado ? Colors.orangeAccent : Colors.tealAccent,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+                Stack(
+                  alignment: Alignment.centerRight,
+                  children: [
+                    TextField(
+                      controller: qtdController,
+                      focusNode: focusNode,
+                      autofocus: !balancaAtiva,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      style: const TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.bold),
+                      textAlign: TextAlign.center,
+                      decoration: InputDecoration(
+                        hintText: '0,000',
+                        hintStyle: TextStyle(color: Colors.white.withOpacity(0.1)),
+                        enabledBorder: UnderlineInputBorder(
+                          borderSide: BorderSide(
+                            color: balancaAtiva ? Colors.tealAccent.withOpacity(0.5) : Colors.blueAccent
+                          )
+                        ),
+                        focusedBorder: UnderlineInputBorder(
+                          borderSide: BorderSide(
+                            color: balancaAtiva ? Colors.tealAccent : Colors.blueAccent, 
+                            width: 2
+                          )
+                        ),
+                      ),
+                      onSubmitted: (val) {
+                        final valor = val.replaceAll(',', '.');
+                        final qtd = double.tryParse(valor) ?? 0.0;
+                        if (qtd > 0) {
+                          Navigator.pop(context);
+                          setState(() => _quantidadeDigitada = qtd);
+                          _efetivarAdicaoAoCarrinho(produto, manterFoco: manterFoco);
+                        }
+                      },
+                    ),
+                    if (lendo)
+                      const Positioned(
+                        right: 10,
+                        child: SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.5,
+                            valueColor: AlwaysStoppedAnimation<Color>(Colors.tealAccent),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                if (statusText != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Text(
+                      statusText!,
+                      style: TextStyle(
+                        color: pesoSimulado ? Colors.orangeAccent.withOpacity(0.8) : Colors.white60,
+                        fontSize: 12,
+                        height: 1.3
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                const SizedBox(height: 4),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      'Use vírgula para valores decimais',
+                      style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 11),
+                    ),
+                    if (balancaAtiva) ...[
+                      const SizedBox(width: 12),
+                      TextButton.icon(
+                        onPressed: lendo ? null : () => lerDaBalanca(),
+                        icon: const Icon(Icons.refresh, size: 14, color: Colors.tealAccent),
+                        label: const Text(
+                          'LER NOVAMENTE',
+                          style: TextStyle(color: Colors.tealAccent, fontSize: 11, fontWeight: FontWeight.bold),
+                        ),
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('CANCELAR', style: TextStyle(color: Colors.white54)),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: balancaAtiva ? Colors.teal : Colors.blueAccent,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+                onPressed: () {
+                  final valor = qtdController.text.replaceAll(',', '.');
+                  final qtd = double.tryParse(valor) ?? 0.0;
+                  if (qtd > 0) {
+                    Navigator.pop(context);
+                    setState(() => _quantidadeDigitada = qtd);
+                    _efetivarAdicaoAoCarrinho(produto, manterFoco: manterFoco);
+                  }
+                },
+                child: const Text('ADICIONAR', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    // Garantir o foco no campo
+    Future.delayed(const Duration(milliseconds: 100), () {
+      focusNode.requestFocus();
+    });
   }
 
   bool _deveMostrarAdicionais(Produto produto, Empresa? empresa) {
@@ -1222,7 +1682,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
             id: const Uuid().v4(),
             itemId: itemCarrinho.id,
             nome: itemCarrinho.nome,
-            quantidade: delta,
+            quantidade: delta.toDouble(),
             preco: itemCarrinho.preco,
             isServico: itemCarrinho.isServico,
             paraCozinha: itemCarrinho.isServico ? false : dataService.getProdutoById(itemCarrinho.id)?.paraCozinha,
@@ -1269,6 +1729,32 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     _salvarCarrinho();
   }
 
+  void _scrollToSelectedCartItem(int index) {
+    if (index < 0) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_carrinhoScrollController.hasClients) {
+        // Estima altura do item no carrinho: ~105px (card + margem)
+        final targetOffset = index * 105.0;
+        final currentOffset = _carrinhoScrollController.offset;
+        final viewportHeight = 400.0; // Estimativa do container visível do carrinho
+
+        if (targetOffset < currentOffset) {
+          _carrinhoScrollController.animateTo(
+            targetOffset,
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+          );
+        } else if (targetOffset > currentOffset + viewportHeight - 120) {
+          _carrinhoScrollController.animateTo(
+            targetOffset - viewportHeight + 120,
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+          );
+        }
+      }
+    });
+  }
+
   void _removerItem(int index) {
     setState(() {
       final itemRemovido = _carrinho[index];
@@ -1295,6 +1781,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         dataService.updateMesaComanda(_mesaComandaVinculada!);
       }
     });
+    _tocarSomPDV('notification.mp3', tipo: 'remover');
     // Salvar carrinho automaticamente
     _salvarCarrinho();
   }
@@ -1926,9 +2413,34 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     return categorias;
   }
 
+  int _getGridCrossAxisCount(double screenWidth) {
+    if (screenWidth >= 1600) return 6;
+    if (screenWidth >= 1200) return 5;
+    if (screenWidth >= 900) return 4;
+    return 3;
+  }
+
+  double _getGridItemAspectRatio(double screenHeight) {
+    if (screenHeight < 650) return 2.0;
+    if (screenHeight < 750) return 1.8;
+    return 1.6;
+  }
+
   List<Produto> _getProdutosPorCategoria(DataService dataService) {
+    // Se o cache for válido, retorna ele
+    if (_cacheProdutosCategoria.isNotEmpty &&
+        _cacheCategoriaAtiva == _categoriaAtiva &&
+        _cacheSortPDV == _sortOption &&
+        _cacheTotalProdutosPDV == dataService.produtos.length) {
+      return _cacheProdutosCategoria;
+    }
+
     List<Produto> lista;
     if (_categoriaAtiva == null) {
+      // No estado inicial (nulo), retorna lista vazia por padrão
+      return [];
+    } else if (_categoriaAtiva == 'Todos') {
+      // Se selecionou explicitamente "Todos", mostra tudo
       lista = List<Produto>.from(dataService.produtos);
     } else {
       lista = dataService.produtos
@@ -1944,7 +2456,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         case SortOption.recentes:
           final dateA = a.updatedAt ?? a.createdAt ?? DateTime(2000);
           final dateB = b.updatedAt ?? b.createdAt ?? DateTime(2000);
-          return dateB.compareTo(dateA); // Do mais novo para o mais antigo
+          return dateB.compareTo(dateA); 
         case SortOption.grupo:
           final grupoCompare = a.grupo.toLowerCase().compareTo(b.grupo.toLowerCase());
           if (grupoCompare != 0) return grupoCompare;
@@ -1956,283 +2468,100 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           return numA.compareTo(numB);
       }
     });
+
+    // Atualizar cache
+    _cacheProdutosCategoria = lista;
+    _cacheCategoriaAtiva = _categoriaAtiva;
+    _cacheSortPDV = _sortOption;
+    _cacheTotalProdutosPDV = dataService.produtos.length;
     
     return lista;
   }
 
-  List<dynamic> _buscarItens(DataService dataService) {
-    if (_termoBusca.isEmpty) return [];
+  List<dynamic> _buscarItens(DataService dataService, {String? termoOverride}) {
+    final termoFinal = (termoOverride ?? _termoBusca).trim();
+    if (termoFinal.isEmpty) return [];
 
-    final buscaLower = _termoBusca.toLowerCase().trim();
+    final buscaLower = termoFinal.toLowerCase();
     final ehNumero = RegExp(r'^[0-9]+$').hasMatch(buscaLower);
 
     // Se for número, mínimo 1 caractere; se for texto, mínimo 2 caracteres
     if (!ehNumero && buscaLower.length < 2) return [];
 
-    final resultados = <dynamic>[];
+    // Listas de prioridade
+    final exatos = <dynamic>[];
+    final parciais = <dynamic>[];
+    final nomes = <dynamic>[];
 
-    // Se digitar 9999, garantir que o produto Diversos existe e adicionar aos resultados
-    if (ehNumero && buscaLower == '9999') {
-      dataService.garantirProdutoDiversos().then((diversos) {
-        if (mounted) {
-          setState(() {
-            // Força atualização para mostrar o produto Diversos
-          });
-        }
-      });
-    }
-
-    // Extrair números do query (removendo zeros à esquerda para comparação)
-    final queryNumeros = _termoBusca.replaceAll(RegExp(r'[^0-9]'), '');
+    final queryNumeros = termoFinal.replaceAll(RegExp(r'[^0-9]'), ''); 
     final queryNumerosSemZeros = queryNumeros.isEmpty
         ? ''
         : int.tryParse(queryNumeros)?.toString() ?? queryNumeros;
 
-    // Buscar produtos com busca avançada
+    // 1. FILTRAR PRODUTOS
     for (final produto in dataService.produtos) {
-      // Filtro por categoria (se houver categoria ativa)
-      if (_categoriaAtiva != null && produto.grupo != _categoriaAtiva) {
-        continue;
-      }
-
-      final nome = produto.nome.toLowerCase().trim();
       final codigo = (produto.codigo ?? '').trim();
       final codigoLower = codigo.toLowerCase();
       final codigoBarras = (produto.codigoBarras ?? '').trim();
       final codigoBarrasLower = codigoBarras.toLowerCase();
-      final grupo = produto.grupo.toLowerCase();
 
-      // Extrair números dos códigos
-      final codigoNumeros = codigo.replaceAll(RegExp(r'[^0-9]'), '');
-      final codigoNumerosSemZeros = codigoNumeros.isEmpty
-          ? ''
-          : int.tryParse(codigoNumeros)?.toString() ?? codigoNumeros;
-      final codigoBarrasNumeros = codigoBarras.replaceAll(
-        RegExp(r'[^0-9]'),
-        '',
-      );
-      final codigoBarrasNumerosSemZeros = codigoBarrasNumeros.isEmpty
-          ? ''
-          : int.tryParse(codigoBarrasNumeros)?.toString() ??
-                codigoBarrasNumeros;
+      final ehMatchCodigoOuBarras = codigoLower == buscaLower || 
+                                     codigoLower == 'cod-$buscaLower' || 
+                                     codigo == termoFinal || 
+                                     codigoBarras == termoFinal ||
+                                     codigoLower.startsWith(buscaLower) || 
+                                     codigoLower.startsWith('cod-$buscaLower') ||
+                                     codigoBarrasLower.startsWith(buscaLower);
 
-      // 1. Match exato de código
-      if (codigoLower == buscaLower || codigo == _termoBusca) {
-        resultados.add(produto);
+      final nome = produto.nome.toLowerCase().trim();
+
+      // MATCH EXATO (PRIORIDADE 1)
+      if (codigoLower == buscaLower || 
+          codigoLower == 'cod-$buscaLower' || 
+          codigo == termoFinal || 
+          codigoBarras == termoFinal) {
+        exatos.add(produto);
         continue;
       }
 
-      // 2. Match exato de código de barras
-      if (codigoBarrasLower == buscaLower || codigoBarras == _termoBusca) {
-        resultados.add(produto);
+      // MATCH CÓDIGO PARCIAL (PRIORIDADE 2)
+      if (codigoLower.startsWith(buscaLower) || 
+          codigoLower.startsWith('cod-$buscaLower') ||
+          (queryNumerosSemZeros.isNotEmpty && codigo.contains(queryNumerosSemZeros))) {
+        parciais.add(produto);
         continue;
       }
 
-      // 3. Match numérico exato (ignorando zeros à esquerda)
-      if (queryNumerosSemZeros.isNotEmpty) {
-        if (codigoNumerosSemZeros == queryNumerosSemZeros ||
-            codigoBarrasNumerosSemZeros == queryNumerosSemZeros) {
-          resultados.add(produto);
-          continue;
-        }
-        if (codigoNumeros == queryNumeros ||
-            codigoBarrasNumeros == queryNumeros) {
-          resultados.add(produto);
-          continue;
-        }
-      }
-
-      // 4. Código começa com o termo
-      if (codigoLower.startsWith(buscaLower) && codigoLower.isNotEmpty) {
-        resultados.add(produto);
-        continue;
-      }
-
-      // 5. Código de barras começa com o termo
-      if (codigoBarrasLower.startsWith(buscaLower) &&
-          codigoBarrasLower.isNotEmpty) {
-        resultados.add(produto);
-        continue;
-      }
-
-      // 6. Código numérico começa com o termo
-      if (queryNumerosSemZeros.isNotEmpty) {
-        if (queryNumerosSemZeros.length == 2) {
-          if ((codigoNumerosSemZeros.startsWith(queryNumerosSemZeros) &&
-                  codigoNumerosSemZeros.length <= 3) ||
-              (codigoBarrasNumerosSemZeros.startsWith(queryNumerosSemZeros) &&
-                  codigoBarrasNumerosSemZeros.length <= 3)) {
-            resultados.add(produto);
-            continue;
-          }
-        } else if (queryNumerosSemZeros.length >= 3) {
-          if (codigoNumerosSemZeros.startsWith(queryNumerosSemZeros) ||
-              codigoBarrasNumerosSemZeros.startsWith(queryNumerosSemZeros)) {
-            resultados.add(produto);
-            continue;
-          }
-        }
-      }
-
-      // 7. Match exato do nome (SOMENTE se não for busca apenas numérica)
-      if (!ehNumero && nome == buscaLower) {
-        resultados.add(produto);
-        continue;
-      }
-
-      // 8. Nome começa com o termo (SOMENTE se não for busca apenas numérica)
-      if (!ehNumero && nome.startsWith(buscaLower)) {
-        resultados.add(produto);
-        continue;
-      }
-
-      // 9. Busca por múltiplas palavras (SOMENTE se não for busca apenas numérica)
-      if (!ehNumero) {
-        final palavrasQuery = buscaLower
-            .split(RegExp(r'[\s\-_]+'))
-            .where((p) => p.isNotEmpty)
-            .toList();
-        if (palavrasQuery.length > 1) {
-          final palavrasNome = nome.split(RegExp(r'[\s\-_]+'));
-          final todasPalavrasEncontradas = palavrasQuery.every(
-            (palavra) => palavrasNome.any(
-              (pn) => pn.startsWith(palavra) || pn.contains(palavra),
-            ),
-          );
-          if (todasPalavrasEncontradas) {
-            resultados.add(produto);
-            continue;
-          }
-        }
-      }
-
-      // 10. Nome contém o termo (3+ caracteres) (SOMENTE se não for busca apenas numérica)
-      if (!ehNumero && _termoBusca.length >= 3 && nome.contains(buscaLower)) {
-        resultados.add(produto);
-        continue;
-      }
-
-      // 11. Código contém o termo (3+ caracteres)
-      if (_termoBusca.length >= 3 && codigoLower.contains(buscaLower)) {
-        resultados.add(produto);
-        continue;
-      }
-
-      // 12. Código de barras contém o termo (3+ caracteres)
-      if (_termoBusca.length >= 3 && codigoBarrasLower.contains(buscaLower)) {
-        resultados.add(produto);
-        continue;
-      }
-
-      // 13. Código numérico contém (3+ dígitos)
-      if (queryNumerosSemZeros.length >= 3 &&
-          (codigoNumerosSemZeros.contains(queryNumerosSemZeros) ||
-              codigoBarrasNumerosSemZeros.contains(queryNumerosSemZeros))) {
-        resultados.add(produto);
-        continue;
-      }
-
-      // 14. Grupo contém o termo (SOMENTE se não for busca apenas numérica)
-      if (!ehNumero && grupo.contains(buscaLower)) {
-        resultados.add(produto);
-        continue;
+      // MATCH NOME (PRIORIDADE 3)
+      if (nome.contains(buscaLower)) {
+        nomes.add(produto);
       }
     }
 
-    // Buscar serviços (sempre, independente da categoria de produto ativa)
+    // 2. FILTRAR SERVIÇOS
+    final servicosEncontrados = <dynamic>[];
     for (final servico in dataService.servicos) {
-
-      final nome = servico.nome.toLowerCase().trim();
-
-      // Match exato
-      if (nome == buscaLower) {
-        resultados.add(servico);
-        continue;
-      }
-
-      // Nome começa com o termo
-      if (nome.startsWith(buscaLower)) {
-        resultados.add(servico);
-        continue;
-      }
-
-      // Busca por múltiplas palavras
-      final palavrasQuery = buscaLower
-          .split(RegExp(r'[\s\-_]+'))
-          .where((p) => p.isNotEmpty)
-          .toList();
-      if (palavrasQuery.length > 1) {
-        final palavrasNome = nome.split(RegExp(r'[\s\-_]+'));
-        final todasPalavrasEncontradas = palavrasQuery.every(
-          (palavra) => palavrasNome.any(
-            (pn) => pn.startsWith(palavra) || pn.contains(palavra),
-          ),
-        );
-        if (todasPalavrasEncontradas) {
-          resultados.add(servico);
-          continue;
-        }
-      }
-
-      // Nome contém (3+ caracteres)
-      if (_termoBusca.length >= 3 && nome.contains(buscaLower)) {
-        resultados.add(servico);
-        continue;
+      final nome = servico.nome.toLowerCase();
+      if (nome.contains(buscaLower)) {
+        servicosEncontrados.add(servico);
       }
     }
 
-    // Ordenar por relevância
-    resultados.sort((a, b) {
-      final isProdutoA = a is Produto;
-      final isProdutoB = b is Produto;
+    // 3. MONTAR LISTA FINAL (ORDEM DE IMPORTÂNCIA)
+    // Ordenamos apenas dentro de cada grupo para manter a lógica
+    parciais.sort((a, b) => (a.codigo ?? '').compareTo(b.codigo ?? ''));
+    nomes.sort((a, b) => a.nome.compareTo(b.nome));
+    servicosEncontrados.sort((a, b) => a.nome.compareTo(b.nome));
 
-      // Produtos primeiro
-      if (isProdutoA != isProdutoB) return isProdutoA ? -1 : 1;
-
-      if (isProdutoA) {
-        final produtoA = a as Produto;
-        final produtoB = b as Produto;
-        final aNome = produtoA.nome.toLowerCase();
-        final bNome = produtoB.nome.toLowerCase();
-        final aCodigo = (produtoA.codigo ?? '').trim().toLowerCase();
-        final bCodigo = (produtoB.codigo ?? '').trim().toLowerCase();
-
-        // Priorizar matches exatos
-        final aCodigoExato = aCodigo == buscaLower || aCodigo == _termoBusca;
-        final bCodigoExato = bCodigo == buscaLower || bCodigo == _termoBusca;
-        if (aCodigoExato != bCodigoExato) return aCodigoExato ? -1 : 1;
-
-        final aNomeExato = aNome.trim() == buscaLower;
-        final bNomeExato = bNome.trim() == buscaLower;
-        if (aNomeExato != bNomeExato) return aNomeExato ? -1 : 1;
-
-        // Depois nomes que começam
-        final aNomeComeca = aNome.startsWith(buscaLower);
-        final bNomeComeca = bNome.startsWith(buscaLower);
-        if (aNomeComeca != bNomeComeca) return aNomeComeca ? -1 : 1;
-
-        // Por último, alfabeticamente
-        return aNome.compareTo(bNome);
-      } else {
-        final servicoA = a as Servico;
-        final servicoB = b as Servico;
-        final aNome = servicoA.nome.toLowerCase();
-        final bNome = servicoB.nome.toLowerCase();
-
-        final aNomeExato = aNome.trim() == buscaLower;
-        final bNomeExato = bNome.trim() == buscaLower;
-        if (aNomeExato != bNomeExato) return aNomeExato ? -1 : 1;
-
-        final aNomeComeca = aNome.startsWith(buscaLower);
-        final bNomeComeca = bNome.startsWith(buscaLower);
-        if (aNomeComeca != bNomeComeca) return aNomeComeca ? -1 : 1;
-
-        return aNome.compareTo(bNome);
-      }
-    });
+    final resultados = <dynamic>[];
+    resultados.addAll(exatos);
+    resultados.addAll(parciais);
+    resultados.addAll(nomes);
+    resultados.addAll(servicosEncontrados);
 
     return resultados;
   }
+
 
   void _solicitarAberturaCaixa(BuildContext context, DataService dataService) {
     final valorController = TextEditingController(text: '0.00');
@@ -2564,7 +2893,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       // 1. Registrar a saída no estoque sem gerar venda
       await dataService.registrarSaidaEstoque(
         produtoId: item.id, 
-        quantidade: qtd,
+        quantidade: qtd.toDouble(),
         motivo: 'Baixa Manual',
         fornecedorNome: item.fornecedorNome,
         observacao: descricaoController.text.trim().isEmpty 
@@ -2691,7 +3020,44 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       return;
     }
 
-    _mostrarDialogPagamento(dataService);
+    setState(() => _dialogAberto = true);
+    _mostrarDialogPagamento(dataService).then((_) {
+      if (mounted) setState(() => _dialogAberto = false);
+    });
+  }
+
+  /// Finalização ultra-rápida em Dinheiro (F10)
+  void _finalizarDinheiroDireto(DataService dataService) {
+    if (_estaFinalizando) return;
+    
+    if (_carrinho.isEmpty && _mesaComandaVinculada == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Adicione itens ao carrinho para venda rápida'),
+          backgroundColor: Colors.orange,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    if (!dataService.caixaAberto) {
+      _solicitarAberturaCaixa(context, dataService);
+      return;
+    }
+
+    final total = _totalCarrinho;
+    final pagamento = PagamentoPedido(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      tipo: TipoPagamento.dinheiro,
+      valor: total,
+      recebido: true,
+      dataRecebimento: DateTime.now(),
+      valorRecebido: total,
+      troco: 0,
+    );
+
+    _concluirVendaComPagamentos(dataService, [pagamento]);
   }
 
   void _selecionarCliente(DataService dataService) {
@@ -2700,6 +3066,103 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => _buildSeletorCliente(dataService),
+    );
+  }
+
+  void _selecionarVendedor(DataService dataService) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _buildSeletorVendedor(dataService),
+    );
+  }
+
+  Widget _buildSeletorVendedor(DataService dataService) {
+    final vendedores = dataService.funcionarios.where((f) => f.ativo).toList();
+
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.7,
+      decoration: const BoxDecoration(
+        color: Color(0xFF1E1E2E),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'Selecionar Vendedor',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close, color: Colors.white),
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ],
+            ),
+          ),
+          if (_vendedorSelecionado != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: ElevatedButton.icon(
+                onPressed: () {
+                  setState(() => _vendedorSelecionado = null);
+                  Navigator.pop(context);
+                },
+                icon: const Icon(Icons.clear),
+                label: const Text('Remover Vendedor Atual'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.redAccent,
+                  foregroundColor: Colors.white,
+                  minimumSize: const Size(double.infinity, 48),
+                ),
+              ),
+            ),
+          const SizedBox(height: 8),
+          Expanded(
+            child: vendedores.isEmpty
+                ? const Center(
+                    child: Text(
+                      'Nenhum vendedor encontrado.',
+                      style: TextStyle(color: Colors.white54),
+                    ),
+                  )
+                : ListView.builder(
+                    itemCount: vendedores.length,
+                    itemBuilder: (context, index) {
+                      final func = vendedores[index];
+                      final isSelected = _vendedorSelecionado?.id == func.id;
+                      return ListTile(
+                        leading: CircleAvatar(
+                          backgroundColor: isSelected ? Colors.purpleAccent : Colors.grey[800],
+                          child: Icon(Icons.person, color: isSelected ? Colors.white : Colors.white54),
+                        ),
+                        title: Text(func.nome, style: const TextStyle(color: Colors.white)),
+                        subtitle: Text(
+                          func.porcentagemComissao > 0 
+                            ? 'Comissão: ${func.porcentagemComissao}%' 
+                            : 'Sem comissão definida',
+                          style: const TextStyle(color: Colors.white54, fontSize: 12),
+                        ),
+                        trailing: isSelected ? const Icon(Icons.check, color: Colors.purpleAccent) : null,
+                        onTap: () {
+                          setState(() => _vendedorSelecionado = func);
+                          Navigator.pop(context);
+                        },
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -4685,8 +5148,19 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     );
   }
 
-  void _mostrarDialogPagamento(DataService dataService) {
-    showModalBottomSheet(
+  Future<void> _mostrarDialogPagamento(
+    DataService dataService, {
+    List<PagamentoPedido>? pagamentosIniciais,
+  }) async {
+    // Limpar seleções de navegação do grid para que o foco fique apenas no diálogo
+    setState(() {
+      _gridSelectedIndex = -1;
+      _cartSelectedIndex = -1;
+      _focoNoCarrinho = false;
+      _focoNasCategorias = false;
+    });
+    
+    await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
@@ -4727,6 +5201,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     final mesaNumero = this.mesaNumero;
     final tipoNome = this.tipoNome;
     final clienteSelecionadoCapturado = _clienteSelecionado;
+    final vendedorSelecionadoCapturado = _vendedorSelecionado;
     final observacoesVendaCapturadas = _observacoesVenda;
     final cpfNfceCapturado = _cpfNfce;
     final nomeNfceCapturado = _nomeNfce;
@@ -4752,10 +5227,11 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     debugPrint('>>> [VendaDireta] 🔍 Itens: ${itensVendaCapturados.length}');
     
     try {
-      String numero = isDeliveryCapturado 
+      String numero = _pedidoOriginal?.numero ?? (isDeliveryCapturado 
           ? dataService.getProximoNumeroPedido() 
-          : dataService.getProximoNumeroVenda();
-      if (mesaNumero != null) {
+          : dataService.getProximoNumeroVenda());
+          
+      if (mesaNumero != null && _pedidoOriginal == null) {
         final bool isComanda = mesaComandaOriginal?.tipo == TipoControle.comanda || 
                                mesaNumero.toUpperCase().contains('CMD') || 
                                mesaNumero.toUpperCase().contains('COMANDA');
@@ -4810,11 +5286,15 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
             (item) => ItemVendaBalcao(
               id: item.id,
               nome: item.nome,
-              precoUnitario: item.preco,
+              precoUnitario: item.isBrinde ? 0.0 : item.preco,
               quantidade: item.quantidade,
               isServico: item.isServico,
               fornecedorNome: item.fornecedorNome,
-              observacao: item.observacao,
+              observacao: item.isBrinde 
+                  ? (item.observacao != null && item.observacao!.isNotEmpty 
+                      ? '[BRINDE] ${item.observacao}' 
+                      : '[BRINDE]') 
+                  : item.observacao,
             ),
           )
           .toList();
@@ -4844,7 +5324,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
               : tagIdentificacao)
           : observacoesFinais;
 
-      final vendaId = uuid.v4();
+      final vendaId = _pedidoOriginal?.id ?? uuid.v4();
       final vendaBalcao = VendaBalcao(
         id: vendaId,
         numero: numero,
@@ -4853,6 +5333,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         clienteNome: clienteNomeFinal,
         clienteTelefone: clienteSelecionadoCapturado?.telefone,
         clienteCpfCnpj: clienteSelecionadoCapturado?.cpfCnpj ?? cpfNfceCapturado,
+        vendedorId: vendedorSelecionadoCapturado?.id,
+        vendedorNome: vendedorSelecionadoCapturado?.nome,
         itens: itensVenda,
         tipoPagamento: tipoPagamentoVenda,
         valorTotal: totalVendaCapturado,
@@ -4882,6 +5364,18 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       );
 
       // SALVAR DADOS (Snapshot garantido)
+      // Se estava editando um pedido/venda salva, remover o antigo ANTES de adicionar o novo
+      if (_pedidoOriginal != null) {
+        // dataService.deletePedido(_pedidoOriginal!.id);
+
+        final vendaOriginal = dataService.vendasBalcao
+            .where((v) => v.id == _pedidoOriginal!.id || v.numero == _pedidoOriginal!.numero)
+            .firstOrNull;
+        if (vendaOriginal != null) {
+          await dataService.deleteVendaBalcao(vendaOriginal.id);
+        }
+      }
+
       // Se for Delivery agora gerado, não criar VendaBalcao ainda (será criada quando paga no PDV)
       if (!isDeliveryCapturado) {
         await dataService.addVendaBalcao(vendaBalcao);
@@ -4933,6 +5427,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           pagamentos: pagamentosAtualizados,
           observacoes: observacaoIdentificadora,
           deliveryInfo: vendaBalcao.deliveryInfo,
+          vendedorId: vendedorSelecionadoCapturado?.id,
+          vendedorNome: vendedorSelecionadoCapturado?.nome,
         );
 
         await dataService.addPedido(pedido);
@@ -4959,6 +5455,14 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           await dataService.addEntrega(entrega);
         }
       }
+
+      await _registrarComissaoVendedorSeAplicavel(
+        dataService: dataService,
+        pedidoId: vendaId,
+        pedidoNumero: numero,
+        valorPedido: totalVendaCapturado,
+        vendedor: vendedorSelecionadoCapturado,
+      );
 
       // Atualizar Fiado do Cliente
       final valorFiado = pagamentosAtualizados
@@ -4988,8 +5492,10 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           .fold(0.0, (sum, p) => sum + (p.troco ?? 0));
 
       _resetarTodaVenda();
+
       
       if (mounted) {
+        _tocarSomPDV('notification.mp3', tipo: 'finalizar');
         _mostrarSucessoVenda(
           totalVendaCapturado, numero, vendaBalcao,
           troco: trocoTotal,
@@ -5007,6 +5513,56 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       }
     } finally {
       if (mounted) setState(() => _estaFinalizando = false);
+    }
+  }
+
+  Future<void> _registrarComissaoVendedorSeAplicavel({
+    required DataService dataService,
+    required String pedidoId,
+    required String pedidoNumero,
+    required double valorPedido,
+    required Funcionario? vendedor,
+  }) async {
+    if (vendedor == null || !vendedor.ativo || valorPedido <= 0) return;
+
+    double percentualComissao = 0.0;
+    double valorComissao = 0.0;
+
+    if (vendedor.tipoComissao == 'Porcentagem') {
+      percentualComissao = vendedor.porcentagemComissao;
+      valorComissao = valorPedido * (percentualComissao / 100);
+    } else {
+      valorComissao = vendedor.valorComissao;
+      percentualComissao =
+          valorPedido > 0 ? (valorComissao / valorPedido) * 100 : 0.0;
+    }
+
+    if (valorComissao <= 0) return;
+
+    final comissaoExistente = dataService.comissoesVendedores
+        .where((c) => c.pedidoId == pedidoId && c.funcionarioId == vendedor.id)
+        .firstOrNull;
+
+    final comissao = ComissaoVendedor(
+      id: comissaoExistente?.id ?? const Uuid().v4(),
+      linkVendedorId: comissaoExistente?.linkVendedorId ?? '',
+      funcionarioId: vendedor.id,
+      funcionarioNome: vendedor.nome,
+      pedidoId: pedidoId,
+      pedidoNumero: pedidoNumero,
+      valorPedido: valorPedido,
+      percentualComissao: percentualComissao,
+      valorComissao: valorComissao,
+      status: comissaoExistente?.status ?? 'Pendente',
+      dataPagamento: comissaoExistente?.dataPagamento,
+      createdAt: comissaoExistente?.createdAt ?? DateTime.now(),
+      updatedAt: DateTime.now(),
+    );
+
+    if (comissaoExistente != null) {
+      await dataService.updateComissaoVendedor(comissao);
+    } else {
+      await dataService.addComissaoVendedor(comissao);
     }
   }
 
@@ -5097,9 +5653,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     List<PagamentoPedido> pagamentosDoDialog, {
     bool mostrarPromptImpressao = false,
   }) async {
-    final authService = Provider.of<AuthService>(context, listen: false);
-    final usuarioAtual = authService.usuarioAtual;
     String? nomeIdentificacao;
+    final vendedorSelecionadoCapturado = _vendedorSelecionado;
 
     // Se não tiver cliente selecionado, perguntar um nome rápido para identificar
     if (_clienteSelecionado == null) {
@@ -5180,19 +5735,35 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         .toList();
 
     // Determinar tipo de pagamento principal (se houver)
-    TipoPagamento tipoPrincipal = TipoPagamento.outro;
+    TipoPagamento tipoPrincipal = _formaPagamentoDelivery ?? TipoPagamento.outro;
     if (pagamentosDoDialog.isNotEmpty) {
       tipoPrincipal = pagamentosDoDialog.first.tipo;
+    }
+
+    final String numero = _pedidoOriginal?.numero ?? (isDeliveryCapturado 
+        ? dataService.getProximoNumeroPedido() 
+        : dataService.getProximoNumeroVenda());
+        
+    String numeroFinal = numero;
+    if (mesaNumero != null && _pedidoOriginal == null) {
+      final bool isComanda = _mesaComandaVinculada?.tipo == TipoControle.comanda || 
+                             mesaNumero.toUpperCase().contains('CMD') || 
+                             mesaNumero.toUpperCase().contains('COMANDA');
+      final prefixo = isComanda ? 'CMD' : 'MESA';
+      final proximoNumVal = numero.split('-').last;
+      numeroFinal = '$prefixo-$mesaNumero-$proximoNumVal';
     }
 
     // Criar venda balcão
     final vendaBalcao = VendaBalcao(
       id: _pedidoOriginal?.id ?? uuid.v4(),
-      numero: _pedidoOriginal?.numero ?? dataService.getProximoNumeroPedido(),
+      numero: numeroFinal,
       dataVenda: _pedidoOriginal?.dataPedido ?? DateTime.now(),
       clienteId: _clienteSelecionado?.id,
       clienteNome: _clienteSelecionado?.nome ?? (nomeIdentificacao?.isNotEmpty == true ? nomeIdentificacao : (mesaNumero != null ? 'Mesa $mesaNumero' : null)),
       clienteTelefone: _clienteSelecionado?.telefone,
+      vendedorId: vendedorSelecionadoCapturado?.id,
+      vendedorNome: vendedorSelecionadoCapturado?.nome,
 
       itens: itensVenda,
       tipoPagamento: tipoPrincipal,
@@ -5214,6 +5785,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                 motoristaId: motoristaIdCapturado,
                 motoristaNome: motoristaNomeCapturado,
                 status: 'Pendente',
+                valorParaTroco: _valorParaTroco,
                 dataPedido: DateTime.now(),
               )
             : null,
@@ -5259,8 +5831,11 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       id: _pedidoOriginal?.id ?? uuid.v4(),
       numero: _pedidoOriginal?.numero ?? vendaBalcao.numero,
       clienteId: _clienteSelecionado?.id,
-      clienteNome: vendaBalcao.clienteNome,
+      clienteNome: vendaBalcao.clienteNome?.trim().isEmpty == true ? 'Delivery' : vendaBalcao.clienteNome,
       clienteTelefone: _clienteSelecionado?.telefone ?? vendaBalcao.clienteTelefone,
+      clienteEndereco: isDeliveryCapturado && enderecoEntregaCapturado != null 
+          ? '${enderecoEntregaCapturado.logradouro}, ${enderecoEntregaCapturado.numero}' 
+          : null,
       dataPedido: vendaBalcao.dataVenda,
       status: 'Pendente',
       produtos: produtosPedido,
@@ -5269,7 +5844,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           ? pagamentosDoDialog 
           : [PagamentoPedido(
               id: uuid.v4(),
-              tipo: TipoPagamento.outro,
+              tipo: _formaPagamentoDelivery ?? TipoPagamento.outro,
               valor: _totalCarrinho,
               recebido: false,
               observacao: 'Venda Salva: ${DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now())}',
@@ -5277,20 +5852,21 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       createdAt: vendaBalcao.dataVenda,
       updatedAt: vendaBalcao.dataVenda,
       observacoes: vendaBalcao.observacoes,
-      vendedorId: usuarioAtual?.funcionarioId ?? usuarioAtual?.id,
-      vendedorNome: usuarioAtual?.nome,
+      vendedorId: vendedorSelecionadoCapturado?.id,
+      vendedorNome: vendedorSelecionadoCapturado?.nome,
       deliveryInfo: vendaBalcao.deliveryInfo,
     );
 
     // Se estava editando um pedido/venda salva, remover o antigo ANTES de adicionar o novo
     // Isso evita duplicados e garante que o novo registro (com mesmo ID se carregado) persista
     if (_pedidoOriginal != null) {
-      dataService.deletePedido(_pedidoOriginal!.id);
+      // dataService.deletePedido(_pedidoOriginal!.id);
+
       final vendaOriginal = dataService.vendasBalcao
           .where((v) => v.numero == _pedidoOriginal!.numero)
           .firstOrNull;
       if (vendaOriginal != null) {
-        dataService.deleteVendaBalcao(vendaOriginal.id);
+        await dataService.deleteVendaBalcao(vendaOriginal.id);
       }
       
       // Também remover registro de entrega antigo se houver
@@ -5307,7 +5883,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
 
     if (isDelivery) {
       // 1. DELIVERY: Salvar como Pedido para aparecer na Central de Pedidos
-      dataService.addPedido(pedidoVendaSalva);
+      await dataService.addPedido(pedidoVendaSalva);
 
       // 2. CRIAR REGISTRO DE ENTREGA
       final registroEntrega = Entrega(
@@ -5347,6 +5923,14 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       _navegarParaReceber();
     }
 
+    await _registrarComissaoVendedorSeAplicavel(
+      dataService: dataService,
+      pedidoId: pedidoVendaSalva.id,
+      pedidoNumero: pedidoVendaSalva.numero,
+      valorPedido: pedidoVendaSalva.total,
+      vendedor: vendedorSelecionadoCapturado,
+    );
+
     _pedidoOriginal = null;
 
     // Callback de finalização
@@ -5373,7 +5957,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
 
     // Resetar estado local
     _resetarTodaVenda();
-    _limparCarrinhoSalvo();
+
   }
 
   void _mostrarSucessoPedidoGerado(String numeroVenda) {
@@ -5386,9 +5970,11 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     );
 
     // Limpar estado completo da venda
-    _resetarTodaVenda();
+    // _resetarTodaVenda();
+
     // Limpar carrinho salvo após finalizar venda
-    _limparCarrinhoSalvo();
+    // _limparCarrinhoSalvo();
+
   }
 
   void _mostrarDialogoTipoImpressaoPedido(BuildContext context, Pedido pedido) {
@@ -5481,23 +6067,19 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     }
 
     try {
-      Uint8List pdfBytes;
       if (termico) {
-        pdfBytes = await PedidoPDFService.gerarPDFTermico(
+        await PedidoPDFService.imprimirPDFTermico(
           pedido: pedido,
           empresa: empresa,
+          context: context,
         );
       } else {
-        pdfBytes = await PedidoPDFService.gerarPDF(
+        await PedidoPDFService.imprimirPDF(
           pedido: pedido,
           empresa: empresa,
+          context: context,
         );
       }
-
-      await Printing.layoutPdf(
-        onLayout: (PdfPageFormat format) async => pdfBytes,
-        name: 'Pedido_${pedido.numero}',
-      );
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -5517,16 +6099,18 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     );
 
     // Limpar estado completo da venda
-    _resetarTodaVenda();
+    // _resetarTodaVenda();
+
     // Limpar carrinho salvo após finalizar venda
-    _limparCarrinhoSalvo();
+    // _limparCarrinhoSalvo();
+
   }
 
   /// Notificação inteligente e discreta para itens adicionados
   void _mostrarNotificacaoItemAdicionado({
     required String nome,
-    required int quantidade,
-    required int quantidadeTotal,
+    required double quantidade,
+    required double quantidadeTotal,
     required double preco,
     required bool jaExistia,
     required bool isServico,
@@ -5619,9 +6203,11 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     );
 
     // Limpar estado completo da venda
-    _resetarTodaVenda();
+    // _resetarTodaVenda();
+
     // Limpar carrinho salvo após finalizar venda
-    _limparCarrinhoSalvo();
+    // _limparCarrinhoSalvo();
+
   }
 
   void _mostrarSucessoVendaParcelada(
@@ -5643,9 +6229,11 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
 
     // Limpar carrinho
     // Limpar estado completo da venda
-    _resetarTodaVenda();
+    // _resetarTodaVenda();
+
     // Limpar carrinho salvo após finalizar venda
-    _limparCarrinhoSalvo();
+    // _limparCarrinhoSalvo();
+
   }
 
   void _abrirConferenciaItens() {
@@ -5678,9 +6266,11 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       info: 'Faltando: ${formatoMoeda.format(valorRestante)}',
     );
 
-    _resetarTodaVenda();
+    // _resetarTodaVenda();
+
     // Limpar carrinho e cliente salvos após finalizar
-    _limparCarrinhoSalvo();
+    // _limparCarrinhoSalvo();
+
   }
 
   void _mostrarSucessoVenda(
@@ -5695,26 +6285,27 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   bool voltarAoFechar = false, // true quando chamado a partir do controle de mesas
 }) {
   // Popup animado com dinheiro caindo
-  PopupSucessoVenda.mostrar(
-    context,
-    valor: valor,
-    titulo: titulo ?? 'VENDA CONCLUÍDA!',
-    subtitulo: numeroVenda,
-    troco: troco,
-    icone: icone,
-    corBase: corBase,
-    infoExtra: infoExtra,
-    onDismiss: () {
-      // Limpar carrinho e cliente após fechar
-      if (mounted) {
-        _resetarTodaVenda();
-        _limparCarrinhoSalvo();
-        // Se veio do controle de mesas, voltar para aquela tela
-        if (voltarAoFechar) {
-          Navigator.of(context).pop();
+    _estaComPopupAberto = true;
+    PopupSucessoVenda.mostrar(
+      context,
+      valor: valor,
+      titulo: titulo ?? 'VENDA CONCLUÍDA!',
+      subtitulo: numeroVenda,
+      troco: troco,
+      icone: icone,
+      corBase: corBase,
+      infoExtra: infoExtra,
+      onDismiss: () {
+        _estaComPopupAberto = false;
+        // O estado já foi resetado em _concluirVendaComPagamentos antes de mostrar o popup.
+        // Apenas garantimos o reset do foco e se necessário voltar para mesas.
+        if (mounted) {
+          _buscaFocusNode.requestFocus();
+          if (voltarAoFechar) {
+            Navigator.of(context).pop();
+          }
         }
-      }
-    },
+      },
     onEmitirNFCe: () => _emitirNFCe(
       vendaBalcao,
       cpfCnpjOverride: _cpfNfce ?? vendaBalcao.clienteCpfCnpj,
@@ -5728,6 +6319,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         VendaPDFService.imprimirPDFTermico(
           venda: vendaBalcao,
           empresa: empresa,
+          context: context,
         );
       }
     },
@@ -6184,10 +6776,8 @@ o padrão padrão (sem opções avançadas).
     final dataService = Provider.of<DataService>(context, listen: false);
     final empresa = dataService.empresaAtual;
     
-    if (empresa == null || 
-        empresa.whatsappApiUrl == null || 
-        empresa.whatsappApiKey == null) {
-      _mostrarErro('Configuração de WhatsApp não encontrada. Configure em Configurações > WhatsApp.');
+    if (empresa == null) {
+      _mostrarErro('Nenhuma empresa selecionada.');
       return;
     }
 
@@ -6276,13 +6866,12 @@ o padrão padrão (sem opções avançadas).
     );
 
     try {
-      final service = WhatsAppService.fromEmpresa(empresa);
-      final isConnected = await service.isConectado();
+      final hasApi = empresa.whatsappApiUrl != null && empresa.whatsappApiKey != null;
+      bool isConnected = false;
       
-      if (!isConnected) {
-        if (mounted) Navigator.pop(context);
-        _mostrarErro('WhatsApp não está conectado.\n\nAcesse o Gerenciamento WhatsApp na Home para conectar seu aparelho.');
-        return;
+      if (hasApi) {
+        final service = WhatsAppService.fromEmpresa(empresa);
+        isConnected = await service.isConectado();
       }
 
       // Montar mensagem caprichada
@@ -6306,13 +6895,211 @@ o padrão padrão (sem opções avançadas).
       if (venda.troco != null && venda.troco! > 0) {
         buffer.writeln('💵 Troco: R\$ ${venda.troco!.toStringAsFixed(2)}');
       }
-      buffer.writeln('━━━━━━━━━━━━━━━━━━━━');
-      buffer.writeln('Obrigado pela preferência! 😊');
-      if (empresa.telefone != null) {
-        buffer.writeln('📞 Contato: ${empresa.telefone}');
+      // 1. Perguntar o formato desejado (A4 ou 80mm)
+      String? formato = await showDialog<String>(
+        context: context,
+        builder: (context) => AlertDialog(
+          backgroundColor: const Color(0xFF1E1E2E),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Text('Escolha o Formato', style: TextStyle(color: Colors.white)),
+          content: const Text(
+            'Como você deseja enviar o comprovante?',
+            style: TextStyle(color: Colors.white70),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, 'texto'),
+              child: const Text('SOMENTE TEXTO', style: TextStyle(color: Colors.white54)),
+            ),
+            ElevatedButton.icon(
+              onPressed: () => Navigator.pop(context, '80mm'),
+              icon: const Icon(Icons.receipt, size: 18),
+              label: const Text('RECIBO 80MM'),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+            ),
+            ElevatedButton.icon(
+              onPressed: () => Navigator.pop(context, 'A4'),
+              icon: const Icon(Icons.picture_as_pdf, size: 18),
+              label: const Text('PDF A4'),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
+            ),
+          ],
+        ),
+      );
+
+      if (formato == null) {
+        if (mounted) Navigator.pop(context);
+        return;
       }
 
-      final ok = await service.enviarMensagem(telefone, buffer.toString());
+      bool sucesso = false;
+      
+      if (formato == 'texto') {
+        if (hasApi && isConnected) {
+          final service = WhatsAppService.fromEmpresa(empresa);
+          sucesso = await service.enviarMensagem(telefone, buffer.toString());
+        } else {
+          // Fallback para link direto se não tiver API ou não estiver conectado
+          sucesso = await WhatsAppService.abrirWhatsAppDireto(
+            numero: telefone, 
+            mensagem: buffer.toString()
+          );
+        }
+      } else {
+        if (!hasApi || !isConnected) {
+          if (mounted) Navigator.pop(context);
+          
+          final confirmarManual = await showDialog<bool>(
+            context: context,
+            builder: (context) => AlertDialog(
+              backgroundColor: const Color(0xFF1E1E2E),
+              title: const Text('API Indisponível', style: TextStyle(color: Colors.white)),
+              content: const Text(
+                'A integração automática não está configurada. Deseja gerar o PDF e compartilhar usando o menu do seu aparelho?',
+                style: TextStyle(color: Colors.white70),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('CANCELAR', style: TextStyle(color: Colors.white54)),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
+                  child: const Text('SIM, COMPARTILHAR'),
+                ),
+              ],
+            ),
+          );
+
+          if (confirmarManual != true) return;
+          
+          // Se confirmou manual, gerar e compartilhar pelo menu nativo
+          // Mostrar loading novamente pois o anterior foi fechado
+          if (!mounted) return;
+          showDialog(context: context, barrierDismissible: false, builder: (context) => const Center(child: CircularProgressIndicator()));
+          
+          try {
+             // Converter VendaBalcao para Pedido temporário para usar o PDF Service
+            final pedidoTemp = Pedido(
+              id: venda.id,
+              numero: venda.numero,
+              dataPedido: venda.dataVenda,
+              status: 'Pago',
+              total: venda.valorTotal,
+              produtos: venda.itens.where((i) => !i.isServico).map((i) => ItemPedido(
+                id: i.id,
+                nome: i.nome,
+                quantidade: i.quantidade,
+                preco: i.precoUnitario,
+                observacao: i.observacao,
+                fornecedorNome: i.fornecedorNome,
+                adicionais: i.adicionais,
+              )).toList(),
+              servicos: venda.itens.where((i) => i.isServico).map((i) => ItemServico(
+                id: i.id,
+                descricao: i.nome,
+                valor: i.precoUnitario,
+                observacao: i.observacao,
+              )).toList(),
+              pagamentos: [
+                PagamentoPedido(
+                  id: 'pg-${venda.id}',
+                  tipo: venda.tipoPagamento,
+                  valor: venda.valorTotal,
+                  recebido: true,
+                  dataRecebimento: venda.dataVenda,
+                )
+              ],
+              clienteId: venda.clienteId,
+              clienteNome: venda.clienteNome,
+              clienteTelefone: venda.clienteTelefone,
+              clienteCpfCnpj: venda.clienteCpfCnpj,
+              createdAt: venda.createdAt,
+            );
+
+            Uint8List pdfBytes;
+            if (formato == '80mm') {
+              pdfBytes = await PedidoPDFService.gerarPDFTermico(pedido: pedidoTemp, empresa: empresa);
+            } else {
+              pdfBytes = await PedidoPDFService.gerarPDF(pedido: pedidoTemp, empresa: empresa);
+            }
+
+            if (mounted) Navigator.pop(context); // Fecha loading
+            
+            await Printing.sharePdf(
+              bytes: pdfBytes,
+              filename: 'comprovante_${venda.numero}.pdf',
+            );
+            return;
+          } catch (e) {
+            if (mounted) Navigator.pop(context);
+            _mostrarErro('Erro ao gerar PDF para compartilhamento: $e');
+            return;
+          }
+        }
+
+        final service = WhatsAppService.fromEmpresa(empresa);
+        // Converter VendaBalcao para Pedido temporário para usar o PDF Service
+        final pedidoTemp = Pedido(
+          id: venda.id,
+          numero: venda.numero,
+          dataPedido: venda.dataVenda,
+          status: 'Pago',
+          total: venda.valorTotal,
+          produtos: venda.itens.where((i) => !i.isServico).map((i) => ItemPedido(
+            id: i.id,
+            nome: i.nome,
+            quantidade: i.quantidade,
+            preco: i.precoUnitario,
+            observacao: i.observacao,
+            fornecedorNome: i.fornecedorNome,
+            adicionais: i.adicionais,
+          )).toList(),
+          servicos: venda.itens.where((i) => i.isServico).map((i) => ItemServico(
+            id: i.id,
+            descricao: i.nome,
+            valor: i.precoUnitario,
+            observacao: i.observacao,
+          )).toList(),
+          pagamentos: [
+            PagamentoPedido(
+              id: 'pg-${venda.id}',
+              tipo: venda.tipoPagamento,
+              valor: venda.valorTotal,
+              recebido: true,
+              dataRecebimento: venda.dataVenda,
+            )
+          ],
+          clienteId: venda.clienteId,
+          clienteNome: venda.clienteNome,
+          clienteTelefone: venda.clienteTelefone,
+          clienteCpfCnpj: venda.clienteCpfCnpj,
+          createdAt: venda.createdAt,
+        );
+
+        Uint8List pdfBytes;
+        String fileName;
+        
+        if (formato == '80mm') {
+          pdfBytes = await PedidoPDFService.gerarPDFTermico(pedido: pedidoTemp, empresa: empresa);
+          fileName = 'recibo_${venda.numero}.pdf';
+        } else {
+          pdfBytes = await PedidoPDFService.gerarPDF(pedido: pedidoTemp, empresa: empresa);
+          fileName = 'comprovante_${venda.numero}.pdf';
+        }
+
+        final base64Pdf = base64Encode(pdfBytes);
+        
+        sucesso = await service.enviarArquivo(
+          numero: telefone,
+          base64Content: base64Pdf,
+          fileName: fileName,
+          caption: 'Olá! Segue o seu comprovante da compra realizada em *${empresa.razaoSocial}*. 🛍️',
+        );
+      }
+
+      final ok = sucesso;
       
       if (mounted) Navigator.pop(context); // Fecha loading
       
@@ -6352,8 +7139,7 @@ o padrão padrão (sem opções avançadas).
 
     setState(() => _estaFinalizando = true);
     final dataService = Provider.of<DataService>(context, listen: false);
-    final authService = Provider.of<AuthService>(context, listen: false);
-    final usuarioAtual = authService.usuarioAtual;
+    final vendedorSelecionadoCapturado = _vendedorSelecionado;
     final uuid = const Uuid();
     
     try {
@@ -6384,6 +7170,7 @@ o padrão padrão (sem opções avançadas).
         motoristaId: _motoristaId,
         motoristaNome: _motoristaNome,
         status: 'Pendente',
+        valorParaTroco: _valorParaTroco,
         dataPedido: DateTime.now(),
       );
 
@@ -6397,8 +7184,10 @@ o padrão padrão (sem opções avançadas).
         clienteNome: _clienteSelecionado?.nome ?? _nomeNfce ?? 'Delivery',
         clienteTelefone: _clienteSelecionado?.telefone,
         clienteCpfCnpj: _clienteSelecionado?.cpfCnpj ?? _cpfNfce,
+        vendedorId: vendedorSelecionadoCapturado?.id,
+        vendedorNome: vendedorSelecionadoCapturado?.nome,
         itens: itensVenda,
-        tipoPagamento: TipoPagamento.outro, // Lançado como pendente
+        tipoPagamento: _formaPagamentoDelivery ?? TipoPagamento.outro, // Lançado conforme registrado ou pendente
         valorTotal: _totalCarrinho,
         valorRecebido: 0,
         troco: 0,
@@ -6436,8 +7225,11 @@ o padrão padrão (sem opções avançadas).
         id: vendaId,
         numero: numero,
         clienteId: _clienteSelecionado?.id,
-        clienteNome: vendaBalcao.clienteNome,
+        clienteNome: vendaBalcao.clienteNome?.trim().isEmpty == true ? 'Delivery' : vendaBalcao.clienteNome,
         clienteTelefone: vendaBalcao.clienteTelefone,
+        clienteEndereco: _enderecoEntrega != null 
+            ? '${_enderecoEntrega!.logradouro}, ${_enderecoEntrega!.numero}' 
+            : null,
         dataPedido: vendaBalcao.dataVenda,
         status: 'Pendente',
         total: vendaBalcao.valorTotal,
@@ -6446,19 +7238,27 @@ o padrão padrão (sem opções avançadas).
         pagamentos: [
           PagamentoPedido(
             id: uuid.v4(),
-            tipo: TipoPagamento.outro,
+            tipo: _formaPagamentoDelivery ?? TipoPagamento.outro,
             valor: vendaBalcao.valorTotal,
             recebido: false,
           )
         ],
         deliveryInfo: deliveryInfo,
         observacoes: vendaBalcao.observacoes,
-        vendedorId: usuarioAtual?.funcionarioId ?? usuarioAtual?.id,
-        vendedorNome: usuarioAtual?.nome,
+        vendedorId: vendedorSelecionadoCapturado?.id,
+        vendedorNome: vendedorSelecionadoCapturado?.nome,
       );
 
       // SALVAR TUDO
       await dataService.addPedido(pedido);
+
+      await _registrarComissaoVendedorSeAplicavel(
+        dataService: dataService,
+        pedidoId: pedido.id,
+        pedidoNumero: pedido.numero,
+        valorPedido: pedido.total,
+        vendedor: vendedorSelecionadoCapturado,
+      );
       
       // CRIAR REGISTRO DE ENTREGA (Para aparecer no Controle de Entregas)
       final registroEntrega = Entrega(
@@ -6509,14 +7309,97 @@ o padrão padrão (sem opções avançadas).
     }
   }
 
-  void _abrirConfiguracoesPDV() {
+  Widget _buildViewModeOption(String label, IconData icon, bool isSelected, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          color: isSelected ? Colors.blueAccent.withOpacity(0.15) : Colors.white.withOpacity(0.02),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: isSelected ? Colors.blueAccent : Colors.white10,
+            width: isSelected ? 2 : 1,
+          ),
+        ),
+        child: Column(
+          children: [
+            Icon(icon, color: isSelected ? Colors.blueAccent : Colors.white54, size: 24),
+            const SizedBox(height: 6),
+            Text(
+              label,
+              style: TextStyle(
+                color: isSelected ? Colors.white : Colors.white54,
+                fontSize: 10,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _abrirConfiguracoesPDV() async {
     final dataService = Provider.of<DataService>(context, listen: false);
     final authService = Provider.of<AuthService>(context, listen: false);
     final empresa = dataService.empresaAtual;
     if (empresa == null) return;
 
+    // Mostrar dialog de carregamento rápido
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(
+        child: CircularProgressIndicator(valueColor: AlwaysStoppedAnimation<Color>(Colors.blueAccent)),
+      ),
+    );
+
+    // Carregar configurações da balança e portas COM disponíveis
+    final balancaService = BalancaService();
+    final configBalanca = await balancaService.obterConfiguracao();
+    final portasCOM = await balancaService.listarPortasCOM();
+    if (configBalanca['diretorioToledo'].isEmpty) {
+      configBalanca['diretorioToledo'] = await balancaService.obterDiretorioToledoPadrao();
+    }
+
+    // Fechar dialog de carregamento
+    if (context.mounted) {
+      Navigator.pop(context);
+    }
+
     // Estado local para resposta instantânea
     bool selecionarFornecedorLocal = empresa.configuracoes?['selecionarFornecedorPDV'] == true;
+    bool habilitarMesasComandasLocal = empresa.configuracoes?['habilitarMesasComandas'] != false; // true por padrão
+    bool habilitarCozinhaLocal = empresa.configuracoes?['habilitarCozinha'] != false; // true por padrão
+    bool somHabilitadoLocal = _somHabilitado;
+    bool somAdicionarLocal = _somAdicionarHabilitado;
+    bool somRemoverLocal = _somRemoverHabilitado;
+    bool somFinalizarLocal = _somFinalizarHabilitado;
+
+    // Estados locais da balança
+    bool balancaAtiva = configBalanca['ativo'] == true;
+    String portaSelecionada = configBalanca['porta'] ?? 'COM1';
+    int baudRateSelecionado = configBalanca['baudRate'] ?? 9600;
+    bool usarMockBalanca = configBalanca['usarMock'] ?? true;
+    double pesoMockBalanca = (configBalanca['pesoMock'] ?? 1.500).toDouble();
+    String diretorioToledo = configBalanca['diretorioToledo'];
+    String deptoToledo = configBalanca['deptoToledo'] ?? '01';
+    int validadeToledo = configBalanca['validadeToledoDias'] ?? 0;
+
+    // Garantir que a porta selecionada esteja na lista de portas válidas
+    if (!portasCOM.contains(portaSelecionada)) {
+      portasCOM.insert(0, portaSelecionada);
+    }
+
+    final TextEditingController pesoMockController = TextEditingController(text: pesoMockBalanca.toStringAsFixed(3));
+    final TextEditingController dirToledoController = TextEditingController(text: diretorioToledo);
+    final TextEditingController deptoToledoController = TextEditingController(text: deptoToledo);
+    final TextEditingController validadeToledoController = TextEditingController(text: validadeToledo.toString());
+
+    if (!context.mounted) return;
 
     showDialog(
       context: context,
@@ -6539,44 +7422,501 @@ o padrão padrão (sem opções avançadas).
                 const Text('Configurações do PDV', style: TextStyle(color: Colors.white, fontSize: 18)),
               ],
             ),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.03),
-                    borderRadius: BorderRadius.circular(15),
-                    border: Border.all(
-                      color: selecionarFornecedorLocal 
-                          ? Colors.blueAccent.withOpacity(0.3) 
-                          : Colors.white.withOpacity(0.05)
+            content: SizedBox(
+              width: 500,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // --- CONFIGURAÇÕES GERAIS ---
+                    const Text(
+                      'Configurações do Sistema',
+                      style: TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.bold, fontSize: 12, letterSpacing: 1.1),
                     ),
-                  ),
-                  child: SwitchListTile(
-                    title: const Text('Selecionar Fornecedor', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                    subtitle: const Text(
-                      'Permite escolher o fornecedor do produto no momento da venda quando houver estoque particionado.',
-                      style: TextStyle(color: Colors.white54, fontSize: 11),
+                    const SizedBox(height: 10),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.03),
+                        borderRadius: BorderRadius.circular(15),
+                        border: Border.all(
+                          color: selecionarFornecedorLocal 
+                              ? Colors.blueAccent.withOpacity(0.3) 
+                              : Colors.white.withOpacity(0.05)
+                        ),
+                      ),
+                      child: SwitchListTile(
+                        title: const Text('Selecionar Fornecedor', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+                        subtitle: const Text(
+                          'Permite escolher o fornecedor do produto no momento da venda quando houver estoque particionado.',
+                          style: TextStyle(color: Colors.white54, fontSize: 11),
+                        ),
+                        value: selecionarFornecedorLocal,
+                        activeColor: Colors.blueAccent,
+                        activeTrackColor: Colors.blueAccent.withOpacity(0.3),
+                        inactiveThumbColor: Colors.grey,
+                        inactiveTrackColor: Colors.white10,
+                        onChanged: (value) {
+                          setDialogState(() {
+                            selecionarFornecedorLocal = value;
+                          });
+                        },
+                      ),
                     ),
-                    value: selecionarFornecedorLocal,
-                    activeColor: Colors.blueAccent,
-                    activeTrackColor: Colors.blueAccent.withOpacity(0.3),
-                    inactiveThumbColor: Colors.grey,
-                    inactiveTrackColor: Colors.white10,
-                    onChanged: (value) {
-                      setDialogState(() {
-                        selecionarFornecedorLocal = value;
-                      });
-                    },
-                  ),
+                    const SizedBox(height: 12),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.03),
+                        borderRadius: BorderRadius.circular(15),
+                        border: Border.all(
+                          color: habilitarMesasComandasLocal 
+                              ? Colors.purpleAccent.withOpacity(0.3) 
+                              : Colors.white.withOpacity(0.05)
+                        ),
+                      ),
+                      child: SwitchListTile(
+                        title: const Text('Mesas e Comandas', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+                        subtitle: const Text(
+                          'Habilita os botões e rotinas de controle de mesas e comandas de clientes.',
+                          style: TextStyle(color: Colors.white54, fontSize: 11),
+                        ),
+                        value: habilitarMesasComandasLocal,
+                        activeColor: Colors.purpleAccent,
+                        activeTrackColor: Colors.purpleAccent.withOpacity(0.3),
+                        inactiveThumbColor: Colors.grey,
+                        inactiveTrackColor: Colors.white10,
+                        onChanged: (value) {
+                          setDialogState(() {
+                            habilitarMesasComandasLocal = value;
+                          });
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.03),
+                        borderRadius: BorderRadius.circular(15),
+                        border: Border.all(
+                          color: habilitarCozinhaLocal 
+                              ? Colors.greenAccent.withOpacity(0.3) 
+                              : Colors.white.withOpacity(0.05)
+                        ),
+                      ),
+                      child: SwitchListTile(
+                        title: const Text('Painel de Cozinha', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+                        subtitle: const Text(
+                          'Exibe o atalho para monitorar pedidos e preparos na Cozinha/Bar.',
+                          style: TextStyle(color: Colors.white54, fontSize: 11),
+                        ),
+                        value: habilitarCozinhaLocal,
+                        activeColor: Colors.greenAccent,
+                        activeTrackColor: Colors.greenAccent.withOpacity(0.3),
+                        inactiveThumbColor: Colors.grey,
+                        inactiveTrackColor: Colors.white10,
+                        onChanged: (value) {
+                          setDialogState(() {
+                            habilitarCozinhaLocal = value;
+                          });
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.03),
+                        borderRadius: BorderRadius.circular(15),
+                        border: Border.all(
+                          color: somHabilitadoLocal 
+                              ? Colors.amberAccent.withOpacity(0.3) 
+                              : Colors.white.withOpacity(0.05)
+                        ),
+                      ),
+                      child: Column(
+                        children: [
+                          SwitchListTile(
+                            title: const Text('Efeitos Sonoros do PDV', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+                            subtitle: const Text(
+                              'Ativa ou desativa os bips ao bipar itens, deletar e finalizar vendas.',
+                              style: TextStyle(color: Colors.white54, fontSize: 11),
+                            ),
+                            value: somHabilitadoLocal,
+                            activeColor: Colors.amberAccent,
+                            activeTrackColor: Colors.amberAccent.withOpacity(0.3),
+                            inactiveThumbColor: Colors.grey,
+                            inactiveTrackColor: Colors.white10,
+                            onChanged: (value) {
+                              setDialogState(() {
+                                somHabilitadoLocal = value;
+                              });
+                            },
+                          ),
+                          if (somHabilitadoLocal) ...[
+                            const Divider(color: Colors.white10, height: 1),
+                            Padding(
+                              padding: const EdgeInsets.only(left: 16.0),
+                              child: SwitchListTile(
+                                title: const Text('Som ao Adicionar Item', style: TextStyle(color: Colors.white, fontSize: 13)),
+                                value: somAdicionarLocal,
+                                activeColor: Colors.amberAccent,
+                                inactiveThumbColor: Colors.grey,
+                                inactiveTrackColor: Colors.white10,
+                                onChanged: (value) {
+                                  setDialogState(() {
+                                    somAdicionarLocal = value;
+                                  });
+                                },
+                              ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.only(left: 16.0),
+                              child: SwitchListTile(
+                                title: const Text('Som ao Remover Item', style: TextStyle(color: Colors.white, fontSize: 13)),
+                                value: somRemoverLocal,
+                                activeColor: Colors.amberAccent,
+                                inactiveThumbColor: Colors.grey,
+                                inactiveTrackColor: Colors.white10,
+                                onChanged: (value) {
+                                  setDialogState(() {
+                                    somRemoverLocal = value;
+                                  });
+                                },
+                              ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.only(left: 16.0),
+                              child: SwitchListTile(
+                                title: const Text('Som ao Finalizar Venda', style: TextStyle(color: Colors.white, fontSize: 13)),
+                                value: somFinalizarLocal,
+                                activeColor: Colors.amberAccent,
+                                inactiveThumbColor: Colors.grey,
+                                inactiveTrackColor: Colors.white10,
+                                onChanged: (value) {
+                                  setDialogState(() {
+                                    somFinalizarLocal = value;
+                                  });
+                                },
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.03),
+                        borderRadius: BorderRadius.circular(15),
+                        border: Border.all(color: Colors.white.withOpacity(0.05)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Visualização de Produtos',
+                            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                          ),
+                          const Text(
+                            'Escolha como os produtos são exibidos no catálogo',
+                            style: TextStyle(color: Colors.white54, fontSize: 11),
+                          ),
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: _buildViewModeOption(
+                                  'Grade de Quadros', 
+                                  Icons.grid_view_rounded, 
+                                  _viewMode == ViewMode.grid,
+                                  () {
+                                    setDialogState(() {
+                                      _viewMode = ViewMode.grid;
+                                    });
+                                    setState(() {});
+                                  }
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: _buildViewModeOption(
+                                  'Lista de Linhas', 
+                                  Icons.view_headline_rounded, 
+                                  _viewMode == ViewMode.list,
+                                  () {
+                                    setDialogState(() {
+                                      _viewMode = ViewMode.list;
+                                    });
+                                    setState(() {});
+                                  }
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 24),
+                    // --- CONFIGURAÇÕES DA BALANÇA ---
+                    const Text(
+                      'Balança (Leitura Serial / COM)',
+                      style: TextStyle(color: Colors.tealAccent, fontWeight: FontWeight.bold, fontSize: 12, letterSpacing: 1.1),
+                    ),
+                    const SizedBox(height: 10),
+                    Container(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.02),
+                        borderRadius: BorderRadius.circular(15),
+                        border: Border.all(
+                          color: balancaAtiva ? Colors.tealAccent.withOpacity(0.3) : Colors.white.withOpacity(0.05)
+                        ),
+                      ),
+                      child: Column(
+                        children: [
+                          SwitchListTile(
+                            title: const Text('Ativar Integração com Balança', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+                            subtitle: const Text(
+                              'Efetua leitura automática do peso ao selecionar produtos pesáveis.',
+                              style: TextStyle(color: Colors.white54, fontSize: 11),
+                            ),
+                            value: balancaAtiva,
+                            activeColor: Colors.tealAccent,
+                            activeTrackColor: Colors.tealAccent.withOpacity(0.3),
+                            inactiveThumbColor: Colors.grey,
+                            inactiveTrackColor: Colors.white10,
+                            onChanged: (value) {
+                              setDialogState(() {
+                                balancaAtiva = value;
+                              });
+                            },
+                          ),
+                          if (balancaAtiva) ...[
+                            const Divider(color: Colors.white10, height: 16),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                              child: Column(
+                                children: [
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: DropdownButtonFormField<String>(
+                                          value: portaSelecionada,
+                                          dropdownColor: const Color(0xFF1E1E2E),
+                                          style: const TextStyle(color: Colors.white, fontSize: 13),
+                                          decoration: InputDecoration(
+                                            labelText: 'Porta Serial',
+                                            labelStyle: const TextStyle(color: Colors.tealAccent, fontSize: 12),
+                                            enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.white10)),
+                                            focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.tealAccent)),
+                                          ),
+                                          items: portasCOM.map((p) => DropdownMenuItem(value: p, child: Text(p))).toList(),
+                                          onChanged: (val) {
+                                            if (val != null) {
+                                              setDialogState(() => portaSelecionada = val);
+                                            }
+                                          },
+                                        ),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: DropdownButtonFormField<int>(
+                                          value: baudRateSelecionado,
+                                          dropdownColor: const Color(0xFF1E1E2E),
+                                          style: const TextStyle(color: Colors.white, fontSize: 13),
+                                          decoration: InputDecoration(
+                                            labelText: 'Baud Rate',
+                                            labelStyle: const TextStyle(color: Colors.tealAccent, fontSize: 12),
+                                            enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.white10)),
+                                            focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.tealAccent)),
+                                          ),
+                                          items: [2400, 4800, 9600, 19200, 38400, 115200]
+                                              .map((b) => DropdownMenuItem(value: b, child: Text('$b bps')))
+                                              .toList(),
+                                          onChanged: (val) {
+                                            if (val != null) {
+                                              setDialogState(() => baudRateSelecionado = val);
+                                            }
+                                          },
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 12),
+                                  SwitchListTile(
+                                    title: const Text('Modo Simulador (Sem Balança Física)', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+                                    subtitle: const Text(
+                                      'Retorna peso predefinido para testes sem conexão serial real.',
+                                      style: TextStyle(color: Colors.white54, fontSize: 11),
+                                    ),
+                                    value: usarMockBalanca,
+                                    activeColor: Colors.orangeAccent,
+                                    activeTrackColor: Colors.orangeAccent.withOpacity(0.3),
+                                    onChanged: (value) {
+                                      setDialogState(() {
+                                        usarMockBalanca = value;
+                                      });
+                                    },
+                                    contentPadding: EdgeInsets.zero,
+                                  ),
+                                  if (usarMockBalanca)
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 8),
+                                      child: TextFormField(
+                                        controller: pesoMockController,
+                                        style: const TextStyle(color: Colors.white),
+                                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                        decoration: const InputDecoration(
+                                          labelText: 'Peso Simulado Padrão (kg)',
+                                          labelStyle: TextStyle(color: Colors.orangeAccent, fontSize: 12),
+                                          enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.white10)),
+                                          focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.orangeAccent)),
+                                          hintText: '1.500',
+                                        ),
+                                        onChanged: (val) {
+                                          final clean = val.replaceAll(',', '.');
+                                          final valDouble = double.tryParse(clean);
+                                          if (valDouble != null && valDouble > 0) {
+                                            pesoMockBalanca = valDouble;
+                                          }
+                                        },
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 24),
+                    // --- EXPORTAÇÃO BALANÇA TOLEDO ---
+                    const Text(
+                      'Balanças Toledo (Carga de Produtos)',
+                      style: TextStyle(color: Colors.purpleAccent, fontWeight: FontWeight.bold, fontSize: 12, letterSpacing: 1.1),
+                    ),
+                    const SizedBox(height: 10),
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.02),
+                        borderRadius: BorderRadius.circular(15),
+                        border: Border.all(color: Colors.white.withOpacity(0.05)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          TextFormField(
+                            controller: dirToledoController,
+                            style: const TextStyle(color: Colors.white, fontSize: 13),
+                            decoration: InputDecoration(
+                              labelText: 'Diretório de Destino (txtitens.txt)',
+                              labelStyle: const TextStyle(color: Colors.purpleAccent, fontSize: 12),
+                              enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.white10)),
+                              focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.purpleAccent)),
+                              suffixIcon: const Icon(Icons.folder, color: Colors.purpleAccent),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: TextFormField(
+                                  controller: deptoToledoController,
+                                  style: const TextStyle(color: Colors.white, fontSize: 13),
+                                  maxLength: 2,
+                                  decoration: InputDecoration(
+                                    labelText: 'Departamento (MGV)',
+                                    labelStyle: const TextStyle(color: Colors.purpleAccent, fontSize: 12),
+                                    enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.white10)),
+                                    focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.purpleAccent)),
+                                    counterText: '',
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: TextFormField(
+                                  controller: validadeToledoController,
+                                  style: const TextStyle(color: Colors.white, fontSize: 13),
+                                  keyboardType: TextInputType.number,
+                                  decoration: InputDecoration(
+                                    labelText: 'Validade em Dias',
+                                    labelStyle: const TextStyle(color: Colors.purpleAccent, fontSize: 12),
+                                    enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.white10)),
+                                    focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.purpleAccent)),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          ElevatedButton.icon(
+                            onPressed: () async {
+                              final dir = dirToledoController.text.trim();
+                              final depto = deptoToledoController.text.trim().isEmpty ? '01' : deptoToledoController.text.trim();
+                              final validade = int.tryParse(validadeToledoController.text.trim()) ?? 0;
+
+                              // Salva temporariamente para exportação consistente
+                              final tempConfig = {
+                                'ativo': balancaAtiva,
+                                'porta': portaSelecionada,
+                                'baudRate': baudRateSelecionado,
+                                'usarMock': usarMockBalanca,
+                                'pesoMock': pesoMockBalanca,
+                                'diretorioToledo': dir,
+                                'deptoToledo': depto,
+                                'validadeToledoDias': validade,
+                              };
+                              await balancaService.salvarConfiguracao(tempConfig);
+
+                              try {
+                                final filePath = await balancaService.exportarItensToledo(dataService.produtos, dir);
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('Arquivo exportado com sucesso em: $filePath'),
+                                      backgroundColor: Colors.purple,
+                                      behavior: SnackBarBehavior.floating,
+                                    ),
+                                  );
+                                }
+                              } catch (e) {
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('Erro ao exportar arquivo: $e'),
+                                      backgroundColor: Colors.redAccent,
+                                      behavior: SnackBarBehavior.floating,
+                                    ),
+                                  );
+                                }
+                              }
+                            },
+                            icon: const Icon(Icons.scale, color: Colors.white, size: 18),
+                            label: const Text('GERAR E EXPORTAR ARQUIVO TXTITENS.TXT', style: TextStyle(fontWeight: FontWeight.bold)),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.purple,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 20),
+                    const Text(
+                      'As alterações do sistema são aplicadas em nuvem, e as configurações de balança serial são mantidas apenas neste computador/terminal.',
+                      style: TextStyle(color: Colors.white38, fontSize: 11, fontStyle: FontStyle.italic),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 20),
-                const Text(
-                  'As alterações são aplicadas a todas as vendas desta empresa.',
-                  style: TextStyle(color: Colors.white38, fontSize: 11, fontStyle: FontStyle.italic),
-                  textAlign: TextAlign.center,
-                ),
-              ],
+              ),
             ),
             actions: [
               TextButton(
@@ -6585,12 +7925,50 @@ o padrão padrão (sem opções avançadas).
               ),
               ElevatedButton(
                 onPressed: () async {
+                  // 1. Salvar configurações na Empresa (Global)
                   final config = Map<String, dynamic>.from(empresa.configuracoes ?? {});
                   config['selecionarFornecedorPDV'] = selecionarFornecedorLocal;
+                  config['venda_direta_view_mode'] = _viewMode == ViewMode.list ? 'list' : 'grid';
+                  config['habilitarMesasComandas'] = habilitarMesasComandasLocal;
+                  config['habilitarCozinha'] = habilitarCozinhaLocal;
                   
                   final novaEmpresa = empresa.copyWith(configuracoes: config);
-                  // Usar AuthService para garantir que o estado global seja atualizado e não sobrescrito pelo AuthWrapper
                   await authService.atualizarEmpresa(novaEmpresa);
+                  dataService.setEmpresaAtual(novaEmpresa);
+
+                  // 2. Salvar configurações locais da balança
+                  final depto = deptoToledoController.text.trim().isEmpty ? '01' : deptoToledoController.text.trim();
+                  final validade = int.tryParse(validadeToledoController.text.trim()) ?? 0;
+                  final novaConfigBalanca = {
+                    'ativo': balancaAtiva,
+                    'porta': portaSelecionada,
+                    'baudRate': baudRateSelecionado,
+                    'dataBits': 8,
+                    'paridade': 'None',
+                    'stopBits': 1,
+                    'usarMock': usarMockBalanca,
+                    'pesoMock': pesoMockBalanca,
+                    'diretorioToledo': dirToledoController.text.trim(),
+                    'deptoToledo': depto,
+                    'validadeToledoDias': validade,
+                  };
+                  await balancaService.salvarConfiguracao(novaConfigBalanca);
+                  
+                    // Salvar se som está ativo
+                    await _storage.salvar(_keySomPDV, somHabilitadoLocal);
+                    await _storage.salvar(_keySomAdicionar, somAdicionarLocal);
+                    await _storage.salvar(_keySomRemover, somRemoverLocal);
+                    await _storage.salvar(_keySomFinalizar, somFinalizarLocal);
+
+                    // Atualizar o estado da própria VendaDiretaPage
+                    if (mounted) {
+                      setState(() {
+                        _somHabilitado = somHabilitadoLocal;
+                        _somAdicionarHabilitado = somAdicionarLocal;
+                        _somRemoverHabilitado = somRemoverLocal;
+                        _somFinalizarHabilitado = somFinalizarLocal;
+                      });
+                    }
                   
                   if (context.mounted) {
                     Navigator.pop(context);
@@ -6600,7 +7978,7 @@ o padrão padrão (sem opções avançadas).
                           children: [
                             const Icon(Icons.check_circle, color: Colors.white),
                             const SizedBox(width: 10),
-                            Text('Configurações salvas: Seleção de fornecedor ${selecionarFornecedorLocal ? "ativada" : "desativada"}.'),
+                            const Text('Configurações salvas com sucesso!'),
                           ],
                         ),
                         backgroundColor: Colors.blueAccent,
@@ -6784,24 +8162,108 @@ o padrão padrão (sem opções avançadas).
                           ),
                           const SizedBox(width: 16),
                           Expanded(
-                            child: TextField(
-                              onChanged: (value) {
-                                setState(() => _motoristaNome = value);
-                              },
-                              controller: TextEditingController(text: _motoristaNome ?? ''),
-                              style: const TextStyle(color: Colors.white),
+                            child: DropdownButtonFormField<String>(
+                              value: dataService.motoristas.any((m) => m.id == _motoristaId) ? _motoristaId : null,
                               decoration: InputDecoration(
                                 labelText: 'Motorista / Motoboy',
                                 labelStyle: const TextStyle(color: Colors.white54),
-                                prefixIcon: const Icon(Icons.person_pin, color: Colors.white24),
+                                prefixIcon: const Icon(Icons.motorcycle, color: Colors.white24),
                                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                                enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.white10)),
-                                focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.orangeAccent)),
+                                enabledBorder: const OutlineInputBorder(borderSide: BorderSide(color: Colors.white10)),
+                                focusedBorder: const OutlineInputBorder(borderSide: BorderSide(color: Colors.orangeAccent)),
                               ),
+                              dropdownColor: const Color(0xFF1E1E2E),
+                              style: const TextStyle(color: Colors.white),
+                              items: [
+                                const DropdownMenuItem(value: null, child: Text('Nenhum')),
+                                ...dataService.motoristas.map((m) => DropdownMenuItem(
+                                  value: m.id,
+                                  child: Text(m.nome),
+                                )),
+                              ],
+                              onChanged: (value) {
+                                setState(() {
+                                  _motoristaId = value;
+                                  _motoristaNome = value != null ? dataService.motoristas.firstWhere((m) => m.id == value).nome : null;
+                                });
+                                setDialogState(() {});
+                              },
                             ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.add_circle, color: Colors.orangeAccent),
+                            tooltip: 'Cadastrar Motorista',
+                            onPressed: () => _abrirDialogCadastroMotorista(dataService, setDialogState),
                           ),
                         ],
                       ),
+                      
+                      const SizedBox(height: 20),
+                      const Text('FORMA DE RECEBIMENTO (PREFERENCIAL)', style: TextStyle(color: Colors.orangeAccent, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: TipoPagamento.values.map((tipo) {
+                          final isSelected = _formaPagamentoDelivery == tipo;
+                          return GestureDetector(
+                            onTap: () {
+                              setState(() => _formaPagamentoDelivery = tipo);
+                              setDialogState(() {});
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              decoration: BoxDecoration(
+                                color: isSelected ? Colors.orangeAccent.withOpacity(0.2) : Colors.white.withOpacity(0.05),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(color: isSelected ? Colors.orangeAccent : Colors.white.withOpacity(0.1)),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    _getIconeTipo(tipo), 
+                                    size: 14, 
+                                    color: isSelected ? Colors.orangeAccent : Colors.white38
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    tipo.nome, 
+                                    style: TextStyle(
+                                      color: isSelected ? Colors.orangeAccent : Colors.white70, 
+                                      fontSize: 11,
+                                      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                                    )
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                      
+                      if (_formaPagamentoDelivery == TipoPagamento.dinheiro) ...[
+                        const SizedBox(height: 16),
+                        TextField(
+                          onChanged: (value) {
+                            setState(() => _valorParaTroco = double.tryParse(value.replaceAll(',', '.')) ?? 0.0);
+                          },
+                          controller: TextEditingController(text: _valorParaTroco > 0 ? _valorParaTroco.toStringAsFixed(2).replaceFirst('.', ',') : ''),
+                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          style: const TextStyle(color: Colors.white, fontSize: 13),
+                          decoration: InputDecoration(
+                            labelText: 'Troco para quanto?',
+                            labelStyle: const TextStyle(color: Colors.white54, fontSize: 12),
+                            prefixText: r'R$ ',
+                            prefixStyle: const TextStyle(color: Colors.orangeAccent),
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                            enabledBorder: const OutlineInputBorder(borderSide: BorderSide(color: Colors.white10)),
+                            focusedBorder: const OutlineInputBorder(borderSide: BorderSide(color: Colors.orangeAccent)),
+                            filled: true,
+                            fillColor: Colors.white.withOpacity(0.02),
+                          ),
+                        ),
+                      ],
                     ],
                   ],
                 ),
@@ -6812,7 +8274,28 @@ o padrão padrão (sem opções avançadas).
                 onPressed: () => Navigator.pop(context),
                 child: const Text('FECHAR', style: TextStyle(color: Colors.white54)),
               ),
-              if (_isDelivery)
+              if (_isDelivery) ...[
+                OutlinedButton(
+                  onPressed: () {
+                    if (_isDelivery && _enderecoEntrega == null) {
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Selecione um endereço para a Entrega')));
+                      return;
+                    }
+                    if (_estaFinalizando) return;
+                    
+                    Navigator.pop(context);
+                    // Salva diretamente usando a forma de pagamento selecionada no diálogo de delivery
+                    _salvarVendaPendente(dataService, [], mostrarPromptImpressao: true);
+                  },
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.orangeAccent,
+                    side: const BorderSide(color: Colors.orangeAccent),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  child: const Text('SALVAR PEDIDO', style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
+                const SizedBox(width: 8),
                 ElevatedButton(
                   onPressed: () {
                     if (_isDelivery && _enderecoEntrega == null) {
@@ -6821,21 +8304,87 @@ o padrão padrão (sem opções avançadas).
                     }
                     if (_estaFinalizando) return;
                     
-                    // Em vez de finalizar direto, fechamos este diálogo e abrimos o de PAGAMENTO
-                    // para que o usuário possa lançar como pago, parcial ou pendente.
+                    // Abre o diálogo de pagamento para lançar pagamentos detalhados
                     Navigator.pop(context);
                     _mostrarDialogPagamento(dataService);
                   },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.orangeAccent,
-                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   ),
-                  child: const Text('CONFIRMAR E IR PARA PAGAMENTO', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.black)),
+                  child: const Text('IR PARA PAGAMENTO', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.black)),
                 ),
+              ],
             ],
           );
         },
+      ),
+    );
+  }
+
+  void _abrirDialogCadastroMotorista(DataService dataService, StateSetter setDeliveryDialogState) {
+    final nomeC = TextEditingController();
+    final telefoneC = TextEditingController();
+    final placaC = TextEditingController();
+    String tipoComissao = 'Fixo por Entrega';
+    final valorComissaoC = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        title: const Text('Cadastrar Motorista', style: TextStyle(color: Colors.white)),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(controller: nomeC, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Nome do Motorista', labelStyle: TextStyle(color: Colors.white54))),
+              TextField(controller: telefoneC, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Telefone', labelStyle: TextStyle(color: Colors.white54))),
+              TextField(controller: placaC, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Placa do Veículo (Opcional)', labelStyle: TextStyle(color: Colors.white54))),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                value: tipoComissao,
+                dropdownColor: const Color(0xFF1E1E2E),
+                items: ['Fixo por Entrega', 'Diária', 'Porcentagem'].map((t) => DropdownMenuItem(value: t, child: Text(t, style: const TextStyle(color: Colors.white)))).toList(),
+                onChanged: (v) => tipoComissao = v ?? 'Fixo por Entrega',
+                decoration: const InputDecoration(labelText: 'Tipo de Comissão', labelStyle: TextStyle(color: Colors.white54)),
+              ),
+              TextField(
+                controller: valorComissaoC, 
+                style: const TextStyle(color: Colors.white), 
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'Valor Comissão/Diária (R\$ ou %)', labelStyle: TextStyle(color: Colors.white54)),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('CANCELAR', style: TextStyle(color: Colors.white54))),
+          ElevatedButton(
+            onPressed: () async {
+              if (nomeC.text.isEmpty) return;
+              final novoMotoboy = Motorista(
+                nome: nomeC.text,
+                telefone: telefoneC.text,
+                placaVeiculo: placaC.text,
+                tipoComissao: tipoComissao,
+                valorComissao: double.tryParse(valorComissaoC.text.replaceAll(',', '.')) ?? 0.0,
+                taxaPadrao: double.tryParse(valorComissaoC.text.replaceAll(',', '.')) ?? 0.0, // fallback table
+              );
+              
+              await dataService.addMotorista(novoMotoboy);
+              
+              setState(() {
+                _motoristaId = novoMotoboy.id;
+                _motoristaNome = novoMotoboy.nome;
+              });
+              setDeliveryDialogState(() {});
+              if (mounted) Navigator.pop(context);
+            },
+            child: const Text('SALVAR'),
+          ),
+        ],
       ),
     );
   }
@@ -7103,7 +8652,7 @@ o padrão padrão (sem opções avançadas).
     double totalCompras = 0;
     double totalAPrazo = 0;
     double totalPendente = 0;
-    Map<String, int> produtosContagem = {};
+    Map<String, double> produtosContagem = {};
     Map<String, int> servicosContagem = {};
 
     for (final pedido in pedidosCliente) {
@@ -7424,7 +8973,7 @@ o padrão padrão (sem opções avançadas).
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       children: [
                         // Top produtos
-                        ...produtosOrdenados.take(10).map((entry) {
+                        ...produtosOrdenados.take(50).map((entry) {
                           final porcentagem = produtosOrdenados.isNotEmpty
                               ? entry.value / produtosOrdenados.first.value
                               : 0.0;
@@ -7525,7 +9074,7 @@ o padrão padrão (sem opções avançadas).
                             ],
                           ),
                           const SizedBox(height: 8),
-                          ...servicosOrdenados.take(5).map((entry) {
+                          ...servicosOrdenados.take(50).map((entry) {
                             return Container(
                               margin: const EdgeInsets.only(bottom: 8),
                               padding: const EdgeInsets.all(12),
@@ -7751,19 +9300,54 @@ o padrão padrão (sem opções avançadas).
   @override
   Widget build(BuildContext context) {
     final dataService = Provider.of<DataService>(context);
-    final screenWidth = MediaQuery.of(context).size.width;
-    final screenHeight = MediaQuery.of(context).size.height;
-    final isVerySmallHeight = screenHeight < 650;
-    final isSmallHeight = screenHeight < 750;
 
-    // Se digitar 9999, garantir que o produto Diversos existe
-    if (_termoBusca == '9999') {
-      dataService.garantirProdutoDiversos();
+    // OTIMIZAÇÃO CRÍTICA: Se o popup de sucesso está aberto, não re-processamos nada em background.
+    // Isso evita que o clique nos botões do popup (Imprimir/Fechar) pareça travado
+    // enquanto o Firebase sincroniza 6.5k produtos no fundo.
+    if (_estaComPopupAberto && _cachedItens != null) {
+       return _buildScaffoldContexto(context, dataService, _cachedItens!, _cachedCategorias!, _cachedProdutosCategoria!);
+    }
+
+    // MEMOIZATION: Só re-processar busca se o termo, categoria ou o próprio DataService mudou significativamente
+    final agora = DateTime.now();
+    final termoAtual = _termoBusca;
+    final catAtiva = _categoriaAtiva;
+    
+    // Se o cache é recente (< 1s) e os parâmetros são iguais, usamos o cache
+    if (_cachedItens != null && 
+        _ultimoTermoCache == termoAtual && 
+        _ultimaCategoriaCache == catAtiva &&
+        _ultimaAtualizacaoCache != null &&
+        agora.difference(_ultimaAtualizacaoCache!).inMilliseconds < 1000) {
+       return _buildScaffoldContexto(context, dataService, _cachedItens!, _cachedCategorias!, _cachedProdutosCategoria!);
     }
 
     final itensEncontrados = _buscarItens(dataService);
     final categorias = _getCategorias(dataService);
     final produtosCategoria = _getProdutosPorCategoria(dataService);
+    
+    // Atualizar cache
+    _cachedItens = itensEncontrados;
+    _cachedCategorias = categorias;
+    _cachedProdutosCategoria = produtosCategoria;
+    _ultimoTermoCache = termoAtual;
+    _ultimaCategoriaCache = catAtiva;
+    _ultimaAtualizacaoCache = agora;
+
+    return _buildScaffoldContexto(context, dataService, itensEncontrados, categorias, produtosCategoria);
+  }
+
+  Widget _buildScaffoldContexto(
+    BuildContext context, 
+    DataService dataService, 
+    List<dynamic> itensEncontrados,
+    List<String> categorias,
+    List<Produto> produtosCategoria
+  ) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final screenHeight = MediaQuery.of(context).size.height;
+    final isVerySmallHeight = screenHeight < 650;
+    final isSmallHeight = screenHeight < 750;
 
     // Calcular colunas dinamicamente para navegação por teclado
     int crossAxisCount = 2;
@@ -7796,6 +9380,9 @@ o padrão padrão (sem opções avançadas).
         if (event is! KeyDownEvent) return KeyEventResult.ignored;
 
         final key = event.logicalKey;
+        
+        // Debug: mostrar tecla pressionada
+        debugPrint('[PDV TECLADO] Tecla: ${key.debugName}, focoNoCarrinho: $_focoNoCarrinho, focoNasCategorias: $_focoNasCategorias, gridIndex: $_gridSelectedIndex');
 
         // Tecla ESC - Limpar carrinho
         if (key == LogicalKeyboardKey.escape) {
@@ -7844,8 +9431,8 @@ o padrão padrão (sem opções avançadas).
           return KeyEventResult.handled;
         }
 
-        // Tecla SHIFT - Focar Carrinho rapidamente
-        if (key == LogicalKeyboardKey.shiftLeft || key == LogicalKeyboardKey.shiftRight) {
+        // Tecla CONTROL + Shift - Focar Carrinho rapidamente (removido Shift puro por conflito com asterisco)
+        if ((key == LogicalKeyboardKey.shiftLeft || key == LogicalKeyboardKey.shiftRight) && HardwareKeyboard.instance.isControlPressed) {
           if (_carrinho.isNotEmpty) {
             setState(() {
               _focoNoCarrinho = true;
@@ -7865,18 +9452,10 @@ o padrão padrão (sem opções avançadas).
            return KeyEventResult.handled;
         }
 
-        // Tecla F8 - Salvar / Pedido
+        // Teclas F8, F9, etc agora são tratadas pelo handler do HardwareKeyboard global para maior confiabilidade
         if (key == LogicalKeyboardKey.f8) {
           if (_carrinho.isNotEmpty) {
             _salvarVendaPendente(dataService, [], mostrarPromptImpressao: true);
-          }
-          return KeyEventResult.handled;
-        }
-
-        // Tecla F9 - Finalizar/Receber
-        if (key == LogicalKeyboardKey.f9) {
-          if (_carrinho.isNotEmpty) {
-            _finalizarVenda(dataService);
           }
           return KeyEventResult.handled;
         }
@@ -7901,18 +9480,24 @@ o padrão padrão (sem opções avançadas).
           }
           // Navegação dentro do grid (quando já está navegando nele)
           if (!_focoNoCarrinho && !_focoNasCategorias && _gridSelectedIndex >= 0) {
+            final screenWidth = MediaQuery.of(context).size.width;
+            final isList = _viewMode == ViewMode.list;
+            final crossAxisCount = isList ? 1 : _getGridCrossAxisCount(screenWidth);
             final maxItems = _termoBusca.isNotEmpty
                 ? _buscarItens(dataService).length
-                : (_categoriaAtiva != null
-                    ? _getProdutosPorCategoria(dataService).length
-                    : 0);
+                : _getProdutosPorCategoria(dataService).length;
 
-            if (_gridSelectedIndex < maxItems - 1) {
+            final isEndOfRow = isList ? true : ((_gridSelectedIndex + 1) % crossAxisCount == 0);
+
+            if (_gridSelectedIndex < maxItems - 1 && !isEndOfRow) {
               setState(() => _gridSelectedIndex++);
+              // Auto-scroll após navegação lateral
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                _scrollToSelectedGridItem(_gridSelectedIndex, crossAxisCount, 0); // altura será decidida na função
+              });
               return KeyEventResult.handled;
-            }
-            // Fim do grid sem mais items: ir para o carrinho
-            if (_carrinho.isNotEmpty) {
+            } else if (!isList && _carrinho.isNotEmpty) {
+              // Somente no modo GRADE (grid) a seta direita pula para o carrinho ao fim da linha
               setState(() {
                 _focoNoCarrinho = true;
                 _cartSelectedIndex = 0;
@@ -7946,7 +9531,24 @@ o padrão padrão (sem opções avançadas).
           }
           // Navegação lateral esquerda no grid (quando já está navegando nele)
           if (!_focoNoCarrinho && !_focoNasCategorias && _gridSelectedIndex > 0) {
+            final screenWidth = MediaQuery.of(context).size.width;
+            final crossAxisCount = _viewMode == ViewMode.list ? 1 : _getGridCrossAxisCount(screenWidth);
+            
+            // Na lista, seta esquerda volta para categorias
+            if (_viewMode == ViewMode.list) {
+              setState(() {
+                _gridSelectedIndex = -1;
+                _focoNasCategorias = true;
+                _categoriaSelectedIndex = 0;
+              });
+              return KeyEventResult.handled;
+            }
+
             setState(() => _gridSelectedIndex--);
+            // Auto-scroll após navegação lateral
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _scrollToSelectedGridItem(_gridSelectedIndex, crossAxisCount, 0);
+            });
             return KeyEventResult.handled;
           } else if (!_focoNoCarrinho && !_focoNasCategorias && _gridSelectedIndex == 0) {
             // Primeiro item do grid: volta para categorias
@@ -7981,8 +9583,11 @@ o padrão padrão (sem opções avançadas).
         if (key == LogicalKeyboardKey.arrowDown) {
           setState(() {
             if (_focoNoCarrinho) {
-              if (_cartSelectedIndex < _carrinho.length - 1) {
-                _cartSelectedIndex++;
+              // No carrinho reversedIndex = length - 1 - index
+              // Para IR PARA BAIXO visualmente, o index do carrinho deve DIMINUIR
+              if (_cartSelectedIndex > 0) {
+                _cartSelectedIndex--;
+                _scrollToSelectedCartItem(_cartSelectedIndex);
               }
             } else if (_focoNasCategorias) {
               _focoNasCategorias = false;
@@ -7995,23 +9600,34 @@ o padrão padrão (sem opções avançadas).
               _cartSelectedIndex = -1;
               _atalhosFocusNode.requestFocus();
             } else {
+              final screenWidth = MediaQuery.of(context).size.width;
+              final crossAxisCount = _viewMode == ViewMode.list ? 1 : _getGridCrossAxisCount(screenWidth);
               final maxItems = _termoBusca.isNotEmpty
                   ? _buscarItens(dataService).length
-                  : (_categoriaAtiva != null
-                        ? _getProdutosPorCategoria(dataService).length
-                        : 0);
+                  : _getProdutosPorCategoria(dataService).length;
 
               if (_gridSelectedIndex < 0 && maxItems > 0) {
                 _gridSelectedIndex = 0;
               } else if (_gridSelectedIndex + crossAxisCount < maxItems) {
                 _gridSelectedIndex += crossAxisCount;
+                
+                // Expansão Antecipada: Se chegarmos perto do fim dos itens visíveis, carregamos mais 500
+                if (_termoBusca.isEmpty && _gridSelectedIndex >= _itensVisiveisPDV - 50) {
+                   _itensVisiveisPDV += 500;
+                   debugPrint('>>> ArrowDown Expansão: Agora com $_itensVisiveisPDV itens');
+                }
               } else if (_gridSelectedIndex >= 0 && _gridSelectedIndex + crossAxisCount >= maxItems) {
-                // Se não tem próxima linha, talvez pular para o carrinho? Por enquanto vamos só manter no último
                 if (_gridSelectedIndex < maxItems - 1) {
                    _gridSelectedIndex = maxItems - 1;
                 }
               }
             }
+          });
+          // Auto-scroll após navegação
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            final screenWidth = MediaQuery.of(context).size.width;
+            final crossAxisCount = _viewMode == ViewMode.list ? 1 : _getGridCrossAxisCount(screenWidth);
+            _scrollToSelectedGridItem(_gridSelectedIndex, crossAxisCount, 0);
           });
           return KeyEventResult.handled;
         }
@@ -8019,13 +9635,18 @@ o padrão padrão (sem opções avançadas).
         if (key == LogicalKeyboardKey.arrowUp) {
           setState(() {
             if (_focoNoCarrinho) {
-              if (_cartSelectedIndex > 0) {
-                _cartSelectedIndex--;
+              // No carrinho reversedIndex = length - 1 - index
+              // Para IR PARA CIMA visualmente, o index do carrinho deve AUMENTAR
+              if (_cartSelectedIndex < _carrinho.length - 1) {
+                _cartSelectedIndex++;
+                _scrollToSelectedCartItem(_cartSelectedIndex);
               }
             } else if (_focoNasCategorias) {
               _focoNasCategorias = false;
               _buscaFocusNode.requestFocus();
             } else {
+              final screenWidth = MediaQuery.of(context).size.width;
+              final crossAxisCount = _viewMode == ViewMode.list ? 1 : _getGridCrossAxisCount(screenWidth);
               if (_gridSelectedIndex >= crossAxisCount) {
                 _gridSelectedIndex -= crossAxisCount;
               } else {
@@ -8037,6 +9658,16 @@ o padrão padrão (sem opções avançadas).
               }
             }
           });
+          // Auto-scroll para cima também
+          if (_focoNoCarrinho) {
+            _scrollToSelectedCartItem(_cartSelectedIndex);
+          } else if (!_focoNoCarrinho && (_focoNasCategorias || _gridSelectedIndex >= -1)) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              final screenWidth = MediaQuery.of(context).size.width;
+              final crossAxisCount = _viewMode == ViewMode.list ? 1 : _getGridCrossAxisCount(screenWidth);
+              _scrollToSelectedGridItem(_gridSelectedIndex, crossAxisCount, 0);
+            });
+          }
           return KeyEventResult.handled;
         }
 
@@ -8061,16 +9692,25 @@ o padrão padrão (sem opções avançadas).
             }
             return KeyEventResult.handled;
           }
+
+          // Se a busca estiver focada, NÃO tratar o Enter aqui, deixar o TextField.onSubmitted tratar
+          if (_buscaFocusNode.hasFocus) {
+            debugPrint('[PDV ENTER] Busca focada, permitindo processamento do TextField');
+            return KeyEventResult.ignored;
+          }
+
           if (!_focoNoCarrinho && _gridSelectedIndex >= 0) {
             final itens = _termoBusca.isNotEmpty
                 ? _buscarItens(dataService)
-                : (_categoriaAtiva != null
-                      ? _getProdutosPorCategoria(dataService)
-                      : []);
+                : _getProdutosPorCategoria(dataService);
+            debugPrint('[PDV ENTER] Grid selecionado, index: $_gridSelectedIndex, total itens: ${itens.length}');
             if (_gridSelectedIndex < itens.length) {
+              debugPrint('[PDV ENTER] Adicionando item ${itens[_gridSelectedIndex].nome} ao carrinho');
               _adicionarAoCarrinho(itens[_gridSelectedIndex], manterFoco: true);
               return KeyEventResult.handled;
             }
+          } else {
+            debugPrint('[PDV ENTER] Ignorando - focoNoCarrinho: $_focoNoCarrinho, gridIndex: $_gridSelectedIndex');
           }
         }
 
@@ -8258,7 +9898,7 @@ o padrão padrão (sem opções avançadas).
                     IconButton(
                       onPressed: () => _toggleTelaCheia(),
                       icon: Icon(
-                        html.document.fullscreenElement == null
+                        !html_helper.isFullscreen()
                             ? Icons.fullscreen
                             : Icons.fullscreen_exit,
                         color: Colors.white70,
@@ -8446,7 +10086,7 @@ o padrão padrão (sem opções avançadas).
                           border: Border.all(color: Colors.white.withOpacity(0.2)),
                         ),
                         child: Icon(
-                          html.document.fullscreenElement == null
+                          !html_helper.isFullscreen()
                               ? Icons.fullscreen
                               : Icons.fullscreen_exit,
                           color: Colors.white70,
@@ -8608,21 +10248,232 @@ o padrão padrão (sem opções avançadas).
           borderRadius: BorderRadius.circular(12),
           border: Border.all(color: Colors.blue.withOpacity(0.3)),
         ),
-        child: TextField(
-          controller: _buscaController,
-          focusNode: _buscaFocusNode,
-          style: TextStyle(color: Colors.white, fontSize: isSmallHeight ? 14 : 15),
-          decoration: InputDecoration(
-            hintText: _categoriaAtiva != null ? '🔍 $_categoriaAtiva...' : '🔍 Buscar...',
-            hintStyle: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: isSmallHeight ? 12 : 13),
-            prefixIcon: GestureDetector(onTap: () => _abrirBuscaFacilitada(context), child: Icon(Icons.search, color: Colors.blue, size: isSmallHeight ? 18 : 22)),
-            filled: true, fillColor: Colors.transparent, border: InputBorder.none,
-            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Focus(
+          onKeyEvent: (node, event) {
+            if (event is! KeyDownEvent) return KeyEventResult.ignored;
+            final key = event.logicalKey;
+            
+            // F9 tratado globalmente
+        
+            
+            // Seta para baixo: sair do campo e ir para categorias/grid
+            if (key == LogicalKeyboardKey.arrowDown) {
+              _atalhosFocusNode.requestFocus();
+              setState(() {
+                _focoNasCategorias = true;
+                _categoriaSelectedIndex = 0;
+                _gridSelectedIndex = -1;
+              });
+              return KeyEventResult.handled;
+            }
+
+            // Backspace no campo vazio: resetar quantidade para 1.0
+            if (key == LogicalKeyboardKey.backspace && _buscaController.text.isEmpty && _quantidadeDigitada != 1.0) {
+              setState(() {
+                _quantidadeDigitada = 1.0;
+              });
+              return KeyEventResult.handled;
+            }
+
+            // Seta para direita: se o campo estiver vazio, incrementa a quantidade. Se contiver texto, navega para o fim e vai para o grid.
+            if (key == LogicalKeyboardKey.arrowRight) {
+              final text = _buscaController.text;
+              if (text.isEmpty) {
+                setState(() {
+                  _quantidadeDigitada++;
+                });
+                return KeyEventResult.handled;
+              }
+              final selection = _buscaController.selection;
+              if (selection.baseOffset >= text.length) {
+                _atalhosFocusNode.requestFocus();
+                final itens = _buscarItens(dataService);
+                if (itens.isNotEmpty) {
+                  setState(() {
+                    _gridSelectedIndex = 0;
+                  });
+                }
+                return KeyEventResult.handled;
+              }
+            }
+
+            // Seta para esquerda: se o campo estiver vazio, decrementa a quantidade
+            if (key == LogicalKeyboardKey.arrowLeft) {
+              final text = _buscaController.text;
+              if (text.isEmpty) {
+                if (_quantidadeDigitada > 1.0) {
+                  setState(() {
+                    _quantidadeDigitada--;
+                  });
+                }
+                return KeyEventResult.handled;
+              }
+            }
+            return KeyEventResult.ignored;
+          },
+          child: TextField(
+            controller: _buscaController,
+            focusNode: _buscaFocusNode,
+            style: TextStyle(color: Colors.white, fontSize: isSmallHeight ? 14 : 15),
+            decoration: InputDecoration(
+              hintText: _categoriaAtiva != null ? '🔍 $_categoriaAtiva...' : '🔍 Buscar...',
+              hintStyle: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: isSmallHeight ? 12 : 13),
+              prefixIcon: GestureDetector(
+                onTap: () => _abrirBuscaFacilitada(context),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const SizedBox(width: 12),
+                    Icon(Icons.search,
+                        color: Colors.blue, size: isSmallHeight ? 18 : 22),
+                    if (_quantidadeDigitada != 1.0) ...[
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.orange,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          '${_quantidadeDigitada.toStringAsFixed(_quantidadeDigitada.truncateToDouble() == _quantidadeDigitada ? 0 : 3)}x',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              suffixIcon: _termoBusca.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.clear, color: Colors.white54),
+                      onPressed: () {
+                        _buscaController.clear();
+                        setState(() => _termoBusca = '');
+                      },
+                    )
+                  : null,
+              filled: true,
+              fillColor: Colors.transparent,
+              border: InputBorder.none,
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            ),
+            onChanged: (value) {
+              if (_debounce?.isActive ?? false) _debounce!.cancel();
+              _debounce = Timer(const Duration(milliseconds: 150), () {
+                if (!mounted) return;
+                setState(() {
+                  _termoBusca = value;
+                  
+                  // Se terminar com '*' ou ' ', tenta extrair a quantidade
+                  if ((value.endsWith('*') || value.endsWith(' ')) && value.length > 1) {
+                    final valorSemPrefixo = value.substring(0, value.length - 1).replaceAll(',', '.');
+                    final double? qtd = double.tryParse(valorSemPrefixo);
+                    if (qtd != null && qtd > 0) {
+                      _quantidadeDigitada = qtd;
+                      _termoBusca = '';
+                      
+                      _buscaController.clear();
+                      _buscaFocusNode.requestFocus();
+                      
+                      _mostrarNotificacaoSucesso(
+                        icone: Icons.scale,
+                        titulo: 'Quantidade: ${qtd.toStringAsFixed(3)}',
+                        subtitulo: 'Próximo item será multiplicado',
+                        cor: Colors.orange,
+                      );
+                      return;
+                    }
+                  }
+                });
+              });
+            },
+            onSubmitted: (value) {
+              if (value.isEmpty) {
+                // Se der Enter vazio, mantém o foco na busca
+                _buscaFocusNode.requestFocus();
+                return;
+              }
+
+              // Pattern de Multiplicação: 5*COCA -> Qtd 5, busca COCA
+              String termo = value;
+              double qtd = 1.0;
+              bool temMultiplicador = false;
+
+              if (value.contains('*')) {
+                final partes = value.split('*');
+                if (partes.length >= 2) {
+                  qtd = double.tryParse(partes[0].replaceAll(',', '.')) ?? 1.0;
+                  termo = partes.sublist(1).join('*');
+                  temMultiplicador = true;
+                }
+              }
+
+              final itens = _buscarItens(dataService, termoOverride: termo);
+              final termoLimpoNum = termo.replaceAll(',', '.');
+              final double? numPuro = double.tryParse(termoLimpoNum);
+
+              if (itens.isNotEmpty) {
+                final primeiroItem = itens.first;
+                setState(() => _quantidadeDigitada = temMultiplicador ? qtd : _quantidadeDigitada);
+                _adicionarAoCarrinho(primeiroItem, manterFoco: true);
+                _buscaController.clear();
+                setState(() => _termoBusca = '');
+                _buscaFocusNode.requestFocus();
+                return;
+              } 
+              
+              // Se não encontrou nenhum item e o termo for APENAS um número de quantidade válido (ex: "0,200" ou "5"),
+              // Evitamos que códigos de barra / SKUs numéricos (ex: 22222, 1008) sejam interpretados como peso.
+              final bool ehQtdValida = !temMultiplicador && numPuro != null && numPuro > 0 && (
+                value.contains('.') || 
+                value.contains(',') || 
+                numPuro <= 100
+              );
+
+              if (ehQtdValida) {
+                setState(() {
+                  _quantidadeDigitada = numPuro;
+                  _termoBusca = '';
+                });
+                _buscaController.clear();
+                _buscaFocusNode.requestFocus();
+                _mostrarNotificacaoSucesso(
+                  icone: Icons.scale,
+                  titulo: 'Quantidade Definida',
+                  subtitulo: 'Próximo item será adicionado com: ${numPuro.toStringAsFixed(3)}',
+                  cor: Colors.blueAccent,
+                );
+                return;
+              }
+              
+              // Se não encontrou nenhum item e não é uma quantidade válida (ex: código inexistente 22222)
+              _buscaFocusNode.requestFocus();
+              _mostrarNotificacaoSucesso(
+                icone: Icons.error_outline_rounded,
+                titulo: 'Código Inexistente',
+                subtitulo: 'Produto "$value" não cadastrado.',
+                cor: Colors.redAccent,
+              );
+            },
           ),
-          onChanged: (value) => setState(() => _termoBusca = value),
         ),
       ),
     );
+
+    // Obter configurações de visibilidade dos botões da empresa
+    final empresa = dataService.empresaAtual;
+    final config = empresa?.configuracoes;
+    final mostrarCliente = config?['mostrarBotaoCliente'] ?? true;
+    final mostrarVendedor = config?['mostrarBotaoVendedor'] ?? true;
+    final mostrarEntregas = config?['mostrarBotaoEntregas'] ?? true;
+    final mostrarHistorico = config?['mostrarBotaoHistorico'] ?? true;
+    final mostrarCentral = config?['mostrarBotaoCentral'] ?? true;
+    final mostrarDespesa = config?['mostrarBotaoDespesa'] ?? true;
 
     final actionButtons = SingleChildScrollView(
       scrollDirection: Axis.horizontal,
@@ -8630,23 +10481,44 @@ o padrão padrão (sem opções avançadas).
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _buildCompactHeaderButton(icon: Icons.person, label: _clienteSelecionado?.nome ?? 'Cliente', color: _clienteSelecionado != null ? Colors.greenAccent : Colors.white54, onTap: () => _selecionarCliente(dataService)),
-          const SizedBox(width: 8),
-          _buildCompactHeaderButton(
-            icon: Icons.delivery_dining, 
-            label: _isDelivery ? 'Entrega Ativa' : 'Entregas', 
-            color: _isDelivery ? Colors.orangeAccent : Colors.white54, 
-            onTap: () => _abrirDialogDelivery()
-          ),
-          const SizedBox(width: 8),
-          _buildCompactHeaderButton(icon: Icons.history, label: 'Histórico', color: Colors.amber, onTap: () => _abrirHistoricoVendas()),
-          const SizedBox(width: 8),
-          _buildCompactHeaderButton(icon: Icons.assignment, label: 'Central', color: Colors.blueAccent, onTap: () => _abrirPedidos()),
-          const SizedBox(width: 8),
-          _buildCompactHeaderButton(icon: Icons.money_off, label: 'Despesa', color: Colors.redAccent, onTap: () => _abrirLancamentoDespesa()),
+          if (mostrarCliente) ...[
+            _buildCompactHeaderButton(icon: Icons.person, label: _clienteSelecionado?.nome ?? 'Cliente', color: _clienteSelecionado != null ? Colors.greenAccent : Colors.white54, onTap: () => _selecionarCliente(dataService)),
+            const SizedBox(width: 8),
+          ],
+          if (mostrarVendedor) ...[
+            _buildCompactHeaderButton(
+              icon: Icons.badge, 
+              label: _vendedorSelecionado?.nome ?? 'Vendedor', 
+              color: _vendedorSelecionado != null ? Colors.purpleAccent : Colors.white54, 
+              onTap: () => _selecionarVendedor(dataService)
+            ),
+            const SizedBox(width: 8),
+          ],
+          if (mostrarEntregas) ...[
+            _buildCompactHeaderButton(
+              icon: Icons.delivery_dining, 
+              label: _isDelivery ? 'Entrega Ativa' : 'Entregas', 
+              color: _isDelivery ? Colors.orangeAccent : Colors.white54, 
+              onTap: () => _abrirDialogDelivery()
+            ),
+            const SizedBox(width: 8),
+          ],
+          if (mostrarHistorico) ...[
+            _buildCompactHeaderButton(icon: Icons.history, label: 'Histórico', color: Colors.amber, onTap: () => _abrirHistoricoVendas()),
+            const SizedBox(width: 8),
+          ],
+          if (mostrarCentral) ...[
+            _buildCompactHeaderButton(icon: Icons.assignment, label: 'Central', color: Colors.blueAccent, onTap: () => _abrirPedidos()),
+            const SizedBox(width: 8),
+          ],
+          if (mostrarDespesa)
+            _buildCompactHeaderButton(icon: Icons.money_off, label: 'Despesa', color: Colors.redAccent, onTap: () => _abrirLancamentoDespesa()),
         ],
       ),
     );
+
+    final habilitarMesasComandas = dataService.empresaAtual?.configuracoes?['habilitarMesasComandas'] != false;
+    final habilitarCozinha = dataService.empresaAtual?.configuracoes?['habilitarCozinha'] != false;
 
     return Container(
       padding: EdgeInsets.fromLTRB(16, isSmallHeight ? 4 : 8, 16, isSmallHeight ? 4 : 8),
@@ -8655,12 +10527,16 @@ o padrão padrão (sem opções avançadas).
             children: [
               Row(
                 children: [
-                  _buildBotaoMapaMesas(dataService, compact: true),
-                  const SizedBox(width: 4),
-                  _buildBotaoComandas(dataService, compact: true),
-                  const SizedBox(width: 4),
-                  _buildBotaoCozinha(dataService, compact: true),
-                  const SizedBox(width: 8),
+                  if (habilitarMesasComandas) ...[
+                    _buildBotaoMapaMesas(dataService, compact: true),
+                    const SizedBox(width: 4),
+                    _buildBotaoComandas(dataService, compact: true),
+                    const SizedBox(width: 4),
+                  ],
+                  if (habilitarCozinha) ...[
+                    _buildBotaoCozinha(dataService, compact: true),
+                    const SizedBox(width: 8),
+                  ],
                   searchField,
                 ],
               ),
@@ -8670,17 +10546,23 @@ o padrão padrão (sem opções avançadas).
           )
         : Row(
             children: [
-              _buildBotaoMapaMesas(dataService, compact: true),
-              const SizedBox(width: 4),
-              _buildBotaoComandas(dataService, compact: true),
-              const SizedBox(width: 4),
-              _buildBotaoCozinha(dataService, compact: true),
-              const SizedBox(width: 8),
+              if (habilitarMesasComandas) ...[
+                _buildBotaoMapaMesas(dataService, compact: true),
+                const SizedBox(width: 4),
+                _buildBotaoComandas(dataService, compact: true),
+                const SizedBox(width: 4),
+              ],
+              if (habilitarCozinha) ...[
+                _buildBotaoCozinha(dataService, compact: true),
+                const SizedBox(width: 8),
+              ],
               if (_mesaComandaVinculada != null) ...[
                 _buildBadgeVinculoHeader(),
                 const SizedBox(width: 8),
               ],
               searchField,
+              const SizedBox(width: 8),
+              _buildBotaoOrdenacao(dataService), // Novo botão de ordenação
               const SizedBox(width: 8),
               actionButtons,
             ],
@@ -8704,6 +10586,72 @@ o padrão padrão (sem opções avançadas).
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(color: _mesaComandaVinculada!.tipo == TipoControle.comanda ? Colors.purple.withOpacity(0.2) : Colors.orange.withOpacity(0.2), borderRadius: BorderRadius.circular(12), border: Border.all(color: _mesaComandaVinculada!.tipo == TipoControle.comanda ? Colors.purple : Colors.orange)),
       child: Row(children: [Icon(_mesaComandaVinculada!.tipo == TipoControle.comanda ? Icons.receipt_long : Icons.table_restaurant, size: 14, color: _mesaComandaVinculada!.tipo == TipoControle.comanda ? Colors.purpleAccent : Colors.orangeAccent), const SizedBox(width: 6), Text(_mesaComandaVinculada!.numero, style: TextStyle(color: _mesaComandaVinculada!.tipo == TipoControle.comanda ? Colors.purpleAccent : Colors.orangeAccent, fontWeight: FontWeight.bold, fontSize: 12))]),
+    );
+  }
+
+  Widget _buildBotaoOrdenacao(DataService dataService) {
+    return PopupMenuButton<SortOption>(
+      initialValue: _sortOption,
+      tooltip: 'Ordenar produtos',
+      icon: Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1E1E2E),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white.withOpacity(0.1)),
+        ),
+        child: const Icon(Icons.sort_rounded, color: Colors.blueAccent, size: 20),
+      ),
+      onSelected: (option) {
+        setState(() {
+          _sortOption = option;
+          _cachedProdutosCategoria = []; // Limpa cache para reordenar
+        });
+      },
+      color: const Color(0xFF1E1E2E),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      itemBuilder: (context) => [
+        const PopupMenuItem(
+          value: SortOption.nome,
+          child: Row(
+            children: [
+              Icon(Icons.sort_by_alpha_rounded, color: Colors.white70, size: 18),
+              SizedBox(width: 12),
+              Text('Ordem Alfabética (A-Z)', style: TextStyle(color: Colors.white)),
+            ],
+          ),
+        ),
+        const PopupMenuItem(
+          value: SortOption.recentes,
+          child: Row(
+            children: [
+              Icon(Icons.history_rounded, color: Colors.white70, size: 18),
+              SizedBox(width: 12),
+              Text('Últimos Cadastrados', style: TextStyle(color: Colors.white)),
+            ],
+          ),
+        ),
+        const PopupMenuItem(
+          value: SortOption.codigo,
+          child: Row(
+            children: [
+              Icon(Icons.tag_rounded, color: Colors.white70, size: 18),
+              SizedBox(width: 12),
+              Text('Pelo Código', style: TextStyle(color: Colors.white)),
+            ],
+          ),
+        ),
+        const PopupMenuItem(
+          value: SortOption.grupo,
+          child: Row(
+            children: [
+              Icon(Icons.category_rounded, color: Colors.white70, size: 18),
+              SizedBox(width: 12),
+              Text('Por Categoria/Grupo', style: TextStyle(color: Colors.white)),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -8745,14 +10693,13 @@ o padrão padrão (sem opções avançadas).
                 itemBuilder: (context, index) {
                   if (index == 0) {
                     // Botão "Todos"
-                    final isActive =
-                        _categoriaAtiva == null && _termoBusca.isEmpty;
+                    final isActive = _categoriaAtiva == 'Todos';
                     final isSelected =
                         _focoNasCategorias && _categoriaSelectedIndex == 0;
                     return GestureDetector(
                       onTap: () {
                         setState(() {
-                          _categoriaAtiva = null;
+                          _categoriaAtiva = 'Todos';
                           _termoBusca = '';
                           _buscaController.clear();
                           _focoNasCategorias = true;
@@ -9118,30 +11065,51 @@ o padrão padrão (sem opções avançadas).
     final screenWidth = MediaQuery.of(context).size.width;
     if (screenWidth < 900) return const SizedBox.shrink();
 
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      decoration: BoxDecoration(
-        color: const Color(0xFF0D0D15),
-        border: Border(top: BorderSide(color: Colors.white.withOpacity(0.05))),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          _buildItemLegenda('SETAS', 'NAVEGAR'),
-          _buildItemLegenda('F2', 'BUSCA'),
-          _buildItemLegenda('F6', 'CLIENTE'),
-          _buildItemLegenda('F7', 'DESPESA'),
+    return MouseRegion(
+      onEnter: (_) => setState(() => _mostrarBarraLegenda = true),
+      onExit: (_) => setState(() => _mostrarBarraLegenda = false),
+      child: AnimatedSize(
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOutCubic,
+        child: Container(
+          width: double.infinity,
+          height: _mostrarBarraLegenda ? null : 6, // 6 pixels de 'sensor' no rodapé
+          decoration: BoxDecoration(
+            color: const Color(0xFF0D0D15),
+            border: Border(top: BorderSide(color: Colors.white.withOpacity(_mostrarBarraLegenda ? 0.1 : 0.05))),
+          ),
+          child: _mostrarBarraLegenda 
+            ? AnimatedOpacity(
+                duration: const Duration(milliseconds: 200),
+                opacity: 1.0,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  child: Wrap(
+                    alignment: WrapAlignment.center,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 0,
+                    runSpacing: 8,
+                    children: [
+                      _buildItemLegenda('SETAS', 'NAVEGAR'),
+                      _buildItemLegenda('F2', 'BUSCA'),
+                      _buildItemLegenda('F6', 'CLIENTE'),
+                      _buildItemLegenda('F7', 'DESPESA'),
 
-          _buildItemLegenda('F4', 'CATEGORIAS'),
-          _buildItemLegenda('SHIFT', 'CARRINHO'),
-          _buildItemLegenda('CTRL', 'CONFERIR'),
-          _buildItemLegenda('ENTER', 'ADICIONAR'),
-          _buildItemLegenda('+', 'QUANTIDADE'),
-          _buildItemLegenda('DEL', 'REMOVER'),
-          _buildItemLegenda('⇧+DEL', 'LIMPAR TUDO'),
-          _buildItemLegenda('F8', 'SALVAR'),
-          _buildItemLegenda('F9', 'FINALIZAR', isPrimary: true),
-        ],
+                      _buildItemLegenda('F4', 'CATEGORIAS'),
+                      _buildItemLegenda('SHIFT', 'CARRINHO'),
+                      _buildItemLegenda('CTRL', 'CONFERIR'),
+                      _buildItemLegenda('ENTER', 'ADICIONAR'),
+                      _buildItemLegenda('+', 'QUANTIDADE'),
+                      _buildItemLegenda('DEL', 'REMOVER'),
+                      _buildItemLegenda('⇧+DEL', 'LIMPAR TUDO'),
+                      _buildItemLegenda('F8', 'SALVAR'),
+                      _buildItemLegenda('F9', 'FINALIZAR', isPrimary: true),
+                    ],
+                  ),
+                ),
+              )
+            : const SizedBox.shrink(),
+        ),
       ),
     );
   }
@@ -9573,71 +11541,256 @@ o padrão padrão (sem opções avançadas).
   }
 
   Widget _buildGridItens(List<dynamic> itens) {
+    if (_viewMode == ViewMode.list) {
+      return Scrollbar(
+        controller: _gridScrollController,
+        thumbVisibility: true,
+        child: ListView.builder(
+          controller: _gridScrollController,
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.only(left: 8, right: 8, top: 4, bottom: 100),
+          itemCount: itens.length,
+          itemBuilder: (context, index) {
+            final item = itens[index];
+            final isProduto = item is Produto;
+            return _buildLinhaProduto(item, isProduto, index: index);
+          },
+        ),
+      );
+    }
     final screenWidth = MediaQuery.of(context).size.width;
     final screenHeight = MediaQuery.of(context).size.height;
-    final isVerySmallHeight = screenHeight < 650;
-    final isSmallHeight = screenHeight < 750;
+    final crossAxisCount = _getGridCrossAxisCount(screenWidth);
+    final aspectRatio = _getGridItemAspectRatio(screenHeight);
 
-    // Mais colunas para caber mais produtos
-    int crossAxisCount = 3;
-    if (screenWidth >= 1600) {
-      crossAxisCount = 6;
-    } else if (screenWidth >= 1200) {
-      crossAxisCount = 5;
-    } else if (screenWidth >= 900) {
-      crossAxisCount = 4;
-    }
-
-    // Aspect ratio mais compacto para economizar espaço
-    final aspectRatio = isVerySmallHeight ? 2.0 : (isSmallHeight ? 1.8 : 1.6);
-
-    return GridView.builder(
-      padding: const EdgeInsets.all(4),
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+    return Scrollbar(
+      controller: _gridScrollController,
+      thumbVisibility: true,
+      child: GridView.builder(
+        controller: _gridScrollController,
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.only(left: 4, right: 4, top: 4, bottom: 100),
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: crossAxisCount,
         childAspectRatio: aspectRatio,
         crossAxisSpacing: 4,
         mainAxisSpacing: 4,
       ),
       itemCount: itens.length,
-      itemBuilder: (context, index) {
-        final item = itens[index];
-        final isProduto = item is Produto;
-        return _buildCardProduto(item, isProduto, index: index);
-      },
+        itemBuilder: (context, index) {
+          final item = itens[index];
+          final isProduto = item is Produto;
+          return _buildCardProduto(item, isProduto, index: index);
+        },
+      ),
     );
   }
 
   Widget _buildGridProdutos(List<Produto> produtos) {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final screenHeight = MediaQuery.of(context).size.height;
-    final isVerySmallHeight = screenHeight < 650;
-    final isSmallHeight = screenHeight < 750;
-
-    // Mais colunas para caber mais produtos
-    int crossAxisCount = 3;
-    if (screenWidth >= 1600) {
-      crossAxisCount = 6;
-    } else if (screenWidth >= 1200) {
-      crossAxisCount = 5;
-    } else if (screenWidth >= 900) {
-      crossAxisCount = 4;
+    if (produtos.isEmpty && _termoBusca.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.search_rounded, size: 64, color: Colors.white.withOpacity(0.1)),
+            const SizedBox(height: 16),
+            Text(
+              'Pronto para vender!',
+              style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Busque um produto ou selecione uma categoria acima.',
+              style: TextStyle(color: Colors.white.withOpacity(0.3), fontSize: 14),
+            ),
+          ],
+        ),
+      );
     }
     
-    final aspectRatio = isVerySmallHeight ? 2.0 : (isSmallHeight ? 1.8 : 1.6);
+    if (_viewMode == ViewMode.list) {
+      return Scrollbar(
+        controller: _gridScrollController,
+        thumbVisibility: true,
+        child: ListView.builder(
+          controller: _gridScrollController,
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.only(left: 8, right: 8, top: 20, bottom: 100),
+          itemExtent: 82.0, // Altura fixa garantida para precisão de scroll
+          itemCount: _termoBusca.isNotEmpty 
+              ? produtos.length 
+              : (_itensVisiveisPDV > produtos.length ? produtos.length : _itensVisiveisPDV),
+          itemBuilder: (context, index) {
+            return _buildLinhaProduto(produtos[index], true, index: index);
+          },
+        ),
+      );
+    }
+    final screenWidth = MediaQuery.of(context).size.width;
+    final screenHeight = MediaQuery.of(context).size.height;
+    final crossAxisCount = _getGridCrossAxisCount(screenWidth);
 
-    return GridView.builder(
-      padding: const EdgeInsets.all(4),
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: crossAxisCount,
-        childAspectRatio: aspectRatio,
-        crossAxisSpacing: 4,
-        mainAxisSpacing: 4,
+    return Scrollbar(
+      controller: _gridScrollController,
+      thumbVisibility: true,
+      child: GridView.builder(
+        controller: _gridScrollController,
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.only(left: 4, right: 4, top: 4, bottom: 100),
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: crossAxisCount,
+          mainAxisExtent: 82.0, // Altura fixa garantida também na grade
+          crossAxisSpacing: 4,
+          mainAxisSpacing: 4,
+        ),
+      itemCount: _termoBusca.isNotEmpty 
+          ? produtos.length 
+          : (_itensVisiveisPDV > produtos.length ? produtos.length : _itensVisiveisPDV),
+        itemBuilder: (context, index) {
+          return _buildCardProduto(produtos[index], true, index: index);
+        },
       ),
-      itemCount: produtos.length,
-      itemBuilder: (context, index) {
-        return _buildCardProduto(produtos[index], true, index: index);
-      },
+    );
+  }
+
+  Widget _buildLinhaProduto(dynamic item, bool isProduto, {int index = -1}) {
+    final nome = item.nome as String;
+    final preco = isProduto
+        ? (item as Produto).precoAtual
+        : (item as Servico).preco;
+    final codigo = isProduto ? (item as Produto).codigo : null;
+    final estoque = isProduto ? (item as Produto).estoque : null;
+    final isSelected = !_focoNoCarrinho && _gridSelectedIndex == index && index != -1;
+
+    return RepaintBoundary(
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+          child: InkWell(
+            onTap: () {
+              setState(() {
+                _focoNoCarrinho = false;
+                _gridSelectedIndex = index;
+              });
+              final isDiversos = isProduto && codigo == '9999';
+              if (isDiversos) {
+                final valorDigitado = double.tryParse(_termoBusca.replaceAll(',', '.').trim());
+                _lancarDiversosRapido(precoInicial: valorDigitado);
+              } else {
+                _adicionarAoCarrinho(item, manterFoco: true);
+              }
+            },
+            hoverColor: Colors.blueAccent.withOpacity(0.1),
+            splashColor: Colors.blueAccent.withOpacity(0.2),
+            borderRadius: BorderRadius.circular(8),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: isSelected 
+                  ? Colors.blueAccent.withOpacity(0.15) 
+                  : Colors.white.withOpacity(0.04),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: isSelected ? Colors.blueAccent : Colors.white.withOpacity(0.05),
+                width: isSelected ? 3 : 1,
+              ),
+              boxShadow: isSelected ? [
+                BoxShadow(
+                  color: Colors.blueAccent.withOpacity(0.5),
+                  blurRadius: 15,
+                  spreadRadius: 4, // Brilho aumentado para 4
+                  offset: const Offset(0, 0),
+                )
+              ] : null,
+            ),
+            child: Row(
+              children: [
+                // Avatar ou Ícone
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: isProduto ? Colors.blueAccent.withOpacity(0.1) : Colors.purpleAccent.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(
+                    isProduto ? Icons.inventory_2_rounded : Icons.miscellaneous_services_rounded,
+                    color: isProduto ? Colors.blueAccent : Colors.purpleAccent,
+                    size: 20,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                // Info
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          if (codigo != null && codigo.isNotEmpty)
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              margin: const EdgeInsets.only(right: 6),
+                              decoration: BoxDecoration(
+                                color: Colors.blueAccent.withOpacity(0.2),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                codigo,
+                                style: const TextStyle(color: Colors.blueAccent, fontSize: 10, fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                          Expanded(
+                            child: Text(
+                              nome,
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.9),
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (isProduto && (item as Produto).grupo.isNotEmpty)
+                        Text(
+                          item.grupo,
+                          style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 11),
+                        ),
+                    ],
+                  ),
+                ),
+                // Preço e Estoque
+                const SizedBox(width: 12),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      _formatoMoeda.format(preco),
+                      style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 15),
+                    ),
+                    if (isProduto && estoque != null)
+                      Text(
+                        'Estoque: ${estoque.toInt()}',
+                        style: TextStyle(
+                          color: (estoque <= 0) ? Colors.redAccent.withOpacity(0.7) : Colors.white.withOpacity(0.4),
+                          fontSize: 11,
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(width: 8),
+                // Botão de adicionar
+                IconButton(
+                  icon: const Icon(Icons.add_circle_outline_rounded, color: Colors.blueAccent, size: 24),
+                  onPressed: () => _adicionarAoCarrinho(item, manterFoco: true),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -9650,181 +11803,180 @@ o padrão padrão (sem opções avançadas).
     final codigo = isProduto ? (item as Produto).codigo : null;
     final estoque = isProduto ? (item as Produto).estoque : null;
 
-    // Se for o produto Diversos (código 9999), abrir diálogo para descrição
-    final isDiversos = isProduto && codigo == '9999';
-
     final screenHeight = MediaQuery.of(context).size.height;
     final isSmallHeight = screenHeight < 750;
     final isSelected =
         !_focoNoCarrinho && _gridSelectedIndex == index && index != -1;
 
-    return GestureDetector(
-      onTap: () {
-        setState(() {
-          _focoNoCarrinho = false;
-          _gridSelectedIndex = index;
-        });
-        if (isDiversos) {
-          // Verificar se o termo de busca é um número (preço)
-          final valorDigitado = double.tryParse(
-            _termoBusca.replaceAll(',', '.').trim(),
-          );
-          _lancarDiversosRapido(precoInicial: valorDigitado);
-        } else {
-          _adicionarAoCarrinho(item, manterFoco: true);
-        }
-      },
-      child: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: isProduto
-                ? [const Color(0xFF1E3A5F), const Color(0xFF2C3E50)]
-                : [const Color(0xFF4A1E5F), const Color(0xFF3E2C50)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          borderRadius: BorderRadius.circular(isSmallHeight ? 10 : 12),
-          border: Border.all(
-            color: isSelected
-                ? Colors.cyanAccent
-                : (promocao
-                      ? Colors.orange.withOpacity(0.5)
-                      : Colors.transparent),
-            width: isSelected ? 3 : 2,
-          ),
-          boxShadow: isSelected
-              ? [
-                  BoxShadow(
-                    color: Colors.cyanAccent.withOpacity(0.3),
-                    blurRadius: 15,
-                    spreadRadius: 2,
-                  ),
-                ]
-              : null,
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(5),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Código + ícone
-              Row(
-                children: [
-                  Icon(
-                    isProduto ? Icons.inventory_2 : Icons.build,
-                    color: isProduto
-                        ? Colors.lightBlueAccent
-                        : Colors.purpleAccent,
-                    size: 14,
-                  ),
-                  const SizedBox(width: 4),
-                  if (codigo != null && codigo.isNotEmpty)
-                    Flexible(
-                      child: Text(
-                        codigo,
-                        style: const TextStyle(
-                          color: Colors.white70,
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
+    return RepaintBoundary(
+      child: InkWell(
+        onTap: () {
+          setState(() {
+            _focoNoCarrinho = false;
+            _gridSelectedIndex = index;
+          });
+          final isDiversos = isProduto && codigo == '9999';
+          if (isDiversos) {
+            final valorDigitado = double.tryParse(
+              _termoBusca.replaceAll(',', '.').trim(),
+            );
+            _lancarDiversosRapido(precoInicial: valorDigitado);
+          } else {
+            _adicionarAoCarrinho(item, manterFoco: true);
+          }
+        },
+        hoverColor: Colors.blueAccent.withOpacity(0.1),
+        splashColor: Colors.blueAccent.withOpacity(0.2),
+        borderRadius: BorderRadius.circular(isSmallHeight ? 10 : 12),
+        child: Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: isProduto
+                  ? [const Color(0xFF1E3A5F), const Color(0xFF2C3E50)]
+                  : [const Color(0xFF4A1E5F), const Color(0xFF3E2C50)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(isSmallHeight ? 10 : 12),
+            border: Border.all(
+              color: isSelected
+                  ? Colors.cyanAccent
+                  : (promocao
+                        ? Colors.orange.withOpacity(0.5)
+                        : Colors.transparent),
+              width: isSelected ? 3 : 2,
+            ),
+            boxShadow: isSelected
+                ? [
+                    BoxShadow(
+                      color: Colors.cyanAccent.withOpacity(0.3),
+                      blurRadius: 15,
+                      spreadRadius: 2,
                     ),
-                  if (isProduto && estoque != null) ...[
-                    const SizedBox(width: 6),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                      decoration: BoxDecoration(
-                        color: (estoque <= 0) 
-                            ? Colors.red.withOpacity(0.2) 
-                            : Colors.white.withOpacity(0.05),
-                        borderRadius: BorderRadius.circular(4),
-                        border: Border.all(
-                          color: (estoque <= 0) 
-                              ? Colors.redAccent.withOpacity(0.5) 
-                              : Colors.white10,
-                          width: 1,
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.inventory_2_outlined,
-                            size: 8,
-                            color: (estoque <= 0) ? Colors.redAccent : Colors.white54,
-                          ),
-                          const SizedBox(width: 2),
-                          Text(
-                            estoque.toStringAsFixed(0),
-                            style: TextStyle(
-                              color: (estoque <= 0) ? Colors.redAccent : Colors.white70,
-                              fontSize: 9,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
+                  ]
+                : null,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(5),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      isProduto ? Icons.inventory_2 : Icons.build,
+                      color: isProduto
+                          ? Colors.lightBlueAccent
+                          : Colors.purpleAccent,
+                      size: 14,
                     ),
-                  ],
-                  if (promocao) ...[
                     const SizedBox(width: 4),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                      decoration: BoxDecoration(
-                        color: Colors.orange,
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: const Text(
-                        'PROMO',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 8,
-                          fontWeight: FontWeight.bold,
+                    if (codigo != null && codigo.isNotEmpty)
+                      Flexible(
+                        child: Text(
+                          codigo,
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
+                    if (isProduto && estoque != null) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: (estoque <= 0) 
+                              ? Colors.red.withOpacity(0.2) 
+                              : Colors.white.withOpacity(0.05),
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(
+                            color: (estoque <= 0) 
+                                ? Colors.redAccent.withOpacity(0.5) 
+                                : Colors.white10,
+                            width: 1,
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.inventory_2_outlined,
+                              size: 8,
+                              color: (estoque <= 0) ? Colors.redAccent : Colors.white54,
+                            ),
+                            const SizedBox(width: 2),
+                            Text(
+                              estoque.toStringAsFixed(0),
+                              style: TextStyle(
+                                color: (estoque <= 0) ? Colors.redAccent : Colors.white70,
+                                fontSize: 9,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                    if (promocao) ...[
+                      const SizedBox(width: 4),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: Colors.orange,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: const Text(
+                          'PROMO',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 8,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
+                    const Spacer(),
+                    Icon(
+                      Icons.add_circle,
+                      color: Colors.greenAccent.withOpacity(0.6),
+                      size: 18,
                     ),
                   ],
-                  const Spacer(),
-                  Icon(
-                    Icons.add_circle,
-                    color: Colors.greenAccent.withOpacity(0.6),
-                    size: 18,
+                ),
+                const Spacer(),
+                Text(
+                  nome.toUpperCase(),
+                  style: TextStyle(
+                    color: Colors.yellow.shade200,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 15,
+                    height: 1.1,
+                    letterSpacing: 0.3,
+                    shadows: const [
+                      Shadow(
+                        color: Colors.black87,
+                        blurRadius: 3,
+                        offset: Offset(0, 1),
+                      ),
+                    ],
                   ),
-                ],
-              ),
-              const Spacer(),
-              // Nome - destaque principal
-              Text(
-                nome.toUpperCase(),
-                style: TextStyle(
-                  color: Colors.yellow.shade200,
-                  fontWeight: FontWeight.w900,
-                  fontSize: 15,
-                  height: 1.1,
-                  letterSpacing: 0.3,
-                  shadows: const [
-                    Shadow(
-                      color: Colors.black87,
-                      blurRadius: 3,
-                      offset: Offset(0, 1),
-                    ),
-                  ],
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              const SizedBox(height: 2),
-              // Preço
-              Text(
-                'R\$ ${preco.toStringAsFixed(2)}',
-                style: TextStyle(
-                  color: promocao ? Colors.orange : Colors.greenAccent,
-                  fontWeight: FontWeight.w900,
-                  fontSize: 13,
+                const SizedBox(height: 2),
+                Text(
+                  'R\$ ${preco.toStringAsFixed(2)}',
+                  style: TextStyle(
+                    color: promocao ? Colors.orange : Colors.greenAccent,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 13,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -10135,6 +12287,15 @@ o padrão padrão (sem opções avançadas).
                           },
                           onDarBaixa: () => _darBaixaEstoqueItem(reversedIndex),
                           onAdicionarObservacao: () => _adicionarObservacaoItem(reversedIndex),
+                          onToggleBrinde: () {
+                            setState(() {
+                              _carrinho[reversedIndex].isBrinde = !_carrinho[reversedIndex].isBrinde;
+                              if (_carrinho[reversedIndex].isBrinde) {
+                                _carrinho[reversedIndex].desconto = 0.0; // Reseta o desconto normal se virar brinde
+                              }
+                            });
+                            _salvarCarrinho();
+                          },
                         ),
                       ),
                     );
@@ -10581,7 +12742,7 @@ o padrão padrão (sem opções avançadas).
                                 ),
                                 const SizedBox(width: 8),
                                 Text(
-                                  'FINALIZAR',
+                                  'FINALIZAR (F9)',
                                   style: TextStyle(
                                     color: _carrinho.isEmpty
                                         ? Colors.white.withOpacity(0.2)
@@ -10605,6 +12766,54 @@ o padrão padrão (sem opções avançadas).
         ),
       ],
     );
+  }
+  bool _globalKeyHandler(KeyEvent event) {
+    if (event is! KeyDownEvent) return false;
+
+    // Atalhos globais do PDV
+    final dataService = Provider.of<DataService>(context, listen: false);
+
+    // F9 - Finalizar
+    if (event.logicalKey == LogicalKeyboardKey.f9) {
+      if (_dialogAberto || _estaFinalizando) return false;
+      _finalizarVenda(dataService);
+      return true;
+    }
+
+    // F10 - Dinheiro Direto
+    if (event.logicalKey == LogicalKeyboardKey.f10) {
+      if (_dialogAberto || _estaFinalizando) return false;
+      _finalizarDinheiroDireto(dataService);
+      return true;
+    }
+
+    // Operações no carrinho (apenas se não houver diálogo aberto)
+    if (!_dialogAberto && _carrinho.isNotEmpty) {
+      // + e - para alterar quantidade do ÚLTIMO item (topo da lista visual)
+      if (event.logicalKey == LogicalKeyboardKey.add || event.logicalKey == LogicalKeyboardKey.numpadAdd) {
+        _alterarQuantidade(_carrinho.length - 1, 1);
+        return true;
+      }
+      if (event.logicalKey == LogicalKeyboardKey.minus || event.logicalKey == LogicalKeyboardKey.numpadSubtract) {
+        if (_carrinho.last.quantidade > 1) {
+          _alterarQuantidade(_carrinho.length - 1, -1);
+        }
+        return true;
+      }
+
+      // CTRL + D para Desconto no último item
+      if (HardwareKeyboard.instance.isControlPressed && event.logicalKey == LogicalKeyboardKey.keyD) {
+        _aplicarDescontoItem(_carrinho.length - 1);
+        return true;
+      }
+
+      // CTRL + DEL para Remover último item
+      if (HardwareKeyboard.instance.isControlPressed && event.logicalKey == LogicalKeyboardKey.delete) {
+        _removerItem(_carrinho.length - 1);
+        return true;
+      }
+    }
+    return false;
   }
 }
 
@@ -10839,8 +13048,8 @@ class _NotificacaoItemAdicionado extends StatefulWidget {
   final IconData icone;
   final String titulo;
   final String nomeItem;
-  final int quantidade;
-  final int quantidadeTotal;
+  final double quantidade;
+  final double quantidadeTotal;
   final double valorItem;
   final double totalCarrinho;
   final Color cor;
@@ -11013,8 +13222,8 @@ class _NotificacaoItemAdicionadoState extends State<_NotificacaoItemAdicionado>
                         children: [
                           Text(
                             widget.jaExistia
-                                ? 'Qtd Total: ${widget.quantidadeTotal}'
-                                : 'Quantidade: ${widget.quantidade}',
+                                ? 'Qtd Total: ${widget.quantidadeTotal.toStringAsFixed(widget.quantidadeTotal.truncateToDouble() == widget.quantidadeTotal ? 0 : 2)}'
+                                : 'Quantidade: ${widget.quantidade.toStringAsFixed(widget.quantidade.truncateToDouble() == widget.quantidade ? 0 : 2)}',
                             style: const TextStyle(
                               color: Colors.white70,
                               fontSize: 16,
@@ -11088,6 +13297,7 @@ class _ItemCarrinhoComHover extends StatefulWidget {
   final VoidCallback onRemoverDescontoDirect;
   final VoidCallback onDarBaixa;
   final VoidCallback onAdicionarObservacao;
+  final VoidCallback onToggleBrinde;
 
   const _ItemCarrinhoComHover({
     required this.item,
@@ -11098,6 +13308,7 @@ class _ItemCarrinhoComHover extends StatefulWidget {
     required this.onRemoverDescontoDirect,
     required this.onDarBaixa,
     required this.onAdicionarObservacao,
+    required this.onToggleBrinde,
   });
 
   @override
@@ -11107,6 +13318,27 @@ class _ItemCarrinhoComHover extends StatefulWidget {
 class _ItemCarrinhoComHoverState extends State<_ItemCarrinhoComHover> {
   OverlayEntry? _overlayEntry;
   final GlobalKey _itemKey = GlobalKey();
+
+  String? _obterCodigoProduto(ItemCarrinho item) {
+    if (item.isServico) return null;
+
+    final dataService = Provider.of<DataService>(context, listen: false);
+    Produto? produto;
+    for (final p in dataService.produtos) {
+      if (p.id == item.id) {
+        produto = p;
+        break;
+      }
+    }
+
+    final codigo = produto?.codigo?.trim();
+    if (codigo != null && codigo.isNotEmpty) return codigo;
+
+    final codigoBarras = produto?.codigoBarras?.trim();
+    if (codigoBarras != null && codigoBarras.isNotEmpty) return codigoBarras;
+
+    return null;
+  }
 
   void _showDescricao() {
     if (widget.item.descricao == null || widget.item.descricao!.isEmpty) {
@@ -11174,6 +13406,7 @@ class _ItemCarrinhoComHoverState extends State<_ItemCarrinhoComHover> {
   @override
   Widget build(BuildContext context) {
     final item = widget.item;
+    final codigoProduto = _obterCodigoProduto(item);
     final corPrincipal = item.isServico
         ? Colors.purpleAccent
         : Colors.greenAccent;
@@ -11225,17 +13458,82 @@ class _ItemCarrinhoComHoverState extends State<_ItemCarrinhoComHover> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        item.nome,
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: isSmallHeight ? 14 : 16,
-                          height: 1.2,
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Expanded(
+                            child: Text(
+                              item.nome,
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: isSmallHeight ? 14 : 16,
+                                height: 1.2,
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          if (item.isBrinde) ...[
+                            const SizedBox(width: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: Colors.redAccent.withOpacity(0.2),
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(color: Colors.redAccent.withOpacity(0.5)),
+                              ),
+                              child: const Text(
+                                'BRINDE',
+                                style: TextStyle(
+                                  color: Colors.redAccent,
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
+                      if (codigoProduto != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 3,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.07),
+                              borderRadius: BorderRadius.circular(999),
+                              border: Border.all(
+                                color: Colors.white.withOpacity(0.12),
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.qr_code_2_rounded,
+                                  size: isSmallHeight ? 10 : 12,
+                                  color: Colors.white.withOpacity(0.65),
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  'Cod: $codigoProduto',
+                                  style: TextStyle(
+                                    color: Colors.white.withOpacity(0.75),
+                                    fontSize: isSmallHeight ? 9 : 10,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
                       if (item.adicionais != null && item.adicionais!.isNotEmpty)
                         Padding(
                           padding: const EdgeInsets.only(top: 4),
@@ -11407,6 +13705,33 @@ class _ItemCarrinhoComHoverState extends State<_ItemCarrinhoComHover> {
                     ),
                   ),
                 ),
+                SizedBox(width: isSmallHeight ? 4 : 8),
+                // Botão de Brinde
+                GestureDetector(
+                  onTap: widget.onToggleBrinde,
+                  child: Container(
+                    padding: EdgeInsets.all(isSmallHeight ? 6 : 8),
+                    decoration: BoxDecoration(
+                      color: item.isBrinde
+                          ? Colors.redAccent.withOpacity(0.2)
+                          : Colors.white.withOpacity(0.05),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: item.isBrinde
+                            ? Colors.redAccent.withOpacity(0.4)
+                            : Colors.transparent,
+                        width: 1,
+                      ),
+                    ),
+                    child: Icon(
+                      item.isBrinde ? Icons.card_giftcard : Icons.card_giftcard_outlined,
+                      color: item.isBrinde
+                          ? Colors.redAccent
+                          : Colors.white30,
+                      size: isSmallHeight ? 12 : 14,
+                    ),
+                  ),
+                ),
 
                 const Spacer(),
                 // Preço e Subtotal
@@ -11480,58 +13805,11 @@ class _SeletorClienteWidgetState extends State<_SeletorClienteWidget> {
   final TextEditingController _buscaController = TextEditingController();
 
   @override
-  void dispose() {
-    _buscaController.dispose();
-    super.dispose();
-  }
-
-  List<Cliente> get _clientesFiltrados {
-    if (_busca.isEmpty) {
-      return widget.dataService.clientes;
-    }
-    final termo = _busca.toLowerCase();
-    return widget.dataService.clientes.where((c) {
-      return c.nome.toLowerCase().contains(termo) ||
-          c.telefone.contains(termo) ||
-          (c.cpfCnpj?.contains(termo) ?? false);
-    }).toList();
-  }
-
-  void _selecionarCliente(Cliente cliente) {
-    Navigator.of(context).pop();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      widget.onClienteSelecionado(cliente);
-    });
-  }
-
-  void _removerCliente() {
-    Navigator.of(context).pop();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      widget.onRemoverCliente();
-    });
-  }
-
-  Future<void> _cadastrarNovoCliente() async {
-    Navigator.of(context).pop();
-    await Future.delayed(const Duration(milliseconds: 100));
-    if (!mounted) return;
-
-    final novoCliente = await Navigator.push<Cliente>(
-      context,
-      MaterialPageRoute(builder: (context) => const ClienteDetalhesPage()),
-    );
-
-    if (novoCliente != null && mounted) {
-      widget.onClienteSelecionado(novoCliente);
-    }
-  }
-
-  @override
   Widget build(BuildContext context) {
     final clientes = _clientesFiltrados;
 
     return Container(
-      height: MediaQuery.of(context).size.height * 0.7,
+      height: MediaQuery.of(context).size.height * 0.95,
       decoration: const BoxDecoration(
         color: Color(0xFF1E1E2E),
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
@@ -11623,6 +13901,15 @@ class _SeletorClienteWidgetState extends State<_SeletorClienteWidget> {
                           Icons.search,
                           color: Colors.white54,
                         ),
+                        suffixIcon: _busca.isNotEmpty
+                            ? IconButton(
+                                icon: const Icon(Icons.clear, color: Colors.white54),
+                                onPressed: () {
+                                  _buscaController.clear();
+                                  setState(() => _busca = '');
+                                },
+                              )
+                            : null,
                         border: InputBorder.none,
                         contentPadding: const EdgeInsets.symmetric(
                           horizontal: 16,
@@ -11675,6 +13962,54 @@ class _SeletorClienteWidgetState extends State<_SeletorClienteWidget> {
         ],
       ),
     );
+  }
+
+
+  @override
+  void dispose() {
+    _buscaController.dispose();
+    super.dispose();
+  }
+
+  List<Cliente> get _clientesFiltrados {
+    if (_busca.isEmpty) {
+      return widget.dataService.clientes;
+    }
+    final termo = _busca.toLowerCase();
+    return widget.dataService.clientes.where((c) {
+      return c.nome.toLowerCase().contains(termo) ||
+          c.telefone.contains(termo) ||
+          (c.cpfCnpj?.contains(termo) ?? false);
+    }).toList();
+  }
+
+  void _selecionarCliente(Cliente cliente) {
+    Navigator.of(context).pop();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      widget.onClienteSelecionado(cliente);
+    });
+  }
+
+  void _removerCliente() {
+    Navigator.of(context).pop();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      widget.onRemoverCliente();
+    });
+  }
+
+  Future<void> _cadastrarNovoCliente() async {
+    Navigator.of(context).pop();
+    await Future.delayed(const Duration(milliseconds: 100));
+    if (!mounted) return;
+
+    final novoCliente = await Navigator.push<Cliente>(
+      context,
+      MaterialPageRoute(builder: (context) => const ClienteDetalhesPage()),
+    );
+
+    if (novoCliente != null && mounted) {
+      widget.onClienteSelecionado(novoCliente);
+    }
   }
 
   Widget _buildEstadoVazio() {
@@ -11882,13 +14217,40 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
     _cpfController = TextEditingController(text: widget.cpfCnpjInicial);
     _nomeController = TextEditingController(text: widget.nomeInicial);
     _focusNode.requestFocus();
+    
+    // Handler global para o diálogo de pagamento
+    HardwareKeyboard.instance.addHandler(_dialogKeyHandler);
+  }
+
+  bool _dialogKeyHandler(KeyEvent event) {
+    if (event is! KeyDownEvent) return false;
+
+    // F9 no diálogo: Confirmar ou Salvar
+    if (event.logicalKey == LogicalKeyboardKey.f9) {
+      if (_estaConfirmando) return true;
+      if (_pagamentoCompleto) {
+        setState(() => _estaConfirmando = true);
+        widget.onConfirmar(_pagamentos);
+      } else {
+        widget.onSalvarPendente(_pagamentos);
+      }
+      return true;
+    }
+
+    // ESC no diálogo: Fechar
+    if (event.logicalKey == LogicalKeyboardKey.escape) {
+      Navigator.pop(context);
+      return true;
+    }
+
+    return false;
   }
 
   @override
   void dispose() {
-    _focusNode.dispose();
     _cpfController.dispose();
     _nomeController.dispose();
+    HardwareKeyboard.instance.removeHandler(_dialogKeyHandler);
     super.dispose();
   }
 
@@ -12511,6 +14873,11 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
 
             setState(() => _pagamentos = novaLista);
             Navigator.pop(context);
+            
+            // SE O PAGAMENTO JÁ COMPLETOU O TOTAL, FINALIZAR AUTOMATICAMENTE (VAPT-VUPT)
+            if (_pagamentoCompleto && !isFiado && !suportaParcelamento) {
+               widget.onConfirmar(novaLista);
+            }
           }
 
           double valorTotal =
@@ -13366,6 +15733,9 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
         if (event is! KeyDownEvent) return KeyEventResult.ignored;
 
         final key = event.logicalKey;
+        
+        // ESC e F9 tratados no handler do HardwareKeyboard para maior confiabilidade
+        
 
         // Teclas 1 a 8 para formas de pagamento
         final types = TipoPagamento.values;
@@ -13556,57 +15926,60 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
 
                       return GestureDetector(
                         onTap: () => _adicionarPagamento(tipo),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 8,
-                          ),
-                          decoration: BoxDecoration(
-                            color: _getCorTipo(tipo).withOpacity(0.15),
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(
-                              color: _getCorTipo(tipo).withOpacity(0.3),
+                        child: Tooltip(
+                          message: 'Pressione $shortcut para selecionar',
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 8,
                             ),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              // Atalho numérico
-                              if (shortcut <= 8)
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 4,
-                                    vertical: 1,
-                                  ),
-                                  margin: const EdgeInsets.only(right: 6),
-                                  decoration: BoxDecoration(
-                                    color: _getCorTipo(tipo).withOpacity(0.3),
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: Text(
-                                    '$shortcut',
-                                    style: TextStyle(
-                                      color: _getCorTipo(tipo),
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.bold,
+                            decoration: BoxDecoration(
+                              color: _getCorTipo(tipo).withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: _getCorTipo(tipo).withOpacity(0.3),
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                // Atalho numérico
+                                if (shortcut <= 8)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 4,
+                                      vertical: 1,
+                                    ),
+                                    margin: const EdgeInsets.only(right: 6),
+                                    decoration: BoxDecoration(
+                                      color: _getCorTipo(tipo).withOpacity(0.3),
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: Text(
+                                      '$shortcut',
+                                      style: TextStyle(
+                                        color: _getCorTipo(tipo),
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.bold,
+                                      ),
                                     ),
                                   ),
-                                ),
-                              Icon(
-                                _getIconeTipo(tipo),
-                                color: _getCorTipo(tipo),
-                                size: 14,
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                tipo.nome,
-                                style: TextStyle(
+                                Icon(
+                                  _getIconeTipo(tipo),
                                   color: _getCorTipo(tipo),
-                                  fontWeight: FontWeight.w500,
-                                  fontSize: 11,
+                                  size: 14,
                                 ),
-                              ),
-                            ],
+                                const SizedBox(width: 4),
+                                Text(
+                                  tipo.nome,
+                                  style: TextStyle(
+                                    color: _getCorTipo(tipo),
+                                    fontWeight: FontWeight.w500,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
                       );
@@ -14012,14 +16385,14 @@ class PopupSucessoVenda extends StatefulWidget {
 class _PopupSucessoVendaState extends State<PopupSucessoVenda>
     with TickerProviderStateMixin {
   late AnimationController _scaleController;
-  late AnimationController _moneyController;
   late Animation<double> _scaleAnimation;
-  final List<_DinheiroAnimado> _dinheiros = [];
   final math.Random _random = math.Random();
   
   // Foco para botões
   final FocusNode _fecharNode = FocusNode();
   final FocusNode _nfceNode = FocusNode();
+  final FocusNode _whatsappNode = FocusNode();
+  final FocusNode _imprimirNode = FocusNode();
 
   @override
   void initState() {
@@ -14027,7 +16400,8 @@ class _PopupSucessoVendaState extends State<PopupSucessoVenda>
 
     // Animação de escala do popup
     _scaleController = AnimationController(
-      duration: const Duration(milliseconds: 400),
+      duration: const Duration(milliseconds: 300),
+      reverseDuration: const Duration(milliseconds: 100),
       vsync: this,
     );
     _scaleAnimation = CurvedAnimation(
@@ -14035,28 +16409,7 @@ class _PopupSucessoVendaState extends State<PopupSucessoVenda>
       curve: Curves.elasticOut,
     );
 
-    // Animação de dinheiro caindo
-    _moneyController = AnimationController(
-      duration: const Duration(milliseconds: 2500),
-      vsync: this,
-    );
-
-    // Gerar notas de dinheiro
-    for (int i = 0; i < 20; i++) {
-      _dinheiros.add(
-        _DinheiroAnimado(
-          x: _random.nextDouble(),
-          delay: _random.nextDouble() * 0.5,
-          speed: 0.5 + _random.nextDouble() * 0.5,
-          rotation: _random.nextDouble() * 2 * math.pi,
-          rotationSpeed: (_random.nextDouble() - 0.5) * 4,
-          size: 24 + _random.nextDouble() * 16,
-        ),
-      );
-    }
-
     _scaleController.forward();
-    _moneyController.repeat();
 
     // Auto fechar após 2.5 segundos (apenas se não houver botão de emitir NFC-e)
     if (widget.onEmitirNFCe == null) {
@@ -14077,6 +16430,8 @@ class _PopupSucessoVendaState extends State<PopupSucessoVenda>
     // Adicionar listeners para reconstruir quando o foco mudar (para atualizar estilos)
     _fecharNode.addListener(_onFocusChange);
     _nfceNode.addListener(_onFocusChange);
+    _whatsappNode.addListener(_onFocusChange);
+    _imprimirNode.addListener(_onFocusChange);
   }
   
   void _onFocusChange() {
@@ -14101,12 +16456,30 @@ class _PopupSucessoVendaState extends State<PopupSucessoVenda>
     }
   }
 
+  void _whatsApp() {
+    if (widget.onWhatsApp != null) {
+      if (mounted) {
+        Navigator.pop(context);
+        widget.onWhatsApp?.call();
+      }
+    }
+  }
+
+  void _imprimir() {
+    if (widget.onImprimir != null) {
+      if (mounted) {
+        widget.onImprimir?.call();
+      }
+    }
+  }
+
   @override
   void dispose() {
     _scaleController.dispose();
-    _moneyController.dispose();
     _fecharNode.dispose();
     _nfceNode.dispose();
+    _whatsappNode.dispose();
+    _imprimirNode.dispose();
     super.dispose();
   }
 
@@ -14118,22 +16491,41 @@ class _PopupSucessoVendaState extends State<PopupSucessoVenda>
       focusNode: FocusNode(), // Capturar teclas globalmente no popup
       onKeyEvent: (event) {
         if (event is KeyDownEvent) {
+          // Lista de botões disponíveis para navegação
+          final listNodes = <FocusNode>[];
+          if (widget.onEmitirNFCe != null) listNodes.add(_nfceNode);
+          if (widget.onWhatsApp != null) listNodes.add(_whatsappNode);
+          if (widget.onImprimir != null) listNodes.add(_imprimirNode);
+          listNodes.add(_fecharNode);
+
           if (event.logicalKey == LogicalKeyboardKey.enter || 
               event.logicalKey == LogicalKeyboardKey.numpadEnter) {
             // Enter aciona o botão focado
             if (_nfceNode.hasFocus) {
               _emitir();
+            } else if (_whatsappNode.hasFocus) {
+              _whatsApp();
+            } else if (_imprimirNode.hasFocus) {
+              _imprimir();
             } else {
               _fechar();
             }
           } else if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
-            // Seta esquerda move para NFC-e se existir
-            if (widget.onEmitirNFCe != null) {
-              _nfceNode.requestFocus();
+            // Mover foco para a esquerda
+            int index = listNodes.indexWhere((n) => n.hasFocus);
+            if (index > 0) {
+              listNodes[index - 1].requestFocus();
+            } else if (index == 0) {
+              listNodes.last.requestFocus();
             }
           } else if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
-            // Seta direita volta para Fechar
-            _fecharNode.requestFocus();
+            // Mover foco para a direita
+            int index = listNodes.indexWhere((n) => n.hasFocus);
+            if (index != -1 && index < listNodes.length - 1) {
+              listNodes[index + 1].requestFocus();
+            } else {
+              listNodes.first.requestFocus();
+            }
           } else if (event.logicalKey == LogicalKeyboardKey.escape) {
             _fechar();
           }
@@ -14143,44 +16535,7 @@ class _PopupSucessoVendaState extends State<PopupSucessoVenda>
         color: Colors.transparent,
         child: Stack(
           children: [
-          // Dinheiro caindo por trás
-          ...List.generate(_dinheiros.length, (index) {
-            final dinheiro = _dinheiros[index];
-            return AnimatedBuilder(
-              animation: _moneyController,
-              builder: (context, child) {
-                final progress =
-                    (_moneyController.value - dinheiro.delay).clamp(0.0, 1.0) *
-                    dinheiro.speed;
-                final y =
-                    -50 +
-                    (progress * (MediaQuery.of(context).size.height + 100));
-                final rotation =
-                    dinheiro.rotation +
-                    (_moneyController.value * dinheiro.rotationSpeed);
-                final opacity = progress < 0.1
-                    ? progress * 10
-                    : progress > 0.8
-                    ? (1 - progress) * 5
-                    : 1.0;
-
-                return Positioned(
-                  left: dinheiro.x * MediaQuery.of(context).size.width,
-                  top: y,
-                  child: Opacity(
-                    opacity: opacity.clamp(0.0, 1.0),
-                    child: Transform.rotate(
-                      angle: rotation,
-                      child: Text(
-                        '💵',
-                        style: TextStyle(fontSize: dinheiro.size),
-                      ),
-                    ),
-                  ),
-                );
-              },
-            );
-          }),
+          // O fundo animado foi removido para evitar travamentos em dispositivos lentos
 
           // Popup central
           Center(
@@ -14293,7 +16648,7 @@ class _PopupSucessoVendaState extends State<PopupSucessoVenda>
                       builder: (context, value, child) {
                         return Transform.scale(
                           scale: 0.5 + (value * 0.5),
-                          child: Opacity(opacity: value, child: child),
+                          child: Opacity(opacity: value.clamp(0.0, 1.0), child: child),
                         );
                       },
                       child: Container(
@@ -14422,17 +16777,21 @@ class _PopupSucessoVendaState extends State<PopupSucessoVenda>
                         
                         if (widget.onWhatsApp != null)
                           ElevatedButton.icon(
-                            onPressed: () {
-                              Navigator.pop(context);
-                              widget.onWhatsApp?.call();
-                            },
+                            focusNode: _whatsappNode,
+                            onPressed: _whatsApp,
                             icon: const Icon(Icons.chat_bubble_outline, size: 20),
                             label: const Text('WhatsApp'),
                             style: ElevatedButton.styleFrom(
                               backgroundColor: const Color(0xFF25D366),
                               foregroundColor: Colors.white,
+                              elevation: _whatsappNode.hasFocus ? 8 : 2,
                               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16),
+                                side: _whatsappNode.hasFocus 
+                                  ? const BorderSide(color: Colors.white, width: 2)
+                                  : BorderSide.none,
+                              ),
                             ),
                           ),
 
@@ -14442,9 +16801,8 @@ class _PopupSucessoVendaState extends State<PopupSucessoVenda>
                         // Botão Imprimir Cupom Simples
                         if (widget.onImprimir != null)
                           ElevatedButton.icon(
-                            onPressed: () {
-                              widget.onImprimir?.call();
-                            },
+                            focusNode: _imprimirNode,
+                            onPressed: _imprimir,
                             icon: const Icon(Icons.print_rounded, size: 20),
                             label: const Text(
                               'Imprimir',
@@ -14453,8 +16811,14 @@ class _PopupSucessoVendaState extends State<PopupSucessoVenda>
                             style: ElevatedButton.styleFrom(
                               backgroundColor: Colors.white.withOpacity(0.9),
                               foregroundColor: Colors.blue.shade800,
+                              elevation: _imprimirNode.hasFocus ? 8 : 2,
                               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16),
+                                side: _imprimirNode.hasFocus 
+                                  ? BorderSide(color: Colors.blue.shade900, width: 2)
+                                  : BorderSide.none,
+                              ),
                             ),
                           ),
 
@@ -14660,7 +17024,7 @@ class _DialogConferenciaItensState extends State<_DialogConferenciaItens> {
   final NumberFormat _formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
 
   double get _totalCarrinho => widget.carrinho.fold(0.0, (sum, item) => sum + item.subtotalSemDesconto);
-  int get _totalItens => widget.carrinho.fold(0, (sum, item) => sum + item.quantidade);
+  double get _totalItens => widget.carrinho.fold(0.0, (sum, item) => sum + item.quantidade);
 
   void _scrollToSelected() {
     if (!_scrollController.hasClients) return;
@@ -14962,4 +17326,5 @@ class _DialogConferenciaItensState extends State<_DialogConferenciaItens> {
     );
   }
 }
+
 

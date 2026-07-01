@@ -165,18 +165,53 @@ class Cliente {
 
 
   factory Cliente.fromMap(Map<String, dynamic> map) {
+    String? getStr(String camel, String snake) {
+      final val = map[camel] ?? map[snake];
+      return val?.toString();
+    }
+    num? getNum(String camel, String snake) {
+      final val = map[camel] ?? map[snake];
+      if (val == null) return null;
+      if (val is num) return val;
+      if (val is String) return num.tryParse(val);
+      return null;
+    }
+    bool? getBool(String camel, String snake) {
+      final val = map[camel] ?? map[snake];
+      if (val == null) return null;
+      if (val is bool) return val;
+      if (val is num) return val != 0;
+      if (val is String) {
+        final lower = val.toLowerCase();
+        return lower == 'true' || lower == '1';
+      }
+      return null;
+    }
+    List? getList(String camel, String snake) {
+      final val = map[camel] ?? map[snake];
+      if (val is List) return val;
+      return null;
+    }
+    Map? getMap(String camel, String snake) {
+      final val = map[camel] ?? map[snake];
+      if (val is Map) return val;
+      return null;
+    }
+
+    final tipoPessoaStr = getStr('tipoPessoa', 'tipo_pessoa');
+    
     return Cliente(
       id: map['id']?.toString() ?? '',
       nome: map['nome']?.toString() ?? '',
-      nomeFantasia: map['nomeFantasia']?.toString(),
-      tipoPessoa: map['tipoPessoa'] != null
+      nomeFantasia: getStr('nomeFantasia', 'nome_fantasia'),
+      tipoPessoa: tipoPessoaStr != null
           ? TipoPessoa.values.firstWhere(
-              (t) => t.name == map['tipoPessoa'],
+              (t) => t.name == tipoPessoaStr,
               orElse: () => TipoPessoa.fisica,
             )
           : TipoPessoa.fisica,
-      cpfCnpj: map['cpfCnpj']?.toString(),
-      rgIe: map['rgIe']?.toString(),
+      cpfCnpj: getStr('cpfCnpj', 'cpf_cnpj'),
+      rgIe: getStr('rgIe', 'rg_ie'),
       email: map['email']?.toString(),
       telefone: map['telefone']?.toString() ?? '',
       telefone2: map['telefone2']?.toString(),
@@ -188,30 +223,32 @@ class Cliente {
       cidade: map['cidade']?.toString(),
       estado: map['estado']?.toString(),
       cep: map['cep']?.toString(),
-      pontoReferencia: map['pontoReferencia']?.toString(),
-      dataNascimento: map['dataNascimento'] != null
-          ? DateParser.parse(map['dataNascimento'])
+      pontoReferencia: getStr('pontoReferencia', 'ponto_referencia'),
+      dataNascimento: getStr('dataNascimento', 'data_nascimento') != null
+          ? DateParser.parse(getStr('dataNascimento', 'data_nascimento'))
           : null,
       profissao: map['profissao']?.toString(),
       observacoes: map['observacoes']?.toString(),
-      fotoPath: map['fotoPath']?.toString(),
-      dadosExtras: map['dadosExtras'] != null ? Map<String, dynamic>.from(map['dadosExtras']) : null,
-      pets: map['pets'] != null
-          ? (map['pets'] as List).map((p) => Pet.fromMap(p as Map<String, dynamic>)).toList()
+      fotoPath: getStr('fotoPath', 'foto_path'),
+      dadosExtras: getMap('dadosExtras', 'dados_extras') != null 
+          ? Map<String, dynamic>.from(getMap('dadosExtras', 'dados_extras')!) 
+          : null,
+      pets: getList('pets', 'pets') != null
+          ? getList('pets', 'pets')!.map((p) => Pet.fromMap(p as Map<String, dynamic>)).toList()
           : [],
-      enderecos: map['enderecos'] != null
-          ? (map['enderecos'] as List).map((e) => EnderecoCliente.fromMap(e as Map<String, dynamic>)).toList()
+      enderecos: getList('enderecos', 'enderecos') != null
+          ? getList('enderecos', 'enderecos')!.map((e) => EnderecoCliente.fromMap(e as Map<String, dynamic>)).toList()
           : [],
-      limiteCredito: (map['limiteCredito'] as num?)?.toDouble(),
-      saldoDevedor: (map['saldoDevedor'] as num? ?? 0).toDouble(),
-      bloqueado: map['bloqueado'] ?? false,
-      motivoBloqueio: map['motivoBloqueio']?.toString(),
+      limiteCredito: getNum('limiteCredito', 'limite_credito')?.toDouble(),
+      saldoDevedor: (getNum('saldoDevedor', 'saldo_devedor') ?? 0).toDouble(),
+      bloqueado: getBool('bloqueado', 'bloqueado') ?? false,
+      motivoBloqueio: getStr('motivoBloqueio', 'motivo_bloqueio'),
       senha: map['senha']?.toString(),
-      emailLogin: map['emailLogin']?.toString(),
-      habilitaTaxiDog: map['habilitaTaxiDog'] ?? false,
-      ativo: map['ativo'] ?? true,
-      createdAt: DateParser.parse(map['createdAt']),
-      updatedAt: DateParser.parse(map['updatedAt']),
+      emailLogin: getStr('emailLogin', 'email_login'),
+      habilitaTaxiDog: getBool('habilitaTaxiDog', 'habilita_taxi_dog') ?? false,
+      ativo: getBool('ativo', 'ativo') ?? true,
+      createdAt: DateParser.parse(getStr('createdAt', 'created_at') ?? ''),
+      updatedAt: DateParser.parse(getStr('updatedAt', 'updated_at') ?? ''),
     );
   }
 
@@ -220,10 +257,10 @@ class Cliente {
     return {
       'id': id,
       'nome': nome,
-      'nomeFantasia': nomeFantasia,
-      'tipoPessoa': tipoPessoa.name,
-      'cpfCnpj': cpfCnpj,
-      'rgIe': rgIe,
+      'nome_fantasia': nomeFantasia,
+      'tipo_pessoa': tipoPessoa.name,
+      'cpf_cnpj': cpfCnpj,
+      'rg_ie': rgIe,
       'email': email,
       'telefone': telefone,
       'telefone2': telefone2,
@@ -235,24 +272,24 @@ class Cliente {
       'cidade': cidade,
       'estado': estado,
       'cep': cep,
-      'pontoReferencia': pontoReferencia,
-      'dataNascimento': dataNascimento?.toIso8601String(),
+      'ponto_referencia': pontoReferencia,
+      'data_nascimento': dataNascimento?.toIso8601String(),
       'profissao': profissao,
       'observacoes': observacoes,
-      'fotoPath': fotoPath,
-      'dadosExtras': dadosExtras,
+      'foto_path': fotoPath,
+      'dados_extras': dadosExtras,
       'pets': pets.map((p) => p.toMap()).toList(),
       'enderecos': enderecos.map((e) => e.toMap()).toList(),
-      'limiteCredito': limiteCredito,
-      'saldoDevedor': saldoDevedor,
+      'limite_credito': limiteCredito,
+      'saldo_devedor': saldoDevedor,
       'bloqueado': bloqueado,
-      'motivoBloqueio': motivoBloqueio,
+      'motivo_bloqueio': motivoBloqueio,
       'senha': senha,
-      'emailLogin': emailLogin,
-      'habilitaTaxiDog': habilitaTaxiDog,
+      'email_login': emailLogin,
+      'habilita_taxi_dog': habilitaTaxiDog,
       'ativo': ativo,
-      'createdAt': createdAt.toIso8601String(),
-      'updatedAt': updatedAt.toIso8601String(),
+      'created_at': createdAt.toIso8601String(),
+      'updated_at': updatedAt.toIso8601String(),
     };
   }
 

@@ -9,6 +9,7 @@ class DeliveryInfo {
   final String uf;
   final String? cep;
   final double taxaEntrega;
+  final double valorParaTroco; // Valor informado pelo cliente para troco
   final String status; // Pendente, Em Preparo, Em Transito, Entregue, Cancelado
   final String? motoristaId;
   final String? motoristaNome;
@@ -27,6 +28,7 @@ class DeliveryInfo {
     required this.uf,
     this.cep,
     this.taxaEntrega = 0.0,
+    this.valorParaTroco = 0.0,
     this.status = 'Pendente',
     this.motoristaId,
     this.motoristaNome,
@@ -49,6 +51,7 @@ class DeliveryInfo {
       uf: map['uf']?.toString() ?? '',
       cep: map['cep']?.toString(),
       taxaEntrega: (map['taxaEntrega'] as num? ?? 0.0).toDouble(),
+      valorParaTroco: (map['valorParaTroco'] as num? ?? 0.0).toDouble(),
       status: map['status']?.toString() ?? 'Pendente',
       motoristaId: map['motoristaId']?.toString(),
       motoristaNome: map['motoristaNome']?.toString() ?? map['entregadorNome']?.toString(), // Fallback
@@ -70,6 +73,7 @@ class DeliveryInfo {
       'uf': uf,
       'cep': cep,
       'taxaEntrega': taxaEntrega,
+      'valorParaTroco': valorParaTroco,
       'status': status,
       'motoristaId': motoristaId,
       'motoristaNome': motoristaNome,
@@ -90,6 +94,7 @@ class DeliveryInfo {
     String? uf,
     String? cep,
     double? taxaEntrega,
+    double? valorParaTroco,
     String? status,
     String? motoristaId,
     String? motoristaNome,
@@ -108,6 +113,7 @@ class DeliveryInfo {
       uf: uf ?? this.uf,
       cep: cep ?? this.cep,
       taxaEntrega: taxaEntrega ?? this.taxaEntrega,
+      valorParaTroco: valorParaTroco ?? this.valorParaTroco,
       status: status ?? this.status,
       motoristaId: motoristaId ?? this.motoristaId,
       motoristaNome: motoristaNome ?? this.motoristaNome,

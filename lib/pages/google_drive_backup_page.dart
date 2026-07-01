@@ -3,6 +3,8 @@ import 'package:googleapis/drive/v3.dart' as drive;
 import 'package:intl/intl.dart';
 import '../services/google_drive_service.dart';
 import '../services/auth_service.dart';
+import '../services/data_service.dart';
+import '../services/supabase_service.dart';
 import 'package:provider/provider.dart';
 import '../theme.dart';
 
@@ -57,6 +59,34 @@ class _GoogleDriveBackupPageState extends State<GoogleDriveBackupPage> {
             SnackBar(content: Text('❌ Erro no backup: ${resultado['mensagem']}'), backgroundColor: Colors.red),
           );
         }
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _sincronizarComSupabase() async {
+    if (!SupabaseService.isAvailable) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('❌ Supabase não está disponível'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+
+    setState(() => _isLoading = true);
+    try {
+      final dataService = Provider.of<DataService>(context, listen: false);
+      await dataService.publicarSincronizacaoTotal();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('☁️ Dados sincronizados com sucesso no Supabase!'), backgroundColor: Colors.green),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('❌ Erro ao sincronizar: $e'), backgroundColor: Colors.red),
+        );
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -172,7 +202,7 @@ class _GoogleDriveBackupPageState extends State<GoogleDriveBackupPage> {
       child: Scaffold(
         backgroundColor: Colors.transparent,
         appBar: AppBar(
-          title: const Text('Backup & Restauração Cloud'),
+          title: const Text('Backup & Sincronização'),
           actions: [
             IconButton(
               icon: const Icon(Icons.refresh),
@@ -195,9 +225,25 @@ class _GoogleDriveBackupPageState extends State<GoogleDriveBackupPage> {
                         child: ElevatedButton.icon(
                           onPressed: _isLoading ? null : _realizarBackup,
                           icon: const Icon(Icons.cloud_upload),
-                          label: const Text('REALIZAR BACKUP DAS EMPRESAS'),
+                          label: const Text('BACKUP GOOGLE DRIVE'),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.blue,
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: _isLoading ? null : _sincronizarComSupabase,
+                          icon: const Icon(Icons.sync),
+                          label: const Text('ENVIAR DADOS PARA SUPABASE'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.green,
                             padding: const EdgeInsets.symmetric(vertical: 16),
                           ),
                         ),

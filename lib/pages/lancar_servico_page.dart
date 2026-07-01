@@ -3048,7 +3048,7 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
                   return;
                 }
 
-                final estoque = int.tryParse(estoqueController.text) ?? 0;
+                final estoque = (int.tryParse(estoqueController.text) ?? 0).toDouble();
                 final unidade = unidadeController.text.trim().isEmpty 
                     ? 'UN' 
                     : unidadeController.text.trim();
@@ -3798,7 +3798,7 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
           // Para baixas fracionadas, subtrair a quantidade exata e arredondar o resultado
           // Usar round() para arredondar corretamente (0.5 vai para cima)
           final novoEstoqueDouble = produto.estoque - quantidadeParaBaixa;
-          final novoEstoque = novoEstoqueDouble < 0 ? 0 : novoEstoqueDouble.round();
+          final novoEstoque = (novoEstoqueDouble < 0 ? 0 : novoEstoqueDouble.round()).toDouble();
 
           // Atualizar produto no estoque
           await dataService.updateProduto(

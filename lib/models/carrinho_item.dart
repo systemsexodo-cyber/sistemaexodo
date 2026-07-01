@@ -53,7 +53,7 @@ class CarrinhoItem {
     double precoFinal = produto.precoComVariacao(variacoesSelecionadas);
     
     // Calcula o estoque considerando as variações
-    int? estoqueFinal = produto.estoqueVariacao(variacoesSelecionadas);
+    double? estoqueFinal = produto.estoqueVariacao(variacoesSelecionadas);
     
     // Monta o nome com as variações
     String nomeCompleto = produto.nome;
@@ -73,7 +73,7 @@ class CarrinhoItem {
       preco: precoFinal,
       quantidade: quantidade,
       unidade: produto.unidade,
-      estoqueDisponivel: estoqueFinal,
+      estoqueDisponivel: estoqueFinal?.toInt(),
       variacoesSelecionadas: variacoesSelecionadas,
       pesoGramas: produto.pesoGramas,
     );

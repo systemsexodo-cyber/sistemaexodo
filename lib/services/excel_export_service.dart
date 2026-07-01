@@ -1,7 +1,9 @@
 import 'dart:typed_data';
 import 'package:excel/excel.dart';
 import 'package:flutter/foundation.dart';
+import 'package:intl/intl.dart';
 import '../models/produto.dart';
+import '../models/estoque_historico.dart';
 import '../pages/html_helper_web.dart' if (dart.library.io) 'local_storage_service_stub.dart';
 
 /// Serviço para exportar produtos para Excel e CSV
@@ -76,10 +78,7 @@ class ExcelExportService {
     
     try {
       var excel = Excel.createExcel();
-      String sheetName = "Lista de Produtos";
-      // Garantir que a planilha existe e remover a padrão
-      excel[sheetName]; 
-      if (excel.sheets.containsKey('Sheet1')) excel.delete('Sheet1');
+      String sheetName = excel.sheets.keys.first;
       
       List<String> headers = [
         'Código', 'Cód. Barras', 'Nome', 'Descrição', 'Grupo/Categoria', 'Unidade',
@@ -124,6 +123,145 @@ class ExcelExportService {
       }
     } catch (e) {
       debugPrint('>>> [ExcelExport] ❌ ERRO: $e');
+      rethrow;
+    }
+  }
+
+  /// Exporta o Inventário de Estoque para Contabilidade (xlsx)
+  /// Contém: Código, Nome, Unidade, Quantidade, Valor Unitário (Custo), Valor Total
+  static void exportarInventarioContabilidade(List<Produto> produtos) {
+    debugPrint('>>> [InventoryExport] Gerando inventário contábil para ${produtos.length} produtos...');
+    
+    try {
+      var excel = Excel.createExcel();
+      String sheetName = excel.sheets.keys.first;
+      
+      final headers = [
+        'CÓDIGO', 'DESCRIÇÃO', 'UNID', 'QUANTIDADE', 'CUSTO UNITÁRIO', 'CUSTO TOTAL'
+      ];
+
+      // Estilo para cabeçalho
+      // Nota: A lib excel tem limitações de estilo em algumas versões, mas vamos tentar o básico
+      for (int i = 0; i < headers.length; i++) {
+        excel.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: i, rowIndex: 0), headers[i]);
+      }
+
+      double somaTotal = 0;
+
+      // Escrever dados
+      for (int i = 0; i < produtos.length; i++) {
+        final p = produtos[i];
+        final r = i + 1;
+        final qty = p.estoque.toDouble();
+        if (qty <= 0) {
+          // Pular ou zerar se o estoque for 0 ou negativo, conforme solicitado
+          excel.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: r), _fix(p.codigo));
+          excel.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: r), _fix(p.nome));
+          excel.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 2, rowIndex: r), _fix(p.unidade));
+          excel.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 3, rowIndex: r), 0);
+          excel.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 4, rowIndex: r), p.precoCusto ?? 0.0);
+          excel.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 5, rowIndex: r), 0);
+          continue; 
+        }
+        
+        final custo = p.precoCusto ?? 0.0;
+        final total = qty * custo;
+        somaTotal += total;
+
+        excel.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: r), _fix(p.codigo));
+        excel.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: r), _fix(p.nome));
+        excel.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 2, rowIndex: r), _fix(p.unidade));
+        excel.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 3, rowIndex: r), qty);
+        excel.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 4, rowIndex: r), custo);
+        excel.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 5, rowIndex: r), total);
+      }
+
+      // Rodapé com total geral
+      final footerRow = produtos.length + 2;
+      excel.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 4, rowIndex: footerRow), 'TOTAL GERAL:');
+      excel.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 5, rowIndex: footerRow), somaTotal);
+
+      final bytes = excel.encode();
+      if (bytes != null && kIsWeb) {
+        final dataStr = DateFormat('dd-MM-yyyy').format(DateTime.now());
+        downloadBytes(bytes, "inventario_estoque_$dataStr.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      }
+    } catch (e) {
+      debugPrint('>>> [InventoryExport] ❌ ERRO: $e');
+      rethrow;
+    }
+  }
+
+  /// Exporta o Inventário Retroativo
+  /// Calcula o estoque na data desejada reconstruindo a partir dos movimentos
+  static void exportarInventarioRetroativo(List<Produto> produtos, List<EstoqueHistorico> historico, DateTime dataAlvo) {
+    debugPrint('>>> [InventoryExport] Gerando inventário retroativo (${DateFormat('dd/MM/yyyy').format(dataAlvo)}) para ${produtos.length} produtos...');
+    
+    try {
+      var excel = Excel.createExcel();
+      String sheetName = excel.sheets.keys.first;
+      
+      final headers = [
+        'CÓDIGO', 'DESCRIÇÃO', 'UNID', 'QUANT. RETROATIVA', 'CUSTO UNITÁRIO', 'CUSTO TOTAL'
+      ];
+
+      for (int i = 0; i < headers.length; i++) {
+        excel.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: i, rowIndex: 0), headers[i]);
+      }
+
+      double somaTotal = 0;
+
+      for (int i = 0; i < produtos.length; i++) {
+        final p = produtos[i];
+        final r = i + 1;
+        
+        // RECONSTRUÇÃO DO ESTOQUE
+        // Estoque na data = Estoque Atual - (Entradas após data) + (Saídas após data)
+        double qtyCalculada = p.estoque.toDouble();
+        
+        final movimentosDepois = historico.where((h) => h.produtoId == p.id && h.data.isAfter(dataAlvo));
+        for (final m in movimentosDepois) {
+          if (m.tipo == 'entrada') {
+            qtyCalculada -= m.quantidade;
+          } else if (m.tipo == 'saida' || m.tipo == 'venda') {
+            qtyCalculada += m.quantidade;
+          }
+        }
+
+        if (qtyCalculada <= 0) {
+          excel.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: r), _fix(p.codigo));
+          excel.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: r), _fix(p.nome));
+          excel.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 2, rowIndex: r), _fix(p.unidade));
+          excel.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 3, rowIndex: r), 0);
+          excel.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 4, rowIndex: r), p.precoCusto ?? 0.0);
+          excel.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 5, rowIndex: r), 0);
+          continue; 
+        }
+        
+        final custo = p.precoCusto ?? 0.0;
+        final total = qtyCalculada * custo;
+        somaTotal += total;
+
+        excel.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: r), _fix(p.codigo));
+        excel.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: r), _fix(p.nome));
+        excel.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 2, rowIndex: r), _fix(p.unidade));
+        excel.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 3, rowIndex: r), qtyCalculada);
+        excel.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 4, rowIndex: r), custo);
+        excel.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 5, rowIndex: r), total);
+      }
+
+      final footerRow = produtos.length + 2;
+      excel.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 3, rowIndex: footerRow), 'INVENTÁRIO EM: ${DateFormat('dd/MM/yyyy').format(dataAlvo)}');
+      excel.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 4, rowIndex: footerRow), 'TOTAL GERAL:');
+      excel.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 5, rowIndex: footerRow), somaTotal);
+
+      final bytes = excel.encode();
+      if (bytes != null && kIsWeb) {
+        final dataStr = DateFormat('yyyyMMdd').format(dataAlvo);
+        downloadBytes(bytes, "inventario_estoque_retroativo_$dataStr.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      }
+    } catch (e) {
+      debugPrint('>>> [InventoryExport] ❌ ERRO RETROATIVO: $e');
       rethrow;
     }
   }

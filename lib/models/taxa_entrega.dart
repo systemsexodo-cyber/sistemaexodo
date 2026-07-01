@@ -22,7 +22,9 @@ class TaxaEntrega {
     return TaxaEntrega(
       id: map['id'] ?? '',
       bairro: map['bairro'] ?? '',
-      valor: (map['valor'] ?? 0.0).toDouble(),
+      valor: map['valor'] is num 
+          ? (map['valor'] as num).toDouble() 
+          : double.tryParse(map['valor']?.toString() ?? '0') ?? 0.0,
       cidade: map['cidade'],
       ativo: map['ativo'] ?? true,
       createdAt: map['createdAt'] != null

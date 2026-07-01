@@ -1,5 +1,30 @@
+import os
 import sys
 import multiprocessing
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Garantir que o módulo tempfile está disponível (correção para PyInstaller)
+# ═══════════════════════════════════════════════════════════════════════════════
+try:
+    import tempfile
+    import uuid as _uuid
+    # Garantir que os atributos essenciais estão disponíveis
+    if not hasattr(tempfile, 'gettempdir'):
+        tempfile.gettempdir = lambda: os.environ.get('TEMP', 'C:/temp')
+    if not hasattr(tempfile, 'NamedTemporaryFile'):
+        # Implementação alternativa para NamedTemporaryFile
+        def _named_temp_file(delete=True, suffix='', prefix='tmp', dir=None):
+            import uuid as __uuid
+            if dir is None:
+                dir = os.environ.get('TEMP', 'C:/temp')
+            name = os.path.join(dir, f"{prefix}{__uuid.uuid4().hex}{suffix}")
+            f = open(name, 'w+b')
+            f.name = name
+            return f
+        tempfile.NamedTemporaryFile = _named_temp_file
+except Exception as e:
+    print(f"[AVISO] Erro ao configurar tempfile: {e}")
+# ═══════════════════════════════════════════════════════════════════════════════
 
 # Suporte crítico para PyInstaller + Windows
 if __name__ == '__main__':
@@ -102,9 +127,32 @@ from fastapi import FastAPI, HTTPException, Request, Header, Depends
 from pydantic import BaseModel
 from typing import List, Optional
 from fastapi.middleware.cors import CORSMiddleware
-from nfce_handler import emitir_nfce_pynfe
-import firebase_admin
-from firebase_admin import credentials, firestore
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Importação do nfce_handler com tratamento de erro detalhado
+# ═══════════════════════════════════════════════════════════════════════════════
+try:
+    from nfce_handler import emitir_nfce_pynfe
+    print("[OK] nfce_handler importado com sucesso!")
+except Exception as e:
+    import traceback
+    print(f"[ERRO CRÍTICO] Falha ao importar nfce_handler: {e}")
+    print(f"[ERRO CRÍTICO] Traceback:\n{traceback.format_exc()}")
+    # Criar uma função placeholder que retorna o erro
+    def emitir_nfce_pynfe(req):
+        raise HTTPException(status_code=500, detail=f"Erro na importação do nfce_handler: {e}")
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Firebase é opcional — importado apenas se as credenciais existirem
+try:
+    import firebase_admin
+    from firebase_admin import credentials, firestore
+    FIREBASE_SDK_DISPONIVEL = True
+except ImportError:
+    FIREBASE_SDK_DISPONIVEL = False
+    firebase_admin = None
+    credentials = None
+    firestore = None
 
 app = FastAPI(title="Ponte de Emissão NFC-e Exodo")
 
@@ -189,7 +237,7 @@ def load_identity():
     except: pass
 
 # --- GLOBAIS ---
-BRIDGE_VERSION = "3.4.6"
+BRIDGE_VERSION = "3.5.1"
 
 # Custom encoder for Firestore objects
 def json_serial(obj):
@@ -223,7 +271,10 @@ async def emitir_nfce_endpoint(req: RequisicaoEmissao):
         import traceback
         tb = traceback.format_exc()
         print(f"[HTTP ERRO EMISSAO] {e}\n{tb}")
-        raise HTTPException(status_code=500, detail=str(e))
+        # Salvar no log
+        import logging
+        logging.error(f"[HTTP ERRO EMISSAO] {e}\n{tb}")
+        raise HTTPException(status_code=500, detail=f"{str(e)}\n\nTraceback:\n{tb}")
 
 @app.post("/api/nfce/cancelar")
 async def cancelar_nfce_endpoint(req: Request):
@@ -629,6 +680,7 @@ def _iniciar_listeners(db):
         def _watchdog_loop():
             import time as _time
             nonlocal nfce_watch, cmd_watch
+            global LAST_HEARTBEAT_TS
             
             error_count = 0
             while FIREBASE_ACTIVE:
@@ -714,38 +766,36 @@ def _registrar_heartbeat(db):
             FIREBASE_STATUS_MSG = f"🔴 Offline: {err_msg[:20]}..."
         if not IS_CLOUD: update_tray_menu()
 
-FIREBASE_STATUS_MSG = "🟠 Conectando..."
+FIREBASE_STATUS_MSG = "🔵 Modo Local (HTTP)"
 
 def update_tray_menu():
-    import pystray # Dependência opcional para tray
+    import pystray
     global GLOBAL_TRAY_ICON, FIREBASE_STATUS_MSG, LAST_PROCESSED_COMPANY
     if not GLOBAL_TRAY_ICON or IS_CLOUD: return
-    
+
     empresa_nome = LAST_PROCESSED_COMPANY.get('nome') or "Nenhuma"
     cnpj = LAST_PROCESSED_COMPANY.get('cnpj') or "Aguardando..."
-    
-    # Atualizar Ícone baseado no Status
+
+    # Ícone: verde = local OK, laranja = aguardando, vermelho = erro
     try:
         from PIL import Image
         meipass = getattr(sys, '_MEIPASS', None)
         base_path = get_base_path()
-        
-        icon_name = "icon_orange.ico"
-        if "Conectado" in FIREBASE_STATUS_MSG:
+
+        if FIREBASE_ACTIVE:
             icon_name = "icon_green.ico"
-        elif "Offline" in FIREBASE_STATUS_MSG or "Erro" in FIREBASE_STATUS_MSG:
+        elif "Erro" in FIREBASE_STATUS_MSG or "Offline" in FIREBASE_STATUS_MSG:
             icon_name = "icon_red.ico"
-            
+        else:
+            icon_name = "icon_orange.ico"
+
         full_path = None
-        # Busca no MEIPASS primeiro
         if meipass:
             p = os.path.join(meipass, icon_name)
             if os.path.exists(p): full_path = p
-            
         if not full_path:
             p = os.path.join(base_path, icon_name)
             if os.path.exists(p): full_path = p
-            
         if full_path:
             GLOBAL_TRAY_ICON.icon = Image.open(full_path)
     except: pass
@@ -754,20 +804,21 @@ def update_tray_menu():
         icon.stop()
         os._exit(0)
 
+    firebase_linha = f"Firebase: {FIREBASE_STATUS_MSG}" if FIREBASE_ACTIVE else "Firebase: Modo Local"
+
     menu_items = [
-        pystray.MenuItem(f"Versão: {BRIDGE_VERSION}", lambda: None, enabled=False),
-        pystray.MenuItem(f"Firebase: {FIREBASE_STATUS_MSG}", lambda: None, enabled=False),
+        pystray.MenuItem(f"Exodo Bridge v{BRIDGE_VERSION}", lambda: None, enabled=False),
+        pystray.MenuItem(f"🌐 HTTP Local: Porta 8000 ✅", lambda: None, enabled=False),
+        pystray.MenuItem(firebase_linha, lambda: None, enabled=False),
         pystray.Menu.SEPARATOR,
-        pystray.MenuItem(f"Exodo Bridge: {empresa_nome}", lambda: None, enabled=False),
+        pystray.MenuItem(f"Empresa: {empresa_nome}", lambda: None, enabled=False),
         pystray.MenuItem(f"CNPJ: {cnpj}", lambda: None, enabled=False),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Reiniciar Serviço", lambda icon, item: restart_action_silent()),
         pystray.MenuItem("Sair", lambda icon, item: quit_app(icon))
     ]
     GLOBAL_TRAY_ICON.menu = pystray.Menu(*menu_items)
-    
-    status_icon = "Ativo" if "Conectado" in FIREBASE_STATUS_MSG else "Falha"
-    GLOBAL_TRAY_ICON.title = f"Exodo Bridge v{BRIDGE_VERSION} - ({status_icon})"
+    GLOBAL_TRAY_ICON.title = f"Exodo Bridge v{BRIDGE_VERSION} — Local OK"
 
 def update_local_status():
     if getattr(sys, 'frozen', False):
@@ -933,13 +984,15 @@ def setup_tray():
 
 def run_server():
     try:
-        log_message("Iniciando Uvicorn...")
-        # log_config=None usa o padrão do uvicorn, o que evita erros de formatação no PyInstaller
+        log_message("Iniciando Uvicorn na porta 8000...")
         uvicorn.run(app, host="0.0.0.0", port=8000, log_config=None, reload=False, workers=1)
+    except OSError as e:
+        if 'address already in use' in str(e).lower() or '10048' in str(e):
+            log_message("Porta 8000 já em uso — outra instância rodando?", "WARN")
+        else:
+            log_message(f"ERRO CRÍTICO NO SERVIDOR HTTP: {e}", "ERROR")
     except Exception as e:
         log_message(f"ERRO CRÍTICO NO SERVIDOR HTTP: {e}", "ERROR")
-        # Se falhar a porta 8000, o sistema continuará funcionando via Firebase
-        # Não encerramos o app aqui.
 
 GLOBAL_TRAY_ICON = None
 
@@ -950,24 +1003,68 @@ def notify_user(title, message):
     except Exception as e:
         print(f"Erro notificação: {e}")
 
+def kill_zombies():
+    """Mata instâncias antigas do Bridge para evitar conflito de porta."""
+    if not IS_WINDOWS:
+        return
+    try:
+        current_pid = os.getpid()
+        current_exe = os.path.basename(sys.executable) if getattr(sys, 'frozen', False) else None
+        if not current_exe:
+            return
+        # Matar processos com o mesmo nome, exceto o processo atual
+        result = subprocess.run(
+            ['tasklist', '/FI', f'IMAGENAME eq {current_exe}', '/FO', 'CSV', '/NH'],
+            capture_output=True, text=True, creationflags=0x08000000
+        )
+        for line in result.stdout.splitlines():
+            try:
+                parts = line.strip('"').split('","')
+                if len(parts) >= 2:
+                    pid = int(parts[1])
+                    if pid != current_pid:
+                        subprocess.run(['taskkill', '/F', '/PID', str(pid)],
+                                       capture_output=True, creationflags=0x08000000)
+                        log_message(f"[CLEANUP] Processo zombie eliminado: PID {pid}")
+            except (ValueError, IndexError):
+                pass
+    except Exception as e:
+        log_message(f"[CLEANUP] Erro ao limpar zumbis: {e}", "WARN")
+
 def run_background_tasks():
-    """Roda as tarefas pesadas (Firebase, Servidor, Instalação, Cleanup) em segundo plano."""
+    """Roda as tarefas pesadas (Servidor HTTP, Firebase opcional, Instalação, Cleanup) em segundo plano."""
     try:
         # 1. Limpeza de processos antigos (Zumbis)
-        # Rodamos aqui para o ícone sumir das instâncias velhas enquanto este sobe
         if getattr(sys, 'frozen', False):
             kill_zombies()
 
         # 2. Configurações de sistema (Auto-start)
         if getattr(sys, 'frozen', False):
             self_install()
-            
-        # 3. Iniciar Firebase (Conexão de rede)
-        log_message("Conectando ao Firebase em segundo plano...")
-        start_firebase_listener()
-        
-        # 4. Iniciar Servidor HTTP
-        run_server()
+
+        # 3. Iniciar Servidor HTTP LOCAL (SEMPRE — mesmo sem Firebase)
+        log_message("Iniciando servidor HTTP local (porta 8000)...")
+        # Rodar em thread separada para não bloquear Firebase
+        http_thread = threading.Thread(target=run_server, daemon=True, name="UvicornThread")
+        http_thread.start()
+
+        # 4. Atualizar bandeja para mostrar servidor ativo
+        import time as _t
+        _t.sleep(1.5)  # Dar tempo para o Uvicorn subir
+        update_tray_menu()
+
+        # 5. Tentar Firebase opcionalmente (não trava se falhar)
+        if FIREBASE_SDK_DISPONIVEL:
+            log_message("Tentando conectar ao Firebase (opcional)...")
+            try:
+                start_firebase_listener()
+            except Exception as fe:
+                log_message(f"Firebase não disponível (modo local apenas): {fe}", "WARN")
+        else:
+            log_message("Firebase SDK não instalado — modo 100% local ativo.", "INFO")
+
+        # 6. Aguardar o thread HTTP (mantém o bg_thread vivo)
+        http_thread.join()
     except Exception as e:
         log_message(f"Erro nas tarefas de background: {e}", "ERROR")
 

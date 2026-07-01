@@ -5,7 +5,7 @@ import 'package:googleapis/drive/v3.dart' as drive;
 import 'package:googleapis_auth/googleapis_auth.dart' as auth;
 import 'package:googleapis_auth/auth_io.dart' as auth_io;
 import 'package:http/http.dart' as http;
-import 'firebase_service.dart';
+import 'supabase_service.dart';
 import '../models/empresa.dart';
 
 import 'dart:io';
@@ -72,10 +72,7 @@ class GoogleDriveService {
       final baseDir = Directory.current.path;
       final paths = [
         p.join(baseDir, 'gdrive_service_account.json'),
-        p.join(baseDir, 'firebase-credentials.json'),
-        p.join(baseDir, 'backend_nfce', 'firebase-credentials.json'),
         'gdrive_service_account.json',
-        'firebase-credentials.json',
       ];
 
       File? file;
@@ -313,8 +310,8 @@ class GoogleDriveService {
       try {
          final fixa = await _driveApi!.files.get(folderIdFixa) as drive.File;
          if (fixa.id != null) {
-           debugPrint('>>> [GoogleDrive] ✅ Usando pasta raiz fixa: ${fixa.name}');
-           return fixa.id;
+            debugPrint('>>> [GoogleDrive] ✅ Usando pasta raiz fixa: ${fixa.name}');
+            return fixa.id;
          }
       } catch (e) {
          debugPrint('>>> [GoogleDrive] Pasta fixa não encontrada ou sem acesso, buscando por nome...');
@@ -354,8 +351,10 @@ class GoogleDriveService {
       final parentFolderId = await _getOrCreateBackupFolder();
       if (parentFolderId == null) return {'sucesso': false, 'mensagem': 'Não foi possível acessar a pasta de backup'};
 
-      // 1. Obter todas as empresas
-      final empresas = await FirebaseService.instance.carregarEmpresas();
+      // 1. Obter todas as empresas via Supabase
+      final empresasResults = await SupabaseService.instance.select('empresas');
+      final empresas = empresasResults.map((e) => Empresa.fromMap(e)).toList();
+      
       if (empresas.isEmpty) return {'sucesso': false, 'mensagem': 'Nenhuma empresa encontrada'};
 
       // 2. Pasta para o backup atual (por data)
@@ -372,7 +371,7 @@ class GoogleDriveService {
 
       // 3. Salvar um índice do backup para facilitar a restauração
       final String indexFileName = 'INDEX_BACKUP_$timestamp.txt';
-      final String indexContent = 'Backup realizado em: ${DateTime.now().toLocal()}\nEmpresas: ${empresas.map((e) => e.nomeExibicao).join(", ")}';
+      final String indexContent = 'Backup realizado via Supabase em: ${DateTime.now().toLocal()}\nEmpresas: ${empresas.map((e) => e.nomeExibicao).join(", ")}';
       await salvarArquivo(
         nomeArquivo: indexFileName,
         conteudo: indexContent,
@@ -387,9 +386,15 @@ class GoogleDriveService {
         try {
           debugPrint('>>> [GoogleDrive] Exportando dados da empresa: ${empresa.nomeExibicao} (${empresa.id})');
           
-          // Carregar todos os dados do Firebase para esta empresa
-          final resultadoFirebase = await FirebaseService.instance.carregarTudoDoFirebase(empresa.id);
-          final dados = resultadoFirebase['data'] ?? resultadoFirebase; // Pega apenas os dados, ignora snapshots
+          // Carregar todos os dados do Supabase para esta empresa (Simulação para backup GDrive)
+          // Em Supabase, exportamos as tabelas principais
+          final tabelas = ['produtos', 'clientes', 'vendas_balcao', 'pedidos', 'agendamentos_servico'];
+          final Map<String, dynamic> dados = {};
+          
+          for (final tabela in tabelas) {
+            final res = await SupabaseService.instance.select(tabela, filters: {'empresa_id': empresa.id});
+            dados[tabela] = res;
+          }
           
           final jsonString = jsonEncode({
             'empresa': empresa.toMap(),
@@ -462,25 +467,24 @@ class GoogleDriveService {
 
       debugPrint('>>> [GoogleDrive] 🔄 Restaurando dados para empresa: ${empresaMap['nomeExibicao']}');
 
-      // Restaurar Empresa
+      // Restaurar Empresa via Supabase
       final Empresa empresa = Empresa.fromMap(empresaMap);
-      await FirebaseService.instance.salvarEmpresa(empresa);
+      await SupabaseService.instance.upsert('empresas', empresa.toMap());
 
       // Restaurar cada subcoleção de dados
       int totalRestaurado = 0;
       for (var entry in dadosMap.entries) {
-        final String colecao = entry.key;
+        final String tabela = entry.key;
         final List<dynamic> itens = entry.value;
 
         if (itens.isEmpty) continue;
 
-        debugPrint('>>> [GoogleDrive] 📦 Restaurando $colecao (${itens.length} itens)...');
+        debugPrint('>>> [GoogleDrive] 📦 Restaurando $tabela (${itens.length} itens)...');
 
-        // IMPORTANTE: O FirebaseService.salvarTudoNoFirebase espera listas de OBJETOS.
-        // Como o backup tem Maps, precisamos de um método no FirebaseService 
-        // que aceite Maps ou converter de volta. 
-        // Para ser seguro e rápido, usaremos uma nova função em lotes de Map.
-        await FirebaseService.instance.restaurarDadosEmLote(empresaId, colecao, itens);
+        // Upsert em lote via Supabase
+        for (final item in itens) {
+          await SupabaseService.instance.upsert(tabela, item as Map<String, dynamic>);
+        }
         totalRestaurado += itens.length;
       }
 

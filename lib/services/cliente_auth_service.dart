@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/cliente.dart';
 import 'local_storage_service.dart';
-import 'firebase_service.dart';
+import 'supabase_service.dart';
 import 'data_service.dart';
 
 /// Serviço de autenticação para clientes do e-commerce
@@ -255,9 +255,9 @@ class ClienteAuthService extends ChangeNotifier {
       // Salvar no localStorage
       await _storage.salvar('cliente_ecommerce_atual', _clienteAtual!.toMap());
 
-      // Tentar salvar no Firebase (não bloqueante)
-      _salvarClienteNoFirebase(_clienteAtual!).catchError((e) {
-        debugPrint('>>> [ClienteAuthService] Erro ao salvar no Firebase: $e');
+      // Tentar salvar no Supabase (não bloqueante)
+      _salvarClienteNoSupabase(_clienteAtual!).catchError((e) {
+        debugPrint('>>> [ClienteAuthService] Erro ao salvar no Supabase: $e');
       });
 
       _isLoading = false;
@@ -271,17 +271,17 @@ class ClienteAuthService extends ChangeNotifier {
     }
   }
 
-  /// Salva cliente no Firebase (não bloqueante)
-  Future<void> _salvarClienteNoFirebase(Cliente cliente) async {
+  /// Salva cliente no Supabase (não bloqueante)
+  Future<void> _salvarClienteNoSupabase(Cliente cliente) async {
     try {
-      if (!FirebaseService.isAvailable) return;
+      if (!SupabaseService.isAvailable) return;
 
-      // Salvar cliente via FirebaseService
-      await FirebaseService.instance.salvarCliente('ecommerce', cliente);
+      // Salvar cliente via SupabaseService
+      await SupabaseService.instance.upsert(SupabaseService.tableClientes, cliente.toMap());
       
-      debugPrint('>>> [ClienteAuthService] Cliente salvo no Firebase');
+      debugPrint('>>> [ClienteAuthService] Cliente salvo no Supabase');
     } catch (e) {
-      debugPrint('>>> [ClienteAuthService] Erro ao salvar no Firebase: $e');
+      debugPrint('>>> [ClienteAuthService] Erro ao salvar no Supabase: $e');
     }
   }
 
@@ -302,9 +302,9 @@ class ClienteAuthService extends ChangeNotifier {
       _clienteAtual = clienteAtualizado;
       await _storage.salvar('cliente_ecommerce_atual', clienteAtualizado.toMap());
 
-      // Tentar salvar no Firebase
-      _salvarClienteNoFirebase(clienteAtualizado).catchError((e) {
-        debugPrint('>>> [ClienteAuthService] Erro ao atualizar no Firebase: $e');
+      // Tentar salvar no Supabase
+      _salvarClienteNoSupabase(clienteAtualizado).catchError((e) {
+        debugPrint('>>> [ClienteAuthService] Erro ao atualizar no Supabase: $e');
       });
 
       notifyListeners();

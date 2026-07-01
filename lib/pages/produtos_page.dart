@@ -28,6 +28,7 @@ class _ProdutosPageState extends State<ProdutosPage> {
   String _busca = '';
   final _buscaController = TextEditingController();
   SortOption _sortOption = SortOption.codigo;
+  int _selectedIndex = -1; // Índice para navegação por teclado
 
   // Para edição rápida
   String? _editandoId;
@@ -44,10 +45,22 @@ class _ProdutosPageState extends State<ProdutosPage> {
   bool _modoSelecao = false;
 
   // ==================== PAGINAÇÃO INTELIGENTE ====================
-  static const int _itensPorPagina = 20; // Quantidade por vez
-  int _itensVisiveis = 20; // Total visível atual
+  static const int _itensPorPagina = 50; // Aumentado para 50 para reduzir rebuilds ao rolar
+  int _itensVisiveis = 200; // Aumentado de 50 para 200 para carregar um catálogo maior inicialmente
   final ScrollController _scrollController = ScrollController();
   bool _carregando = false;
+  final NumberFormat _formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+  
+  // Cache de resultados filtrados para performance
+  List<Produto> _cacheFiltrados = [];
+  String _cacheBusca = "";
+  int? _cacheEstoque;
+  String? _cacheGrupo;
+  String? _cacheUnidade;
+  SortOption _cacheSort = SortOption.codigo;
+  int _cacheTotalService = 0;
+  // Hash baseado no updatedAt do produto mais recente — invalida cache após qualquer edição
+  int _cacheUpdateHash = 0;
 
 
   @override
@@ -94,8 +107,33 @@ class _ProdutosPageState extends State<ProdutosPage> {
   // Reset paginação quando busca/filtro muda
   void _resetPaginacao() {
     _itensVisiveis = _itensPorPagina;
+    _selectedIndex = -1; // Reseta seleção ao filtrar
     if (_scrollController.hasClients) {
       _scrollController.jumpTo(0);
+    }
+  }
+
+  void _scrollToSelectedIndex() {
+    if (!_scrollController.hasClients || _selectedIndex < 0) return;
+
+    const double itemHeight = 110.0; // Altura calibrada para o cadastro
+    final scrollPosition = _selectedIndex * itemHeight;
+    final viewportHeight = _scrollController.position.viewportDimension;
+    final currentOffset = _scrollController.offset;
+
+    // Se o item estiver fora da visão ou muito perto da borda (margem 10px)
+    const margin = 10.0;
+    if (scrollPosition < (currentOffset + margin) || 
+        (scrollPosition + itemHeight) > (currentOffset + viewportHeight - margin)) {
+      
+      final targetScroll = (scrollPosition - (viewportHeight / 2) + (itemHeight / 2))
+          .clamp(0.0, _scrollController.position.maxScrollExtent);
+          
+      _scrollController.animateTo(
+        targetScroll,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOutQuart,
+      );
     }
   }
 
@@ -114,7 +152,7 @@ class _ProdutosPageState extends State<ProdutosPage> {
         double.tryParse(_precoController.text.replaceAll(',', '.')) ??
         produto.preco;
     final novoEstoque =
-        int.tryParse(_estoqueController.text) ?? produto.estoque;
+        double.tryParse(_estoqueController.text.replaceAll(',', '.')) ?? produto.estoque;
 
     // Usar copyWith para preservar TODOS os campos, incluindo e-commerce
     final produtoAtualizado = produto.copyWith(
@@ -142,6 +180,47 @@ class _ProdutosPageState extends State<ProdutosPage> {
     setState(() {
       _editandoId = null;
     });
+  }
+
+  void _gerarInventario({required bool isRetroativo, DateTime? dataAlvo}) {
+    final service = Provider.of<DataService>(context, listen: false);
+    try {
+      debugPrint('>>> [ProdutosPage] Gerando inventário (Retroativo: $isRetroativo)...');
+      
+      // Pegar todos os produtos para garantir o inventário completo
+      final todosProdutos = service.produtos;
+      
+      if (todosProdutos.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Nenhum produto cadastrado para o inventário')),
+        );
+        return;
+      }
+
+      if (isRetroativo && dataAlvo != null) {
+        // Enviar os produtos e o histórico completo para a reconstrução lógica
+        ExcelExportService.exportarInventarioRetroativo(todosProdutos, service.estoqueHistorico, dataAlvo);
+      } else {
+        // Inventário atual (apenas produtos ativos com estoque > 0)
+        final ativos = todosProdutos.where((p) => p.estoque > 0).toList();
+        ExcelExportService.exportarInventarioContabilidade(ativos);
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('✓ Inventário ${isRetroativo ? "Retroativo" : "Atual"} exportado! Verifique a pasta DOWNLOADS'),
+          backgroundColor: isRetroativo ? Colors.amber.shade800 : Colors.amber,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('❌ Erro no inventário: $e'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    }
   }
   
   void _copiarDescricao(Produto produto) {
@@ -189,12 +268,17 @@ class _ProdutosPageState extends State<ProdutosPage> {
           ),
           child: produto_form.ProdutoServicoForm(
             item: produto,
-            onSave: (newProduto) {
+            onSave: (newProduto) async {
               final service = Provider.of<DataService>(context, listen: false);
               if (produto == null || isClone) {
-                service.addProduto(newProduto);
+                await service.addProduto(newProduto);
               } else {
-                service.updateProduto(newProduto);
+                await service.updateProduto(newProduto);
+              }
+              // Invalidar cache após salvar
+              if (mounted) {
+                setState(() {});
+                Navigator.pop(context);
               }
             },
           ),
@@ -208,83 +292,109 @@ class _ProdutosPageState extends State<ProdutosPage> {
     // Usar listen: true para atualizar automaticamente quando os dados mudarem
     final service = Provider.of<DataService>(context, listen: true);
 
-    // Filtrar produtos baseado na busca e estoque
-    List<Produto> produtosFiltrados = service.produtos.where((p) {
-      // 1. Filtro de estoque
-      if (_filtroEstoque != null && p.estoque >= _filtroEstoque!) {
-        return false;
-      }
+    // Hash para detectar edições de preço/estoque (updatedAt do produto mais recente)
+    final currentUpdateHash = service.produtos.isEmpty
+        ? 0
+        : service.produtos
+            .map((p) => p.updatedAt?.millisecondsSinceEpoch ?? p.createdAt?.millisecondsSinceEpoch ?? 0)
+            .reduce((a, b) => a > b ? a : b);
+
+    // Lógica de cache para evitar re-filtrar e re-ordenar 6 mil itens em cada frame
+    if (_cacheFiltrados.isEmpty || 
+        _cacheBusca != _busca || 
+        _cacheEstoque != _filtroEstoque || 
+        _cacheGrupo != _filtroGrupo || 
+        _cacheUnidade != _filtroUnidade || 
+        _cacheSort != _sortOption ||
+        _cacheTotalService != service.produtos.length ||
+        _cacheUpdateHash != currentUpdateHash) {
       
-      // 2. Filtro de grupo
-      if (_filtroGrupo != null && p.grupo != _filtroGrupo) {
+      _cacheFiltrados = service.produtos.where((p) {
+        if (_filtroEstoque != null && p.estoque >= _filtroEstoque!) return false;
+        if (_filtroGrupo != null && p.grupo != _filtroGrupo) return false;
+        if (_filtroUnidade != null && p.unidade != _filtroUnidade) return false;
+        
+        if (_busca.isEmpty) return true;
+
+        final buscaLower = _busca.toLowerCase().trim();
+        final ehNumero = RegExp(r'^[0-9]+$').hasMatch(buscaLower);
+
+        if (!ehNumero && buscaLower.length < 2) return true;
+
+        if (ehNumero && p.codigo != null) {
+          final numCodigo = p.codigo!.replaceAll(RegExp(r'[^0-9]'), '');
+          if (numCodigo == buscaLower) return true;
+          return false;
+        }
+
+        if (!ehNumero && p.codigo != null) {
+          final codigoLower = p.codigo!.toLowerCase();
+          if (codigoLower.startsWith(buscaLower)) return true;
+        }
+
+        if (!ehNumero) {
+          final palavras = p.nome
+              .toLowerCase()
+              .replaceAll(RegExp(r'[0-9]+'), ' ')
+              .replaceAll(RegExp(r'[^a-záàâãéêíóôõúç\s]'), ' ')
+              .split(RegExp(r'\s+'))
+              .where((w) => w.length >= 2)
+              .toList();
+
+          return palavras.any((palavra) => palavra.startsWith(buscaLower));
+        }
+
         return false;
-      }
-      
-      // 3. Filtro de unidade
-      if (_filtroUnidade != null && p.unidade != _filtroUnidade) {
-        return false;
-      }
+      }).toList();
 
-      if (_busca.isEmpty) return true;
+      // Ordenação
+      _cacheFiltrados.sort((a, b) {
+        switch (_sortOption) {
+          case SortOption.nome:
+            return a.nome.toLowerCase().compareTo(b.nome.toLowerCase());
+          case SortOption.recentes:
+            final dateA = a.updatedAt ?? a.createdAt ?? DateTime(2000);
+            final dateB = b.updatedAt ?? b.createdAt ?? DateTime(2000);
+            return dateB.compareTo(dateA); 
+          case SortOption.grupo:
+            final grupoCompare = a.grupo.toLowerCase().compareTo(b.grupo.toLowerCase());
+            if (grupoCompare != 0) return grupoCompare;
+            return a.nome.toLowerCase().compareTo(b.nome.toLowerCase());
+          case SortOption.unidade:
+            final unidadeCompare = a.unidade.toLowerCase().compareTo(b.unidade.toLowerCase());
+            if (unidadeCompare != 0) return unidadeCompare;
+            return a.nome.toLowerCase().compareTo(b.nome.toLowerCase());
+          case SortOption.codigo:
+          default:
+            final numA = int.tryParse(a.codigo?.replaceAll(RegExp(r'[^0-9]'), '') ?? '0') ?? 0;
+            final numB = int.tryParse(b.codigo?.replaceAll(RegExp(r'[^0-9]'), '') ?? '0') ?? 0;
+            return numA.compareTo(numB);
+        }
+      });
 
-      final buscaLower = _busca.toLowerCase().trim();
-      final ehNumero = RegExp(r'^[0-9]+$').hasMatch(buscaLower);
+      // Atualizar chaves de cache
+      _cacheBusca = _busca;
+      _cacheEstoque = _filtroEstoque;
+      _cacheGrupo = _filtroGrupo;
+      _cacheUnidade = _filtroUnidade;
+      _cacheSort = _sortOption;
+      _cacheTotalService = service.produtos.length;
+      _cacheUpdateHash = currentUpdateHash;
+    }
 
-      if (!ehNumero && buscaLower.length < 2) return true;
-
-      if (ehNumero && p.codigo != null) {
-        final numCodigo = p.codigo!.replaceAll(RegExp(r'[^0-9]'), '');
-        if (numCodigo == buscaLower) return true;
-        return false;
-      }
-
-      if (!ehNumero && p.codigo != null) {
-        final codigoLower = p.codigo!.toLowerCase();
-        if (codigoLower.startsWith(buscaLower)) return true;
-      }
-
-      if (!ehNumero) {
-        final palavras = p.nome
-            .toLowerCase()
-            .replaceAll(RegExp(r'[0-9]+'), ' ')
-            .replaceAll(RegExp(r'[^a-záàâãéêíóôõúç\s]'), ' ')
-            .split(RegExp(r'\s+'))
-            .where((w) => w.length >= 2)
-            .toList();
-
-        return palavras.any((palavra) => palavra.startsWith(buscaLower));
-      }
-
-      return false;
-    }).toList()..sort((a, b) {
-      switch (_sortOption) {
-        case SortOption.nome:
-          return a.nome.toLowerCase().compareTo(b.nome.toLowerCase());
-        case SortOption.recentes:
-          final dateA = a.updatedAt ?? a.createdAt ?? DateTime(2000);
-          final dateB = b.updatedAt ?? b.createdAt ?? DateTime(2000);
-          return dateB.compareTo(dateA); // Do mais novo para o mais antigo
-        case SortOption.grupo:
-          final grupoCompare = a.grupo.toLowerCase().compareTo(b.grupo.toLowerCase());
-          if (grupoCompare != 0) return grupoCompare;
-          return a.nome.toLowerCase().compareTo(b.nome.toLowerCase());
-        case SortOption.unidade:
-          final unidadeCompare = a.unidade.toLowerCase().compareTo(b.unidade.toLowerCase());
-          if (unidadeCompare != 0) return unidadeCompare;
-          return a.nome.toLowerCase().compareTo(b.nome.toLowerCase());
-        case SortOption.codigo:
-        default:
-          final numA = int.tryParse(a.codigo?.replaceAll(RegExp(r'[^0-9]'), '') ?? '0') ?? 0;
-          final numB = int.tryParse(b.codigo?.replaceAll(RegExp(r'[^0-9]'), '') ?? '0') ?? 0;
-          return numA.compareTo(numB);
-      }
-    });
+    final produtosFiltrados = _cacheFiltrados;
 
     return AppTheme.appBackground(
       child: Scaffold(
         appBar: CustomAppBar(
-          title: 'Produtos',
+          title: 'Produtos • ${service.empresaAtual?.nomeExibicao ?? 'Catálogo'}',
           actions: [
+            // Botão Sincronizar e Diagnóstico
+            IconButton(
+              icon: const Icon(Icons.sync_rounded, color: Colors.blueAccent),
+              tooltip: 'Diagnóstico e Sincronização',
+              onPressed: () => _showSyncDiagnostics(context, service),
+            ),
             // Modo Seleção / Edição em Massa
             IconButton(
               icon: Icon(
@@ -433,6 +543,56 @@ class _ProdutosPageState extends State<ProdutosPage> {
                 },
               ),
             ),
+            // Botão Inventário para Contabilidade (Novo!)
+            PermissionWidget(
+              permissao: TipoPermissao.estoqueVisualizar,
+              child: IconButton(
+                icon: const Icon(
+                  Icons.account_balance_rounded,
+                  color: Colors.amberAccent,
+                ),
+                tooltip: 'Inventário p/ Contabilidade (Custo)',
+                onPressed: () {
+                  showDialog(
+                    context: context,
+                    builder: (context) => AlertDialog(
+                      backgroundColor: const Color(0xFF1E1E2E),
+                      title: const Text('Gerar Inventário', style: TextStyle(color: Colors.white)),
+                      content: const Text(
+                        'Escolha o tipo de inventário que deseja gerar para a contabilidade:',
+                        style: TextStyle(color: Colors.white70),
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () {
+                            Navigator.pop(context);
+                            _gerarInventario(isRetroativo: false);
+                          },
+                          child: const Text('ESTOQUE ATUAL'),
+                        ),
+                        ElevatedButton(
+                          onPressed: () async {
+                            Navigator.pop(context);
+                            final data = await showDatePicker(
+                              context: context,
+                              initialDate: DateTime(DateTime.now().year - 1, 12, 31),
+                              firstDate: DateTime(2023),
+                              lastDate: DateTime.now(),
+                              helpText: 'Selecione a data do inventário retroativo',
+                            );
+                            if (data != null) {
+                              _gerarInventario(isRetroativo: true, dataAlvo: data);
+                            }
+                          },
+                          style: ElevatedButton.styleFrom(backgroundColor: Colors.amber.shade700),
+                          child: const Text('ESTOQUE RETROATIVO'),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
             // Botão Exportar Excel
             PermissionWidget(
               permissao: TipoPermissao.estoqueVisualizar,
@@ -516,6 +676,35 @@ class _ProdutosPageState extends State<ProdutosPage> {
               child: Row(
                 children: [
                   Icon(Icons.search, color: Colors.white.withOpacity(0.6), size: 22),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.blueAccent.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: Colors.blueAccent.withOpacity(0.4)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.inventory_2_outlined, color: Colors.blueAccent.withOpacity(0.8), size: 14),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Total: ${service.produtos.length}',
+                          style: const TextStyle(color: Colors.blueAccent, fontSize: 13, fontWeight: FontWeight.bold),
+                        ),
+                        if (produtosFiltrados.length < service.produtos.length) ...[
+                          const SizedBox(width: 6),
+                          Container(width: 1, height: 12, color: Colors.blueAccent.withOpacity(0.3)),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Filtrados: ${produtosFiltrados.length}',
+                            style: TextStyle(color: Colors.blueAccent.withOpacity(0.7), fontSize: 12),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
                   const SizedBox(width: 12),
                   Expanded(
                     child: TextField(
@@ -673,81 +862,151 @@ class _ProdutosPageState extends State<ProdutosPage> {
                         ),
                       ),
                     )
-                  : ListView.separated(
-                      controller: _scrollController,
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                      itemCount: _itensVisiveis > produtosFiltrados.length 
-                          ? produtosFiltrados.length 
-                          : _itensVisiveis,
-                      separatorBuilder: (_, __) => const SizedBox(height: 4),
-                      itemBuilder: (context, index) {
-                        final produto = produtosFiltrados[index];
-                        final estaEditando = _editandoId == produto.id;
-                        final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
-                        final estoqueBaixo = produto.estoque < 10;
+                  : Focus(
+                        autofocus: true,
+                        onKeyEvent: (node, event) {
+                          if (event is KeyDownEvent) {
+                            final maxItems = _itensVisiveis > produtosFiltrados.length 
+                                ? produtosFiltrados.length 
+                                : _itensVisiveis;
 
-                        if (estaEditando) {
-                          return _buildEdicaoRapida(produto);
-                        }
-
-                        return Container(
-                          margin: const EdgeInsets.only(bottom: 8),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.04),
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(
-                              color: Colors.white.withOpacity(0.05),
-                            ),
-                          ),
-                          child: InkWell(
-                            onTap: () {
-                              if (_modoSelecao) {
-                                setState(() {
-                                  if (_selecionados.contains(produto.id)) {
-                                    _selecionados.remove(produto.id);
-                                  } else {
-                                    _selecionados.add(produto.id);
+                            if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+                              setState(() {
+                                if (_selectedIndex < produtosFiltrados.length - 1) {
+                                  _selectedIndex++;
+                                  // Lazy loading antecipado via teclado
+                                  if (_selectedIndex >= _itensVisiveis - 5) {
+                                    _itensVisiveis += _itensPorPagina;
                                   }
-                                });
-                              } else {
-                                _iniciarEdicaoRapida(produto);
+                                }
+                              });
+                              _scrollToSelectedIndex();
+                              return KeyEventResult.handled;
+                            } else if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+                              setState(() {
+                                if (_selectedIndex > 0) _selectedIndex--;
+                              });
+                              _scrollToSelectedIndex();
+                              return KeyEventResult.handled;
+                            } else if (event.logicalKey == LogicalKeyboardKey.enter || 
+                                       event.logicalKey == LogicalKeyboardKey.numpadEnter) {
+                              if (_selectedIndex >= 0 && _selectedIndex < produtosFiltrados.length) {
+                                final p = produtosFiltrados[_selectedIndex];
+                                if (_modoSelecao) {
+                                  setState(() {
+                                    if (_selecionados.contains(p.id)) _selecionados.remove(p.id);
+                                    else _selecionados.add(p.id);
+                                  });
+                                } else {
+                                  _iniciarEdicaoRapida(p);
+                                }
                               }
-                            },
-                            onLongPress: () => _showForm(context, produto: produto),
-                            borderRadius: BorderRadius.circular(16),
-                            child: Padding(
-                              padding: const EdgeInsets.all(12),
-                              child: Row(
-                                children: [
-                                  if (_modoSelecao)
-                                    Checkbox(
-                                      value: _selecionados.contains(produto.id),
-                                      onChanged: (v) {
-                                        setState(() {
-                                          if (v == true) {
-                                            _selecionados.add(produto.id);
-                                          } else {
-                                            _selecionados.remove(produto.id);
-                                          }
-                                        });
-                                      },
-                                      activeColor: Colors.blueAccent,
-                                      side: const BorderSide(color: Colors.white24),
+                              return KeyEventResult.handled;
+                            } else if (event.logicalKey == LogicalKeyboardKey.escape) {
+                              if (_editandoId != null) {
+                                _cancelarEdicao();
+                                return KeyEventResult.handled;
+                              }
+                            }
+                          }
+                          return KeyEventResult.ignored;
+                        },
+                        child: Scrollbar(
+                          controller: _scrollController,
+                          thumbVisibility: true,
+                          thickness: 8,
+                          radius: const Radius.circular(10),
+                          child: ListView.builder(
+                            controller: _scrollController,
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                            itemCount: _itensVisiveis > produtosFiltrados.length 
+                                ? produtosFiltrados.length 
+                                : _itensVisiveis,
+                        itemBuilder: (context, index) {
+                          final produto = produtosFiltrados[index];
+                          final estaEditando = _editandoId == produto.id;
+                          final isSelected = _selectedIndex == index;
+                          final estoqueBaixo = produto.estoque < 10;
+  
+                          if (estaEditando) {
+                            return _buildEdicaoRapida(produto);
+                          }
+  
+                          return RepaintBoundary(
+                            child: Container(
+                              margin: const EdgeInsets.only(bottom: 8),
+                            decoration: BoxDecoration(
+                              color: isSelected 
+                                  ? Colors.blueAccent.withOpacity(0.15) 
+                                  : Colors.white.withOpacity(0.04),
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(
+                                color: isSelected ? Colors.blueAccent : Colors.white.withOpacity(0.05),
+                                width: isSelected ? 3 : 1,
+                              ),
+                              boxShadow: isSelected ? [
+                                BoxShadow(
+                                  color: Colors.blueAccent.withOpacity(0.5),
+                                  blurRadius: 15,
+                                  spreadRadius: 4,
+                                )
+                              ] : null,
+                            ),
+                            child: InkWell(
+                              onTap: () {
+                                setState(() {
+                                  _selectedIndex = index;
+                                });
+                                if (_modoSelecao) {
+                                  setState(() {
+                                    if (_selecionados.contains(produto.id)) {
+                                      _selecionados.remove(produto.id);
+                                    } else {
+                                      _selecionados.add(produto.id);
+                                    }
+                                  });
+                                } else {
+                                  _iniciarEdicaoRapida(produto);
+                                }
+                              },
+                              onLongPress: () => _showForm(context, produto: produto),
+                              onDoubleTap: () => _showForm(context, produto: produto),
+                              hoverColor: Colors.blueAccent.withOpacity(0.1),
+                              splashColor: Colors.blueAccent.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(16),
+                              child: Padding(
+                                padding: const EdgeInsets.all(12),
+                                child: Row(
+                                  children: [
+                                    if (_modoSelecao)
+                                      Checkbox(
+                                        value: _selecionados.contains(produto.id),
+                                        onChanged: (v) {
+                                          setState(() {
+                                            if (v == true) {
+                                              _selecionados.add(produto.id);
+                                            } else {
+                                              _selecionados.remove(produto.id);
+                                            }
+                                          });
+                                        },
+                                        activeColor: Colors.blueAccent,
+                                        side: const BorderSide(color: Colors.white24),
+                                      ),
+                                    if (_modoSelecao) const SizedBox(width: 4),
+                                    Container(
+                                      width: 52,
+                                      height: 40,
+                                      decoration: BoxDecoration(
+                                        color: Colors.blueAccent.withOpacity(0.15),
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      alignment: Alignment.center,
+                                      child: Text(
+                                        produto.codigo?.replaceAll('COD-', '') ?? '?',
+                                        style: const TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold, fontSize: 13),
+                                      ),
                                     ),
-                                  if (_modoSelecao) const SizedBox(width: 4),
-                                  Container(
-                                    width: 52,
-                                    height: 40,
-                                    decoration: BoxDecoration(
-                                      color: Colors.blueAccent.withOpacity(0.15),
-                                      borderRadius: BorderRadius.circular(10),
-                                    ),
-                                    alignment: Alignment.center,
-                                    child: Text(
-                                      produto.codigo?.replaceAll('COD-', '') ?? '?',
-                                      style: const TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold, fontSize: 13),
-                                    ),
-                                  ),
                                   const SizedBox(width: 16),
                                   Expanded(
                                     child: Column(
@@ -810,6 +1069,27 @@ class _ProdutosPageState extends State<ProdutosPage> {
                                               child: Text(produto.grupo.isEmpty ? 'GERAL' : produto.grupo.toUpperCase(),
                                                 style: const TextStyle(fontSize: 10, color: Colors.blueAccent, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
                                             ),
+                                            if (produto.enviaBalanca) ...[
+                                              const SizedBox(width: 8),
+                                              // Badge de Balança
+                                              Container(
+                                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                                decoration: BoxDecoration(
+                                                  color: Colors.tealAccent.withOpacity(0.1),
+                                                  borderRadius: BorderRadius.circular(8),
+                                                  border: Border.all(color: Colors.tealAccent.withOpacity(0.2)),
+                                                ),
+                                                child: Row(
+                                                  mainAxisSize: MainAxisSize.min,
+                                                  children: const [
+                                                    Icon(Icons.scale, size: 10, color: Colors.tealAccent),
+                                                    SizedBox(width: 4),
+                                                    Text('BALANÇA',
+                                                      style: TextStyle(fontSize: 9, color: Colors.tealAccent, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
+                                                  ],
+                                                ),
+                                              ),
+                                            ],
                                           ],
                                         ),
                                         if (produto.estoquePorFornecedor.isNotEmpty)
@@ -830,20 +1110,20 @@ class _ProdutosPageState extends State<ProdutosPage> {
                                     crossAxisAlignment: CrossAxisAlignment.end,
                                     children: [
                                       Text(
-                                        formatoMoeda.format(produto.precoAtual),
-                                        style: TextStyle(
-                                          color: const Color(0xFF00FF9D), // Verde cintilante/neon
+                                        _formatoMoeda.format(produto.precoAtual),
+                                        style: const TextStyle(
+                                          color: Color(0xFF00FF9D), // Verde cintilante/neon
                                           fontWeight: FontWeight.bold, 
                                           fontSize: 17,
+                                          // Sombras simplificadas para performance Web
                                           shadows: [
-                                            Shadow(color: const Color(0xFF00FF9D).withOpacity(0.5), blurRadius: 8),
-                                            Shadow(color: const Color(0xFF00FF9D).withOpacity(0.3), blurRadius: 15),
+                                            Shadow(color: Color(0x8000FF9D), blurRadius: 4),
                                           ],
                                         ),
                                       ),
                                       if (produto.promocaoAtiva)
                                         Text(
-                                          formatoMoeda.format(produto.preco),
+                                          _formatoMoeda.format(produto.preco),
                                           style: const TextStyle(color: Colors.white24, fontSize: 10, decoration: TextDecoration.lineThrough),
                                         ),
                                     ],
@@ -869,9 +1149,12 @@ class _ProdutosPageState extends State<ProdutosPage> {
                               ),
                             ),
                           ),
-                        );
-                      },
-                    ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ),
             ),
           ],
         ),
@@ -956,7 +1239,7 @@ class _ProdutosPageState extends State<ProdutosPage> {
     bool eNcm = false, eCfop = false, eOrigem = false, eCest = false;
     bool eIcmsAliq = false, eIcmsCst = false, eCsosn = false;
     bool ePisAliq = false, ePisCst = false, eCofinsAliq = false, eCofinsCst = false;
-    bool eLoja = false, eDestaque = false, eCozinha = false, eBar = false;
+    bool eLoja = false, eDestaque = false, eCozinha = false, eBar = false, eBalanca = false;
 
     // Controladores
     final cPreco = TextEditingController(), cEstoque = TextEditingController(), cGrupo = TextEditingController();
@@ -966,7 +1249,7 @@ class _ProdutosPageState extends State<ProdutosPage> {
     final cPisAliq = TextEditingController(), cPisCst = TextEditingController(), cCofinsAliq = TextEditingController(), cCofinsCst = TextEditingController();
     
     // Valores booleanos
-    bool vLoja = false, vDestaque = false, vCozinha = false, vBar = false;
+    bool vLoja = false, vDestaque = false, vCozinha = false, vBar = false, vBalanca = false;
 
     // Lista de grupos existentes para o autocomplete
     final gruposExistentes = service.produtos.map((p) => p.grupo).where((g) => g.isNotEmpty).toSet().toList();
@@ -1027,12 +1310,13 @@ class _ProdutosPageState extends State<ProdutosPage> {
                     _buildCampoBulk('COFINS Alíquota (%)', cCofinsAliq, eCofinsAliq, (v) => setDs(() => eCofinsAliq = v!), kType: TextInputType.number),
                     _buildCampoBulk('COFINS CST', cCofinsCst, eCofinsCst, (v) => setDs(() => eCofinsCst = v!)),
                   ]),
-
+ 
                   _buildSecaoBulk('🌐 OPÇÕES ADICIONAIS', [
                     _buildSwitchBulk('Exibir no E-commerce', vLoja, eLoja, (v) => setDs(() => eLoja = v!), (val) => setDs(() => vLoja = val)),
                     _buildSwitchBulk('Produto em Destaque', vDestaque, eDestaque, (v) => setDs(() => eDestaque = v!), (val) => setDs(() => vDestaque = val)),
                     _buildSwitchBulk('Enviar para Cozinha', vCozinha, eCozinha, (v) => setDs(() => eCozinha = v!), (val) => setDs(() => vCozinha = val)),
                     _buildSwitchBulk('Enviar para o Bar', vBar, eBar, (v) => setDs(() => eBar = v!), (val) => setDs(() => vBar = val)),
+                    _buildSwitchBulk('Enviar para Balança', vBalanca, eBalanca, (v) => setDs(() => eBalanca = v!), (val) => setDs(() => vBalanca = val)),
                   ]),
                 ],
               ),
@@ -1049,7 +1333,7 @@ class _ProdutosPageState extends State<ProdutosPage> {
                     final up = p.copyWith(
                       preco: ePreco ? (double.tryParse(cPreco.text.replaceAll(',', '.')) ?? p.preco) : p.preco,
                       precoCusto: eCusto ? (double.tryParse(cCusto.text.replaceAll(',', '.')) ?? p.precoCusto) : p.precoCusto,
-                      estoque: eEstoque ? (int.tryParse(cEstoque.text) ?? p.estoque) : p.estoque,
+                      estoque: eEstoque ? (double.tryParse(cEstoque.text.replaceAll(',', '.')) ?? p.estoque) : p.estoque,
                       unidade: eUnidade ? cUnidade.text.trim() : p.unidade,
                       grupo: eGrupo ? cGrupo.text.trim() : p.grupo,
                       ncm: eNcm ? cNcm.text.trim() : p.ncm,
@@ -1067,6 +1351,7 @@ class _ProdutosPageState extends State<ProdutosPage> {
                       emDestaque: eDestaque ? vDestaque : p.emDestaque,
                       paraCozinha: eCozinha ? vCozinha : p.paraCozinha,
                       paraBar: eBar ? vBar : p.paraBar,
+                      enviaBalanca: eBalanca ? vBalanca : p.enviaBalanca,
                       updatedAt: DateTime.now(),
                     );
                     service.updateProduto(up);
@@ -1263,7 +1548,7 @@ class _ProdutosPageState extends State<ProdutosPage> {
                                 keyboardType: TextInputType.number,
                                 style: const TextStyle(fontSize: 13, color: Colors.blueAccent),
                                 decoration: const InputDecoration(border: InputBorder.none, isDense: true),
-                                onChanged: (v) => edicoes[p.id] = edicoes[p.id]!.copyWith(estoque: int.tryParse(v) ?? atual.estoque),
+                                onChanged: (v) => edicoes[p.id] = edicoes[p.id]!.copyWith(estoque: double.tryParse(v.replaceAll(',', '.')) ?? atual.estoque),
                               ),
                             ),
                           ),
@@ -1401,6 +1686,110 @@ class _ProdutosPageState extends State<ProdutosPage> {
               ),
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  void _showSyncDiagnostics(BuildContext context, DataService service) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A2E),
+        title: const Row(
+          children: [
+            Icon(Icons.analytics_outlined, color: Colors.blueAccent),
+            SizedBox(width: 12),
+            Text('Diagnóstico de Catálogo', style: TextStyle(color: Colors.white)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildDiagRow('Empresa Atual:', service.currentEmpresaId ?? 'Nenhuma'),
+            _buildDiagRow('Total em Memória:', '${service.produtos.length} itens'),
+            _buildDiagRow('Firebase Habilitado:', service.firebaseHabilitado ? 'Sim' : 'Não'),
+            if (service.ultimoErroSync != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text('Erro: ${service.ultimoErroSync}', style: const TextStyle(color: Colors.redAccent, fontSize: 11)),
+              ),
+            const Divider(color: Colors.white10, height: 24),
+            const Text('Ações Disponíveis:', style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.cloud_download, size: 18),
+                label: const Text('FORÇAR RECARGA DA NUVEM'),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent.withOpacity(0.2), foregroundColor: Colors.blueAccent),
+                onPressed: () async {
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Sincronizando com Firebase...')));
+                  await service.recarregarTudoDoFirebase();
+                },
+              ),
+            ),
+            if (!service.firebaseHabilitado) ...[
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  icon: const Icon(Icons.cloud_queue, size: 18),
+                  label: const Text('REATIVAR NUVEM (FIREBASE)'),
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.green.withOpacity(0.2), foregroundColor: Colors.green),
+                  onPressed: () {
+                    Navigator.pop(context);
+                    service.reativarFirebase();
+                  },
+                ),
+              ),
+            ],
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.cloud_upload, size: 18),
+                label: const Text('FORÇAR UPLOAD TOTAL (MEMÓRIA -> NUVEM)'),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.orange.withOpacity(0.2), foregroundColor: Colors.orange),
+                onPressed: () async {
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Enviando dados para a nuvem em lotes...')));
+                  await service.addProdutosLote(service.produtos);
+                },
+              ),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.storage_rounded, size: 18),
+                label: const Text('RECARREGAR DADOS LOCAIS'),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.white.withOpacity(0.05), foregroundColor: Colors.white),
+                onPressed: () async {
+                  Navigator.pop(context);
+                  await service.definirEmpresaAtual(service.currentEmpresaId);
+                },
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('FECHAR')),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDiagRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: const TextStyle(color: Colors.white70, fontSize: 13)),
+          Text(value, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
         ],
       ),
     );

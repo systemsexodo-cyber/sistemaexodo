@@ -122,7 +122,7 @@ class _EstoqueReposicaoPageState extends State<EstoqueReposicaoPage> {
   void _exibirPedidoCompra(List<Produto> produtosIniciais) {
     // Criar uma lista local de itens para edição dentro do diálogo
     final List<Map<String, dynamic>> itensPedido = produtosIniciais.map((p) {
-      int faltamSugestao = (p.estoqueMinimo - p.estoque);
+      int faltamSugestao = (p.estoqueMinimo - p.estoque).toInt();
       if (faltamSugestao <= 0 && p.estoque <= 0) {
         faltamSugestao = 1; // Sugere 1 se zerado e sem mínimo definido
       }
@@ -678,7 +678,7 @@ class _EstoqueReposicaoPageState extends State<EstoqueReposicaoPage> {
     return Tooltip(
       message: 'Giro de 30 dias: $totalVendido. Sugerimos mínimo de $sugestao (+20%)',
       child: TextButton(
-        onPressed: () => _confirmarAtualizacaoMinimo(p, sugestao),
+        onPressed: () => _confirmarAtualizacaoMinimo(p, sugestao.toDouble()),
         style: TextButton.styleFrom(
           backgroundColor: Colors.blueAccent.withOpacity(0.1),
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -698,7 +698,7 @@ class _EstoqueReposicaoPageState extends State<EstoqueReposicaoPage> {
     );
   }
 
-  Future<void> _confirmarAtualizacaoMinimo(Produto p, int novoMinimo) async {
+  Future<void> _confirmarAtualizacaoMinimo(Produto p, double novoMinimo) async {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(

@@ -19,14 +19,14 @@ import '../widgets/sync_status_widget.dart';
 /// Item no carrinho de compras
 class ItemCarrinho {
   final Produto produto;
-  int quantidade;
+  double quantidade;
   double precoUnitario;
   String? observacao;
   List<AdicionalProduto> adicionais;
 
   ItemCarrinho({
     required this.produto,
-    this.quantidade = 1,
+    this.quantidade = 1.0,
     double? precoUnitario,
     this.observacao,
     List<AdicionalProduto>? adicionais,
@@ -70,6 +70,7 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
   final _buscaController = TextEditingController();
   final _observacoesController = TextEditingController();
   final _buscaFocusNode = FocusNode();
+  final _keyboardFocusNode = FocusNode();
 
   // Estado do pedido
   Cliente? _clienteSelecionado;
@@ -83,6 +84,11 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
   List<Produto> _produtosFiltrados = [];
   bool _mostrarResultadosBusca = false;
   int _indiceSelecionado = -1;
+  
+  // Entrega
+  bool _isEntrega = false;
+  DateTime? _dataEntrega;
+  TimeOfDay? _horaEntrega;
   
   // Busca de cliente
   final _buscaClienteController = TextEditingController();
@@ -164,6 +170,14 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
 
     _statusPedido = pedido.status;
     _observacoesController.text = pedido.observacoes ?? '';
+    
+    if (pedido.deliveryInfo != null) {
+      _isEntrega = true;
+      _dataEntrega = pedido.deliveryInfo!.dataEntrega;
+      if (_dataEntrega != null) {
+        _horaEntrega = TimeOfDay.fromDateTime(_dataEntrega!);
+      }
+    }
   }
 
   @override
@@ -174,6 +188,7 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
     _buscaFocusNode.dispose();
     _buscaClienteController.dispose();
     _buscaClienteFocusNode.dispose();
+    _keyboardFocusNode.dispose();
     super.dispose();
   }
 
@@ -381,7 +396,7 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
     });
   }
 
-  void _adicionarProduto(Produto produto, {int quantidade = 1}) {
+  void _adicionarProduto(Produto produto, {double quantidade = 1.0}) {
     if (produto.temAdicionais) {
       _exibirSelecaoAdicionais(produto, quantidade: quantidade);
       return;
@@ -423,7 +438,7 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
     );
   }
 
-  void _exibirSelecaoAdicionais(Produto produto, {int quantidade = 1}) {
+  void _exibirSelecaoAdicionais(Produto produto, {double quantidade = 1.0}) {
     List<AdicionalProduto> selecionados = [];
     final precoBase = produto.preco;
     
@@ -582,7 +597,7 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
     );
   }
 
-  void _alterarQuantidade(int index, int delta) {
+  void _alterarQuantidade(int index, double delta) {
     setState(() {
       final novaQuantidade = _carrinho[index].quantidade + delta;
       if (novaQuantidade > 0) {
@@ -597,8 +612,8 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
     return _carrinho.fold(0.0, (sum, item) => sum + item.subtotal);
   }
 
-  int get _totalItens {
-    return _carrinho.fold(0, (sum, item) => sum + item.quantidade);
+  double get _totalItens {
+    return _carrinho.fold(0.0, (sum, item) => sum + item.quantidade);
   }
 
   void _editarObservacaoItem(int index) {
@@ -702,10 +717,9 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
       }
     }
 
+    // Criar objeto do pedido base
     final pedido = Pedido(
-      id:
-          widget.pedidoExistente?.id ??
-          DateTime.now().millisecondsSinceEpoch.toString(),
+      id: widget.pedidoExistente?.id ?? const Uuid().v4(),
       numero: _numeroPedido,
       clienteId: _clienteSelecionado?.id,
       clienteNome: _clienteSelecionado?.nome,
@@ -721,47 +735,57 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
       produtos: _carrinho.map((item) => item.toItemPedido()).toList(),
       servicos: widget.pedidoExistente?.servicos ?? [],
       pagamentos: _pagamentos,
-      deliveryInfo: widget.pedidoExistente?.deliveryInfo, // Preserva deliveryInfo se existir
+      deliveryInfo: widget.pedidoExistente?.deliveryInfo,
       createdAt: widget.pedidoExistente?.createdAt ?? DateTime.now(),
       updatedAt: DateTime.now(),
     );
 
-    if (widget.pedidoExistente != null) {
-      dataService.updatePedido(pedido);
+    // Criar DeliveryInfo se for entrega
+    DeliveryInfo? deliveryInfo = pedido.deliveryInfo;
+    if (_isEntrega) {
+      DateTime? dataFinalEntrega;
+      if (_dataEntrega != null) {
+        dataFinalEntrega = DateTime(
+          _dataEntrega!.year,
+          _dataEntrega!.month,
+          _dataEntrega!.day,
+          _horaEntrega?.hour ?? 0,
+          _horaEntrega?.minute ?? 0,
+        );
+      }
+
+      deliveryInfo = (pedido.deliveryInfo ?? DeliveryInfo(
+        id: const Uuid().v4(),
+        enderecoId: _clienteSelecionado?.id ?? 'balcao',
+        logradouro: _clienteSelecionado?.endereco ?? '',
+        numero: _clienteSelecionado?.numero ?? '',
+        bairro: _clienteSelecionado?.bairro ?? '',
+        cidade: _clienteSelecionado?.cidade ?? '',
+        uf: _clienteSelecionado?.estado ?? '',
+        status: 'Pendente',
+      )).copyWith(
+        dataEntrega: dataFinalEntrega,
+      );
     } else {
-      await dataService.addPedido(pedido);
+      deliveryInfo = null;
+    }
+
+    final pedidoFinal = pedido.copyWith(
+      deliveryInfo: deliveryInfo,
+    );
+
+    if (widget.pedidoExistente != null) {
+      dataService.updatePedido(pedidoFinal);
+    } else {
+      await dataService.addPedido(pedidoFinal);
     }
 
     if (mounted) {
-      Navigator.of(context).pop(pedido);
+      Navigator.of(context).pop(pedidoFinal);
     }
   }
 
-  // Trata teclas especiais na busca
-  void _onKeyEvent(KeyEvent event) {
-    if (event is! KeyDownEvent) return;
 
-    if (_produtosFiltrados.isEmpty) return;
-
-    setState(() {
-      if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
-        _indiceSelecionado =
-            (_indiceSelecionado + 1) % _produtosFiltrados.length;
-      } else if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
-        _indiceSelecionado =
-            (_indiceSelecionado - 1 + _produtosFiltrados.length) %
-            _produtosFiltrados.length;
-      } else if (event.logicalKey == LogicalKeyboardKey.enter) {
-        if (_indiceSelecionado >= 0 &&
-            _indiceSelecionado < _produtosFiltrados.length) {
-          _adicionarProduto(_produtosFiltrados[_indiceSelecionado]);
-        }
-      } else if (event.logicalKey == LogicalKeyboardKey.escape) {
-        _buscaController.clear();
-        _mostrarResultadosBusca = false;
-      }
-    });
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -843,6 +867,9 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
           // Seleção de cliente
           _buildSelecaoCliente(clientes),
           const SizedBox(height: 12),
+          // Seção de Entrega
+          _buildSecaoEntrega(),
+          const SizedBox(height: 12),
           // Status do pedido
           Row(
             children: [
@@ -903,9 +930,41 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
           const SizedBox(height: 12),
 
           // Campo de busca de produtos
-          KeyboardListener(
-            focusNode: FocusNode(),
-            onKeyEvent: _onKeyEvent,
+          Focus(
+            focusNode: _keyboardFocusNode,
+            onKeyEvent: (node, event) {
+              if (event is! KeyDownEvent) return KeyEventResult.ignored;
+
+              if (_produtosFiltrados.isEmpty) return KeyEventResult.ignored;
+
+              if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+                setState(() {
+                  _indiceSelecionado =
+                      (_indiceSelecionado + 1) % _produtosFiltrados.length;
+                });
+                return KeyEventResult.handled;
+              } else if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+                setState(() {
+                  _indiceSelecionado =
+                      (_indiceSelecionado - 1 + _produtosFiltrados.length) %
+                      _produtosFiltrados.length;
+                });
+                return KeyEventResult.handled;
+              } else if (event.logicalKey == LogicalKeyboardKey.enter || event.logicalKey == LogicalKeyboardKey.numpadEnter) {
+                if (_indiceSelecionado >= 0 &&
+                    _indiceSelecionado < _produtosFiltrados.length) {
+                  _adicionarProduto(_produtosFiltrados[_indiceSelecionado]);
+                  return KeyEventResult.handled;
+                }
+              } else if (event.logicalKey == LogicalKeyboardKey.escape) {
+                setState(() {
+                  _buscaController.clear();
+                  _mostrarResultadosBusca = false;
+                });
+                return KeyEventResult.handled;
+              }
+              return KeyEventResult.ignored;
+            },
             child: TextField(
               controller: _buscaController,
               focusNode: _buscaFocusNode,
@@ -2051,5 +2110,132 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
       default:
         return Colors.grey;
     }
+  }
+
+  Widget _buildSecaoEntrega() {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: _isEntrega ? Colors.blueAccent.withOpacity(0.1) : Colors.white.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: _isEntrega ? Colors.blueAccent.withOpacity(0.3) : Colors.white.withOpacity(0.1),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.delivery_dining,
+                color: _isEntrega ? Colors.blueAccent : Colors.white54,
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              const Text(
+                'Agendar Entrega?',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const Spacer(),
+              SizedBox(
+                height: 24,
+                child: Switch(
+                  value: _isEntrega,
+                  onChanged: (val) {
+                    setState(() {
+                      _isEntrega = val;
+                      if (_isEntrega && _dataEntrega == null) {
+                        _dataEntrega = DateTime.now();
+                        _horaEntrega = TimeOfDay.now();
+                      }
+                    });
+                  },
+                  activeColor: Colors.blueAccent,
+                ),
+              ),
+            ],
+          ),
+          if (_isEntrega) ...[
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: InkWell(
+                    onTap: () async {
+                      final date = await showDatePicker(
+                        context: context,
+                        initialDate: _dataEntrega ?? DateTime.now(),
+                        firstDate: DateTime(2020),
+                        lastDate: DateTime.now().add(const Duration(days: 365)),
+                      );
+                      if (date != null) {
+                        setState(() => _dataEntrega = date);
+                      }
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.calendar_today, size: 14, color: Colors.blueAccent),
+                          const SizedBox(width: 6),
+                          Text(
+                            _dataEntrega != null
+                                ? DateFormat('dd/MM/yy').format(_dataEntrega!)
+                                : 'Data',
+                            style: const TextStyle(color: Colors.white, fontSize: 13),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: InkWell(
+                    onTap: () async {
+                      final time = await showTimePicker(
+                        context: context,
+                        initialTime: _horaEntrega ?? TimeOfDay.now(),
+                      );
+                      if (time != null) {
+                        setState(() => _horaEntrega = time);
+                      }
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.access_time, size: 14, color: Colors.blueAccent),
+                          const SizedBox(width: 6),
+                          Text(
+                            _horaEntrega != null
+                                ? _horaEntrega!.format(context)
+                                : 'Hora',
+                            style: const TextStyle(color: Colors.white, fontSize: 13),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
   }
 }

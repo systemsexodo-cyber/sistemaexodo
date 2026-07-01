@@ -1,7 +1,12 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-// Import condicional para Web
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart';
+import 'database_service_stub.dart'
+    if (dart.library.io) 'database_service.dart';
+// Import condicional para Web (Hive)
 import 'local_storage_service_stub.dart'
     if (dart.library.html) 'local_storage_service_web_stub.dart';
 
@@ -32,6 +37,7 @@ class LocalStorageService {
   static const String _keyComissoesVendedores = 'exodo_comissoes_vendedores';
   static const String _keySangrias = 'exodo_sangrias';
   static const String _keySuprimentos = 'exodo_suprimentos';
+  static const String _keyRomaneios = 'exodo_romaneios';
   
   static String get keyNotasEntrada => _keyNotasEntrada;
   static String get keyLinksVendedores => _keyLinksVendedores;
@@ -41,40 +47,51 @@ class LocalStorageService {
   static String get keySangrias => _keySangrias;
   static String get keySuprimentos => _keySuprimentos;
 
-  /// Salva uma lista de objetos como JSON no localStorage
-  Future<void> salvarLista<T>(String key, List<T> lista) async {
+  Future<void> salvarLista<T>(String key, List<T> lista, {bool isSync = false}) async {
     try {
       if (kIsWeb) {
-        // Usar localStorage no Web
+        // Usar localStorage no Web via HIVE
         final json = jsonEncode(lista.map((item) => _toMap(item)).toList());
         await _salvarWeb(key, json);
+        debugPrint('✓ Dados salvos (Web/Hive): $key (${lista.length} itens)');
       } else {
-        // Usar shared_preferences em outras plataformas
-        final json = jsonEncode(lista.map((item) => _toMap(item)).toList());
-        await _salvarSharedPreferences(key, json);
+        // Usar PostgreSQL em Desktop/Mobile para performance (6k+ itens)
+        final data = lista.map((item) => _toMap(item) as Map<String, dynamic>).toList();
+        
+        // Chamada direta ao DatabaseService que agora tem lógica específica por tabela
+        await DatabaseService().salvarLista(key, data, isSync: isSync);
+        debugPrint('✓ Dados salvos (Local/PostgreSQL): $key (${lista.length} itens)');
+        
+        // Cópia em shared_preferences APENAS para chaves críticas pequenas (configurações)
+        if (lista.length < 100 && !key.contains('produtos') && !key.contains('vendas')) {
+          final json = jsonEncode(data);
+          await _salvarSharedPreferences(key, json);
+        }
       }
-      debugPrint('✓ Dados salvos: $key (${lista.length} itens)');
     } catch (e) {
       debugPrint('✗ Erro ao salvar $key: $e');
     }
   }
 
-  /// Carrega uma lista de objetos do localStorage
+  /// Carrega uma lista de objetos do local
   Future<List<Map<String, dynamic>>> carregarLista(String key) async {
     try {
-      String? json;
       if (kIsWeb) {
-        json = await _carregarWeb(key);
+        final json = await _carregarWeb(key);
+        if (json == null || json.isEmpty) return [];
+        final decoded = jsonDecode(json) as List;
+        return decoded.cast<Map<String, dynamic>>();
       } else {
-        json = await _carregarSharedPreferences(key);
+        // Tentar PostgreSQL primeiro (Novo padrão Nativo)
+        final dados = await DatabaseService().carregarLista(key);
+        if (dados.isNotEmpty) return dados;
+        
+        // Fallback para shared_preferences (Migração)
+        final json = await _carregarSharedPreferences(key);
+        if (json == null || json.isEmpty) return [];
+        final decoded = jsonDecode(json) as List;
+        return decoded.cast<Map<String, dynamic>>();
       }
-
-      if (json == null || json.isEmpty) {
-        return [];
-      }
-
-      final decoded = jsonDecode(json) as List;
-      return decoded.cast<Map<String, dynamic>>();
     } catch (e) {
       debugPrint('✗ Erro ao carregar $key: $e');
       return [];
@@ -261,7 +278,12 @@ class LocalStorageService {
   }
 
   /// Verifica se a sessão atual é ativa (survive F5 no Web)
-  bool isSessaoAtiva() => LocalStorageWeb.isSessaoAtiva();
+  bool isSessaoAtiva() {
+    if (kIsWeb) return LocalStorageWeb.isSessaoAtiva();
+    // No Desktop (Windows), a sessão persiste entre reinicializações do app.
+    // O logout só ocorre se o usuário clicar explicitamente em Sair.
+    return true; 
+  }
 
   // ============ Métodos SharedPreferences ============
 
@@ -318,5 +340,37 @@ class LocalStorageService {
   static String get keyNFCes => _keyNFCes;
   static String get keySangriasField => _keySangrias;
   static String get keySuprimentosField => _keySuprimentos;
+  static String get keyRomaneios => _keyRomaneios;
+
+  /// Exporta todos os dados locais para um arquivo JSON (Backup)
+  Future<String?> exportarBackupJSON() async {
+    try {
+      final chaves = [
+        _keyClientes, _keyProdutos, _keyServicos, _keyPedidos,
+        _keyOrdensServico, _keyEntregas, _keyVendasBalcao, _keyAberturasCaixa,
+        _keyFechamentosCaixa, _keyNotasEntrada, _keyAgendamentosServico,
+        _keyFuncionarios, _keyTaxasEntrega, _keyContasPagar, _keyNFCes
+      ];
+
+      final Map<String, dynamic> backup = {};
+      for (final chave in chaves) {
+        backup[chave] = await carregarLista(chave);
+      }
+
+      final jsonString = jsonEncode(backup);
+      
+      if (!kIsWeb) {
+        // Obter diretório apenas em plataformas nativas (Windows/Mobile)
+        final directory = await getApplicationDocumentsDirectory();
+        final file = File(join(directory.path, 'exodo_backup_${DateTime.now().millisecondsSinceEpoch}.json'));
+        await file.writeAsString(jsonString);
+        return file.path;
+      }
+      return 'backup_web_json';
+    } catch (e) {
+      debugPrint('✗ Erro ao gerar backup JSON: $e');
+      return null;
+    }
+  }
 }
 

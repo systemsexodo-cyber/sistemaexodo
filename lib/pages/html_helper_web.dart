@@ -33,9 +33,14 @@ String getWindowPathname() {
   return html.window.location.pathname ?? '';
 }
 
-/// Abre uma nova janela no navegador
+/// Abre uma janela no navegador
 void openWindow(String url, String name) {
   html.window.open(url, name);
+}
+
+/// Abre uma URL no navegador (compatível com mailto:)
+void openUrl(String url) {
+  html.window.location.href = url;
 }
 
 /// Atualiza o caminho da URL
@@ -105,6 +110,21 @@ void downloadBytes(List<int> bytes, String fileName, String mimeType) {
   } catch (e) {
     debugPrint('>>> [HtmlHelper] ❌ ERRO ao baixar arquivo binário: $e');
   }
+}
+
+/// Verifica se está em tela cheia no navegador
+bool isFullscreen() {
+  return html.document.fullscreenElement != null;
+}
+
+/// Solicita tela cheia no navegador
+void requestFullscreen() {
+  html.document.documentElement?.requestFullscreen();
+}
+
+/// Sai da tela cheia no navegador
+void exitFullscreen() {
+  html.document.exitFullscreen();
 }
 
 

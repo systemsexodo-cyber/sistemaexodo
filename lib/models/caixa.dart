@@ -1,3 +1,5 @@
+import 'package:sistema_exodo_novo/utils/date_parser.dart';
+
 /// Modelo para representar uma abertura de caixa
 class AberturaCaixa {
   final String id;
@@ -22,17 +24,22 @@ class AberturaCaixa {
         updatedAt = updatedAt ?? DateTime.now();
 
   factory AberturaCaixa.fromMap(Map<String, dynamic> map) {
+    double? parseDouble(dynamic value) {
+      if (value == null) return null;
+      if (value is num) return value.toDouble();
+      if (value is String) return double.tryParse(value);
+      return null;
+    }
+    
     return AberturaCaixa(
       id: map['id'] ?? '',
       numero: map['numero'] ?? '',
-      dataAbertura: map['dataAbertura'] != null
-          ? DateTime.parse(map['dataAbertura'])
-          : DateTime.now(),
-      valorInicial: (map['valorInicial'] ?? 0).toDouble(),
+      dataAbertura: DateParser.parse(map['data_abertura'] ?? map['dataAbertura']),
+      valorInicial: parseDouble(map['valor_inicial'] ?? map['valorInicial']) ?? 0.0,
       observacao: map['observacao'],
       responsavel: map['responsavel'],
-      createdAt: map['createdAt'] != null ? DateTime.parse(map['createdAt']) : DateTime.now(),
-      updatedAt: map['updatedAt'] != null ? DateTime.parse(map['updatedAt']) : DateTime.now(),
+      createdAt: DateParser.parse(map['created_at'] ?? map['createdAt']),
+      updatedAt: DateParser.parse(map['updated_at'] ?? map['updatedAt']),
     );
   }
 
@@ -40,12 +47,12 @@ class AberturaCaixa {
     return {
       'id': id,
       'numero': numero,
-      'dataAbertura': dataAbertura.toIso8601String(),
-      'valorInicial': valorInicial,
+      'data_abertura': dataAbertura.toIso8601String(),
+      'valor_inicial': valorInicial,
       'observacao': observacao,
       'responsavel': responsavel,
-      'createdAt': createdAt.toIso8601String(),
-      'updatedAt': updatedAt.toIso8601String(),
+      'created_at': createdAt.toIso8601String(),
+      'updated_at': updatedAt.toIso8601String(),
     };
   }
 }
@@ -74,17 +81,22 @@ class SangriaCaixa {
         updatedAt = updatedAt ?? DateTime.now();
 
   factory SangriaCaixa.fromMap(Map<String, dynamic> map) {
+    double? parseDouble(dynamic value) {
+      if (value == null) return null;
+      if (value is num) return value.toDouble();
+      if (value is String) return double.tryParse(value);
+      return null;
+    }
+
     return SangriaCaixa(
       id: map['id'] ?? '',
-      data: map['data'] != null
-          ? DateTime.parse(map['data'])
-          : DateTime.now(),
-      valor: (map['valor'] ?? 0).toDouble(),
+      data: DateParser.parse(map['data']),
+      valor: parseDouble(map['valor']) ?? 0.0,
       motivo: map['motivo'] ?? '',
       observacao: map['observacao'],
       responsavel: map['responsavel'],
-      createdAt: map['createdAt'] != null ? DateTime.parse(map['createdAt']) : DateTime.now(),
-      updatedAt: map['updatedAt'] != null ? DateTime.parse(map['updatedAt']) : DateTime.now(),
+      createdAt: DateParser.parse(map['created_at'] ?? map['createdAt']),
+      updatedAt: DateParser.parse(map['updated_at'] ?? map['updatedAt']),
     );
   }
 
@@ -96,8 +108,8 @@ class SangriaCaixa {
       'motivo': motivo,
       'observacao': observacao,
       'responsavel': responsavel,
-      'createdAt': createdAt.toIso8601String(),
-      'updatedAt': updatedAt.toIso8601String(),
+      'created_at': createdAt.toIso8601String(),
+      'updated_at': updatedAt.toIso8601String(),
     };
   }
 }
@@ -126,17 +138,22 @@ class SuprimentoCaixa {
         updatedAt = updatedAt ?? DateTime.now();
 
   factory SuprimentoCaixa.fromMap(Map<String, dynamic> map) {
+    double? parseDouble(dynamic value) {
+      if (value == null) return null;
+      if (value is num) return value.toDouble();
+      if (value is String) return double.tryParse(value);
+      return null;
+    }
+
     return SuprimentoCaixa(
       id: map['id'] ?? '',
-      data: map['data'] != null
-          ? DateTime.parse(map['data'])
-          : DateTime.now(),
-      valor: (map['valor'] ?? 0).toDouble(),
+      data: DateParser.parse(map['data']),
+      valor: parseDouble(map['valor']) ?? 0.0,
       motivo: map['motivo'] ?? '',
       observacao: map['observacao'],
       responsavel: map['responsavel'],
-      createdAt: map['createdAt'] != null ? DateTime.parse(map['createdAt']) : DateTime.now(),
-      updatedAt: map['updatedAt'] != null ? DateTime.parse(map['updatedAt']) : DateTime.now(),
+      createdAt: DateParser.parse(map['created_at'] ?? map['createdAt']),
+      updatedAt: DateParser.parse(map['updated_at'] ?? map['updatedAt']),
     );
   }
 
@@ -193,15 +210,20 @@ class FechamentoCaixa {
       suprimentos.fold(0.0, (sum, s) => sum + s.valor);
 
   factory FechamentoCaixa.fromMap(Map<String, dynamic> map) {
+    double? parseDouble(dynamic value) {
+      if (value == null) return null;
+      if (value is num) return value.toDouble();
+      if (value is String) return double.tryParse(value);
+      return null;
+    }
+
     return FechamentoCaixa(
       id: map['id'] ?? '',
-      aberturaCaixaId: map['aberturaCaixaId'] ?? '',
-      dataFechamento: map['dataFechamento'] != null
-          ? DateTime.parse(map['dataFechamento'])
-          : DateTime.now(),
-      valorEsperado: (map['valorEsperado'] ?? 0).toDouble(),
-      valorReal: (map['valorReal'] ?? 0).toDouble(),
-      diferenca: (map['diferenca'] ?? 0).toDouble(),
+      aberturaCaixaId: map['abertura_caixa_id'] ?? map['aberturaCaixaId'] ?? '',
+      dataFechamento: DateParser.parse(map['data_fechamento'] ?? map['dataFechamento']),
+      valorEsperado: parseDouble(map['valor_esperado'] ?? map['valorEsperado']) ?? 0.0,
+      valorReal: parseDouble(map['valor_real'] ?? map['valorReal']) ?? 0.0,
+      diferenca: parseDouble(map['diferenca']) ?? 0.0,
       sangrias: (map['sangrias'] as List<dynamic>? ?? [])
           .map((s) => SangriaCaixa.fromMap(s as Map<String, dynamic>))
           .toList(),
@@ -210,25 +232,25 @@ class FechamentoCaixa {
           .toList(),
       observacao: map['observacao'],
       responsavel: map['responsavel'],
-      createdAt: map['createdAt'] != null ? DateTime.parse(map['createdAt']) : DateTime.now(),
-      updatedAt: map['updatedAt'] != null ? DateTime.parse(map['updatedAt']) : DateTime.now(),
+      createdAt: DateParser.parse(map['created_at'] ?? map['createdAt']),
+      updatedAt: DateParser.parse(map['updated_at'] ?? map['updatedAt']),
     );
   }
 
   Map<String, dynamic> toMap() {
     return {
       'id': id,
-      'aberturaCaixaId': aberturaCaixaId,
-      'dataFechamento': dataFechamento.toIso8601String(),
-      'valorEsperado': valorEsperado,
-      'valorReal': valorReal,
+      'abertura_caixa_id': aberturaCaixaId,
+      'data_fechamento': dataFechamento.toIso8601String(),
+      'valor_esperado': valorEsperado,
+      'valor_real': valorReal,
       'diferenca': diferenca,
       'sangrias': sangrias.map((s) => s.toMap()).toList(),
       'suprimentos': suprimentos.map((s) => s.toMap()).toList(),
       'observacao': observacao,
       'responsavel': responsavel,
-      'createdAt': createdAt.toIso8601String(),
-      'updatedAt': updatedAt.toIso8601String(),
+      'created_at': createdAt.toIso8601String(),
+      'updated_at': updatedAt.toIso8601String(),
     };
   }
 }

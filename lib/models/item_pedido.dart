@@ -3,7 +3,7 @@ import 'package:sistema_exodo_novo/models/adicional_produto.dart';
 class ItemPedido {
   final String id;
   final String nome;
-  final int quantidade;
+  final double quantidade;
   final double preco;
   final String? observacao;
   final String? idVariacao; // ID da variação (se for o caso)
@@ -25,7 +25,7 @@ class ItemPedido {
     return ItemPedido(
       id: map['id'] ?? '',
       nome: map['nome'] ?? '',
-      quantidade: map['quantidade'] ?? 0,
+      quantidade: (map['quantidade'] as num?)?.toDouble() ?? 0.0,
       preco: (map['preco'] ?? 0).toDouble(),
       observacao: map['observacao'],
       idVariacao: map['idVariacao'],

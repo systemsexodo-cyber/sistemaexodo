@@ -22,10 +22,12 @@ class RegistroPagamento {
     return RegistroPagamento(
       id: map['id'] ?? '',
       valor: (map['valor'] ?? 0).toDouble(),
-      dataPagamento: DateTime.parse(map['dataPagamento']),
+      dataPagamento: map['dataPagamento'] != null
+          ? DateTime.parse(map['dataPagamento'])
+          : DateTime.now(),
       formaPagamento: map['formaPagamento'],
       observacao: map['observacao'],
-      itensPagos: map['itensPagos'] != null 
+      itensPagos: map['itensPagos'] != null
           ? List<String>.from(map['itensPagos'])
           : null,
       pessoaPagou: map['pessoaPagou'],
@@ -329,9 +331,9 @@ class ContaPagar {
         orElse: () => StatusContaPagar.pendente,
       ),
       formaPagamento: map['formaPagamento'],
-      historicoPagamentos: map['historicoPagamentos'] != null
-          ? (map['historicoPagamentos'] as List)
-              .map((p) => RegistroPagamento.fromMap(p))
+      historicoPagamentos: map['historicoPagamentos'] != null && map['historicoPagamentos'] is List
+          ? (map['historicoPagamentos'] as List<dynamic>)
+              .map((p) => RegistroPagamento.fromMap(p as Map<String, dynamic>))
               .toList()
           : [],
       recorrente: map['recorrente'] ?? false,

@@ -6,6 +6,9 @@ import 'package:sistema_exodo_novo/services/data_service.dart';
 import 'package:sistema_exodo_novo/services/auth_service.dart';
 import 'package:sistema_exodo_novo/theme.dart';
 import 'package:sistema_exodo_novo/widgets/sync_status_widget.dart';
+import 'comissoes_page.dart';
+import 'motoristas_page.dart';
+import 'vendedor_dashboard_page.dart';
 
 class FuncionariosPage extends StatefulWidget {
   const FuncionariosPage({super.key});
@@ -15,6 +18,88 @@ class FuncionariosPage extends StatefulWidget {
 }
 
 class _FuncionariosPageState extends State<FuncionariosPage> {
+  final TextEditingController _buscaController = TextEditingController();
+  final GlobalKey<_FuncionariosListTabState> _funcionariosTabKey =
+      GlobalKey<_FuncionariosListTabState>();
+  String _termoBusca = '';
+  bool _mostrarBusca = false;
+
+  @override
+  void dispose() {
+    _buscaController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DefaultTabController(
+      length: 4,
+      child: AppTheme.appBackground(
+        child: Scaffold(
+          backgroundColor: Colors.transparent,
+          appBar: AppBar(
+            title: const Text('Gestão de Colaboradores'),
+            backgroundColor: Colors.transparent,
+            elevation: 0,
+            bottom: const TabBar(
+              isScrollable: true,
+              tabs: [
+                Tab(icon: Icon(Icons.people), text: 'Funcionários'),
+                Tab(icon: Icon(Icons.motorcycle), text: 'Motoboy/Motorista'),
+                Tab(icon: Icon(Icons.monetization_on), text: 'Comissões'),
+                Tab(icon: Icon(Icons.dashboard_customize), text: 'Dashboard'),
+              ],
+            ),
+            actions: [
+              const SyncStatusWidget(),
+              IconButton(
+                icon: Icon(
+                  _mostrarBusca ? Icons.search_off : Icons.search,
+                  color: _mostrarBusca
+                      ? Colors.greenAccent
+                      : Theme.of(context).colorScheme.onPrimary,
+                ),
+                tooltip: _mostrarBusca ? 'Fechar busca' : 'Buscar funcionários',
+                onPressed: () {
+                  setState(() {
+                    _mostrarBusca = !_mostrarBusca;
+                    if (!_mostrarBusca) {
+                      _termoBusca = '';
+                      _buscaController.clear();
+                    }
+                  });
+                },
+              ),
+              IconButton(
+                icon: const Icon(Icons.add),
+                tooltip: 'Adicionar funcionário',
+                onPressed: () =>
+                    _funcionariosTabKey.currentState?._mostrarDialogoCriarFuncionario(),
+              ),
+            ],
+          ),
+          body: TabBarView(
+            children: [
+              _FuncionariosListTab(key: _funcionariosTabKey),
+              const MotoristasPage(isEmbedded: true),
+              const ComissoesPage(),
+              const VendedorDashboardPage(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FuncionariosListTab extends StatefulWidget {
+  const _FuncionariosListTab({super.key});
+
+  @override
+  State<_FuncionariosListTab> createState() => _FuncionariosListTabState();
+}
+
+class _FuncionariosListTabState extends State<_FuncionariosListTab> {
   final TextEditingController _buscaController = TextEditingController();
   String _termoBusca = '';
   bool _mostrarBusca = false;
@@ -30,51 +115,8 @@ class _FuncionariosPageState extends State<FuncionariosPage> {
     final dataService = Provider.of<DataService>(context);
     final funcionarios = _filtrarFuncionarios(dataService.funcionarios);
 
-    return AppTheme.appBackground(
-      child: Scaffold(
-        backgroundColor: Colors.transparent,
-        appBar: AppBar(
-          title: const Text('Funcionários / Vendedores'),
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          leading: Navigator.canPop(context)
-              ? IconButton(
-                  icon: Icon(
-                    Icons.arrow_back,
-                    color: Theme.of(context).colorScheme.onPrimary,
-                  ),
-                  onPressed: () => Navigator.of(context).pop(),
-                )
-              : null,
-          actions: [
-            const SyncStatusWidget(),
-            IconButton(
-              icon: Icon(
-                _mostrarBusca ? Icons.search_off : Icons.search,
-                color: _mostrarBusca
-                    ? Colors.greenAccent
-                    : Theme.of(context).colorScheme.onPrimary,
-              ),
-              tooltip: _mostrarBusca ? 'Fechar busca' : 'Buscar funcionários',
-              onPressed: () {
-                setState(() {
-                  _mostrarBusca = !_mostrarBusca;
-                  if (!_mostrarBusca) {
-                    _termoBusca = '';
-                    _buscaController.clear();
-                  }
-                });
-              },
-            ),
-            IconButton(
-              icon: const Icon(Icons.add),
-              tooltip: 'Adicionar funcionário',
-              onPressed: () => _mostrarDialogoCriarFuncionario(),
-            ),
-          ],
-        ),
-        body: Column(
-          children: [
+    return Column(
+      children: [
             // Barra de busca
             if (_mostrarBusca)
               Container(
@@ -254,9 +296,7 @@ class _FuncionariosPageState extends State<FuncionariosPage> {
                       },
                     ),
             ),
-          ],
-        ),
-      ),
+      ],
     );
   }
 

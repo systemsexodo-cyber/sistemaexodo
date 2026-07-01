@@ -570,7 +570,7 @@ class _LojaCheckoutPageState extends State<LojaCheckoutPage> {
           .map((item) => ItemPedido(
                 id: item.itemId,
                 nome: item.nome,
-                quantidade: item.quantidade,
+                quantidade: item.quantidade.toDouble(),
                 preco: item.preco,
               ))
           .toList();

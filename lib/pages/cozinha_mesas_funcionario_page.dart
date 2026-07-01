@@ -1834,7 +1834,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
 
     // Itens selecionados para pagamento
     final itensSelecionados = <String>{};
-    int quantidadePessoasCouvertSelecionada = 0; // Quantidade de pessoas do couvert selecionada para pagar
+    double quantidadePessoasCouvertSelecionada = 0.0; // Quantidade de pessoas do couvert selecionada para pagar
     double valorItensSelecionados = 0.0; // Valor apenas dos itens (sem couvert)
     double valorSelecionado = 0.0; // Valor total selecionado (itens + couvert)
     final pessoaPagouController = TextEditingController();
@@ -2108,12 +2108,12 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                                     style: const TextStyle(color: Colors.white),
                                     onChanged: (value) {
                                       setDialogState(() {
-                                        final quantidade = int.tryParse(value) ?? 0;
+                                        final quantidade = double.tryParse(value) ?? 0.0;
                                         if (quantidade < 0) {
-                                          quantidadePessoasCouvertSelecionada = 0;
+                                          quantidadePessoasCouvertSelecionada = 0.0;
                                           valorSelecionado = valorItensSelecionados;
                                         } else if (quantidade > quantidadePessoasPendente) {
-                                          quantidadePessoasCouvertSelecionada = quantidadePessoasPendente;
+                                          quantidadePessoasCouvertSelecionada = quantidadePessoasPendente.toDouble();
                                           quantidadeCouvertController.text = quantidadePessoasPendente.toString();
                                           valorSelecionado = valorItensSelecionados + (quantidadePessoasPendente * valorPorPessoa);
                                         } else {
@@ -2497,7 +2497,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
           id: item.itemId,
           nome: item.nome,
           precoUnitario: item.preco,
-          quantidade: item.quantidade,
+          quantidade: item.quantidade.toDouble(),
           isServico: item.isServico,
             ));
           }
@@ -2518,7 +2518,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                 id: item.itemId,
                 nome: item.nome,
                 precoUnitario: item.preco,
-                quantidade: item.quantidade,
+                quantidade: item.quantidade.toDouble(),
                 isServico: item.isServico,
               ));
             }
@@ -2686,7 +2686,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
 
     // Itens selecionados para pagamento
     final itensSelecionados = <String>{};
-    int quantidadePessoasCouvertSelecionada = 0; // Quantidade de pessoas do couvert selecionada para pagar
+    double quantidadePessoasCouvertSelecionada = 0.0; // Quantidade de pessoas do couvert selecionada para pagar
     double valorItensSelecionados = 0.0; // Valor apenas dos itens (sem couvert)
     double valorSelecionado = 0.0;
     final pessoaPagouController = TextEditingController();
@@ -2887,12 +2887,12 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                                     style: const TextStyle(color: Colors.white),
                                     onChanged: (value) {
                                       setDialogState(() {
-                                        final quantidade = int.tryParse(value) ?? 0;
+                                        final quantidade = double.tryParse(value) ?? 0.0;
                                         if (quantidade < 0) {
-                                          quantidadePessoasCouvertSelecionada = 0;
+                                          quantidadePessoasCouvertSelecionada = 0.0;
                                           valorSelecionado = valorItensSelecionados;
                                         } else if (quantidade > quantidadePessoasPendente) {
-                                          quantidadePessoasCouvertSelecionada = quantidadePessoasPendente;
+                                          quantidadePessoasCouvertSelecionada = quantidadePessoasPendente.toDouble();
                                           quantidadeCouvertController.text = quantidadePessoasPendente.toString();
                                           valorSelecionado = valorItensSelecionados + (quantidadePessoasPendente * valorPorPessoa);
                                         } else {
@@ -3121,7 +3121,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
               id: item.itemId,
               nome: item.nome,
               precoUnitario: item.preco,
-              quantidade: item.quantidade,
+              quantidade: item.quantidade.toDouble(),
               isServico: item.isServico,
             ));
           }
@@ -5075,7 +5075,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
 
                           for (final item in produtosSelecionados.values) {
                             final produto = item['produto'] as Produto;
-                             final quantidade = item['quantidade'] as int;
+                             final quantidade = (item['quantidade'] as num).toDouble();
                              final categoria = item['categoria'] as String? ?? 'outros';
                              final observacao = item['observacao'] as String?;
                              final List<AdicionalProduto> adicionais = (item['adicionais'] as List?)?.cast<AdicionalProduto>() ?? [];

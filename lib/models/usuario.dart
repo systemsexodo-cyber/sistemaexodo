@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'package:sistema_exodo_novo/utils/date_parser.dart';
+
 /// Modelo para representar um usuário do sistema
 class Usuario {
   final String id;
@@ -84,41 +87,71 @@ class Usuario {
   }
 
   factory Usuario.fromMap(Map<String, dynamic> map) {
+    // Helpers para suportar camelCase (localStorage) e snake_case (Supabase)
+    T? get<T>(String camel, String snake) {
+      if (map.containsKey(camel)) return map[camel] as T?;
+      if (map.containsKey(snake)) return map[snake] as T?;
+      return null;
+    }
+
+    String? getStr(String camel, String snake) => get<String>(camel, snake);
+    bool? getBool(String camel, String snake) => get<bool>(camel, snake);
+    List? getList(String camel, String snake) => get<List>(camel, snake);
+    Set? getSet(String camel, String snake) => get<Set>(camel, snake);
+
+    String? empId = getStr('empresaId', 'empresa_id');
+    if (empId == null || empId.isEmpty) {
+      final dados = map['dados_usuario'] ?? map['dadosUsuario'];
+      if (dados != null) {
+        if (dados is Map) {
+          empId = dados['empresa_id']?.toString() ?? dados['empresaId']?.toString();
+        } else if (dados is String && dados.isNotEmpty) {
+          try {
+            final decoded = jsonDecode(dados);
+            if (decoded is Map) {
+              empId = decoded['empresa_id']?.toString() ?? decoded['empresaId']?.toString();
+            }
+          } catch (_) {}
+        }
+      }
+    }
+
     return Usuario(
-      id: map['id'] ?? '',
-      nome: map['nome'] ?? '',
-      email: map['email'] ?? '',
-      senha: map['senha'] ?? '',
-      telefone: map['telefone'],
-      fotoUrl: map['fotoUrl'],
+      id: map['id']?.toString() ?? '',
+      nome: map['nome']?.toString() ?? '',
+      email: map['email']?.toString() ?? '',
+      senha: map['senha']?.toString() ?? '',
+      telefone: map['telefone']?.toString(),
+      fotoUrl: getStr('fotoUrl', 'foto_url'),
       tipo: TipoUsuario.values.firstWhere(
         (t) => t.name == map['tipo'],
         orElse: () => TipoUsuario.operador,
       ),
-      empresaId: map['empresaId'],
-      funcionarioId: map['funcionarioId'],
-      ativo: map['ativo'] ?? true,
-      isMaster: map['isMaster'] ?? false,
-      permissoesPersonalizadas: map['permissoesPersonalizadas'] != null
-          ? Set<String>.from(map['permissoesPersonalizadas'])
+      empresaId: empId,
+      funcionarioId: getStr('funcionarioId', 'funcionario_id'),
+      ativo: getBool('ativo', 'ativo') ?? true,
+      isMaster: getBool('isMaster', 'is_master') ?? false,
+      permissoesPersonalizadas: get('permissoesPersonalizadas', 'permissoes_personalizadas') != null
+          ? Set<String>.from(get('permissoesPersonalizadas', 'permissoes_personalizadas'))
           : null,
-      permissoesNegadas: map['permissoesNegadas'] != null
-          ? Set<String>.from(map['permissoesNegadas'])
+      permissoesNegadas: get('permissoesNegadas', 'permissoes_negadas') != null
+          ? Set<String>.from(get('permissoesNegadas', 'permissoes_negadas'))
           : null,
-      telasOcultas: map['telasOcultas'] != null
-          ? List<String>.from(map['telasOcultas'])
+      telasOcultas: getList('telasOcultas', 'telas_ocultas') != null
+          ? List<String>.from(getList('telasOcultas', 'telas_ocultas')!)
           : null,
-      createdAt: map['createdAt'] != null
-          ? DateTime.parse(map['createdAt'])
-          : DateTime.now(),
-      updatedAt: map['updatedAt'] != null
-          ? DateTime.parse(map['updatedAt'])
-          : DateTime.now(),
-      serieNfce: map['serieNfce'] ?? 1,
-      ultimoAcesso: map['ultimoAcesso'] != null
-          ? DateTime.parse(map['ultimoAcesso'])
+      createdAt: DateParser.parse(map['created_at'] ?? map['createdAt']),
+      updatedAt: DateParser.parse(map['updated_at'] ?? map['updatedAt']),
+      serieNfce: get<num>('serieNfce', 'serie_nfce')?.toInt() ?? 1,
+      ultimoAcesso: (map['ultimo_acesso'] ?? map['ultimoAcesso']) != null
+          ? DateParser.parse(map['ultimo_acesso'] ?? map['ultimoAcesso'])
           : null,
     );
+  }
+
+  static DateTime? getDate(String? val) {
+    if (val == null) return null;
+    return DateTime.parse(val);
   }
 
   Map<String, dynamic> toMap() {
@@ -128,18 +161,19 @@ class Usuario {
       'email': email,
       'senha': senha,
       'telefone': telefone,
-      'fotoUrl': fotoUrl,
+      'foto_url': fotoUrl,
       'tipo': tipo.name,
-      'empresaId': empresaId,
-      'funcionarioId': funcionarioId,
+      'empresa_id': empresaId,
+      'funcionario_id': funcionarioId,
       'ativo': ativo,
-      'isMaster': isMaster,
-      'permissoesPersonalizadas': permissoesPersonalizadas?.toList(),
-      'permissoesNegadas': permissoesNegadas?.toList(),
-      'serieNfce': serieNfce,
-      'createdAt': createdAt.toIso8601String(),
-      'updatedAt': updatedAt.toIso8601String(),
-      'ultimoAcesso': ultimoAcesso?.toIso8601String(),
+      'is_master': isMaster,
+      'permissoes_personalizadas': permissoesPersonalizadas?.toList(),
+      'permissoes_negadas': permissoesNegadas?.toList(),
+      'telas_ocultas': telasOcultas,
+      'serie_nfce': serieNfce,
+      'created_at': createdAt.toIso8601String(),
+      'updated_at': updatedAt.toIso8601String(),
+      'ultimo_acesso': ultimoAcesso?.toIso8601String(),
     };
   }
 

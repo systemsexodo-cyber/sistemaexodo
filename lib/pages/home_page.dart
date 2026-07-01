@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'dart:io' show Platform;
 import 'package:provider/provider.dart';
 import 'package:sistema_exodo_novo/widgets/exodo_logo.dart';
 import 'package:sistema_exodo_novo/theme.dart';
@@ -23,6 +24,7 @@ import 'cozinha_bar_page.dart';
 import 'cozinha_mesas_funcionario_page.dart';
 import 'gerenciar_links_vendedores_page.dart';
 import 'vendedor_dashboard_page.dart';
+import 'package:sistema_exodo_novo/services/app_update_service.dart';
 import 'funcionarios_page.dart';
 import 'personalizar_loja_page.dart';
 import 'gerenciar_imagens_page.dart';
@@ -42,6 +44,12 @@ import '../services/data_service.dart';
 import '../services/theme_service.dart';
 import '../widgets/sync_status_widget.dart';
 import 'adicionar_empresa_page.dart';
+import '../services/fiscal_automation_service.dart';
+import '../services/bridge_manager_service.dart';
+import '../services/sincronizador_manager_service.dart';
+import 'motoristas_page.dart';
+import 'romaneios_page.dart';
+
 
 // Import condicional para Web
 import 'html_helper_stub.dart' if (dart.library.html) 'html_helper_web.dart' as html_helper;
@@ -59,6 +67,7 @@ class _HomePageState extends State<HomePage> {
   int _currentPage = 0;
   List<String>? _customOrder;
   bool _isReordering = false;
+  bool? _wasOffline;
 
   // Lista mestre de itens do menu (conforme estão hoje no grid)
   late final List<Map<String, dynamic>> _menuItems;
@@ -138,6 +147,22 @@ class _HomePageState extends State<HomePage> {
         'page': (BuildContext context) => const CaixaPage(),
       },
       {
+        'id': 'entregas',
+        'title': 'Entregas',
+        'subtitle': 'Despachos Individuais',
+        'icon': Icons.local_shipping_outlined,
+        'color': const Color(0xFF3F51B5),
+        'page': (BuildContext context) => const EntregasPage(),
+      },
+      {
+        'id': 'romaneios',
+        'title': 'Romaneios',
+        'subtitle': 'Rotas de Entrega',
+        'icon': Icons.map_outlined,
+        'color': const Color(0xFF009688),
+        'page': (BuildContext context) => const RomaneiosPage(),
+      },
+      {
         'id': 'contas_pagar',
         'title': 'Contas a Pagar',
         'subtitle': 'Despesas',
@@ -191,15 +216,6 @@ class _HomePageState extends State<HomePage> {
         'icon': Icons.chat_bubble_outline,
         'color': const Color(0xFF25D366),
         'page': (BuildContext context) => const WhatsAppGerenciamentoPage(),
-      },
-      {
-        'id': 'vendedor_dash',
-        'title': 'Vendedor',
-        'subtitle': 'Dashboard',
-        'icon': Icons.dashboard_customize,
-        'color': const Color(0xFF00BCD4),
-        'tela': TelaSistema.vendedorDashboard,
-        'page': (BuildContext context) => const VendedorDashboardPage(),
       },
     ];
   }
@@ -330,11 +346,15 @@ class _HomePageState extends State<HomePage> {
     );
 
     if (confirmar == true) {
-      // Fazer logout
       await authService.logout();
       
-      // Mostrar mensagem de saída
       if (context.mounted) {
+        // Redirecionamento forçado e absoluto limpando todo o histórico
+        Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (context) => const LoginPage()),
+          (Route<dynamic> route) => false,
+        );
+
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Você saiu do sistema. Até logo!'),
@@ -342,16 +362,6 @@ class _HomePageState extends State<HomePage> {
             duration: Duration(seconds: 2),
           ),
         );
-        
-        // Redirecionar para login após um breve delay
-        await Future.delayed(const Duration(milliseconds: 500));
-        
-        if (context.mounted) {
-          Navigator.of(context).pushAndRemoveUntil(
-            MaterialPageRoute(builder: (context) => const LoginPage()),
-            (route) => false,
-          );
-        }
       }
     }
   }
@@ -362,10 +372,167 @@ class _HomePageState extends State<HomePage> {
       child: Scaffold(
         backgroundColor: Colors.transparent,
         appBar: AppBar(
-          title: const ExodoLogoCompact(fontSize: 28), // Restaurado 'ê' conforme pedido
+          title: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const ExodoLogoCompact(fontSize: 28),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.white.withOpacity(0.12)),
+                ),
+                child: Text(
+                  'V${AppUpdateService.currentAppVersion}',
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.5),
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ),
+            ],
+          ), // Restaurado 'ê' conforme pedido
           centerTitle: true,
           actions: [
             const SyncStatusWidget(),
+
+            // ========= BOTÕES DE TESTE (TEMPORÁRIOS) - APENAS USUÁRIO MASTER =========
+            Consumer<AuthService>(
+              builder: (context, auth, _) {
+                final isMaster = auth.usuarioAtual?.isMaster == true || auth.usuarioAtual?.email == 'user';
+                if (!isMaster) return const SizedBox.shrink();
+
+                return Row(
+                  children: [
+                    _buildCapsuleActionButton(
+                      icon: Icons.delete_sweep,
+                      label: 'Limpar Local',
+                      color: Colors.redAccent,
+                      tooltip: 'TESTE: Limpar Local (Nuvem Fica)',
+                      onTap: () async {
+                        final dataService = Provider.of<DataService>(context, listen: false);
+                        await dataService.resetLocalCacheOnly();
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Local limpo! Verifique se as listas sumiram.'))
+                        );
+                      },
+                    ),
+                    _buildCapsuleActionButton(
+                      icon: Icons.download_for_offline,
+                      label: 'Puxar Nuvem',
+                      color: Colors.greenAccent,
+                      tooltip: 'TESTE: Puxar da Nuvem Agora',
+                      onTap: () async {
+                        final dataService = Provider.of<DataService>(context, listen: false);
+                        final confirmar = await showDialog<bool>(
+                          context: context,
+                          builder: (ctx) => AlertDialog(
+                            backgroundColor: const Color(0xFF1E1E2E),
+                            title: const Text('⬇️ Puxar Dados da Nuvem?', style: TextStyle(color: Colors.white)),
+                            content: const Text(
+                              'Atenção! Isso vai apagar o cache local do seu computador para baixar uma versão limpa da nuvem.\n\n'
+                              '⚠️ Se você tiver dados criados offline (vendas, clientes, pedidos) que ainda não foram sincronizados para a nuvem, ELES SERÃO PERDIDOS.\n\n'
+                              'Certifique-se de estar conectado à internet antes de prosseguir.',
+                              style: TextStyle(color: Colors.white70),
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(ctx, false),
+                                child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+                              ),
+                              TextButton(
+                                onPressed: () => Navigator.pop(ctx, true),
+                                child: const Text('Sim, Puxar', style: TextStyle(color: Colors.greenAccent)),
+                              ),
+                            ],
+                          ),
+                        );
+
+                        if (confirmar == true) {
+                          try {
+                            await dataService.recarregarTudoDoSupabase();
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('✅ Dados puxados da nuvem!'))
+                            );
+                          } catch (e) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('❌ Erro ao puxar da nuvem: $e'))
+                            );
+                          }
+                        }
+                      },
+                    ),
+                    _buildCapsuleActionButton(
+                      icon: Icons.medical_services,
+                      label: 'Restaurar Nuvem',
+                      color: Colors.cyanAccent,
+                      tooltip: '🚑 RESTAURAR: Enviar dados locais → Nuvem',
+                      onTap: () async {
+                        final dataService = Provider.of<DataService>(context, listen: false);
+                        final confirmar = await showDialog<bool>(
+                          context: context,
+                          builder: (ctx) => AlertDialog(
+                            backgroundColor: const Color(0xFF1E1E2E),
+                            title: const Text('🚑 Restaurar Dados na Nuvem?', style: TextStyle(color: Colors.white)),
+                            content: const Text('Isso vai enviar os dados que estão no SEU COMPUTADOR para a nuvem.\n\nUse isso para recuperar dados apagados acidentalmente.', style: TextStyle(color: Colors.white70)),
+                            actions: [
+                              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar', style: TextStyle(color: Colors.white54))),
+                              TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Sim, Restaurar', style: TextStyle(color: Colors.cyan))),
+                            ],
+                          ),
+                        );
+                        if (confirmar == true) {
+                          try {
+                            await dataService.restaurarLocalParaNuvem();
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('🚑 Dados restaurados na nuvem com sucesso!'))
+                            );
+                          } catch (e) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('❌ Erro ao restaurar: $e'))
+                            );
+                          }
+                        }
+                      },
+                    ),
+                    _buildCapsuleActionButton(
+                      icon: Icons.cloud_off,
+                      label: 'Zerar Nuvem',
+                      color: Colors.amberAccent,
+                      tooltip: 'Zerar Nuvem desta Empresa (CUIDADO)',
+                      onTap: () async {
+                        final dataService = Provider.of<DataService>(context, listen: false);
+                        // Mostrar diálogo de confirmação extra
+                        final confirmar = await showDialog<bool>(
+                          context: context,
+                          builder: (context) => AlertDialog(
+                            backgroundColor: const Color(0xFF1E1E2E),
+                            title: const Text('⚠️ APAGAR NUVEM?', style: TextStyle(color: Colors.white)),
+                            content: const Text('Isso vai apagar TODOS os dados desta empresa no servidor. Tem certeza?', style: TextStyle(color: Colors.white70)),
+                            actions: [
+                              TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Não', style: TextStyle(color: Colors.white54))),
+                              TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Sim, Apagar Tudo', style: TextStyle(color: Colors.red))),
+                            ],
+                          )
+                        );
+
+                        if (confirmar == true) {
+                          await dataService.deletarTudoNoSupabaseDestaEmpresa();
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('🔥 Nuvem limpada com sucesso!'))
+                          );
+                        }
+                      },
+                    ),
+                  ],
+                );
+              },
+            ),
+            // ===============================================
 
             // Botão de Reordenar (Feedback Visual)
             if (_customOrder != null)
@@ -571,6 +738,59 @@ class _HomePageState extends State<HomePage> {
     _inicializarMenu();
     _carregarOrdem();
     
+    // Escutar alterações de conectividade no DataService para exibir alerta offline
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      try {
+        final dataService = Provider.of<DataService>(context, listen: false);
+        _wasOffline = dataService.isOffline;
+        dataService.addListener(_onDataServiceChanged);
+        
+        // Se já inicializar offline, exibir o alerta imediatamente
+        if (dataService.isOffline) {
+          _mostrarAlertaOffline();
+        }
+      } catch (e) {
+        debugPrint('>>> [HomePage] Erro ao registrar listener de conectividade: $e');
+      }
+    });
+    
+    // Verificar se o Sincronizador e o Bridge estão rodando e tentar iniciá-los se for Desktop Windows
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!kIsWeb && Platform.isWindows) {
+        // 1. Verificar Sincronizador Nuvem
+        final syncRunning = await SincronizadorManagerService.isSincronizadorRunning();
+        if (!syncRunning) {
+          final syncStarted = await SincronizadorManagerService.startSincronizador();
+          if (!syncStarted && mounted) {
+            _mostrarAlertaSincronizadorFechado();
+          }
+        }
+
+        // 2. Verificar Bridge (Nuvemzinha)
+        final installed = await BridgeManagerService.isBridgeInstalled();
+        if (installed) {
+          final running = await BridgeManagerService.isBridgeRunning();
+          if (!running) {
+            // Tentar iniciar automaticamente
+            final started = await BridgeManagerService.startBridge();
+            if (!started && mounted) {
+              _mostrarAlertaNuvemFechada();
+            }
+          }
+        } else {
+          // Se não estiver instalado mas o usuário precisa da nuvemzinha
+          if (mounted) {
+            _mostrarAlertaNuvemNaoInstalada();
+          }
+        }
+      }
+    });
+
+    // Verificar automação fiscal (envio mensal para contabilidade)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      FiscalAutomationService.verificarEEnviar(context);
+    });
+
     // Se temos uma página inicial via URL, navegar para ela após o build
     if (widget.initialPage != null && widget.initialPage != 'home' && widget.initialPage != '') {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -618,6 +838,8 @@ class _HomePageState extends State<HomePage> {
       case 'caixa': page = const CaixaPage(); urlPath = '/caixa'; break;
       case 'comissoes': page = const ComissoesPage(); urlPath = '/comissoes'; break;
       case 'entregas': page = const EntregasPage(); urlPath = '/entregas'; break;
+      case 'romaneios': page = const RomaneiosPage(); urlPath = '/romaneios'; break;
+      case 'motoboys': page = const MotoristasPage(); urlPath = '/motoboys'; break;
       case 'empresas': page = const EmpresasPage(); urlPath = '/empresas'; break;
       case 'taxas-entrega': page = const TaxasEntregaPage(); urlPath = '/taxas-entrega'; break;
       case 'gerenciar-permissoes': page = const GerenciarPermissoesPage(); urlPath = '/gerenciar-permissoes'; break;
@@ -747,10 +969,472 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  String? _ultimoErroSync;
+
+  void _onDataServiceChanged() {
+    if (!mounted) return;
+    try {
+      final dataService = Provider.of<DataService>(context, listen: false);
+      final isOffline = dataService.isOffline;
+      final erroSync = dataService.ultimoErroSync;
+      
+      if (_wasOffline == null) {
+        _wasOffline = isOffline;
+        if (isOffline) {
+          _mostrarAlertaOffline();
+        }
+      } else if (_wasOffline != isOffline) {
+        _wasOffline = isOffline;
+        if (isOffline) {
+          _mostrarAlertaOffline();
+        } else {
+          // Conexão voltou - mostrar alerta
+          _mostrarAlertaOnline();
+        }
+      }
+
+      // Alerta se o ícone da nuvenzinha der erro (transição de null/diferente para um novo erro)
+      if (erroSync != null && erroSync != _ultimoErroSync) {
+        _ultimoErroSync = erroSync;
+        _mostrarAlertaErroSync(erroSync);
+      } else if (erroSync == null) {
+        _ultimoErroSync = null;
+      }
+    } catch (_) {}
+  }
+
+  void _mostrarAlertaErroSync(String erro) {
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: Colors.redAccent, width: 1),
+        ),
+        title: const Row(
+          children: [
+            Icon(Icons.cloud_off, color: Colors.redAccent, size: 28),
+            SizedBox(width: 12),
+            Text(
+              'Erro na Sincronização',
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
+            ),
+          ],
+        ),
+        content: Scrollbar(
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Ocorreu uma falha ao tentar sincronizar os dados com a nuvem:',
+                  style: TextStyle(color: Colors.white70, height: 1.4, fontSize: 15),
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  width: double.maxFinite,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.redAccent.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.redAccent.withOpacity(0.3)),
+                  ),
+                  child: Text(
+                    erro,
+                    style: const TextStyle(
+                      color: Colors.redAccent,
+                      fontFamily: 'monospace',
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'O sistema continuará tentando sincronizar em segundo plano de forma automática.',
+                  style: TextStyle(color: Colors.white60, fontSize: 13),
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.white,
+              backgroundColor: Colors.redAccent.withOpacity(0.2),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Text(
+                'Fechar',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _mostrarAlertaOffline() {
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false, // Força o clique no Ok
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: Colors.redAccent, width: 1),
+        ),
+        title: const Row(
+          children: [
+            Icon(Icons.cloud_off, color: Colors.redAccent, size: 28),
+            SizedBox(width: 12),
+            Text(
+              'Você está sem internet',
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
+            ),
+          ],
+        ),
+        content: const Text(
+          'Os seus dados não serão salvos na nuvem temporariamente.\n\n'
+          'Fique tranquilo! Você pode continuar trabalhando offline normalmente. '
+          'Assim que a conexão for restabelecida, os seus dados locais serão sincronizados com a nuvem de forma segura.',
+          style: TextStyle(color: Colors.white70, height: 1.4, fontSize: 15),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.white,
+              backgroundColor: Colors.redAccent.withOpacity(0.2),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Text(
+                'Ok, entendi',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _mostrarAlertaNuvemFechada() {
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: Colors.orangeAccent, width: 1),
+        ),
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.orangeAccent, size: 28),
+            SizedBox(width: 12),
+            Text(
+              'Emissor NFC-e Fechado',
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
+            ),
+          ],
+        ),
+        content: const Text(
+          'O sincronizador local da nuvemzinha (NFC-e Bridge) não está respondendo.\n\n'
+          'Por favor, abra o aplicativo "ExodoNfceBridge.exe" na pasta C:\\ExodoNFCe\\ ou '
+          'no seu Desktop para garantir a emissão correta de notas e sincronização.',
+          style: TextStyle(color: Colors.white70, height: 1.4, fontSize: 15),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              final started = await BridgeManagerService.startBridge();
+              if (started && mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('✅ Emissor local iniciado com sucesso!'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+              }
+            },
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.white,
+              backgroundColor: Colors.blueAccent.withOpacity(0.2),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Text(
+                'Tentar Iniciar',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.white70,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Text(
+                'Fechar',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _mostrarAlertaNuvemNaoInstalada() {
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: Colors.amber, width: 1),
+        ),
+        title: const Row(
+          children: [
+            Icon(Icons.info_outline, color: Colors.amber, size: 28),
+            SizedBox(width: 12),
+            Text(
+              'Sincronizador Não Instalado',
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
+            ),
+          ],
+        ),
+        content: Text(
+          'O Emissor local NFC-e (Bridge) não foi localizado no caminho padrão.\n\n'
+          '${BridgeManagerService.getInstallationInstructions()}',
+          style: const TextStyle(color: Colors.white70, height: 1.4, fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.white,
+              backgroundColor: Colors.amber.withOpacity(0.2),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Text(
+                'Entendido',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _mostrarAlertaSincronizadorFechado() {
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: Colors.redAccent, width: 1),
+        ),
+        title: const Row(
+          children: [
+            Icon(Icons.sync_problem, color: Colors.redAccent, size: 28),
+            SizedBox(width: 12),
+            Text(
+              'Sincronizador Fechado',
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
+            ),
+          ],
+        ),
+        content: const Text(
+          'O "SincronizadorNuvem.exe" não está rodando.\n\n'
+          'Este serviço é indispensável para enviar e receber dados com a nuvem (Supabase).\n'
+          'Deseja tentar abrir o sincronizador agora?',
+          style: TextStyle(color: Colors.white70, height: 1.4, fontSize: 15),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              final started = await SincronizadorManagerService.startSincronizador();
+              if (started && mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('✅ Sincronizador de Nuvem iniciado com sucesso!'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+              }
+            },
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.white,
+              backgroundColor: Colors.blueAccent.withOpacity(0.2),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Text(
+                'Abrir Agora',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.white70,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Text(
+                'Fechar',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _mostrarAlertaOnline() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Row(
+          children: [
+            Icon(Icons.wifi, color: Colors.white),
+            SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Sua internet voltou! Sincronizando dados locais com a nuvem...',
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: Colors.green,
+        duration: const Duration(seconds: 4),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+        ),
+      ),
+    );
+  }
+
   @override
   void dispose() {
+    try {
+      final dataService = Provider.of<DataService>(context, listen: false);
+      dataService.removeListener(_onDataServiceChanged);
+    } catch (_) {}
     _pageController.dispose();
     super.dispose();
+  }
+
+  Widget _buildCapsuleActionButton({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required String tooltip,
+    required VoidCallback onTap,
+  }) {
+    bool isHovered = false;
+    return Tooltip(
+      message: tooltip,
+      child: StatefulBuilder(
+        builder: (context, setState) {
+          return MouseRegion(
+            onEnter: (_) => setState(() => isHovered = true),
+            onExit: (_) => setState(() => isHovered = false),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+              decoration: BoxDecoration(
+                color: isHovered ? color.withOpacity(0.18) : color.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: isHovered ? color.withOpacity(0.5) : color.withOpacity(0.2),
+                  width: 1.2,
+                ),
+                boxShadow: isHovered
+                    ? [
+                        BoxShadow(
+                          color: color.withOpacity(0.15),
+                          blurRadius: 8,
+                          offset: const Offset(0, 2),
+                        )
+                      ]
+                    : [],
+              ),
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(20),
+                  onTap: onTap,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(icon, color: color, size: 14),
+                        const SizedBox(width: 5),
+                        Text(
+                          label,
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.9),
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 0.3,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
   }
 
   Widget _buildNavigationGrid(BuildContext context) {

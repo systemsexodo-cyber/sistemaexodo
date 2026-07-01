@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:uuid/uuid.dart';
 import '../models/produto.dart';
 import '../services/data_service.dart';
 import '../services/codigo_service.dart';
@@ -143,10 +144,10 @@ class _EntradaRapidaProdutosPageState extends State<EntradaRapidaProdutosPage> {
       try {
         final preco =
             double.tryParse(p.precoController.text.replaceAll(',', '.')) ?? 0.0;
-        final estoque = int.tryParse(p.estoqueController.text) ?? 0;
+        final estoque = (int.tryParse(p.estoqueController.text) ?? 0).toDouble();
 
         final produto = Produto(
-          id: UniqueKey().toString(),
+          id: const Uuid().v4(),
           codigo: p.codigo,
           nome: p.nomeController.text.trim(),
           descricao: '',
@@ -220,6 +221,25 @@ class _EntradaRapidaProdutosPageState extends State<EntradaRapidaProdutosPage> {
         appBar: CustomAppBar(
           title: 'Entrada Rápida',
           actions: [
+            TextButton.icon(
+              icon: const Icon(Icons.refresh, color: Colors.amber),
+              label: const Text('Zerar Estoques', style: TextStyle(color: Colors.amber)),
+              onPressed: () {
+                setState(() {
+                  for (var p in _produtos) {
+                    p.estoqueController.text = '0';
+                  }
+                });
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Estoque de todas as linhas zerado!'),
+                    backgroundColor: Colors.amber,
+                    duration: Duration(seconds: 1),
+                  ),
+                );
+              },
+            ),
+            const SizedBox(width: 8),
             IconButton(
               icon: const Icon(Icons.delete_sweep, color: Colors.white),
               tooltip: 'Limpar tudo',

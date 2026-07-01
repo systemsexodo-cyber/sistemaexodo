@@ -37,7 +37,7 @@ class CaixaPDFService {
 
     // Calcular resumo por forma de pagamento
     final resumoPagamentos = <TipoPagamento, double>{};
-    int totalItensVendidos = 0;
+    double totalItensVendidos = 0.0;
     double valorTotalItens = 0.0;
 
     for (final venda in vendas) {

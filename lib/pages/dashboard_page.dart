@@ -11,6 +11,7 @@ import '../models/usuario.dart';
 import '../theme.dart';
 import '../models/conta_pagar.dart';
 import '../widgets/sync_status_widget.dart';
+import '../services/excel_export_service.dart';
 import 'html_helper_stub.dart' if (dart.library.html) 'html_helper_web.dart' as html_helper;
 
 
@@ -167,6 +168,10 @@ class _DashboardPageState extends State<DashboardPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  // Alerta de Inventário de Fim de Ano (Proativo)
+                  if (DateTime.now().month == 12 && DateTime.now().day >= 31 || (DateTime.now().month == 1 && DateTime.now().day <= 5))
+                    _buildInventoryAlert(),
+                  
                   // Filtro de Data
                   _buildFiltroData(),
                   const SizedBox(height: 16),
@@ -426,7 +431,7 @@ class _DashboardPageState extends State<DashboardPage> {
     final lista = produtosVendidos.values.toList();
     lista.sort((a, b) => (b['total'] as double).compareTo(a['total'] as double));
 
-    return lista.take(5).toList();
+    return lista.take(20).toList();
   }
 
   List<Map<String, dynamic>> _calcularTopServicos(
@@ -464,7 +469,7 @@ class _DashboardPageState extends State<DashboardPage> {
     final lista = servicosVendidos.values.toList();
     lista.sort((a, b) => (b['total'] as double).compareTo(a['total'] as double));
 
-    return lista.take(5).toList();
+    return lista.take(20).toList();
   }
 
   Map<String, dynamic> _calcularPedidosPendentes(DataService dataService) {
@@ -1692,6 +1697,96 @@ class _DashboardPageState extends State<DashboardPage> {
                   elevation: 4,
                 ),
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInventoryAlert() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Colors.amber.shade900, Colors.orange.shade800],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.orange.withOpacity(0.3),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.assignment_turned_in, color: Colors.white, size: 32),
+                const SizedBox(width: 16),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Inventário de Fim de Ano',
+                        style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                      ),
+                      SizedBox(height: 4),
+                      Text(
+                        'Hoje é um dia importante para a sua contabilidade! Gere o Registro de Inventário para o fechamento do ano.',
+                        style: TextStyle(color: Colors.white70, fontSize: 13),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                ElevatedButton.icon(
+                  onPressed: () {
+                    final dataService = Provider.of<DataService>(context, listen: false);
+                    final ativos = dataService.produtos.where((p) => p.estoque > 0).toList();
+                    if (ativos.isEmpty) {
+                       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Nenhum produto com estoque ativo')));
+                       return;
+                    }
+                    ExcelExportService.exportarInventarioContabilidade(ativos);
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.white,
+                    foregroundColor: Colors.orange.shade900,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  icon: const Icon(Icons.description),
+                  label: const Text('GERAR ESTOQUE ATUAL', style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
+                if (DateTime.now().month == 1) // Se for Janeiro, oferecer o de 31/12 do ano anterior
+                  ElevatedButton.icon(
+                    onPressed: () {
+                      final dataService = Provider.of<DataService>(context, listen: false);
+                      final dataAlvo = DateTime(DateTime.now().year - 1, 12, 31);
+                      ExcelExportService.exportarInventarioRetroativo(dataService.produtos, dataService.estoqueHistorico, dataAlvo);
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.white.withOpacity(0.9),
+                      foregroundColor: Colors.blue.shade900,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    icon: const Icon(Icons.history),
+                    label: const Text('GERAR RETROATIVO (31/12)', style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+              ],
             ),
           ],
         ),

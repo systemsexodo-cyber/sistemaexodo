@@ -230,11 +230,25 @@ class AppTheme {
     );
   }
   
-  /// Obtém cores da empresa a partir de strings hex
   static Map<String, Color?> getCoresEmpresa(String? corPrimariaHex, String? corSecundariaHex) {
     return {
       'primaria': _hexToColor(corPrimariaHex),
       'secundaria': _hexToColor(corSecundariaHex),
     };
+  }
+
+  static InputDecoration inputDecoration(String label, {IconData? icon}) {
+    return InputDecoration(
+      labelText: label,
+      prefixIcon: icon != null ? Icon(icon, color: Colors.white70) : null,
+      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Colors.white24),
+      ),
+      labelStyle: const TextStyle(color: Colors.white70),
+      filled: true,
+      fillColor: Colors.white.withOpacity(0.05),
+    );
   }
 }

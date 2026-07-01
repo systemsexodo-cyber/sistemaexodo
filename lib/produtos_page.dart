@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'models/produto.dart';
 import '../services/data_service.dart';
+import '../services/auth_service.dart';
 import '../produto_form.dart';
 
 class ProdutosPage extends StatefulWidget {
@@ -14,19 +15,23 @@ class ProdutosPage extends StatefulWidget {
 class _ProdutosPageState extends State<ProdutosPage> {
   String _busca = '';
   final _buscaController = TextEditingController();
+  int _updateCounter = 0; // Forçar rebuild quando mudar
 
   /// BUSCA INTELIGENTE - encontra APENAS palavras que COMEÇAM com o termo digitado
   List<Produto> _filtrarProdutos(List<Produto> produtos) {
-    if (_busca.isEmpty) return produtos;
+    // Sempre retornar uma NOVA lista para garantir que o Flutter detecte mudanças
+    final produtosList = List<Produto>.from(produtos);
+    
+    if (_busca.isEmpty) return produtosList;
 
     final buscaLower = _busca.toLowerCase().trim();
 
     // Se a busca tem menos de 2 caracteres, não filtra
-    if (buscaLower.length < 2) return produtos;
+    if (buscaLower.length < 2) return produtosList;
 
     // Se busca é só números
     if (RegExp(r'^[0-9]+$').hasMatch(buscaLower)) {
-      return produtos.where((p) {
+      return produtosList.where((p) {
         if (p.codigo != null) {
           final num = p.codigo!.replaceAll(RegExp(r'[^0-9]'), '');
           if (num == buscaLower) return true;
@@ -40,14 +45,14 @@ class _ProdutosPageState extends State<ProdutosPage> {
 
     // Se começa com "prd"
     if (buscaLower.startsWith('prd')) {
-      return produtos.where((p) {
+      return produtosList.where((p) {
         return p.codigo != null &&
             p.codigo!.toLowerCase().startsWith(buscaLower);
       }).toList();
     }
 
     // BUSCA POR NOME - SOMENTE palavras que COMEÇAM com o termo
-    return produtos.where((p) {
+    return produtosList.where((p) {
       // Pega só as palavras do nome (sem números)
       final palavras = p.nome
           .toLowerCase()
@@ -106,23 +111,64 @@ class _ProdutosPageState extends State<ProdutosPage> {
   }
 
   void _showForm(BuildContext context, {Produto? produto}) {
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final produtoOriginal = produto;
+
+    // Obter usuário atual para auditoria
+    final usuario = authService.usuarioAtual;
+    final usuarioId = usuario?.id;
+    final usuarioNome = usuario?.nome ?? 'Sistema';
+    final usuarioEmail = usuario?.email;
+
+    // Callback assíncrono: aguarda a persistência antes de rebuildar
+    Future<void> onProdutoSalvo(Produto newProduto) async {
+      debugPrint('>>> [ProdutosPage] CALLBACK: Produto salvo - ${newProduto.nome}: R\$ ${newProduto.preco}');
+
+      // Atualizar no DataService e AGUARDAR para garantir que _produtos já foi atualizado
+      if (produtoOriginal == null) {
+        await dataService.addProduto(
+          newProduto,
+          usuarioId: usuarioId,
+          usuarioNome: usuarioNome,
+          usuarioEmail: usuarioEmail,
+        );
+      } else {
+        await dataService.updateProduto(
+          newProduto,
+          usuarioId: usuarioId,
+          usuarioNome: usuarioNome,
+          usuarioEmail: usuarioEmail,
+        );
+      }
+
+      // Rebuild único após a operação completar
+      if (mounted) {
+        setState(() {
+          _updateCounter++;
+          debugPrint('>>> [ProdutosPage] REBUILD após save - counter: $_updateCounter');
+        });
+      }
+    }
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      builder: (_) {
+      builder: (ctx) {
         return Padding(
           padding: EdgeInsets.only(
-            bottom: MediaQuery.of(context).viewInsets.bottom,
+            bottom: MediaQuery.of(ctx).viewInsets.bottom,
           ),
           child: ProdutoServicoForm(
             item: produto,
             onSave: (newProduto) {
-              final service = Provider.of<DataService>(context, listen: false);
-              if (produto == null) {
-                service.addProduto(newProduto);
-              } else {
-                service.updateProduto(newProduto);
-              }
+              // Fechar modal primeiro
+              Navigator.of(ctx).pop();
+
+              // Chamar callback após o frame de fechamento do modal
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                onProdutoSalvo(newProduto);
+              });
             },
           ),
         );
@@ -134,7 +180,15 @@ class _ProdutosPageState extends State<ProdutosPage> {
   Widget build(BuildContext context) {
     final service = Provider.of<DataService>(context);
     final produtos = _filtrarProdutos(service.produtos);
+    
+    // Log para debug - mostrar primeiro produto
+    if (produtos.isNotEmpty) {
+      final p = produtos.first;
+      debugPrint('>>> [ProdutosPage BUILD] counter:$_updateCounter | Total: ${produtos.length} | Primeiro: ${p.nome} (R\$ ${p.preco})');
+    }
+    
     return Scaffold(
+      key: ValueKey('produtos_page_$_updateCounter'), // Forçar reconstrução completa
       appBar: AppBar(
         title: const Text('Produtos'),
         elevation: 0,
@@ -211,23 +265,37 @@ class _ProdutosPageState extends State<ProdutosPage> {
                     ),
                   )
                 : ListView.builder(
+                    key: ValueKey('lista_$_updateCounter'), // Forçar reconstrução completa quando counter mudar
                     itemCount: produtos.length,
                     itemBuilder: (context, index) {
                       final produto = produtos[index];
+                      // Buscar produto atualizado direto do DataService (garante preço mais recente)
+                      final produtoAtualizado = service.produtos.firstWhere(
+                        (p) => p.id == produto.id,
+                        orElse: () => produto,
+                      );
+                      
+                      // Log especial para produto "Banho"
+                      if (produtoAtualizado.nome == 'Banho') {
+                        debugPrint('>>> [BANHO-UI] Card #$index rebuild: R\$ ${produtoAtualizado.preco} (counter: $_updateCounter)');
+                      }
+                      
+                      debugPrint('>>> [ProdutosPage ITEM $index] ${produtoAtualizado.nome}: R\$ ${produtoAtualizado.preco}');
                       return Card(
+                        key: ValueKey('${produtoAtualizado.id}_${produtoAtualizado.preco}'), // Key muda quando preço muda
                         color: Theme.of(context).cardColor.withOpacity(0.8),
                         margin: const EdgeInsets.symmetric(
                           horizontal: 16,
                           vertical: 8,
                         ),
                         child: ListTile(
-                          title: _highlightText(produto.nome, _busca),
+                          title: _highlightText(produtoAtualizado.nome, _busca),
                           subtitle: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              if (produto.codigo != null &&
-                                  produto.codigo!.isNotEmpty)
+                              if (produtoAtualizado.codigo != null &&
+                                  produtoAtualizado.codigo!.isNotEmpty)
                                 Container(
                                   padding: const EdgeInsets.symmetric(
                                     horizontal: 8,
@@ -239,7 +307,7 @@ class _ProdutosPageState extends State<ProdutosPage> {
                                     borderRadius: BorderRadius.circular(6),
                                   ),
                                   child: Text(
-                                    '📦 CÓDIGO: ${produto.codigo}',
+                                    '📦 CÓDIGO: ${produtoAtualizado.codigo}',
                                     style: const TextStyle(
                                       fontSize: 13,
                                       fontWeight: FontWeight.bold,
@@ -247,10 +315,10 @@ class _ProdutosPageState extends State<ProdutosPage> {
                                     ),
                                   ),
                                 ),
-                              if (produto.codigoBarras != null &&
-                                  produto.codigoBarras!.isNotEmpty)
+                              if (produtoAtualizado.codigoBarras != null &&
+                                  produtoAtualizado.codigoBarras!.isNotEmpty)
                                 Text(
-                                  '🔖 Barras: ${produto.codigoBarras}',
+                                  '🔖 Barras: ${produtoAtualizado.codigoBarras}',
                                   style: const TextStyle(
                                     fontSize: 12,
                                     color: Colors.grey,
@@ -259,18 +327,18 @@ class _ProdutosPageState extends State<ProdutosPage> {
                               Row(
                                 children: [
                                   Text(
-                                    'R\$ ${produto.preco.toStringAsFixed(2)} | Estoque: ${produto.estoque}',
+                                    'R\$ ${produtoAtualizado.preco.toStringAsFixed(2)} | Estoque: ${produtoAtualizado.estoque}',
                                     style: TextStyle(
                                       fontSize: 13,
-                                      color: (produto.estoque <= produto.estoqueMinimo && produto.estoqueMinimo > 0) 
+                                      color: (produtoAtualizado.estoque <= produtoAtualizado.estoqueMinimo && produtoAtualizado.estoqueMinimo > 0) 
                                           ? Colors.redAccent 
                                           : Colors.white70,
-                                      fontWeight: (produto.estoque <= produto.estoqueMinimo && produto.estoqueMinimo > 0)
+                                      fontWeight: (produtoAtualizado.estoque <= produtoAtualizado.estoqueMinimo && produtoAtualizado.estoqueMinimo > 0)
                                           ? FontWeight.bold
                                           : FontWeight.normal,
                                     ),
                                   ),
-                                  if (produto.estoque <= produto.estoqueMinimo && produto.estoqueMinimo > 0)
+                                  if (produtoAtualizado.estoque <= produtoAtualizado.estoqueMinimo && produtoAtualizado.estoqueMinimo > 0)
                                     const Padding(
                                       padding: EdgeInsets.only(left: 8),
                                       child: Icon(Icons.warning_amber_rounded, color: Colors.redAccent, size: 16),
@@ -285,7 +353,7 @@ class _ProdutosPageState extends State<ProdutosPage> {
                               IconButton(
                                 icon: const Icon(Icons.edit),
                                 onPressed: () =>
-                                    _showForm(context, produto: produto),
+                                    _showForm(context, produto: produtoAtualizado),
                               ),
                               IconButton(
                                 icon: const Icon(Icons.delete),
@@ -294,7 +362,7 @@ class _ProdutosPageState extends State<ProdutosPage> {
                                     context: context,
                                     builder: (context) => AlertDialog(
                                       title: const Text('Confirmar Exclusão'),
-                                      content: Text('Tem certeza que deseja excluir o produto "${produto.nome}"?'),
+                                      content: Text('Tem certeza que deseja excluir o produto "${produtoAtualizado.nome}"?'),
                                       actions: [
                                         TextButton(
                                           onPressed: () => Navigator.pop(context, false),
@@ -311,13 +379,21 @@ class _ProdutosPageState extends State<ProdutosPage> {
                                     ),
                                   );
                                   if (confirmar == true && mounted) {
-                                    Provider.of<DataService>(
+                                    final authService = Provider.of<AuthService>(context, listen: false);
+                                    final usuario = authService.usuarioAtual;
+                                    
+                                    await Provider.of<DataService>(
                                       context,
                                       listen: false,
-                                    ).deleteProduto(produto.id);
+                                    ).deleteProduto(
+                                      produtoAtualizado.id,
+                                      usuarioId: usuario?.id,
+                                      usuarioNome: usuario?.nome ?? 'Sistema',
+                                      usuarioEmail: usuario?.email,
+                                    );
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       SnackBar(
-                                        content: Text('Produto "${produto.nome}" excluído'),
+                                        content: Text('Produto "${produtoAtualizado.nome}" excluído'),
                                         backgroundColor: Colors.green,
                                       ),
                                     );

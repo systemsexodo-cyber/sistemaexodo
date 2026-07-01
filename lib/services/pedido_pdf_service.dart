@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'package:flutter/material.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
@@ -7,6 +8,7 @@ import '../models/pedido.dart';
 import '../models/empresa.dart';
 import '../models/forma_pagamento.dart';
 import '../models/adicional_produto.dart';
+import '../models/romaneio.dart';
 
 /// Serviço para geração de PDF de pedido
 class PedidoPDFService {
@@ -320,7 +322,7 @@ class PedidoPDFService {
     for (final servico in pedido.servicos) {
       todosItens.add(_ItemLinha(
         nome: servico.descricao,
-        quantidade: 1,
+        quantidade: 1.0,
         precoUnitario: servico.valor + servico.valorAdicional,
         tipo: 'Serviço',
       ));
@@ -763,9 +765,45 @@ class PedidoPDFService {
       // Cálculo de largura útil (mm -> pt) com compensação de segurança
       final double pageWidth = (larguraBobina - 2) * 2.83465;
 
+      // Calcular altura dinâmica estimada em pontos (pt)
+      // 1 mm = 2.83 pt
+      // Cabeçalho/Logo/Dados: ~180pt
+      // Cliente: ~60pt (mais ~30pt se tiver telefone/entrega)
+      // Cada item: ~25pt (mais ~15pt para cada adicional)
+      // Total/Pagamentos: ~120pt
+      // Rodapé: ~60pt
+      double alturaEstimada = 180.0;
+      
+      // Cliente
+      alturaEstimada += 60.0;
+      if (pedido.clienteTelefone?.isNotEmpty == true) alturaEstimada += 20.0;
+      if ((pedido.deliveryInfo?.enderecoCompleto ?? pedido.clienteEndereco)?.isNotEmpty == true) alturaEstimada += 50.0;
+      
+      // Itens
+      for (final p in pedido.produtos) {
+        alturaEstimada += 25.0; // Nome e total
+        if (p.adicionais.isNotEmpty) {
+          alturaEstimada += p.adicionais.length * 15.0;
+        }
+      }
+      alturaEstimada += pedido.servicos.length * 25.0;
+      
+      // Totais e pagamentos
+      alturaEstimada += 120.0;
+      alturaEstimada += (pedido.pagamentos?.length ?? 0) * 15.0;
+      
+      // Observações e rodapé
+      if (pedido.observacoes?.isNotEmpty == true) {
+        alturaEstimada += 40.0;
+      }
+      alturaEstimada += 60.0; // Rodapé final
+      
+      // Margem de segurança (mínimo de 350pt)
+      if (alturaEstimada < 350) alturaEstimada = 350;
+
       pdf.addPage(
         pw.Page(
-          pageFormat: PdfPageFormat(pageWidth, 2000),
+          pageFormat: PdfPageFormat(pageWidth, alturaEstimada),
           margin: pw.EdgeInsets.only(
             left: margemEsq,
             right: margemDir,
@@ -898,7 +936,7 @@ class PedidoPDFService {
     for (final servico in pedido.servicos) {
       todosItens.add(_ItemLinha(
         nome: servico.descricao,
-        quantidade: 1,
+        quantidade: 1.0,
         precoUnitario: servico.valor + servico.valorAdicional,
         tipo: 'Serviço',
       ));
@@ -1087,7 +1125,7 @@ class PedidoPDFService {
                   ),
                 ],
                 pw.Text(
-                  pagamento.recebido ? '✓ Pago' : '⏳ Pendente',
+                  pagamento.recebido ? 'Pago' : 'Pendente',
                   style: pw.TextStyle(
                     fontSize: fontSizeCorpo - 1,
                     fontWeight: pw.FontWeight.bold,
@@ -1137,6 +1175,37 @@ class PedidoPDFService {
         ],
         pw.SizedBox(height: 5),
         pw.Divider(thickness: 1),
+        if (pedido.deliveryInfo != null && pedido.deliveryInfo!.valorParaTroco > 0) ...[
+          pw.SizedBox(height: 3),
+          pw.Row(
+            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+            children: [
+              pw.Text(
+                'Troco para:',
+                style: pw.TextStyle(fontSize: fontSizeCorpo, fontWeight: pw.FontWeight.bold),
+              ),
+              pw.Text(
+                formatoMoeda.format(pedido.deliveryInfo!.valorParaTroco),
+                style: pw.TextStyle(fontSize: fontSizeCorpo, fontWeight: pw.FontWeight.bold),
+              ),
+            ],
+          ),
+          pw.Row(
+            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+            children: [
+              pw.Text(
+                'VALOR TROCO:',
+                style: pw.TextStyle(fontSize: fontSizeCorpo + 1, fontWeight: pw.FontWeight.bold),
+              ),
+              pw.Text(
+                formatoMoeda.format(pedido.deliveryInfo!.valorParaTroco - pedido.totalGeral),
+                style: pw.TextStyle(fontSize: fontSizeCorpo + 1, fontWeight: pw.FontWeight.bold),
+              ),
+            ],
+          ),
+          pw.SizedBox(height: 5),
+          pw.Divider(thickness: 1),
+        ],
       ],
     );
   }
@@ -1226,16 +1295,65 @@ class PedidoPDFService {
     return cpfCnpj; // Retorna original se não for CPF nem CNPJ válido
   }
 
+  /// Helper para preview de PDF
+  static Future<void> _showPdfPreview(BuildContext context, Uint8List pdfBytes, String fileName, {bool isTermico = false}) async {
+    await showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: Colors.transparent,
+        child: Container(
+          width: MediaQuery.of(context).size.width * 0.8,
+          height: MediaQuery.of(context).size.height * 0.9,
+          clipBehavior: Clip.antiAlias,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Column(
+            children: [
+              AppBar(
+                title: const Text('Pré-visualização de Impressão', style: TextStyle(color: Colors.white)),
+                backgroundColor: const Color(0xFF1E1E2E),
+                iconTheme: const IconThemeData(color: Colors.white),
+                leading: IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ),
+              Expanded(
+                child: PdfPreview(
+                  build: (format) async => pdfBytes,
+                  pdfFileName: '$fileName.pdf',
+                  canChangePageFormat: false,
+                  canChangeOrientation: false,
+                  allowPrinting: true,
+                  allowSharing: true,
+                  maxPageWidth: isTermico ? 320.0 : null,
+                  dpi: isTermico ? 200.0 : null,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   /// Imprime o PDF do pedido
   static Future<void> imprimirPDF({
     required Pedido pedido,
     required Empresa empresa,
+    BuildContext? context,
   }) async {
     try {
       final pdfBytes = await gerarPDF(pedido: pedido, empresa: empresa);
-      await Printing.layoutPdf(
-        onLayout: (PdfPageFormat format) async => pdfBytes,
-      );
+      if (context != null) {
+        await _showPdfPreview(context, pdfBytes, 'Pedido_${pedido.numero}', isTermico: false);
+      } else {
+        await Printing.layoutPdf(
+          onLayout: (PdfPageFormat format) async => pdfBytes,
+        );
+      }
     } catch (e) {
       throw Exception('Erro ao imprimir PDF: $e');
     }
@@ -1245,14 +1363,410 @@ class PedidoPDFService {
   static Future<void> imprimirPDFTermico({
     required Pedido pedido,
     required Empresa empresa,
+    BuildContext? context,
   }) async {
     try {
       final pdfBytes = await gerarPDFTermico(pedido: pedido, empresa: empresa);
-      await Printing.layoutPdf(
-        onLayout: (PdfPageFormat format) async => pdfBytes,
-      );
+      if (context != null) {
+        await _showPdfPreview(context, pdfBytes, 'Pedido_Termico_${pedido.numero}', isTermico: true);
+      } else {
+        await Printing.layoutPdf(
+          onLayout: (PdfPageFormat format) async => pdfBytes,
+        );
+      }
     } catch (e) {
       throw Exception('Erro ao imprimir PDF térmico: $e');
+    }
+  }
+
+  /// Gera um único PDF contínuo contendo a via térmica de VÁRIOS pedidos
+  static Future<Uint8List> gerarLotePDFTermico({
+    required List<Pedido> pedidos,
+    required Empresa empresa,
+  }) async {
+    try {
+      final pdf = pw.Document();
+      final formatoData = DateFormat('dd/MM/yyyy HH:mm');
+      final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+
+      // Configurações de impressão
+      final config = empresa.configuracoes ?? {};
+      final double larguraBobina = config['comandaLarguraBobina']?.toDouble() ?? 80.0;
+      final double margemEsq = config['comandaMargemEsq']?.toDouble() ?? config['comandaMargemH']?.toDouble() ?? 10.0;
+      final double margemDir = config['comandaMargemDir']?.toDouble() ?? config['comandaMargemH']?.toDouble() ?? 15.0;
+      final double fontSizeTitulo = config['comandaFonteTitulo']?.toDouble() ?? 10.5;
+      final double fontSizeCorpo = config['comandaFonteCorpo']?.toDouble() ?? 7.8;
+      final bool usarNegrito = config['comandaNegrito'] ?? true;
+
+      final double pageWidth = (larguraBobina - 2) * 2.83465;
+
+      for (final pedido in pedidos) {
+        pdf.addPage(
+          pw.Page(
+            pageFormat: PdfPageFormat(pageWidth, 2000), // Altura grande para não quebrar no meio
+            margin: pw.EdgeInsets.only(
+              left: margemEsq,
+              right: margemDir,
+              top: 2,
+              bottom: 10,
+            ),
+            build: (pw.Context context) {
+              return pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  _buildCabecalhoTermico(empresa, fontSizeTitulo, fontSizeCorpo, usarNegrito),
+                  pw.SizedBox(height: 2),
+                  _buildDadosPedidoTermico(pedido, formatoData, fontSizeCorpo, usarNegrito),
+                  pw.SizedBox(height: 2),
+                  _buildClienteTermico(pedido, fontSizeCorpo),
+                  pw.SizedBox(height: 3),
+                  _buildItensTermico(pedido, formatoMoeda, fontSizeCorpo, usarNegrito),
+                  _buildTotalTermico(pedido, formatoMoeda, fontSizeCorpo),
+                  _buildPagamentosTermico(pedido, formatoMoeda, fontSizeCorpo),
+                  _buildObservacoesTermico(pedido, fontSizeCorpo),
+                  _buildRodapeTermico(empresa, formatoData, fontSizeCorpo),
+                  pw.SizedBox(height: 20), // Espaço para corte entre cupons
+                  pw.Text('- - - - - - CORTE AQUI - - - - - -', style: pw.TextStyle(fontSize: fontSizeCorpo - 1)),
+                ],
+              );
+            },
+          ),
+        );
+      }
+
+      return await pdf.save();
+    } catch (e) {
+      throw Exception('Erro ao gerar PDF térmico em lote: $e');
+    }
+  }
+
+  /// Imprime as vias térmicas de VÁRIOS pedidos de uma só vez (sem abrir várias janelas de print)
+  static Future<void> imprimirLotePedidosTermico({
+    required List<Pedido> pedidos,
+    required Empresa empresa,
+    BuildContext? context,
+  }) async {
+    if (pedidos.isEmpty) return;
+    
+    try {
+      final pdfBytes = await gerarLotePDFTermico(pedidos: pedidos, empresa: empresa);
+      if (context != null) {
+        await _showPdfPreview(context, pdfBytes, 'Lote_Pedidos_Termico');
+      } else {
+        await Printing.layoutPdf(
+          onLayout: (PdfPageFormat format) async => pdfBytes,
+          name: 'Lote_Pedidos_Termico',
+        );
+      }
+    } catch (e) {
+      throw Exception('Erro ao imprimir lote de pedidos térmico: $e');
+    }
+  }
+
+  /// Gera PDF de Romaneio em formato térmico (80mm) - Sem valores financeiros
+  static Future<Uint8List> gerarRomaneioPDFTermico({
+    required Pedido pedido,
+    required Empresa empresa,
+  }) async {
+    try {
+      final pdf = pw.Document();
+      final formatoData = DateFormat('dd/MM/yyyy HH:mm');
+
+      // Configurações de impressão dinâmicas
+      final config = empresa.configuracoes ?? {};
+      final double larguraBobina = config['comandaLarguraBobina']?.toDouble() ?? 80.0;
+      final double margemEsq = config['comandaMargemEsq']?.toDouble() ?? config['comandaMargemH']?.toDouble() ?? 10.0;
+      final double margemDir = config['comandaMargemDir']?.toDouble() ?? config['comandaMargemH']?.toDouble() ?? 15.0;
+      final double fontSizeTitulo = config['comandaFonteTitulo']?.toDouble() ?? 10.5;
+      final double fontSizeCorpo = config['comandaFonteCorpo']?.toDouble() ?? 7.8;
+      final bool usarNegrito = config['comandaNegrito'] ?? true;
+
+      // Cálculo de largura útil (mm -> pt) com compensação de segurança
+      final double pageWidth = (larguraBobina - 2) * 2.83465;
+
+      pdf.addPage(
+        pw.Page(
+          pageFormat: PdfPageFormat(pageWidth, 2000),
+          margin: pw.EdgeInsets.only(
+            left: margemEsq,
+            right: margemDir,
+            top: 2,
+            bottom: 2,
+          ),
+          build: (pw.Context context) {
+            return pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.center,
+              children: [
+                pw.Text(
+                  'ROMANEIO / SEPARAÇÃO',
+                  style: pw.TextStyle(
+                    fontSize: fontSizeTitulo + 2,
+                    fontWeight: pw.FontWeight.bold,
+                  ),
+                  textAlign: pw.TextAlign.center,
+                ),
+                pw.SizedBox(height: 5),
+                _buildCabecalhoTermico(empresa, fontSizeTitulo, fontSizeCorpo, usarNegrito),
+                pw.SizedBox(height: 2),
+                _buildDadosPedidoTermico(pedido, formatoData, fontSizeCorpo, usarNegrito),
+                pw.SizedBox(height: 2),
+                _buildClienteTermico(pedido, fontSizeCorpo),
+                pw.SizedBox(height: 3),
+                _buildItensRomaneioTermico(pedido, fontSizeCorpo, usarNegrito),
+                if (pedido.observacoes != null && pedido.observacoes!.isNotEmpty) ...[
+                  pw.SizedBox(height: 2),
+                  _buildObservacoesTermico(pedido, fontSizeCorpo),
+                ],
+                pw.SizedBox(height: 4),
+                pw.Text(
+                  '--------------------------------',
+                  style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
+                  textAlign: pw.TextAlign.center,
+                ),
+              ],
+            );
+          },
+        ),
+      );
+
+      return await pdf.save();
+    } catch (e) {
+      throw Exception('Erro ao gerar PDF de romaneio térmico: $e');
+    }
+  }
+
+  /// Constrói itens do romaneio térmico (sem preços)
+  static pw.Widget _buildItensRomaneioTermico(Pedido pedido, double fontSizeCorpo, bool usarNegrito) {
+    final todosItens = <_ItemLinha>[];
+    
+    // Adicionar produtos
+    for (final produto in pedido.produtos) {
+      todosItens.add(_ItemLinha(
+        nome: produto.nome,
+        quantidade: produto.quantidade,
+        precoUnitario: 0,
+        tipo: 'Produto',
+        adicionais: produto.adicionais,
+      ));
+    }
+
+    return pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.start,
+      children: [
+        pw.Text(
+          'ITENS PARA SEPARAÇÃO',
+          style: pw.TextStyle(
+            fontSize: fontSizeCorpo + 1,
+            fontWeight: pw.FontWeight.bold,
+          ),
+        ),
+        pw.SizedBox(height: 4),
+        ...todosItens.map((item) {
+          return pw.Padding(
+            padding: const pw.EdgeInsets.only(bottom: 2.5),
+            child: pw.Row(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                pw.Container(
+                  width: 30,
+                  child: pw.Text(
+                    '${item.quantidade}x',
+                    style: pw.TextStyle(
+                      fontSize: fontSizeCorpo + 1,
+                      fontWeight: pw.FontWeight.bold,
+                    ),
+                  ),
+                ),
+                pw.Expanded(
+                  child: pw.Column(
+                    crossAxisAlignment: pw.CrossAxisAlignment.start,
+                    children: [
+                      pw.Text(
+                        item.nome,
+                        style: pw.TextStyle(
+                          fontSize: fontSizeCorpo + 1,
+                          fontWeight: usarNegrito ? pw.FontWeight.bold : pw.FontWeight.normal,
+                        ),
+                      ),
+                      if (item.adicionais.isNotEmpty)
+                        ...item.adicionais.map((a) => pw.Text(
+                          '+ ${a.nome}',
+                          style: pw.TextStyle(fontSize: fontSizeCorpo, color: PdfColors.grey700),
+                        )),
+                    ],
+                  ),
+                ),
+                pw.Container(
+                  width: 20,
+                  height: 15,
+                  decoration: pw.BoxDecoration(
+                    border: pw.Border.all(color: PdfColors.black, width: 1),
+                  ),
+                )
+              ],
+            ),
+          );
+        }),
+        pw.SizedBox(height: 3),
+        pw.Divider(thickness: 0.5),
+      ],
+    );
+  }
+
+  /// Imprime o PDF do romaneio em formato térmico (80mm)
+  static Future<void> imprimirRomaneioTermico({
+    required Pedido pedido,
+    required Empresa empresa,
+    BuildContext? context,
+  }) async {
+    try {
+      final pdfBytes = await gerarRomaneioPDFTermico(pedido: pedido, empresa: empresa);
+      if (context != null) {
+        await _showPdfPreview(context, pdfBytes, 'Romaneio_Pedido_${pedido.numero}');
+      } else {
+        await Printing.layoutPdf(
+          onLayout: (PdfPageFormat format) async => pdfBytes,
+          name: 'Romaneio_Pedido_${pedido.numero}',
+        );
+      }
+    } catch (e) {
+      throw Exception('Erro ao imprimir Romaneio térmico: $e');
+    }
+  }
+
+  /// Gera PDF do Romaneio Completo com Vários Pedidos (Térmico ou A4)
+  static Future<void> imprimirDocumentoRomaneio({
+    required Romaneio romaneio,
+    required List<Pedido> pedidos,
+    required Empresa empresa,
+    BuildContext? context,
+  }) async {
+    try {
+      final pdf = pw.Document();
+      final formatoData = DateFormat('dd/MM/yyyy HH:mm');
+      final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+
+      // Vamos gerar em A4 para caber mais informações num formato de prancheta
+      pdf.addPage(
+        pw.MultiPage(
+          pageFormat: PdfPageFormat.a4,
+          margin: const pw.EdgeInsets.all(30),
+          build: (pw.Context context) {
+            return [
+              pw.Header(
+                level: 0,
+                child: pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Text('ROMANEIO DE ENTREGA #${romaneio.numero}', style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold)),
+                        pw.Text('Empresa: ${empresa.nomeFantasia}', style: const pw.TextStyle(fontSize: 12)),
+                      ],
+                    ),
+                    pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.end,
+                      children: [
+                        pw.Text('Data: ${formatoData.format(romaneio.dataCriacao)}', style: const pw.TextStyle(fontSize: 10)),
+                        pw.Text('Status: ${romaneio.status.name.toUpperCase()}', style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold)),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              pw.SizedBox(height: 10),
+              pw.Container(
+                padding: const pw.EdgeInsets.all(10),
+                decoration: pw.BoxDecoration(
+                  border: pw.Border.all(color: PdfColors.grey),
+                  borderRadius: const pw.BorderRadius.all(pw.Radius.circular(5)),
+                ),
+                child: pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Text('Motorista: ${romaneio.motoristaNome ?? "Não informado"}', style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
+                    pw.Text('Veículo/Placa: ${romaneio.veiculoPlaca ?? "Não informado"}'),
+                    pw.Text('Total de Entregas: ${pedidos.length}'),
+                  ],
+                ),
+              ),
+              pw.SizedBox(height: 20),
+              pw.Text('ROTA DE ENTREGA', style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold)),
+              pw.Divider(),
+              pw.SizedBox(height: 10),
+              ...pedidos.asMap().entries.map((entry) {
+                final index = entry.key;
+                final pedido = entry.value;
+                return pw.Container(
+                  margin: const pw.EdgeInsets.only(bottom: 15),
+                  padding: const pw.EdgeInsets.all(10),
+                  decoration: pw.BoxDecoration(
+                    color: index % 2 == 0 ? PdfColors.grey100 : PdfColors.white,
+                    border: pw.Border.all(color: PdfColors.grey300),
+                  ),
+                  child: pw.Column(
+                    crossAxisAlignment: pw.CrossAxisAlignment.start,
+                    children: [
+                      pw.Row(
+                        mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                        children: [
+                          pw.Text('${index + 1}. Pedido: ${pedido.numero}', style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
+                          pw.Text('Valor a Receber: ${formatoMoeda.format(pedido.totalGeral - pedido.totalRecebido)}', style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
+                        ],
+                      ),
+                      pw.SizedBox(height: 5),
+                      pw.Text('Cliente: ${pedido.clienteNome ?? "Não informado"} (Tel: ${pedido.clienteTelefone ?? "N/A"})'),
+                      pw.Text('Endereço: ${pedido.clienteEndereco ?? "Não informado"}'),
+                      if (pedido.produtos.isNotEmpty) ...[
+                        pw.SizedBox(height: 5),
+                        pw.Text('Produtos:', style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold)),
+                        ...pedido.produtos.map((p) => pw.Text('- ${p.quantidade}x ${p.nome}', style: const pw.TextStyle(fontSize: 9))),
+                      ],
+                      if (pedido.observacoes != null && pedido.observacoes!.isNotEmpty)
+                        pw.Padding(
+                          padding: const pw.EdgeInsets.only(top: 5),
+                          child: pw.Text('Obs do Pedido: ${pedido.observacoes}', style: pw.TextStyle(color: PdfColors.grey700, fontSize: 9, fontStyle: pw.FontStyle.italic)),
+                        ),
+                      pw.SizedBox(height: 8),
+                      pw.Row(
+                        children: [
+                          pw.Container(width: 15, height: 15, decoration: pw.BoxDecoration(border: pw.Border.all())),
+                          pw.SizedBox(width: 5),
+                          pw.Text('Entregue'),
+                          pw.SizedBox(width: 20),
+                          pw.Container(width: 15, height: 15, decoration: pw.BoxDecoration(border: pw.Border.all())),
+                          pw.SizedBox(width: 5),
+                          pw.Text('Ausente/Falha'),
+                          pw.Spacer(),
+                          pw.Text('Assinatura: ___________________________'),
+                        ]
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
+              if (romaneio.observacoes != null && romaneio.observacoes!.isNotEmpty) ...[
+                pw.SizedBox(height: 20),
+                pw.Text('Observações do Romaneio:', style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
+                pw.Text(romaneio.observacoes!),
+              ],
+            ];
+          },
+        ),
+      );
+
+      final pdfBytes = await pdf.save();
+      if (context != null) {
+        await _showPdfPreview(context, pdfBytes, 'Romaneio_Geral_${romaneio.numero}');
+      } else {
+        await Printing.layoutPdf(
+          onLayout: (PdfPageFormat format) async => pdfBytes,
+          name: 'Romaneio_Geral_${romaneio.numero}',
+        );
+      }
+    } catch (e) {
+      throw Exception('Erro ao imprimir Romaneio Geral: $e');
     }
   }
 }
@@ -1260,7 +1774,7 @@ class PedidoPDFService {
 /// Classe auxiliar para itens
 class _ItemLinha {
   final String nome;
-  final int quantidade;
+  final double quantidade;
   final double precoUnitario;
   final String tipo;
   final List<AdicionalProduto> adicionais;

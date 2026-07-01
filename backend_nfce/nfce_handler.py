@@ -2,8 +2,11 @@ from decimal import Decimal
 import base64
 import os
 import re
-import tempfile
 import traceback
+import uuid
+import hashlib
+import requests
+import urllib3
 from datetime import datetime
 from lxml import etree
 from pynfe.processamento.comunicacao import ComunicacaoSefaz as OriginalComunicacaoSefaz
@@ -13,7 +16,6 @@ class ComunicacaoSefaz(OriginalComunicacaoSefaz):
         """Override do metodo _post para garantir a limpeza do XML e namespaces corretos em SP."""
         from pynfe.utils import etree as _etree
         from pynfe.entidades.certificado import CertificadoA1 as _CertA1
-        import re, os, requests as _requests
         
         certificado_a1 = _CertA1(self.certificate if hasattr(self, 'certificate') else self.certificado)
         chave, cert = certificado_a1.separar_arquivo(self.certificado_senha, caminho=True)
@@ -57,8 +59,7 @@ class ComunicacaoSefaz(OriginalComunicacaoSefaz):
 
             # Debug: Salvar o XML final enviado
             try:
-                import tempfile
-                dbg_out = os.path.join(tempfile.gettempdir(), "last_outgoing_soap.xml")
+                dbg_out = os.path.join(os.environ.get('TEMP', 'C:/temp'), "last_outgoing_soap.xml")
                 with open(dbg_out, "w", encoding="utf-8") as f: f.write(xml_final)
             except: pass
 
@@ -68,8 +69,7 @@ class ComunicacaoSefaz(OriginalComunicacaoSefaz):
             
             # Debug: Salvar resposta
             try:
-                import tempfile
-                resp_dbg = os.path.join(tempfile.gettempdir(), "last_sefaz_response.xml")
+                resp_dbg = os.path.join(os.environ.get('TEMP', 'C:/temp'), "last_sefaz_response.xml")
                 with open(resp_dbg, "w", encoding="utf-8") as f: f.write(res.text)
             except: pass
             
@@ -147,16 +147,23 @@ NotaFiscalProduto.imposto_importacao_valor = Decimal('0.00')
 NotaFiscalProduto.imposto_importacao_valor_iof = Decimal('0.00')
 
 def fix_xml_namespaces(element, ns):
-    """Garante que todos os elementos usem o namespace correto e remove tags vazias irrelevantes."""
+    """Garante que todos os elementos usem o namespace correto e protege tags obrigatórias."""
     if not element.tag.startswith('{'):
         element.tag = f"{{{ns}}}{element.tag}"
     
-    # Remover tags vazias opcionais que podem quebrar o schema
+    # Tags que NUNCA devem ser removidas (obrigatórias pelo Schema NFe/NFCe 4.00)
+    protected_tags = ['cMunFG', 'vTroco', 'nItem', 'detPag', 'pag', 'total', 'ICMSTot', 'imposto']
+    
     for child in list(element):
+        tag_name = child.tag.split('}')[-1] if '}' in child.tag else child.tag
+        
         if child.text is None and len(child) == 0:
-            # Lista de tags que NÃO podem ser removidas mesmo vazias (se houver alguma)
-            # No geral, se está vazia e sem filhos, é lixo ou erro no pynfe
-            element.remove(child)
+            if tag_name not in protected_tags:
+                element.remove(child)
+            else:
+                # Se for obrigatória e estiver nula, colocar pelo menos uma string vazia ou valor padrão
+                child.text = ""
+                if tag_name == 'vTroco': child.text = "0.00"
         else:
             fix_xml_namespaces(child, ns)
 
@@ -258,7 +265,6 @@ def _new_gerar_qrcode(self, token, csc, xml, online=True, return_qr=False):
     1. Import de NFCE estava errado (flags vs webservices)
     2. Bug que removia zeros do token (IdToken)
     """
-    import hashlib
     from pynfe.utils.flags import VERSAO_QRCODE, CODIGOS_ESTADOS
     from pynfe.utils.webservices import NFCE  # NFCE está em webservices, NÃO em flags!
 
@@ -280,172 +286,100 @@ def _new_gerar_qrcode(self, token, csc, xml, online=True, return_qr=False):
         raise ValueError(f"Código de UF '{cuf}' não encontrado em CODIGOS_ESTADOS")
     uf = uf_sigla[0].upper()
 
-    # Identificador do CSC (IdToken) deve ter de 1 a 6 dígitos decimais.
-    # Se for maior que 6, pegamos apenas os últimos 6 para não quebrar o Schema 225.
-    cIdToken = str(token)
-    if len(cIdToken) > 6:
-        cIdToken = cIdToken[-6:]
-    elif len(cIdToken) < 1:
-        cIdToken = "000001"
+    # Identificador do CSC (IdToken) deve ter exatamente 6 dígitos.
+    # Ex: '1' -> '000001' (Obrigatório para Schema 225 em SP e outros estados)
+    cIdToken = str(token).zfill(6)
     
+    # Valores dinâmicos para o QR Code 2.00 (MOC 6.0)
+    # Devem ser convertidos para Hexadecimal ASCII
+    def to_hex_ascii(val):
+        if not val: return ""
+        return "".join("{:02x}".format(ord(c)) for c in str(val)).upper()
+
+    try:
+        # Extrair valores do XML para compor a URL do QR Code
+        vNF_val = nfe.xpath("ns:infNFe/ns:total/ns:ICMSTot/ns:vNF/text()", namespaces=ns)[0]
+        vICMS_val = nfe.xpath("ns:infNFe/ns:total/ns:ICMSTot/ns:vICMS/text()", namespaces=ns)[0]
+        dhEmi_val = nfe.xpath("ns:infNFe/ns:ide/ns:dhEmi/text()", namespaces=ns)[0]
+        # DigestValue está dentro de Signature/SignedInfo/Reference
+        digVal_val = nfe.xpath("//sig:Signature/sig:SignedInfo/sig:Reference/sig:DigestValue/text()", namespaces=sig)[0]
+        
+        vNF_hex = to_hex_ascii(vNF_val)
+        vICMS_hex = to_hex_ascii(vICMS_val)
+        dhEmi_hex = to_hex_ascii(dhEmi_val)
+        digVal_hex = to_hex_ascii(digVal_val)
+    except Exception as e:
+        print(f"[ERRO] Falha ao extrair dados para o QR Code: {str(e)}")
+        vNF_hex = vICMS_hex = dhEmi_hex = digVal_hex = ""
+
     if online:
-        # Formato NT 2015.002 versão online:
-        # url = chNFe|nVersao|tpAmb|cIdToken
-        url = "{}|{}|{}|{}".format(chave, VERSAO_QRCODE, tpamb, cIdToken)
-        # Hash = SHA1(url + csc), em hex maiúsculo
-        string_hash = url + csc
-        print(f"[DEBUG] String para Hash QR Code: {string_hash}")
-        url_hash = hashlib.sha1(string_hash.encode()).digest()
-        import base64 as _b64
-        url_hash_hex = _b64.b16encode(url_hash).decode()
-        url_params = "p={}|{}".format(url, url_hash_hex)
-    else:
-        # Versão offline não é usada para NFC-e no Brasil normalmente
-        return xml
+        url_to_hash = "{}|{}|{}|{}|{}|{}|{}|{}".format(
+            chave, VERSAO_QRCODE, tpamb, dhEmi_hex, vNF_hex, vICMS_hex, digVal_hex, cIdToken
+        )
+        string_hash = url_to_hash + csc
+        hash_qr = hashlib.sha1(string_hash.encode()).hexdigest().upper()
+        
+        raw_url_params = "p={}|{}".format(url_to_hash, hash_qr)
+        
+        url_base = NFCE.get(uf, {}).get(online and 'qrcode' or 'qrcode_offline', '')
+        if not url_base:
+            url_base = "https://www.homologacao.nfce.fazenda.sp.gov.br/NFCeConsultaPublica/Paginas/ConsultaQRCode.aspx"
+            
+        full_url = "{}?{}".format(url_base, raw_url_params)
+        
+        supl = etree.SubElement(nfe, "infNFeSupl")
+        etree.SubElement(supl, "qrCode").text = full_url
+        url_chave = NFCE.get(uf, {}).get('consulta', 'https://www.nfce.fazenda.sp.gov.br/consulta')
+        if uf == "SP" and tpamb == "2":
+            url_chave = "https://www.homologacao.nfce.fazenda.sp.gov.br/consulta"
+            
+        etree.SubElement(supl, "urlChave").text = url_chave
+        
+        return nfe
 
-    # Montar URL completa de acordo com a UF
-    lista_uf_padrao = ["PR", "CE", "RS", "RJ", "RO", "DF"]
-    if uf in lista_uf_padrao:
-        qrcode_url = NFCE[uf]["QR"] + url_params
-        url_chave  = NFCE[uf]["URL"]
-    elif uf == "SP":
-        if tpamb == "1":  # Produção
-            qrcode_url = NFCE[uf]["HTTPS"] + "www." + NFCE[uf]["QR"] + url_params
-            url_chave  = NFCE[uf]["HTTPS"] + "www." + NFCE[uf]["URL"]
-        else:  # Homologação
-            qrcode_url = NFCE[uf]["HTTPS"] + "www.homologacao." + NFCE[uf]["QR"] + url_params
-            url_chave  = NFCE[uf]["HTTPS"] + "www.homologacao." + NFCE[uf]["URL"]
-    elif uf == "BA":
-        if tpamb == "1":
-            qrcode_url = NFCE[uf]["HTTPS"] + NFCE[uf]["QR"] + url_params
-        else:
-            qrcode_url = NFCE[uf]["HOMOLOGACAO"] + NFCE[uf]["QR"] + url_params
-        url_chave = NFCE[uf]["URL"]
-    elif uf == "MG":
-        qrcode_url = NFCE[uf]["QR"] + url_params
-        if tpamb == "1":
-            url_chave = NFCE[uf]["HTTPS"] + NFCE[uf]["URL"]
-        else:
-            url_chave = NFCE[uf]["HOMOLOGACAO"] + NFCE[uf]["URL"]
-    else:  # Demais estados (AC, AM, RR, PA, SE, etc.)
-        if tpamb == "1":
-            qrcode_url = NFCE[uf]["HTTPS"] + NFCE[uf]["QR"] + url_params
-            url_chave  = NFCE[uf]["HTTPS"] + NFCE[uf]["URL"]
-        else:
-            qrcode_url = NFCE[uf]["HOMOLOGACAO"] + NFCE[uf]["QR"] + url_params
-            url_chave  = NFCE[uf]["HOMOLOGACAO"] + NFCE[uf]["URL"]
-
-    # Remover infNFeSupl existente para não duplicar
-    for tag in [f"{{{ns_nfe}}}infNFeSupl", "infNFeSupl"]:
-        old = nfe.find(f".//{tag}")
-        if old is not None:
-            nfe.remove(old)
-
-    # ORDEM CRÍTICA (NFC-e 4.00): 1. infNFe, 2. infNFeSupl, 3. Signature
-    # Vamos remontar os filhos da NFe para garantir que nada saia da ordem
-    signature_tag = None
-    inf_nfe_tag = None
-    
-    for child in list(nfe):
-        tag_name = child.tag.split('}')[-1] if '}' in child.tag else child.tag
-        if tag_name == "Signature":
-            signature_tag = child
-            nfe.remove(child)
-        elif tag_name == "infNFe":
-            inf_nfe_tag = child
-        elif tag_name == "infNFeSupl":
-            nfe.remove(child)
-
-    # Novo elemento infNFeSupl
-    info = etree.Element("infNFeSupl") 
-    # O MOC 4.00 dita que o QRCode é literal (CDATA mode) na viagem do envelope HTTP
-    etree.SubElement(info, "qrCode").text = etree.CDATA(qrcode_url.strip())
-    etree.SubElement(info, "urlChave").text = url_chave
-    
-    # Adicionar na ordem correta exigida pelo XSD da NF-e 4.00:
-    # 1. infNFe (já está lá no índice 0)
-    # 2. infNFeSupl (insere no índice 1)
-    nfe.insert(1, info)
-    
-    # 3. Signature (por último)
-    if signature_tag is not None:
-        nfe.append(signature_tag)
-
-    if return_qr:
-        return nfe, qrcode_url.strip()
-    return nfe
-
-# Aplicar o monkeypatch para o QR Code
 SerializacaoQrcode.gerar_qrcode = _new_gerar_qrcode
 
-# Aplicar os outros monkeypatches
 SerializacaoXML._serializar_emitente = _new_serializar_emitente
 SerializacaoXML._serializar_cliente = _new_serializar_cliente
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# MONKEYPATCH: ComunicacaoSefaz._post
-# Problema: o lxml serializa o infNFeSupl sem namespace explícito (ou com
-# xmlns="" vazio) quando inserido dentro de NFe que já declara o mesmo namespace.
-# Isso viola o XSD do enviNFe e causa erro 225 no SEFAZ.
-# Fix: pós-processar a string XML para garantir que infNFeSupl tenha o namespace.
-# ─────────────────────────────────────────────────────────────────────────────
 import requests as _requests
 from pynfe.entidades.certificado import CertificadoA1 as _CertA1
 
 _NS_NFE = "http://www.portalfiscal.inf.br/nfe"
 
 def _fixed_post(self, url, xml, timeout=None):
-    """_post com fix completo para schema NFC-e 4.00."""
     from pynfe.utils import etree as _etree
     certificado_a1 = _CertA1(self.certificado)
     chave, cert = certificado_a1.separar_arquivo(self.certificado_senha, caminho=True)
     chave_cert = (cert, chave)
+    xml_declaration = '<?xml version="1.0" encoding="UTF-8"?>'
     try:
-        xml_declaration = '<?xml version="1.0" encoding="UTF-8"?>'
+        xml_str = _etree.tostring(xml, encoding="unicode")
 
-        # Serialize to string
-        xml_str = _etree.tostring(xml, encoding="unicode").replace("\n", "")
-
-        # --- FIX ROBUSTO PARA SEFAZ SP (Schema 225 / HTTP 400) ---
-        # 1. Limpar namespaces repetidos em tags internas
-        tags_internas = ['infNFe', 'ide', 'emit', 'dest', 'det', 'prod', 'imposto', 'total', 'transp', 'pag', 'infAdic', 'infNFeSupl']
-        for tag in tags_internas:
-            # Remover xmlns se ele estiver sozinho na tag ou seguido de espaço
-            xml_str = re.sub(rf'<{tag}\s+xmlns=["\'][^"\']*["\']', f'<{tag}', xml_str)
-            xml_str = xml_str.replace(f'<{tag} xmlns="">', f'<{tag}>')
-
-        # 2. Garantir namespace oficial em enviNFe E NFe preservando atributos
-        if '<enviNFe' in xml_str:
-            # Remover xmlns e versao existentes para evitar duplicidade
-            xml_str = re.sub(r'<enviNFe\s+xmlns=["\'][^"\']*["\']', '<enviNFe', xml_str)
-            xml_str = re.sub(r'<enviNFe\s+versao=["\'][^"\']*["\']', '<enviNFe', xml_str)
-            # Adicionar xmlns e versao padrão
-            xml_str = xml_str.replace('<enviNFe', f'<enviNFe xmlns="{_NS_NFE}" versao="4.00"')
+        xml_str = xml_str.replace(' xmlns="http://www.portalfiscal.inf.br/nfe"', '')
+        xml_str = xml_str.replace('<enviNFe', '<enviNFe xmlns="http://www.portalfiscal.inf.br/nfe"')
+        xml_str = xml_str.replace('<NFe>', '<NFe xmlns="http://www.portalfiscal.inf.br/nfe">')
         
-        if '<NFe' in xml_str:
-            # Remover xmlns preservando outros atributos (como Id)
-            xml_str = re.sub(r'<NFe\s+xmlns=["\'][^"\']*["\']', '<NFe', xml_str)
-            # Adicionar xmlns sem fechar a tag precocemente
-            xml_str = xml_str.replace('<NFe', f'<NFe xmlns="{_NS_NFE}"')
+        xml_str = re.sub(r'<\?xml.*?\?>', '', xml_str).strip()
+        xml_str = xml_str.replace('\n', '').replace('\r', '')
+        xml_str = re.sub(r'>\s+<', '><', xml_str)
         
-        # 3. Garantir versao em infNFe preservando Id
-        if '<infNFe' in xml_str:
-            # Remover xmlns e versao existentes
-            xml_str = re.sub(r'<infNFe\s+xmlns=["\'][^"\']*["\']', '<infNFe', xml_str)
-            xml_str = re.sub(r'<infNFe\s+versao=["\'][^"\']*["\']', '<infNFe', xml_str)
-            # Adicionar versao 4.00 (lookahead para não alterar a tag <infNFeSupl>)
-            xml_str = re.sub(r'<infNFe(?=\s|>)', '<infNFe versao="4.00"', xml_str)
+        # 2. Garantir versao em infNFe preservando Id (Regex flexível para atributos em qualquer ordem)
+        # CRÍTICO: usar regex preciso para NÃO afetar <infNFeSupl> (só <infNFe> ou <infNFe ...>)
+        # Usamos (?!\w) para garantir que 'infNFe' não seja seguido por 'Supl' ou qualquer outra letra
+        xml_str = re.sub(r'<(infNFe(?!\w)[^>]*)\s+xmlns=["\'][^"\']*["\']', r'<\1', xml_str)
+        xml_str = re.sub(r'<(infNFe(?!\w)[^>]*)\s+versao=["\'][^"\']*["\']', r'<\1', xml_str)
+        # Adicionar versao="4.00" SOMENTE em <infNFe> e <infNFe ...>, nunca em <infNFeSupl>
+        xml_str = re.sub(r'<infNFe(?!\w)([\s>])', r'<infNFe versao="4.00"\1', xml_str)
         
-        # Correção final de lixo e namespaces vazios
         xml_str = xml_str.replace(' xmlns=""', '')
-        # Garantir que não existam tags de fechamento duplicadas ou mal formadas
         xml_str = xml_str.replace('>>', '>')
         
         # FIX DE ORDEM CRÍTICO (infNFe -> infNFeSupl -> Signature)
-        # 1. Separar a tag infNFeSupl e Signature
-        match_supl = re.search(r'(<infNFeSupl>.*?</infNFeSupl>)', xml_str, re.DOTALL)
-        match_sig = re.search(r'(<Signature xmlns="http://www.w3.org/2000/09/xmldsig#">.*?</Signature>)', xml_str, re.DOTALL)
+        # Separar infNFeSupl e Signature com regex ainda mais flexível
+        # Nota: infNFeSupl deve vir ANTES da Signature na NFC-e 4.00
+        match_supl = re.search(r'(<infNFeSupl[^>]*>.*?</infNFeSupl>)', xml_str, re.DOTALL)
+        match_sig = re.search(r'(<Signature[^>]*>.*?</Signature>)', xml_str, re.DOTALL)
         
         if match_supl and match_sig:
             # Remover de onde estiver para remontar no final
@@ -470,8 +404,7 @@ def _fixed_post(self, url, xml, timeout=None):
 
         # DEBUG: Salvar XML final enviado
         try:
-            import tempfile
-            dbg_path = os.path.join(tempfile.gettempdir(), 'last_enviNFe.xml')
+            dbg_path = os.path.join(os.environ.get('TEMP', 'C:/temp'), 'last_enviNFe.xml')
             with open(dbg_path, 'w', encoding='utf-8') as _f:
                 _f.write(xml_declaration + xml_str)
             print(f"[DEBUG] enviNFe salvo em {dbg_path}")
@@ -491,8 +424,7 @@ def _fixed_post(self, url, xml, timeout=None):
         
         # FIX 4: Salvar resposta do SEFAZ para debug
         try:
-            import tempfile
-            resp_path = os.path.join(tempfile.gettempdir(), 'last_sefaz_response.xml')
+            resp_path = os.path.join(os.environ.get('TEMP', 'C:/temp'), 'last_sefaz_response.xml')
             with open(resp_path, 'w', encoding='utf-8') as _f:
                 _f.write(result.text)
             print(f"[DEBUG] Resposta SEFAZ (status {result.status_code}) salva em {resp_path}")
@@ -521,9 +453,10 @@ class MockFonteDados:
 def emitir_nfce_pynfe(req):
     # Decodificar certificado Base64 para um arquivo temporário
     cert_data = base64.b64decode(req.empresa.certificado_base64)
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".pfx") as tmp_cert:
-        tmp_cert.write(cert_data)
-        caminho_cert = tmp_cert.name
+    temp_dir = os.environ.get('TEMP', 'C:/temp')
+    caminho_cert = os.path.join(temp_dir, f"cert_{uuid.uuid4().hex}.pfx")
+    with open(caminho_cert, 'wb') as f:
+        f.write(cert_data)
 
     try:
         senha_cert = req.empresa.senha_certificado
@@ -588,12 +521,18 @@ def emitir_nfce_pynfe(req):
             indicador_presencial=1, # 1=Presencial (como int)
             valor_total_nota=Decimal(str(req.valor_total)),
             uf=emp.uf,
-            municipio=str(emp.codigo_municipio), # cMunFG - OBRIGATÓRIO (IBGE)
+            # cMunFG - OBRIGATÓRIO (IBGE)
+            # Tentar pegar do codigo_municipio vindo da empresa, senão buscar pelo nome/UF (limpo)
+            municipio=str(emp.codigo_municipio or serializacao_mod.obter_codigo_por_municipio(municipio_limpo, emp.uf) or '').strip() or "3549904",
             tipo_impressao_danfe=4, # 4=DANFE NFC-e - OBRIGATÓRIO
             tipo_documento=1, # 1=Saída - OBRIGATÓRIO para NFC-e
             forma_emissao='1', # 1=Normal (string conforme esperado)
             transporte_modalidade_frete=9 # 9=Sem Ocorrência de Transporte (OBRIGATÓRIO para NFC-e)
         )
+        
+        # Correção final se o município virar "None" ou "0000000" ou continuar inválido
+        if not nota_fiscal.municipio or nota_fiscal.municipio in ["None", "0000000", ""]:
+            nota_fiscal.municipio = serializacao_mod.obter_codigo_por_municipio(municipio_limpo, emp.uf) or "3549904"
         
         # Data de emissão (precisa ser um datetime object no pynfe)
         nota_fiscal.data_emissao = datetime.now()
@@ -664,13 +603,31 @@ def emitir_nfce_pynfe(req):
         ns_nfe = "http://www.portalfiscal.inf.br/nfe"
         fix_xml_namespaces(xml_element, ns_nfe)
 
-        # GARANTIR vTroco ANTES de assinar (Mudar o XML após assinar quebra a assinatura - Erro 297)
-        pag_tag = xml_element.find(f".//{{{ns_nfe}}}pag") or xml_element.find(".//pag")
+        # GARANTIR vTroco e REMOVER indPag de detPag (OBRIGATÓRIO para NFC-e 4.00)
+        # ATENÇÃO: lxml elements avaliam como False em contexto bool quando sem filhos!
+        # SEMPRE usar comparação explícita com 'is None' / 'is not None'.
+        pag_tag = xml_element.find(f".//{{{ns_nfe}}}pag")
+        if pag_tag is None:
+            pag_tag = xml_element.find(".//pag")
         if pag_tag is not None:
-            v_troco = pag_tag.find(f".//{{{ns_nfe}}}vTroco") or pag_tag.find(".//vTroco")
+            # Remover indPag se existir (campo proibido em NFC-e 4.00)
+            det_pags = pag_tag.findall(f".//{{{ns_nfe}}}detPag")
+            if not det_pags:
+                det_pags = pag_tag.findall(".//detPag")
+            for det_pag in det_pags:
+                ind_p = det_pag.find(f"{{{ns_nfe}}}indPag")
+                if ind_p is None:
+                    ind_p = det_pag.find("indPag")
+                if ind_p is not None:
+                    det_pag.remove(ind_p)
+                    print("[FIX] indPag removido de detPag")
+
+            v_troco = pag_tag.find(f".//{{{ns_nfe}}}vTroco")
             if v_troco is None:
-                # vTroco deve vir após detPag
+                v_troco = pag_tag.find(".//vTroco")
+            if v_troco is None:
                 etree.SubElement(pag_tag, f"{{{ns_nfe}}}vTroco").text = "0.00"
+                print("[FIX] vTroco adicionado ao pag")
         
         # Limpar duplicatas de namespace ANTES de assinar
         for el in xml_element.getiterator():
@@ -737,8 +694,7 @@ def emitir_nfce_pynfe(req):
 
         # DEBUG: Salvar XML final para inspeção
         try:
-            import tempfile
-            temp_path = os.path.join(tempfile.gettempdir(), 'last_nfce.xml')
+            temp_path = os.path.join(os.environ.get('TEMP', 'C:/temp'), 'last_nfce.xml')
             debug_xml = etree.tostring(xml_assinado, encoding='utf-8', xml_declaration=True).decode('utf-8')
             with open(temp_path, 'w', encoding='utf-8') as f:
                 f.write(debug_xml)
@@ -894,7 +850,6 @@ def salvar_xml_local(cnpj, chave, xml_content):
     """
     try:
         # Obter diretório base (onde está o executável ou script)
-        import sys
         if getattr(sys, 'frozen', False):
             base_dir = os.path.dirname(sys.executable)
         else:
@@ -931,7 +886,7 @@ def cancelar_nfce_pynfe(req_dict):
     """
     from lxml import etree
     from datetime import datetime
-    import base64, tempfile, os, re, traceback
+    import base64, os, re, traceback
     import requests as _req
     import urllib3
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -994,9 +949,11 @@ def cancelar_nfce_pynfe(req_dict):
         etree.SubElement(det_evento, f"{{{NS}}}xJust").text = just_limpa
 
         # ── 2. Salvar certificado PFX em arquivo temporário, assinar o XML ──
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pfx") as tmp:
-            tmp.write(cert_data)
-            caminho_cert = tmp.name
+        import uuid
+        temp_dir = os.environ.get('TEMP', 'C:/temp')
+        caminho_cert = os.path.join(temp_dir, f"cert_cancel_{uuid.uuid4().hex}.pfx")
+        with open(caminho_cert, 'wb') as f:
+            f.write(cert_data)
 
         chave_pem = None
         cert_pem = None
@@ -1206,7 +1163,9 @@ def cancelar_nfce_pynfe(req_dict):
 
 
 def consultar_nfce_pynfe(req_dict):
-    """Consulta o status de uma NFC-e na SEFAZ."""
+    """
+    Consulta o status de uma NFC-e na SEFAZ.
+    """
     try:
         # Usando ComunicacaoSefaz global
         
@@ -1216,9 +1175,11 @@ def consultar_nfce_pynfe(req_dict):
         is_homologacao = empresa_data.get('ambiente_homologacao', True)
         
         cert_data = base64.b64decode(empresa_data.get('certificado_base64', ''))
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.pfx') as tmp_cert:
-            tmp_cert.write(cert_data)
-            caminho_cert = tmp_cert.name
+        import uuid
+        temp_dir = os.environ.get('TEMP', 'C:/temp')
+        caminho_cert = os.path.join(temp_dir, f"cert_consulta_{uuid.uuid4().hex}.pfx")
+        with open(caminho_cert, 'wb') as f:
+            f.write(cert_data)
             
         try:
             senha_cert = empresa_data.get('senha_certificado', '')
@@ -1250,9 +1211,11 @@ def validar_certificado_pynfe(req_dict):
             return {'success': False, 'error': 'Certificado ou senha não fornecidos.'}
             
         cert_data = base64.b64decode(cert_b64)
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.pfx') as tmp_cert:
-            tmp_cert.write(cert_data)
-            caminho_cert = tmp_cert.name
+        import uuid
+        temp_dir = os.environ.get('TEMP', 'C:/temp')
+        caminho_cert = os.path.join(temp_dir, f"cert_validar_{uuid.uuid4().hex}.pfx")
+        with open(caminho_cert, 'wb') as f:
+            f.write(cert_data)
             
         try:
             # Tentar instanciar o certificado (valida a senha)

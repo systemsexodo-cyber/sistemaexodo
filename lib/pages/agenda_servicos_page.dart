@@ -4,7 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:intl/intl.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import '../services/data_service.dart';
-import '../services/firebase_service.dart';
+import '../services/supabase_service.dart';
 import '../services/agendamento_pdf_service.dart';
 import '../models/agendamento_servico.dart';
 import '../models/servico.dart';
@@ -7549,7 +7549,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                   return;
                 }
 
-                final estoque = int.tryParse(estoqueController.text) ?? 0;
+                final estoque = (int.tryParse(estoqueController.text) ?? 0).toDouble();
                 final unidade = unidadeController.text.trim().isEmpty 
                     ? 'UN' 
                     : unidadeController.text.trim();
@@ -8577,7 +8577,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
     }
     
     // Se ainda for nulo (não deveria), usa o ID
-    identificador ??= dataService.empresaIdAtual;
+    identificador ??= dataService.currentEmpresaId;
 
 
     if (identificador == null) {
@@ -8768,7 +8768,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                 overflow: TextOverflow.ellipsis,
                               ),
                               Text(
-                                'ID: ${currentDataService.empresaIdAtual}',
+                                'ID: ${currentDataService.currentEmpresaId}',
                                 style: const TextStyle(
                                   color: Colors.white38,
                                   fontSize: 10,
@@ -8783,7 +8783,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                           icon: const Icon(Icons.refresh, color: Colors.blueAccent, size: 20),
                           onPressed: () async {
                              ScaffoldMessenger.of(modalContext).showSnackBar(
-                              const SnackBar(content: Text('Buscando atualizações no Firebase...')),
+                              const SnackBar(content: Text('Buscando atualizações no Supabase...')),
                             );
                             await currentDataService.forceSync();
                           },
@@ -8793,27 +8793,19 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                         GestureDetector(
                           onLongPress: () async {
                             ScaffoldMessenger.of(modalContext).showSnackBar(
-                              const SnackBar(content: Text('Verificando Firestore...')),
+                              const SnackBar(content: Text('Verificando Supabase...')),
                             );
-                            final count = await FirebaseService.instance.contarAgendamentosPendentes(currentDataService.empresaIdAtual!);
+                            // Simulação de contagem ou verificação remota (a ser implementada se necessário no SupabaseService)
+                            final count = currentDataService.agendamentosServico.where((a) => a.status == 'Aguardando Confirmação').length;
                             if (modalContext.mounted) {
                             ScaffoldMessenger.of(modalContext).showSnackBar(
                               SnackBar(
-                                content: Text('Encontrados $count docs em: .../${currentDataService.empresaIdAtual}/agendamentos_servico'),
+                                content: Text('Encontrados $count solicitações pendentes localmente.'),
                                 backgroundColor: Colors.blueAccent,
                                 action: SnackBarAction(
-                                  label: 'CRIAR TESTE',
+                                  label: 'OK',
                                   textColor: Colors.white,
-                                  onPressed: () async {
-                                    final teste = AgendamentoServico(
-                                      id: 'TESTE-${DateTime.now().millisecondsSinceEpoch}',
-                                      numero: 'TS-999',
-                                      dataAgendamento: DateTime.now(),
-                                      status: 'Aguardando Confirmação',
-                                      observacoes: 'AGENDAMENTO DE TESTE PARA VERIFICAR CONEXÃO',
-                                    );
-                                    await FirebaseService.instance.salvarAgendamentoServico(currentDataService.empresaIdAtual!, teste);
-                                  },
+                                  onPressed: () {},
                                 ),
                               ),
                             );

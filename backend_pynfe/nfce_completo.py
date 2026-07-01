@@ -170,7 +170,6 @@ class NFCeCompleto:
         root.set('versao', '4.00')
         
         # idLote (obrigatório - 15 dígitos)
-        import random
         id_lote = str(random.randint(100000000000000, 999999999999999))
         etree.SubElement(root, f'{{{ns_nfe}}}idLote').text = id_lote
         
@@ -441,8 +440,6 @@ class NFCeCompleto:
         Envia XML assinado para SEFAZ via SOAP manual (sem WSDL)
         SP não usa WSDL para NFC-e, então fazemos requisição SOAP direta
         """
-        import requests
-        import urllib3
         
         uf = empresa_data.get('uf', 'SP')
         ambiente_homologacao = empresa_data.get('ambienteHomologacao', empresa_data.get('ambiente_homologacao', True))
@@ -469,7 +466,6 @@ class NFCeCompleto:
         # Configurar certificado digital na sessão (OBRIGATÓRIO para SEFAZ)
         if self.certificado and self.private_key:
             try:
-                import tempfile
                 cert_pem = self.certificado.public_bytes(encoding=serialization.Encoding.PEM)
                 key_pem = self.private_key.private_bytes(
                     encoding=serialization.Encoding.PEM,
@@ -718,7 +714,6 @@ class NFCeCompleto:
     
     def _limpar_arquivos_temporarios(self):
         """Limpa arquivos temporários de certificado se existirem"""
-        import os
         for file_path in self._temp_cert_files:
             try:
                 if os.path.exists(file_path):

@@ -134,7 +134,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
         debugPrint('>>> [Agendamento] Configurando empresa: ${emp.nomeExibicao} (${emp.id})');
         
         // Garantir que o DataService saiba qual a empresa atual
-        if (dataService.empresaIdAtual != emp.id) {
+        if (dataService.currentEmpresaId != emp.id) {
           await dataService.definirEmpresaAtual(emp.id, modoLeve: true);
         }
         
@@ -169,7 +169,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     final authService = Provider.of<AuthService>(context, listen: false);
 
     // Garantir empresa ativa para o salvamento
-    if (dataService.empresaIdAtual == null) {
+    if (dataService.currentEmpresaId == null) {
       final slugParaUsar = widget.slugEmpresa;
       if (slugParaUsar != null) {
         final emp = authService.obterEmpresaPorSlug(slugParaUsar);
@@ -3107,7 +3107,7 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
       bool algumOcupado = false;
 
       // Garantir empresa ativa
-      if (dataService.empresaIdAtual == null) {
+      if (dataService.currentEmpresaId == null) {
         final slugParaUsar = widget.slugEmpresa;
         if (slugParaUsar != null) {
           final emp = authService.obterEmpresaPorSlug(slugParaUsar);

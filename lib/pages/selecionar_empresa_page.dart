@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:io';
@@ -18,8 +19,9 @@ import 'gerenciar_usuarios_page.dart';
 import 'login_page.dart';
 import '../services/google_drive_service.dart';
 import '../services/bridge_management_service.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'empresas_page.dart';
+import '../services/supabase_service.dart';
+import '../services/app_update_service.dart';
 
 /// Página para selecionar a empresa
 class SelecionarEmpresaPage extends StatefulWidget {
@@ -694,19 +696,27 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                         overflow: TextOverflow.ellipsis,
                       ),
                       const SizedBox(height: 4),
-                      Row(
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 6,
+                        alignment: WrapAlignment.start,
+                        crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
-                          Icon(Icons.fingerprint, size: 12, color: Colors.white.withOpacity(0.4)),
-                          const SizedBox(width: 4),
-                          Text(
-                            empresa.cnpj ?? 'Sem CNPJ',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.white.withOpacity(0.4),
-                              fontFamily: 'monospace',
-                            ),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.fingerprint, size: 12, color: Colors.white.withOpacity(0.4)),
+                              const SizedBox(width: 4),
+                              Text(
+                                empresa.cnpj ?? 'Sem CNPJ',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.white.withOpacity(0.4),
+                                  fontFamily: 'monospace',
+                                ),
+                              ),
+                            ],
                           ),
-                          const SizedBox(width: 12),
                           // Online indicator
                           Consumer<DataService>(
                             builder: (context, dataService, _) {
@@ -727,6 +737,7 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                                   ],
                                 ),
                                 child: Row(
+                                  mainAxisSize: MainAxisSize.min,
                                   children: [
                                     Container(
                                       width: 6,
@@ -743,6 +754,88 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                               );
                             },
                           ),
+                          // Cloud Sync Indicator (Only for Master User)
+                          if (isUsuarioMaster)
+                            Consumer<DataService>(
+                              builder: (context, dataService, _) {
+                                return FutureBuilder<StatusSyncEmpresa>(
+                                  future: _obterStatusSyncEmpresa(empresa.id, dataService),
+                                  builder: (context, snapshot) {
+                                    if (!snapshot.hasData) {
+                                      return const SizedBox.shrink();
+                                    }
+                                    final status = snapshot.data!;
+                                    
+                                    Color pillColor;
+                                    String statusText;
+                                    IconData iconData;
+                                    String tooltipText;
+
+                                    if (status.ultimoErro != null && status.ultimoErro!.isNotEmpty) {
+                                      pillColor = Colors.redAccent;
+                                      statusText = 'ERRO SYNC';
+                                      iconData = Icons.cloud_off_rounded;
+                                      tooltipText = 'Último Erro: ${status.ultimoErro}\nClique para ver logs';
+                                    } else if (status.ultimaSincronizacaoSucesso != null) {
+                                      pillColor = Colors.greenAccent;
+                                      statusText = 'SYNC OK';
+                                      iconData = Icons.cloud_done_rounded;
+                                      final dt = status.ultimaSincronizacaoSucesso!;
+                                      final timeStr = "${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}";
+                                      tooltipText = 'Última sincronização com sucesso: $timeStr\nClique para ver logs';
+                                    } else {
+                                      pillColor = Colors.grey;
+                                      statusText = 'SEM SYNC';
+                                      iconData = Icons.cloud_queue_rounded;
+                                      tooltipText = 'Nenhuma sincronização realizada\nClique para ver logs';
+                                    }
+
+                                    return Tooltip(
+                                      message: tooltipText,
+                                      child: InkWell(
+                                        onTap: () => _mostrarLogsEmpresa(context, empresa, dataService),
+                                        borderRadius: BorderRadius.circular(20),
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+                                          decoration: BoxDecoration(
+                                            color: pillColor.withOpacity(0.1),
+                                            borderRadius: BorderRadius.circular(20),
+                                            border: Border.all(color: pillColor.withOpacity(0.3)),
+                                            boxShadow: [
+                                              BoxShadow(
+                                                color: pillColor.withOpacity(0.05),
+                                                blurRadius: 6,
+                                                spreadRadius: 1,
+                                              ),
+                                            ],
+                                          ),
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Icon(
+                                                iconData,
+                                                color: pillColor,
+                                                size: 12,
+                                              ),
+                                              const SizedBox(width: 6),
+                                              Text(
+                                                statusText,
+                                                style: TextStyle(
+                                                  color: pillColor,
+                                                  fontSize: 9,
+                                                  fontWeight: FontWeight.w900,
+                                                  letterSpacing: 0.5,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                );
+                              },
+                            ),
                         ],
                       ),
                     ],
@@ -768,7 +861,10 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                           Navigator.push(context, MaterialPageRoute(builder: (context) => GerenciarUsuariosPage(empresa: empresa)));
                           break;
                         case 'reiniciar':
-                          _selecionarPCEDispararComando(context, 'restart', 'Reiniciar Emissor');
+                          _selecionarPCEDispararComando(context, 'restart', 'Reiniciar Emissor', cnpjFilter: empresa.cnpj);
+                          break;
+                        case 'atualizar_sistema':
+                          _selecionarPCEDispararComando(context, 'update', 'Atualizar Sistema', cnpjFilter: empresa.cnpj);
                           break;
                         case 'importar':
                           _importarProdutosExcel(context);
@@ -782,6 +878,7 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                       const PopupMenuItem(value: 'edit', child: Row(children: [Icon(Icons.edit_outlined, size: 18), SizedBox(width: 12), Text('Editar')])),
                       const PopupMenuItem(value: 'users', child: Row(children: [Icon(Icons.people_outline, size: 18), SizedBox(width: 12), Text('Usuários')])),
                       const PopupMenuDivider(),
+                      const PopupMenuItem(value: 'atualizar_sistema', child: Row(children: [Icon(Icons.system_update_rounded, color: Colors.greenAccent, size: 18), SizedBox(width: 12), Text('Atualizar Sistema')])),
                       const PopupMenuItem(value: 'reiniciar', child: Row(children: [Icon(Icons.restart_alt_rounded, color: Colors.blueAccent, size: 18), SizedBox(width: 12), Text('Reiniciar Emissor')])),
                       const PopupMenuItem(value: 'importar', child: Row(children: [Icon(Icons.file_upload_outlined, color: Colors.green, size: 18), SizedBox(width: 12), Text('Importar Excel')])),
                       const PopupMenuItem(value: 'limpar', child: Row(children: [Icon(Icons.delete_sweep_outlined, color: Colors.redAccent, size: 18), SizedBox(width: 12), Text('Limpar Produtos')])),
@@ -1846,7 +1943,7 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
       child: Container(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           color: color.withOpacity(0.1),
           borderRadius: BorderRadius.circular(12),
@@ -1860,19 +1957,18 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                   Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                   Text(subtitle, style: const TextStyle(color: Colors.white54, fontSize: 11)),
+                  Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  Text(subtitle, style: const TextStyle(color: Colors.white54, fontSize: 11)),
                 ],
               ),
             ),
-            Icon(Icons.chevron_right, color: color.withOpacity(0.5)),
           ],
         ),
       ),
     );
   }
 
-  void _selecionarPCEDispararComando(BuildContext pageContext, String comando, String acaoTitulo, {Map<String, dynamic>? extraData}) {
+  void _selecionarPCEDispararComando(BuildContext pageContext, String comando, String acaoTitulo, {String? cnpjFilter, Map<String, dynamic>? extraData}) {
     showDialog(
       context: pageContext,
       builder: (dialogContext) => AlertDialog(
@@ -1881,10 +1977,8 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
         content: SizedBox(
           width: double.maxFinite,
           height: 300,
-          child: StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance
-                .collection('bridge_status')
-                .snapshots(),
+          child: FutureBuilder<List<Map<String, dynamic>>>(
+            future: SupabaseService.instance.getBridgeStatus(),
             builder: (streamContext, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
                 return const Center(child: CircularProgressIndicator());
@@ -1892,96 +1986,74 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
               if (snapshot.hasError) {
                 return Center(child: Text('Erro: ${snapshot.error}', style: const TextStyle(color: Colors.white)));
               }
-
-              final docs = snapshot.data?.docs ?? [];
+  
+              var docs = snapshot.data ?? [];
               
+              if (cnpjFilter != null && cnpjFilter.isNotEmpty) {
+                final cnpjLimpo = cnpjFilter.replaceAll(RegExp(r'[^0-9]'), '');
+                docs = docs.where((b) {
+                  final bCnpj = b['ultimo_cnpj']?.toString().replaceAll(RegExp(r'[^0-9]'), '') ?? '';
+                  return bCnpj == cnpjLimpo;
+                }).toList();
+              }
+  
               if (docs.isEmpty) {
                 return const Center(
                   child: Padding(
                     padding: EdgeInsets.all(20.0),
-                    child: Text('Nenhum emissor encontrado no banco de dados.', style: TextStyle(color: Colors.white54, fontSize: 13), textAlign: TextAlign.center),
+                    child: Text('Nenhum emissor encontrado para esta empresa.', style: TextStyle(color: Colors.white54, fontSize: 13), textAlign: TextAlign.center),
                   ),
                 );
               }
-
+  
               return ListView(
                 children: [
                   ListTile(
                     leading: const Icon(Icons.computer, color: Colors.white),
-                    title: const Text('TODOS OS COMPUTADORES', style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold)),
+                    title: Text(cnpjFilter != null && cnpjFilter.isNotEmpty ? 'TODOS OS COMPUTADORES DA EMPRESA' : 'TODOS OS COMPUTADORES', style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold)),
                     onTap: () {
                       Navigator.pop(dialogContext);
-                      _confirmarComandoBridge(pageContext, comando, 'Deseja $acaoTitulo em TODOS os emissores simultaneamente?', targetPc: null, extraData: extraData);
+                      if (cnpjFilter != null && cnpjFilter.isNotEmpty) {
+                        final targets = docs.map((e) => e['id']?.toString()).whereType<String>().toList();
+                        _confirmarComandoBridgeParaMultiplos(pageContext, comando, 'Deseja $acaoTitulo em TODOS os emissores desta empresa?', targets, extraData: extraData);
+                      } else {
+                        _confirmarComandoBridge(pageContext, comando, 'Deseja $acaoTitulo em TODOS os emissores simultaneamente?', targetPc: null, extraData: extraData);
+                      }
                     },
                   ),
                   const Divider(color: Colors.white24),
-                  // Lista de Pcs Específicos
-                  ...(() {
-                    try {
-                      final List<Widget> tiles = [];
-                      final filteredDocs = docs.where((doc) => !doc.id.startsWith('watchdog_')).toList();
-                      
-                      for (var doc in filteredDocs) {
-                        final dynamic rawData = doc.data();
-                        if (rawData == null || rawData is! Map) continue;
-                        
-                        final data = rawData as Map<String, dynamic>;
-                        final pcName = (data['pc_name'] ?? doc.id).toString();
-                        final bool isOnline = data['online'] == true;
-                        
-                        // Procurar status do watchdog para este PC de forma segura
-                        Map<String, dynamic>? watchdogData;
-                        for (var d in docs) {
-                          if (d.id == 'watchdog_$pcName') {
-                            final dRaw = d.data();
-                            if (dRaw is Map) {
-                              watchdogData = dRaw as Map<String, dynamic>;
-                            }
-                            break;
-                          }
-                        }
-                        
-                        final bool watchdogOnline = watchdogData != null && (watchdogData['online'] == true);
-
-                        tiles.add(ListTile(
-                          leading: Icon(
-                            Icons.desktop_windows, 
-                            color: isOnline ? Colors.green : (watchdogOnline ? Colors.orange : Colors.grey)
+                  ...docs.map((data) {
+                    final pcName = data['pc_name'] ?? 'PC Desconhecido';
+                    final pcId = data['id'];
+                    final isOnline = data['online'] ?? false;
+                    
+                    return ListTile(
+                      leading: Icon(Icons.desktop_windows, color: isOnline ? Colors.green : Colors.white24),
+                      title: Text(pcName, style: const TextStyle(color: Colors.white)),
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            isOnline ? 'Online' : 'Offline',
+                            style: TextStyle(color: isOnline ? Colors.green : Colors.redAccent, fontSize: 11),
                           ),
-                          title: Text(pcName, style: const TextStyle(color: Colors.white)),
-                          subtitle: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                isOnline ? 'Bridge Online' : 'Bridge Offline',
-                                style: TextStyle(color: isOnline ? Colors.green : Colors.red, fontSize: 11),
+                          if (data['versao_software'] != null || data['versao_windows'] != null)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 2),
+                              child: Text(
+                                'Versão: ${data['versao_software'] ?? "Desconhecida"} (${data['versao_windows'] ?? "Windows"})',
+                                style: const TextStyle(color: Colors.white38, fontSize: 10),
                               ),
-                              Text(
-                                watchdogOnline ? '🛡️ Proteção Ativa' : '⚠️ Proteção Offline',
-                                style: TextStyle(color: watchdogOnline ? Colors.orange : Colors.grey, fontSize: 10),
-                              ),
-                              if (data['ultima_empresa'] != null)
-                                Text(
-                                  '🏢 ${data['ultima_empresa']}',
-                                  style: const TextStyle(color: Colors.blueAccent, fontSize: 10, fontWeight: FontWeight.bold),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                            ],
-                          ),
-                          trailing: const Icon(Icons.send, color: Colors.white24, size: 16),
-                          onTap: () {
-                            Navigator.pop(dialogContext);
-                        _confirmarComandoBridge(pageContext, comando, 'Deseja $acaoTitulo no PC: $pcName?', targetPc: pcName, extraData: extraData);
+                            ),
+                        ],
+                      ),
+                      trailing: const Icon(Icons.send, color: Colors.white24, size: 16),
+                      onTap: () {
+                        Navigator.pop(dialogContext);
+                        _confirmarComandoBridge(pageContext, comando, 'Deseja $acaoTitulo no PC "$pcName"?', targetPc: pcId, extraData: extraData);
                       },
-                    ));
-                  }
-                      return tiles;
-                    } catch (e) {
-                      debugPrint('Erro ao construir lista de PCs: $e');
-                      return [Text('Erro na lista: $e', style: const TextStyle(color: Colors.red))];
-                    }
-                  })(),
+                    );
+                  }).toList(),
                 ],
               );
             },
@@ -2011,7 +2083,7 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
           ),
           ElevatedButton(
             onPressed: () async {
-              Navigator.pop(dialogContext); // Fecha confirmação
+              Navigator.pop(dialogContext);
               
               try {
                 debugPrint('>>> [BridgeManager] Enviando comando "$comando" para PC: ${targetPc ?? "Todos"}');
@@ -2027,7 +2099,7 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                   );
                 }
 
-                final docRef = await BridgeManagementService.instance.enviarComando(comando, targetPc: targetPc, extraData: extraData);
+                final requestId = await BridgeManagementService.instance.enviarComando(comando, targetPc: targetPc, extraData: extraData);
                 
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
@@ -2039,78 +2111,37 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                   );
                 }
 
-                // Monitorar Resposta em Tempo Real (Ouvir o Documento apenas uma vez ou por stream limitada)
+                // Monitorar Resposta via Polling (Supabase)
                 int checkCount = 0;
-                late StreamSubscription sub;
-                
-                sub = docRef.snapshots().listen((snapshot) {
-                  if (!snapshot.exists || !mounted) {
-                    sub.cancel();
-                    return;
-                  }
+                while (checkCount < 30) { // 60 segundos
+                  await Future.delayed(const Duration(seconds: 2));
+                  if (!mounted) break;
                   
-                  final data = snapshot.data() as Map<String, dynamic>;
+                  final record = await SupabaseService.instance.select('bridge_commands', filters: {'id': requestId});
+                  if (record.isEmpty) break;
+                  
+                  final data = record.first;
                   final status = data['status'];
                   final resultado = data['resultado'] ?? '';
                   final processorPc = data['processor_pc'] ?? '';
 
-                  // Gerenciamento de Timeout Interno
-                  checkCount++;
-                  if (status == 'pendente' && checkCount > 15) { // ~15-20 segundos sem sair de pendente
-                    sub.cancel();
-                    ScaffoldMessenger.of(context).hideCurrentSnackBar();
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('⚠️ O PC parece estar OFFLINE ou o Bridge está fechado. Verifique se o ícone laranja está aberto no PC.'),
-                        backgroundColor: Colors.brown,
-                        duration: Duration(seconds: 8),
-                      ),
-                    );
-                    return;
-                  }
-
-                  if (status == 'processando') {
-                    ScaffoldMessenger.of(context).hideCurrentSnackBar();
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('⏳ $comando: Processando em $processorPc...'),
-                        backgroundColor: Colors.orange,
-                        duration: const Duration(seconds: 10),
-                      ),
-                    );
-                  } 
-                  else if (status == 'concluido' || status == 'autorizada') { // 'autorizada' para nfce
-                    final bool sucesso = data['sucesso'] == true || status == 'autorizada';
-                    
-                    ScaffoldMessenger.of(context).hideCurrentSnackBar();
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Row(
-                          children: [
-                            Icon(sucesso ? Icons.check_circle : Icons.error, color: Colors.white),
-                            const SizedBox(width: 8),
-                            Expanded(child: Text(sucesso ? '✅ Sucesso ($processorPc): $resultado' : '❌ Erro ($processorPc): $resultado')),
-                          ],
+                  if (status == 'concluido' || status == 'erro') {
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(status == 'concluido' 
+                              ? '🏆 SUCESSO ($processorPc): $resultado' 
+                              : '❌ ERRO ($processorPc): $resultado'),
+                          backgroundColor: status == 'concluido' ? Colors.green : Colors.redAccent,
+                          duration: const Duration(seconds: 5),
                         ),
-                        backgroundColor: sucesso ? Colors.green : Colors.red,
-                        duration: const Duration(seconds: 15),
-                        action: SnackBarAction(label: 'OK', textColor: Colors.white, onPressed: () {}),
-                      ),
-                    );
+                      );
+                    }
+                    break;
                   }
-                  else if (status == 'erro') {
-                    ScaffoldMessenger.of(context).hideCurrentSnackBar();
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('❌ Falha ($processorPc): $resultado'),
-                        backgroundColor: Colors.red,
-                        duration: const Duration(seconds: 15),
-                        action: SnackBarAction(label: 'OK', textColor: Colors.white, onPressed: () {}),
-                      ),
-                    );
-                  }
-                });
-
+                  checkCount++;
+                }
               } catch (e) {
                 debugPrint('>>> [BridgeManager] Erro ao enviar comando: $e');
                 if (mounted) {
@@ -2131,6 +2162,71 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
     );
   }
 
+  void _confirmarComandoBridgeParaMultiplos(BuildContext context, String comando, String pergunta, List<String> targetPcs, {Map<String, dynamic>? extraData}) {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF2E2E3E),
+        title: const Text('Confirmar Comando', style: TextStyle(color: Colors.white)),
+        content: Text(pergunta, style: const TextStyle(color: Colors.white70)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('NÃO'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(dialogContext);
+              
+              try {
+                debugPrint('>>> [BridgeManager] Enviando comando "$comando" para ${targetPcs.length} computadores');
+                
+                if (mounted) {
+                  ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('📤 Enviando comando "$comando" para ${targetPcs.length} PCs...'),
+                      backgroundColor: Colors.blueAccent,
+                      duration: const Duration(seconds: 2),
+                    ),
+                  );
+                }
+
+                final List<Future<String>> futures = targetPcs.map((pcId) => 
+                  BridgeManagementService.instance.enviarComando(comando, targetPc: pcId, extraData: extraData)
+                ).toList();
+
+                await Future.wait(futures);
+                
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('✅ Comando "$comando" enviado com sucesso para os ${targetPcs.length} PCs!'),
+                      backgroundColor: Colors.indigo,
+                      duration: const Duration(seconds: 4),
+                    ),
+                  );
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('❌ Erro ao enviar comando: $e'),
+                      backgroundColor: Colors.redAccent,
+                      duration: const Duration(seconds: 4),
+                    ),
+                  );
+                }
+              }
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
+            child: const Text('SIM', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _selecionarESubirNovaVersao(BuildContext context) async {
     Navigator.pop(context); // Fechar dialog atual
     try {
@@ -2142,37 +2238,64 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
       if (result != null && result.files.single.bytes != null) {
         final file = result.files.single;
         
-        // Perguntar a versão
-        final versionController = TextEditingController(text: "2.8");
+        // Perguntar a versão e o componente
+        final versionController = TextEditingController(text: AppUpdateService.currentAppVersion);
+        String selectedConfigId = 'latest'; // Default: emissor bridge
+        
         final bool? confirm = await showDialog<bool>(
           context: context,
-          builder: (context) => AlertDialog(
-            backgroundColor: const Color(0xFF1E1E2E),
-            title: const Text('Confirmar Upload', style: TextStyle(color: Colors.white)),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text('Arquivo selecionado: ${file.name} (${(file.size / 1024 / 1024).toStringAsFixed(2)} MB)', style: const TextStyle(color: Colors.white70)),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: versionController,
-                  style: const TextStyle(color: Colors.white),
-                  decoration: const InputDecoration(
-                    labelText: 'Versão a distribuir',
-                    labelStyle: TextStyle(color: Colors.white54),
-                    enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.white30)),
+          builder: (dialogContext) => StatefulBuilder(
+            builder: (context, setDialogState) => AlertDialog(
+              backgroundColor: const Color(0xFF1E1E2E),
+              title: const Text('Confirmar Upload', style: TextStyle(color: Colors.white)),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Arquivo: ${file.name} (${(file.size / 1024 / 1024).toStringAsFixed(2)} MB)', style: const TextStyle(color: Colors.white70)),
+                  const SizedBox(height: 16),
+                  const Text('Componente a atualizar:', style: TextStyle(color: Colors.white54, fontSize: 13)),
+                  const SizedBox(height: 8),
+                  DropdownButton<String>(
+                    dropdownColor: const Color(0xFF2E2E3E),
+                    value: selectedConfigId,
+                    style: const TextStyle(color: Colors.white),
+                    isExpanded: true,
+                    underline: Container(height: 1, color: Colors.white30),
+                    items: const [
+                      DropdownMenuItem(value: 'latest', child: Text('Emissor NFC-e (Bridge)')),
+                      DropdownMenuItem(value: 'app_latest', child: Text('Aplicativo Desktop Principal')),
+                      DropdownMenuItem(value: 'sync_latest', child: Text('Sincronizador de Nuvem')),
+                    ],
+                    onChanged: (val) {
+                      if (val != null) {
+                        setDialogState(() {
+                          selectedConfigId = val;
+                        });
+                      }
+                    },
                   ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: versionController,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(
+                      labelText: 'Versão a distribuir',
+                      labelStyle: TextStyle(color: Colors.white54),
+                      enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.white30)),
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(child: const Text('Cancelar'), onPressed: () => Navigator.pop(dialogContext, false)),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.pink),
+                  child: const Text('Iniciar Upload', style: TextStyle(color: Colors.white)),
+                  onPressed: () => Navigator.pop(dialogContext, true),
                 ),
               ],
             ),
-            actions: [
-              TextButton(child: const Text('Cancelar'), onPressed: () => Navigator.pop(context, false)),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.pink),
-                child: const Text('Iniciar Upload', style: TextStyle(color: Colors.white)),
-                onPressed: () => Navigator.pop(context, true),
-              ),
-            ],
           ),
         );
 
@@ -2199,13 +2322,14 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
           await BridgeManagementService.instance.subirNovaVersaoBridge(
             file, 
             versionController.text.trim(),
+            selectedConfigId,
             (progress) {} // Sem atualização em real time por simplicidade visual
           );
 
           if (mounted) {
             Navigator.pop(context); // Fecha dialog de progresso
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('✅ Upload concluído! Os clientes na versão 2.8+ agora podem atualizar via APP.'), backgroundColor: Colors.green),
+              const SnackBar(content: Text('✅ Upload concluído! A atualização já está disponível para os clientes na nuvem.'), backgroundColor: Colors.green),
             );
           }
         }
@@ -2304,6 +2428,200 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
       ),
     );
   }
+
+  Future<StatusSyncEmpresa> _obterStatusSyncEmpresa(String empresaId, DataService dataService) async {
+    try {
+      final keySucesso = 'empresa_${empresaId}_exodo_ultima_sincronizacao_sucesso';
+      final keyErro = 'empresa_${empresaId}_exodo_ultimo_erro_sync';
+
+      final dataSucessoStr = await dataService.storage.carregar(keySucesso);
+      final ultimoErro = await dataService.storage.carregar(keyErro);
+
+      DateTime? ultimaSincronizacaoSucesso;
+      if (dataSucessoStr != null && dataSucessoStr is String) {
+        ultimaSincronizacaoSucesso = DateTime.tryParse(dataSucessoStr);
+      }
+
+      return StatusSyncEmpresa(
+        ultimaSincronizacaoSucesso: ultimaSincronizacaoSucesso,
+        ultimoErro: ultimoErro is String ? ultimoErro : null,
+      );
+    } catch (e) {
+      debugPrint('Erro ao obter status de sync da empresa $empresaId: $e');
+      return StatusSyncEmpresa();
+    }
+  }
+
+  Future<void> _mostrarLogsEmpresa(BuildContext context, Empresa empresa, DataService dataService) async {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF161622),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.blueAccent.withOpacity(0.15),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.cloud_sync_rounded, color: Colors.blueAccent, size: 24),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Logs de Sincronia',
+                      style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
+                    Text(
+                      empresa.nomeExibicao,
+                      style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 13, fontWeight: FontWeight.normal),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          content: SizedBox(
+            width: double.maxFinite,
+            height: 350,
+            child: FutureBuilder<dynamic>(
+              future: dataService.storage.carregar('empresa_${empresa.id}_sync_logs'),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator(color: Colors.blueAccent));
+                }
+                
+                final rawLogs = snapshot.data;
+                final List<String> logs = rawLogs != null && rawLogs is List
+                    ? List<String>.from(rawLogs.map((e) => e.toString()))
+                    : [];
+
+                if (logs.isEmpty) {
+                  return Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.notes_rounded, color: Colors.white.withOpacity(0.2), size: 48),
+                        const SizedBox(height: 12),
+                        Text(
+                          'Nenhum log registrado para esta empresa.',
+                          style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 14),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                    ),
+                  );
+                }
+
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text(
+                      'LOGS DE EVENTOS RECENTES:',
+                      style: TextStyle(
+                        color: Colors.white38,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 1.1,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Expanded(
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.3),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.white.withOpacity(0.08)),
+                        ),
+                        child: ListView.builder(
+                          physics: const BouncingScrollPhysics(),
+                          itemCount: logs.length,
+                          itemBuilder: (context, idx) {
+                            final log = logs[logs.length - 1 - idx];
+                            Color logColor = Colors.white70;
+                            if (log.contains('❌') || log.contains('⚠️') || log.contains('ERRO')) {
+                              logColor = Colors.redAccent;
+                            } else if (log.contains('✅') || log.contains('✓') || log.contains('sucesso')) {
+                              logColor = Colors.greenAccent;
+                            } else if (log.contains('🔄')) {
+                              logColor = Colors.cyanAccent;
+                            }
+                            
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 4),
+                              child: Text(
+                                log,
+                                style: TextStyle(
+                                  color: logColor,
+                                  fontFamily: 'monospace',
+                                  fontSize: 11,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+          actions: [
+            FutureBuilder<dynamic>(
+              future: dataService.storage.carregar('empresa_${empresa.id}_sync_logs'),
+              builder: (context, snapshot) {
+                final rawLogs = snapshot.data;
+                final List<String> logs = rawLogs != null && rawLogs is List
+                    ? List<String>.from(rawLogs.map((e) => e.toString()))
+                    : [];
+
+                return TextButton.icon(
+                  onPressed: logs.isEmpty
+                      ? null
+                      : () {
+                          final logText = logs.join('\n');
+                          Clipboard.setData(ClipboardData(text: logText));
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Logs copiados para a área de transferência!'),
+                              backgroundColor: Colors.green,
+                              duration: Duration(seconds: 2),
+                            ),
+                          );
+                        },
+                  icon: const Icon(Icons.copy, size: 16),
+                  label: const Text('Copiar Logs'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: logs.isEmpty ? Colors.white24 : Colors.blueAccent,
+                  ),
+                );
+              },
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Fechar', style: TextStyle(color: Colors.white70)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class StatusSyncEmpresa {
+  final DateTime? ultimaSincronizacaoSucesso;
+  final String? ultimoErro;
+
+  StatusSyncEmpresa({this.ultimaSincronizacaoSucesso, this.ultimoErro});
 }
 
 

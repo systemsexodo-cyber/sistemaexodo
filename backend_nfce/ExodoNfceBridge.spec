@@ -3,7 +3,23 @@ from PyInstaller.utils.hooks import collect_all
 
 datas = [('firebase-credentials.json', '.')]
 binaries = []
-hiddenimports = ['multiprocessing', '_multiprocessing', 'multiprocessing.resource_tracker', 'multiprocessing.popen_spawn_win32', 'uvicorn', 'pynfe', 'unicodedata']
+hiddenimports = [
+    'multiprocessing',
+    '_multiprocessing',
+    'multiprocessing.resource_tracker',
+    'multiprocessing.popen_spawn_win32',
+    'uvicorn',
+    'pynfe',
+    'unicodedata',
+    'tempfile',
+    '_tempfile',
+    # Dependencias da bandeja no Windows
+    'pystray',
+    'pystray._win32',
+    'PIL',
+    'PIL.Image',
+    'PIL.ImageDraw',
+]
 import pynfe
 import os
 pynfe_dir = os.path.dirname(pynfe.__file__)
@@ -52,18 +68,18 @@ w = Analysis(
 )
 pyz_w = PYZ(w.pure)
 
-# --- Bridge EXE ---
+# --- Bridge EXE (Modo Diretório - OneDir) ---
 exe_bridge = EXE(
     pyz_a,
     a.scripts,
     a.binaries,
     a.datas,
     [],
-    name='ExodoNfceBridge_v346',
+    name='ExodoNfceBridge_v348',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,
@@ -82,7 +98,7 @@ exe_watchdog = EXE(
     w.binaries,
     w.datas,
     [],
-    name='ExodoNfceBridgeWatchdog_v346',
+    name='ExodoNfceBridgeWatchdog_v348',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

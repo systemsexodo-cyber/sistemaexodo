@@ -65,6 +65,10 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
 
   final _bridgeNfceKeyController = TextEditingController();
   
+  // Fiscal / Contabilidade
+  final _emailContabilidadeController = TextEditingController();
+  bool _envioFiscalAutomatico = false;
+  
   // Customizações de Impressão NFC-e
 
   final _nfceMargemEsquerdaController = TextEditingController(text: '5.0');
@@ -98,6 +102,14 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
   bool _moduloPet = false;
   String? _whatsappConnectionState; // 'open', 'close', ou null
   bool _whatsappTestando = false;
+
+  // Configurações de visibilidade dos botões do PDV
+  bool _mostrarBotaoCliente = true;
+  bool _mostrarBotaoVendedor = true;
+  bool _mostrarBotaoEntregas = true;
+  bool _mostrarBotaoHistorico = true;
+  bool _mostrarBotaoCentral = true;
+  bool _mostrarBotaoDespesa = true;
 
   bool _isLoading = false;
 
@@ -201,7 +213,29 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
     _whatsappAtivo = empresa.whatsappAtivo;
     _whatsappTipo = empresa.whatsappTipo ?? 'evolution';
     _moduloPet = empresa.moduloPet;
+    
+    // Fiscal / Contabilidade
+    _emailContabilidadeController.text = empresa.emailContabilidade ?? '';
+    _envioFiscalAutomatico = empresa.envioFiscalAutomatico;
+    
+    // Configurações de visibilidade dos botões do PDV
+    _mostrarBotaoCliente = empresa.configuracoes?['mostrarBotaoCliente'] ?? true;
+    _mostrarBotaoVendedor = empresa.configuracoes?['mostrarBotaoVendedor'] ?? true;
+    _mostrarBotaoEntregas = empresa.configuracoes?['mostrarBotaoEntregas'] ?? true;
+    _mostrarBotaoHistorico = empresa.configuracoes?['mostrarBotaoHistorico'] ?? true;
+    _mostrarBotaoCentral = empresa.configuracoes?['mostrarBotaoCentral'] ?? true;
+    _mostrarBotaoDespesa = empresa.configuracoes?['mostrarBotaoDespesa'] ?? true;
+    
+    // Configurações de Senha do Administrador e Segurança
+    _senhaAdminController.text = empresa.configuracoes?['senha_admin'] ?? '';
+    _exigirSenhaAlterarPedido = empresa.configuracoes?['exigir_senha_alterar_pedido'] ?? false;
+    _exigirSenhaCancelarPedido = empresa.configuracoes?['exigir_senha_cancelar_pedido'] ?? false;
   }
+
+  // Senha do Administrador e Segurança
+  final _senhaAdminController = TextEditingController();
+  bool _exigirSenhaAlterarPedido = false;
+  bool _exigirSenhaCancelarPedido = false;
 
   @override
   void dispose() {
@@ -229,6 +263,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
     _whatsappApiKeyController.dispose();
     _whatsappInstanceNameController.dispose();
     _ultimoNumeroNFCeController.dispose();
+    _emailContabilidadeController.dispose();
 
     _bridgeNfceUrlController.dispose();
     _bridgeNfceKeyController.dispose();
@@ -237,6 +272,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
     _nfceLarguraBobinaController.dispose();
     _nfceMargemDireitaController.dispose();
     _nfceFonteEscalaController.dispose();
+    _senhaAdminController.dispose();
 
     super.dispose();
   }
@@ -341,6 +377,8 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
       whatsappTipo: _whatsappTipo,
       whatsappAtivo: _whatsappAtivo,
       moduloPet: _moduloPet,
+      emailContabilidade: _emailContabilidadeController.text.trim().isEmpty ? null : _emailContabilidadeController.text.trim(),
+      envioFiscalAutomatico: _envioFiscalAutomatico,
       configuracoes: {
         ...?widget.empresa?.configuracoes, // Preservar outras configurações
         if (_certificadoDigitalBytes != null)
@@ -367,6 +405,19 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
         'comandaNegrito': _comandaNegrito,
 
         'ultimo_numero_nfce': _ultimoNumeroNFCeController.text.trim().isEmpty ? null : _ultimoNumeroNFCeController.text.trim(),
+        
+        // Configurações de visibilidade dos botões do PDV
+        'mostrarBotaoCliente': _mostrarBotaoCliente,
+        'mostrarBotaoVendedor': _mostrarBotaoVendedor,
+        'mostrarBotaoEntregas': _mostrarBotaoEntregas,
+        'mostrarBotaoHistorico': _mostrarBotaoHistorico,
+        'mostrarBotaoCentral': _mostrarBotaoCentral,
+        'mostrarBotaoDespesa': _mostrarBotaoDespesa,
+        
+        // Senha do Administrador e Segurança
+        'senha_admin': _senhaAdminController.text.trim(),
+        'exigir_senha_alterar_pedido': _exigirSenhaAlterarPedido,
+        'exigir_senha_cancelar_pedido': _exigirSenhaCancelarPedido,
       },
     );
 
@@ -614,7 +665,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                 label: 'URL do Emissor Local (Bridge)',
                 icon: Icons.lan,
                 hintText: 'http://localhost:8000',
-                helperText: 'Se usar o Firebase Online, coloque aqui o link do seu túnel (Zrok/Ngrok)',
+                helperText: 'URL do emissor NFC-e rodando localmente (padrão: http://localhost:8000)',
               ),
               const SizedBox(height: 8),
               _buildTextField(
@@ -837,6 +888,29 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                     ),
                   ],
                 ),
+              ),
+
+              const SizedBox(height: 24),
+              _buildSectionTitle('Fiscal / Contabilidade'),
+              _buildTextField(
+                controller: _emailContabilidadeController,
+                label: 'E-mail do Contador (Contabilidade)',
+                icon: Icons.alternate_email,
+                hintText: 'exemplo@contabilidade.com.br',
+                helperText: 'E-mail para onde os XMLs e relatórios serão enviados.',
+              ),
+              SwitchListTile(
+                title: const Text('Envio Fiscal Automático', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                subtitle: const Text('Enviar arquivos no dia 1 de cada mês automaticamente ao abrir o sistema.', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                value: _envioFiscalAutomatico,
+                onChanged: (bool value) {
+                  setState(() {
+                    _envioFiscalAutomatico = value;
+                  });
+                },
+                activeColor: Colors.orange,
+                secondary: const Icon(Icons.auto_awesome, color: Colors.orange),
+                contentPadding: EdgeInsets.zero,
               ),
 
               const SizedBox(height: 24),
@@ -1291,6 +1365,191 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
 
               const SizedBox(height: 32),
 
+              // Configuração de Visibilidade dos Botões do PDV
+              _buildSectionTitle('Botões da Barra de Ferramentas (PDV)'),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.orange.shade900.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: Colors.orange.shade400.withOpacity(0.5),
+                    width: 1.5,
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.tune, color: Colors.orange.shade300, size: 24),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Visibilidade dos Botões',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'Defina quais botões aparecem na tela de vendas',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.white70,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    const Divider(color: Colors.white24),
+                    const SizedBox(height: 8),
+                    
+                    // Botão Cliente
+                    _buildBotaoToggle(
+                      icon: Icons.person,
+                      label: 'Cliente',
+                      value: _mostrarBotaoCliente,
+                      onChanged: (value) => setState(() => _mostrarBotaoCliente = value),
+                      color: Colors.green,
+                    ),
+                    
+                    // Botão Vendedor
+                    _buildBotaoToggle(
+                      icon: Icons.badge,
+                      label: 'Vendedor',
+                      value: _mostrarBotaoVendedor,
+                      onChanged: (value) => setState(() => _mostrarBotaoVendedor = value),
+                      color: Colors.purple,
+                    ),
+                    
+                    // Botão Entregas
+                    _buildBotaoToggle(
+                      icon: Icons.delivery_dining,
+                      label: 'Entregas',
+                      value: _mostrarBotaoEntregas,
+                      onChanged: (value) => setState(() => _mostrarBotaoEntregas = value),
+                      color: Colors.orange,
+                    ),
+                    
+                    // Botão Histórico
+                    _buildBotaoToggle(
+                      icon: Icons.history,
+                      label: 'Histórico',
+                      value: _mostrarBotaoHistorico,
+                      onChanged: (value) => setState(() => _mostrarBotaoHistorico = value),
+                      color: Colors.amber,
+                    ),
+                    
+                    // Botão Central
+                    _buildBotaoToggle(
+                      icon: Icons.assignment,
+                      label: 'Central',
+                      value: _mostrarBotaoCentral,
+                      onChanged: (value) => setState(() => _mostrarBotaoCentral = value),
+                      color: Colors.blue,
+                    ),
+                    
+                    // Botão Despesa
+                    _buildBotaoToggle(
+                      icon: Icons.money_off,
+                      label: 'Despesa',
+                      value: _mostrarBotaoDespesa,
+                      onChanged: (value) => setState(() => _mostrarBotaoDespesa = value),
+                      color: Colors.red,
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 32),
+
+              // Segurança e Senha do Administrador
+              _buildSectionTitle('Segurança e Senha do Administrador'),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.red.shade900.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: Colors.red.shade400.withOpacity(0.4),
+                    width: 1.5,
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.gpp_good_outlined, color: Colors.red.shade300, size: 24),
+                        const SizedBox(width: 12),
+                        const Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Controle Anti-Fraude / Senha Master',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                ),
+                              ),
+                              SizedBox(height: 4),
+                              Text(
+                                'Exigir senha de admin para operações críticas no PDV',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.white70,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    const Divider(color: Colors.white24),
+                    const SizedBox(height: 12),
+                    _buildTextField(
+                      controller: _senhaAdminController,
+                      label: 'Senha do Administrador (Master) *',
+                      icon: Icons.vpn_key_rounded,
+                      obscureText: true,
+                      helperText: 'Senha solicitada aos funcionários para autorizar alterações',
+                    ),
+                    const SizedBox(height: 12),
+                    // Toggle Exigir senha para alterar pedido
+                    _buildBotaoToggle(
+                      icon: Icons.edit_document,
+                      label: 'Exigir Senha para Alterar Pedido Pago/Fiado',
+                      value: _exigirSenhaAlterarPedido,
+                      onChanged: (value) => setState(() => _exigirSenhaAlterarPedido = value),
+                      color: Colors.redAccent,
+                    ),
+                    const SizedBox(height: 8),
+                    // Toggle Exigir senha para cancelar pedido
+                    _buildBotaoToggle(
+                      icon: Icons.cancel_presentation,
+                      label: 'Exigir Senha para Cancelar Pedidos',
+                      value: _exigirSenhaCancelarPedido,
+                      onChanged: (value) => setState(() => _exigirSenhaCancelarPedido = value),
+                      color: Colors.redAccent,
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 32),
+
               // Botão deletar todos os dados operacionais (apenas quando editando empresa existente)
               if (widget.empresa != null) ...[
                 OutlinedButton.icon(
@@ -1669,6 +1928,56 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                 fontSize: 11,
               ),
             ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Widget para toggle de visibilidade de botões do PDV
+  Widget _buildBotaoToggle({
+    required IconData icon,
+    required String label,
+    required bool value,
+    required Function(bool) onChanged,
+    required Color color,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: InkWell(
+        onTap: () => onChanged(!value),
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: value ? color.withOpacity(0.15) : Colors.white.withOpacity(0.05),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: value ? color.withOpacity(0.5) : Colors.white12,
+              width: value ? 1.5 : 1,
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(icon, color: value ? color : Colors.white54, size: 20),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    color: value ? Colors.white : Colors.white70,
+                    fontWeight: value ? FontWeight.bold : FontWeight.normal,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+              Switch(
+                value: value,
+                onChanged: onChanged,
+                activeColor: color,
+                activeTrackColor: color.withOpacity(0.3),
+              ),
+            ],
           ),
         ),
       ),

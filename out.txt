@@ -1,0 +1,274 @@
+Analyzing data_service.dart...                                  
+
+   info - The import of 'package:sistema_exodo_novo/models/motorista.dart' is unnecessary because all of the used elements are also provided by the import of 'package:sistema_exodo_novo/models/entrega.dart' - lib\services\data_service.dart:27:8 - unnecessary_import
+warning - Unused import: 'dart:convert' - lib\services\data_service.dart:41:8 - unused_import
+warning - Unused import: 'dart:math' - lib\services\data_service.dart:42:8 - unused_import
+   info - The import of 'package:flutter/material.dart' is unnecessary because all of the used elements are also provided by the import of 'package:flutter/foundation.dart' - lib\services\data_service.dart:45:8 - unnecessary_import
+   info - The private field _bridgesStatus could be 'final' - lib\services\data_service.dart:89:30 - prefer_final_fields
+warning - The value of the field '_bridgeSubscription' isn't used - lib\services\data_service.dart:90:23 - unused_field
+   info - The private field _persistenciaHabilitada could be 'final' - lib\services\data_service.dart:453:8 - prefer_final_fields
+   info - The private field _paginaAtualClientes could be 'final' - lib\services\data_service.dart:628:7 - prefer_final_fields
+warning - The value of the field '_paginaAtualClientes' isn't used - lib\services\data_service.dart:628:7 - unused_field
+   info - The private field _paginaAtualVendas could be 'final' - lib\services\data_service.dart:632:7 - prefer_final_fields
+warning - The value of the field '_paginaAtualVendas' isn't used - lib\services\data_service.dart:632:7 - unused_field
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:688:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:689:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:690:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:691:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:692:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:696:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:699:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:701:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:708:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:709:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:738:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:759:9 - avoid_print
+warning - The operand can't be 'null', so the condition is always 'true' - lib\services\data_service.dart:764:21 - unnecessary_null_comparison
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:776:5 - avoid_print
+warning - The declaration '_reiniciarTimerSincronizacao' isn't referenced - lib\services\data_service.dart:803:8 - unused_element
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:862:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:963:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:964:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:965:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:975:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:987:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:992:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:996:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:999:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1010:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1014:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1021:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1023:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1037:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1041:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1046:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1050:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1055:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1059:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1064:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1066:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1069:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1072:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1089:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1094:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1095:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1096:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1097:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1098:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1099:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1100:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1101:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1102:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1103:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1104:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1106:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1107:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1121:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1129:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1131:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1156:13 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1168:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1180:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1215:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1222:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1232:7 - avoid_print
+   info - Unnecessary braces in a string interpolation - lib\services\data_service.dart:1232:24 - unnecessary_brace_in_string_interps
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1235:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1236:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1255:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1256:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1257:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1258:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1262:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1267:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1270:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1276:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1277:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1292:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1298:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1302:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1304:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1305:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1306:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1310:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1351:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1357:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1388:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1394:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1426:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1434:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1436:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1443:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1445:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1455:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1457:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1463:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1465:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1466:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1475:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1476:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1477:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1485:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1487:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1494:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1496:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1502:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1504:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:1505:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:2423:5 - avoid_print
+   info - Use interpolation to compose strings and values - lib\services\data_service.dart:2571:18 - prefer_interpolation_to_compose_strings
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:2784:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:2790:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:2792:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:2793:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:2798:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:2799:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:2818:5 - avoid_print
+warning - Dead code - lib\services\data_service.dart:2850:79 - dead_code
+warning - The left operand can't be null, so the right operand is never executed - lib\services\data_service.dart:2850:82 - dead_null_aware_expression
+   info - Use interpolation to compose strings and values - lib\services\data_service.dart:2866:11 - prefer_interpolation_to_compose_strings
+warning - Dead code - lib\services\data_service.dart:2916:79 - dead_code
+warning - The left operand can't be null, so the right operand is never executed - lib\services\data_service.dart:2916:82 - dead_null_aware_expression
+   info - Use interpolation to compose strings and values - lib\services\data_service.dart:2996:11 - prefer_interpolation_to_compose_strings
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:3054:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:3055:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:3056:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:3057:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:3058:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:3067:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:3080:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:3081:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:3083:13 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:3086:13 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:3099:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:3106:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:3107:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:3108:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:3900:15 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:3915:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:3916:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:3917:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:3918:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:3919:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:3921:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:3933:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4186:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4194:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4196:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4228:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4231:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4233:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4239:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4244:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4247:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4251:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4256:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4275:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4279:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4286:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4322:15 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4337:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4338:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4339:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4340:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4341:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4343:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4349:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4360:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4361:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4364:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4374:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4413:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4420:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4428:5 - avoid_print
+warning - The operand can't be 'null', so the condition is always 'true' - lib\services\data_service.dart:4513:25 - unnecessary_null_comparison
+warning - The operand can't be 'null', so the condition is always 'true' - lib\services\data_service.dart:4600:23 - unnecessary_null_comparison
+warning - The '!' will have no effect because the receiver can't be null - lib\services\data_service.dart:4602:48 - unnecessary_non_null_assertion
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4642:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4649:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4758:7 - avoid_print
+   info - Unnecessary braces in a string interpolation - lib\services\data_service.dart:4774:114 - unnecessary_brace_in_string_interps
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4779:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4780:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4781:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4782:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4814:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4824:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4831:9 - avoid_print
+   info - The variable name 'SupabaseEhMesa' isn't a lowerCamelCase identifier - lib\services\data_service.dart:4845:18 - non_constant_identifier_names
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4861:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4874:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4886:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4901:9 - avoid_print
+   info - The variable name 'SupabaseEhMesa' isn't a lowerCamelCase identifier - lib\services\data_service.dart:4917:18 - non_constant_identifier_names
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4932:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4948:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4964:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4980:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:4997:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:5009:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:5019:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:5027:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:5075:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:5078:13 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:5086:17 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:5087:17 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:5088:17 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:5093:13 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:5128:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:5157:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:5163:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:5169:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:5175:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:5181:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:5191:9 - avoid_print
+warning - Unnecessary cast - lib\services\data_service.dart:5196:71 - unnecessary_cast
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:5239:7 - avoid_print
+warning - Unnecessary cast - lib\services\data_service.dart:5255:71 - unnecessary_cast
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:5286:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:5292:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:5296:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:5298:7 - avoid_print
+warning - The value of the local variable 'houveAlgumaMudanca' isn't used - lib\services\data_service.dart:5361:10 - unused_local_variable
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:5568:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:5589:13 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:5591:13 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:5616:7 - avoid_print
+warning - The operand can't be 'null', so the condition is always 'true' - lib\services\data_service.dart:5937:34 - unnecessary_null_comparison
+warning - The '!' will have no effect because the receiver can't be null - lib\services\data_service.dart:5938:50 - unnecessary_non_null_assertion
+warning - The operand can't be 'null', so the condition is always 'true' - lib\services\data_service.dart:5975:34 - unnecessary_null_comparison
+warning - The '!' will have no effect because the receiver can't be null - lib\services\data_service.dart:5976:50 - unnecessary_non_null_assertion
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:6071:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:6084:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:6100:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:6101:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:6103:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:6104:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:6109:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:6110:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:6111:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:6112:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:6113:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:6114:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:6115:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:6116:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:6117:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:6118:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:6119:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:6160:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:6162:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:6168:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:6169:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:6170:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:6171:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:6172:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:6173:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:6174:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:6175:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\data_service.dart:6177:7 - avoid_print
+   info - Unnecessary braces in a string interpolation - lib\services\data_service.dart:6379:22 - unnecessary_brace_in_string_interps
+   info - Unnecessary braces in a string interpolation - lib\services\data_service.dart:6390:27 - unnecessary_brace_in_string_interps
+warning - The declaration '_getTipoPagamentoByString' isn't referenced - lib\services\data_service.dart:6431:17 - unused_element
+warning - The declaration '_reiniciarMonitorBridge' isn't referenced - lib\services\data_service.dart:6730:8 - unused_element
+
+270 issues found. (ran in 2.0s)

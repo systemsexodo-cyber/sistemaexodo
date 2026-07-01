@@ -25,6 +25,11 @@ void openWindow(String url, String name) {
   // Não faz nada fora da Web
 }
 
+/// Abre uma URL (stub)
+void openUrl(String url) {
+  // Não faz nada fora da Web
+}
+
 /// Atualiza o caminho da URL (stub)
 void updateUrl(String path, {bool replace = false}) {
   // Não faz nada fora da Web
@@ -47,5 +52,14 @@ void downloadFile(String content, String fileName, String mimeType) {
 void downloadBytes(List<int> bytes, String fileName, String mimeType) {
   // Não faz nada fora da Web
 }
+
+/// Verifica se está em tela cheia (stub)
+bool isFullscreen() => false;
+
+/// Solicita tela cheia (stub)
+void requestFullscreen() {}
+
+/// Sai da tela cheia (stub)
+void exitFullscreen() {}
 
 

@@ -7,6 +7,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../theme.dart';
 import 'home_page.dart';
 import 'selecionar_empresa_page.dart';
+import '../services/app_update_service.dart';
 
 /// Página de login do sistema
 class LoginPage extends StatefulWidget {
@@ -86,7 +87,7 @@ class _LoginPageState extends State<LoginPage> {
                     
                     // VERSÃO E RODAPÉ DISCRETO
                     Text(
-                      'SISTEMA ÊXODO V1.0.8',
+                      'SISTEMA ÊXODO V${AppUpdateService.currentAppVersion}',
                       style: TextStyle(
                         color: Colors.white.withOpacity(0.2),
                         fontSize: 10,

@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'package:flutter/material.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
@@ -728,9 +729,46 @@ class VendaPDFService {
       // Cálculo de largura útil (mm -> pt) com compensação de segurança
       final double pageWidth = (larguraBobina - 2) * 2.83465;
 
+      // Calcular altura dinâmica estimada em pontos (pt)
+      // 1 mm = 2.83 pt
+      // Cabeçalho/Logo/Dados: ~180pt
+      // Cliente: ~60pt (mais ~30pt se tiver telefone/entrega)
+      // Cada item: ~25pt (mais ~15pt para cada adicional)
+      // Total/Pagamentos: ~120pt
+      // Rodapé: ~60pt
+      double alturaEstimada = 180.0;
+      
+      // Cliente
+      alturaEstimada += 60.0;
+      if (venda.clienteNome?.isNotEmpty == true && venda.clienteNome != "CONSUMIDOR FINAL") {
+        alturaEstimada += 20.0;
+      }
+      
+      // Itens
+      if (venda.itens != null) {
+        for (final item in venda.itens) {
+          alturaEstimada += 25.0; // Nome e total
+          if (item.adicionais != null && item.adicionais.isNotEmpty) {
+            alturaEstimada += item.adicionais.length * 15.0;
+          }
+        }
+      }
+      
+      // Totais e pagamentos
+      alturaEstimada += 120.0;
+      
+      // Observações e rodapé
+      if (venda.observacoes?.isNotEmpty == true) {
+        alturaEstimada += 40.0;
+      }
+      alturaEstimada += 60.0; // Rodapé final
+      
+      // Margem de segurança (mínimo de 350pt)
+      if (alturaEstimada < 350) alturaEstimada = 350;
+
       pdf.addPage(
         pw.Page(
-          pageFormat: PdfPageFormat(pageWidth, 2000),
+          pageFormat: PdfPageFormat(pageWidth, alturaEstimada),
           margin: pw.EdgeInsets.only(
             left: margemEsq,
             right: margemDir,
@@ -1160,6 +1198,7 @@ class VendaPDFService {
   /// Constrói seção de entrega térmico
   static pw.Widget _buildDeliveryTermico(VendaBalcao venda, double fontSizeCorpo) {
     final info = venda.deliveryInfo!;
+    final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
@@ -1207,6 +1246,35 @@ class VendaPDFService {
           pw.Text(
             'Motorista: ${info.motoristaNome}',
             style: pw.TextStyle(fontSize: fontSizeCorpo),
+          ),
+        ],
+        if (info.valorParaTroco > 0) ...[
+          pw.SizedBox(height: 4),
+          pw.Row(
+            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+            children: [
+              pw.Text(
+                'TROCO PARA:',
+                style: pw.TextStyle(fontSize: fontSizeCorpo, fontWeight: pw.FontWeight.bold),
+              ),
+              pw.Text(
+                formatoMoeda.format(info.valorParaTroco),
+                style: pw.TextStyle(fontSize: fontSizeCorpo, fontWeight: pw.FontWeight.bold),
+              ),
+            ],
+          ),
+          pw.Row(
+            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+            children: [
+              pw.Text(
+                'VALOR DO TROCO:',
+                style: pw.TextStyle(fontSize: fontSizeCorpo + 1, fontWeight: pw.FontWeight.bold),
+              ),
+              pw.Text(
+                formatoMoeda.format(info.valorParaTroco - venda.valorTotal),
+                style: pw.TextStyle(fontSize: fontSizeCorpo + 1, fontWeight: pw.FontWeight.bold),
+              ),
+            ],
           ),
         ],
         pw.SizedBox(height: 5),
@@ -1259,16 +1327,65 @@ class VendaPDFService {
     );
   }
 
+  /// Helper para preview de PDF
+  static Future<void> _showPdfPreview(BuildContext context, Uint8List pdfBytes, String fileName, {bool isTermico = false}) async {
+    await showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: Colors.transparent,
+        child: Container(
+          width: MediaQuery.of(context).size.width * 0.8,
+          height: MediaQuery.of(context).size.height * 0.9,
+          clipBehavior: Clip.antiAlias,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Column(
+            children: [
+              AppBar(
+                title: const Text('Pré-visualização de Impressão', style: TextStyle(color: Colors.white)),
+                backgroundColor: const Color(0xFF1E1E2E),
+                iconTheme: const IconThemeData(color: Colors.white),
+                leading: IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ),
+              Expanded(
+                child: PdfPreview(
+                  build: (format) async => pdfBytes,
+                  pdfFileName: '$fileName.pdf',
+                  canChangePageFormat: false,
+                  canChangeOrientation: false,
+                  allowPrinting: true,
+                  allowSharing: true,
+                  maxPageWidth: isTermico ? 320.0 : null,
+                  dpi: isTermico ? 200.0 : null,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   /// Imprime o PDF da venda
   static Future<void> imprimirPDF({
     required VendaBalcao venda,
     required Empresa empresa,
+    BuildContext? context,
   }) async {
     try {
       final pdfBytes = await gerarPDF(venda: venda, empresa: empresa);
-      await Printing.layoutPdf(
-        onLayout: (PdfPageFormat format) async => pdfBytes,
-      );
+      if (context != null) {
+        await _showPdfPreview(context, pdfBytes, 'Venda_${venda.numero}', isTermico: false);
+      } else {
+        await Printing.layoutPdf(
+          onLayout: (PdfPageFormat format) async => pdfBytes,
+        );
+      }
     } catch (e) {
       throw Exception('Erro ao imprimir PDF: $e');
     }
@@ -1278,12 +1395,17 @@ class VendaPDFService {
   static Future<void> imprimirPDFTermico({
     required VendaBalcao venda,
     required Empresa empresa,
+    BuildContext? context,
   }) async {
     try {
       final pdfBytes = await gerarPDFTermico(venda: venda, empresa: empresa);
-      await Printing.layoutPdf(
-        onLayout: (PdfPageFormat format) async => pdfBytes,
-      );
+      if (context != null) {
+        await _showPdfPreview(context, pdfBytes, 'Venda_Termico_${venda.numero}', isTermico: true);
+      } else {
+        await Printing.layoutPdf(
+          onLayout: (PdfPageFormat format) async => pdfBytes,
+        );
+      }
     } catch (e) {
       throw Exception('Erro ao imprimir cupom não fiscal térmico: $e');
     }

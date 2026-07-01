@@ -15,15 +15,15 @@ import '../models/agendamento_servico.dart';
 import '../models/venda_balcao.dart';
 import '../models/item_material.dart';
 import '../models/endereco_cliente.dart';
-import '../models/adicional_produto.dart';
 import '../services/data_service.dart';
+import '../services/auth_service.dart';
+import '../services/supabase_service.dart';
 import '../theme.dart';
 import 'venda_direta_page.dart';
 import 'lancar_pedido_page.dart';
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
-import '../services/image_storage_service.dart';
 import 'dart:typed_data';
 import '../widgets/sync_status_widget.dart';
 
@@ -226,6 +226,8 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
   final _profissaoController = TextEditingController();
   final _observacoesController = TextEditingController();
   final _limiteCreditoController = TextEditingController();
+  final _saldoDevedorController = TextEditingController();
+  final _creditoInicialController = TextEditingController();
 
   TipoPessoa _tipoPessoa = TipoPessoa.fisica;
   DateTime? _dataNascimento;
@@ -405,7 +407,7 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
     );
   }
 
-  /// Retorna a URL permanente do Firebase ou null se falhar
+  /// Retorna a URL permanente do Supabase ou null se falhar
   /// [onProgress] callback opcional para atualizar progresso (recebe progresso de 0.0 a 1.0)
   Future<String?> _uploadFotoPet(
     String localPath,
@@ -417,13 +419,13 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
       debugPrint(
         '>>> [Upload Foto Pet] ========================================',
       );
-      debugPrint('>>> [Upload Foto Pet] INICIANDO UPLOAD');
+      debugPrint('>>> [Upload Foto Pet] INICIANDO UPLOAD (SUPABASE)');
       debugPrint('>>> [Upload Foto Pet] Pet ID: $petId');
       debugPrint('>>> [Upload Foto Pet] Cliente ID: $clienteId');
       debugPrint('>>> [Upload Foto Pet] Caminho local: $localPath');
 
       final dataService = Provider.of<DataService>(context, listen: false);
-      final empresaId = dataService.empresaIdAtual;
+      final empresaId = dataService.currentEmpresaId;
 
       if (empresaId == null) {
         debugPrint('>>> [Upload Foto Pet] ❌ ERRO: Empresa ID não encontrado');
@@ -437,7 +439,7 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
       _uploadingFoto = true;
 
       final nomeArquivo =
-          'pet_${petId}_${DateTime.now().millisecondsSinceEpoch}';
+          'pet_${petId}_${DateTime.now().millisecondsSinceEpoch}.jpg';
       final caminhoStorage = 'pets/$empresaId/$clienteId/$nomeArquivo';
 
       debugPrint('>>> [Upload Foto Pet] Caminho no storage: $caminhoStorage');
@@ -459,75 +461,41 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
       }
 
       if (imageBytes.isEmpty) {
-        throw Exception('Arquivo de imagem vazio');
+        throw Exception('Dados de imagem vazios');
       }
 
-      // Obter nome do pet para salvar
-      final pet = widget.cliente?.pets.firstWhere(
-        (p) => p.id == petId,
-        orElse: () => Pet(
-          id: petId,
-          nome: 'Pet',
-          especie: '',
-          raca: '',
-          dataNascimento: DateTime.now(),
-          createdAt: DateTime.now(),
-          updatedAt: DateTime.now(),
-        ),
-      );
-
-      // Usar armazenamento GRATUITO no Firestore
-      debugPrint(
-        '>>> [Upload Foto Pet] Chamando ImageStorageService (GRATUITO)...',
-      );
       if (onProgress != null) onProgress(0.3);
 
-      final url = await ImageStorageService.salvarImagemERetornarUrl(
-        imageBytes: imageBytes,
-        empresaId: empresaId,
-        categoria: 'pets',
-        nome: '${pet?.nome ?? "Pet"} - ${widget.cliente?.nome ?? "Cliente"}',
-        metadata: {
-          'pet_id': petId,
-          'cliente_id': clienteId,
-          'empresa_id': empresaId,
-        },
+      // Upload para Supabase
+      final publicUrl = await SupabaseService.instance.uploadImage(
+        'imagens',
+        caminhoStorage,
+        kIsWeb ? imageBytes : File(localPath),
+        contentType: 'image/jpeg',
       );
 
       if (onProgress != null) onProgress(1.0);
 
-      if (url != null) {
-        debugPrint('>>> [Upload Foto Pet] ✅ Upload concluído com sucesso!');
-        debugPrint('>>> [Upload Foto Pet] URL: $url');
+      if (publicUrl != null) {
+        debugPrint('>>> [Upload Foto Pet] ✅ UPLOAD CONCLUÍDO (SUPABASE)');
+        debugPrint('>>> [Upload Foto Pet] URL pública: $publicUrl');
       } else {
-        debugPrint('>>> [Upload Foto Pet] ❌ Upload retornou null (falhou)');
-        throw Exception('Upload falhou - retornou null');
+        throw Exception('Upload para Supabase falhou (URL retornada como null)');
       }
 
-      debugPrint(
-        '>>> [Upload Foto Pet] ========================================',
-      );
-      return url;
+      return publicUrl;
     } catch (e, stackTrace) {
-      debugPrint('>>> [Upload Foto Pet] ❌❌❌ ERRO AO FAZER UPLOAD ❌❌❌');
-      debugPrint('>>> [Upload Foto Pet] Erro: $e');
-      debugPrint('>>> [Upload Foto Pet] StackTrace: $stackTrace');
-      debugPrint(
-        '>>> [Upload Foto Pet] ========================================',
-      );
-
-      // Mostrar erro ao usuário
+      debugPrint('>>> [Upload Foto Pet] ❌ ERRO: $e');
+      debugPrint('>>> [Upload Foto Pet] $stackTrace');
+      
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Erro ao enviar foto: ${e.toString()}'),
             backgroundColor: Colors.red,
-            duration: const Duration(seconds: 5),
           ),
         );
       }
-
-      // Em caso de erro, retornar null para que não seja salvo um caminho inválido
       return null;
     } finally {
       _uploadingFoto = false;
@@ -611,6 +579,14 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
       _profissaoController.text = c.profissao ?? '';
       _observacoesController.text = c.observacoes ?? '';
       _limiteCreditoController.text = c.limiteCredito?.toStringAsFixed(2) ?? '';
+      _saldoDevedorController.text = c.saldoDevedor.toStringAsFixed(2);
+      
+      // Carregar creditoInicial a partir de dadosExtras
+      final creditoInicialVal = c.dadosExtras?['credito_inicial'];
+      _creditoInicialController.text = creditoInicialVal != null 
+          ? double.parse(creditoInicialVal.toString()).toStringAsFixed(2) 
+          : '0.00';
+          
       _ativo = c.ativo;
       _bloqueado = c.bloqueado;
       _habilitaTaxiDog = c.habilitaTaxiDog;
@@ -641,6 +617,8 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
     _profissaoController.dispose();
     _observacoesController.dispose();
     _limiteCreditoController.dispose();
+    _saldoDevedorController.dispose();
+    _creditoInicialController.dispose();
     super.dispose();
   }
 
@@ -1297,14 +1275,40 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
           ],
 
           // Crédito
-          _buildSecaoTitulo('Crédito', Icons.account_balance_wallet),
+          _buildSecaoTitulo('Crédito e Saldos Iniciais', Icons.account_balance_wallet),
           const SizedBox(height: 12),
-          _buildCampoTexto(
-            controller: _limiteCreditoController,
-            label: 'Limite de Crédito (R\$)',
-            icon: Icons.attach_money,
-            keyboardType: TextInputType.numberWithOptions(decimal: true),
-            prefixText: 'R\$ ',
+          Row(
+            children: [
+              Expanded(
+                child: _buildCampoTexto(
+                  controller: _limiteCreditoController,
+                  label: 'Limite de Crédito (R\$)',
+                  icon: Icons.attach_money,
+                  keyboardType: TextInputType.numberWithOptions(decimal: true),
+                  prefixText: 'R\$ ',
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildCampoTexto(
+                  controller: _saldoDevedorController,
+                  label: 'Saldo Devedor Inicial (Fiado) (R\$)',
+                  icon: Icons.money_off,
+                  keyboardType: TextInputType.numberWithOptions(decimal: true),
+                  prefixText: 'R\$ ',
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildCampoTexto(
+                  controller: _creditoInicialController,
+                  label: 'Crédito Inicial (Adiantamento) (R\$)',
+                  icon: Icons.account_balance,
+                  keyboardType: TextInputType.numberWithOptions(decimal: true),
+                  prefixText: 'R\$ ',
+                ),
+              ),
+            ],
           ),
 
           const SizedBox(height: 24),
@@ -2033,7 +2037,7 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                                             Provider.of<DataService>(
                                               context,
                                               listen: false,
-                                            ).empresaIdAtual;
+                                            ).currentEmpresaId;
 
                                         if (empresaId != null) {
                                           // Fazer upload IMEDIATAMENTE usando bytes
@@ -2097,31 +2101,21 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                                                   ),
                                                 );
 
-                                            url =
-                                                await ImageStorageService.salvarImagemERetornarUrl(
-                                                  imageBytes:
-                                                      selectedFile.bytes!,
-                                                  empresaId: empresaId,
-                                                  categoria: 'pets',
-                                                  nome:
-                                                      '${pet.nome} - ${widget.cliente!.nome}',
-                                                  metadata: {
-                                                    'pet_id': petId,
-                                                    'cliente_id':
-                                                        widget.cliente!.id,
-                                                    'empresa_id': empresaId,
-                                                  },
-                                                ).timeout(
-                                                  const Duration(seconds: 30),
-                                                  onTimeout: () {
-                                                    debugPrint(
-                                                      '>>> [Web/Chrome] ⚠️ Timeout no upload após 30 segundos',
-                                                    );
-                                                    if (mounted)
-                                                      Navigator.pop(context);
-                                                    return null;
-                                                  },
+                                            url = await SupabaseService.instance.uploadImageFromBytes(
+                                              imageBytes: selectedFile.bytes!,
+                                              storagePath: 'pets/${empresaId}/${widget.cliente!.id}/${petId}.jpg',
+                                              contentType: 'image/jpeg',
+                                              onProgress: (p) => progressNotifier.value = p,
+                                            ).timeout(
+                                              const Duration(seconds: 45),
+                                              onTimeout: () {
+                                                debugPrint(
+                                                  '>>> [Web/Chrome] ⚠️ Timeout no upload após 45 segundos',
                                                 );
+                                                if (mounted) Navigator.pop(context);
+                                                return null;
+                                              },
+                                            );
 
                                             progressNotifier.value = 1.0;
                                           } catch (e, stackTrace) {
@@ -2998,10 +2992,10 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                                           '>>> [Salvar Pet] Caminho/URL: $fotoPath',
                                         );
 
-                                        // Se já é uma URL HTTPS do Firebase, verificar se está acessível
+                                        // Se já é uma URL HTTPS do Supabase, verificar se está acessível
                                         if (fotoPath!.startsWith('https://')) {
                                           debugPrint(
-                                            '>>> [Salvar Pet] Verificando URL do Firebase: $fotoPath',
+                                            '>>> [Salvar Pet] Verificando URL do Supabase: $fotoPath',
                                           );
                                           try {
                                             final testResponse = await http
@@ -3208,7 +3202,7 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                                       }
                                     });
 
-                                    // Salvar o cliente no Firebase após atualizar o pet
+                                    // Salvar o cliente no Supabase após atualizar o pet
                                     if (widget.cliente != null) {
                                       try {
                                         final dataService =
@@ -3256,11 +3250,11 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                                           clienteAtualizado,
                                         );
                                         debugPrint(
-                                          '>>> [Salvar Pet] Cliente atualizado no Firebase com a nova foto do pet',
+                                          '>>> [Salvar Pet] Cliente atualizado no Supabase com a nova foto do pet',
                                         );
                                       } catch (e) {
                                         debugPrint(
-                                          '>>> [Salvar Pet] Erro ao salvar cliente no Firebase: $e',
+                                          '>>> [Salvar Pet] Erro ao salvar cliente no Supabase: $e',
                                         );
                                       }
                                     }
@@ -3685,6 +3679,15 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
         limiteCredito: double.tryParse(
           _limiteCreditoController.text.replaceAll(',', '.'),
         ),
+        saldoDevedor: double.tryParse(
+          _saldoDevedorController.text.replaceAll(',', '.'),
+        ) ?? 0.0,
+        dadosExtras: {
+          ...?widget.cliente?.dadosExtras,
+          'credito_inicial': double.tryParse(
+            _creditoInicialController.text.replaceAll(',', '.'),
+          ) ?? 0.0,
+        },
         bloqueado: _bloqueado,
         habilitaTaxiDog: _habilitaTaxiDog,
         ativo: _ativo,
@@ -3871,7 +3874,7 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Dashboard Financeiro
-          _buildDashboardFinanceiro(estatisticas, formatoMoeda),
+          _buildDashboardFinanceiro(estatisticas, formatoMoeda, dataService),
 
           const SizedBox(height: 24),
 
@@ -4049,8 +4052,15 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
       if (venda.cancelado) continue;
 
       totalCompras += venda.valorTotal;
-      totalPago += venda
-          .valorTotal; // Vendas balcão no sistema geralmente são recebidas no ato
+      totalPago += (venda.valorRecebido ?? 0); 
+
+      if (venda.tipoPagamento == TipoPagamento.fiado) {
+        final pendente = venda.valorTotal - (venda.valorRecebido ?? 0);
+        if (pendente > 0) {
+          totalPendente += pendente;
+          qtdPagamentosPendentes++;
+        }
+      }
 
       if (ultimaCompra == null || venda.dataVenda.isAfter(ultimaCompra)) {
         ultimaCompra = venda.dataVenda;
@@ -4091,72 +4101,119 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
   Widget _buildDashboardFinanceiro(
     Map<String, dynamic> stats,
     NumberFormat formatoMoeda,
+    DataService dataService,
   ) {
     final totalCompras = stats['totalCompras'] as double;
     final totalPago = stats['totalPago'] as double;
     final totalPendente = stats['totalPendente'] as double;
     final totalVencido = stats['totalVencido'] as double;
 
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            const Color(0xFF1a237e).withOpacity(0.8),
-            const Color(0xFF283593).withOpacity(0.8),
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+    return Column(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                const Color(0xFF1a237e).withOpacity(0.8),
+                const Color(0xFF283593).withOpacity(0.8),
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Column(
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('DASHBOARD FINANCEIRO', style: TextStyle(color: Colors.white54, fontSize: 10, fontWeight: FontWeight.bold)),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      TextButton.icon(
+                        onPressed: () => _mostrarDialogExtrato(dataService),
+                        icon: const Icon(Icons.receipt_long, color: Colors.cyanAccent, size: 18),
+                        label: const Text('VER EXTRATO', style: TextStyle(color: Colors.cyanAccent, fontSize: 11, fontWeight: FontWeight.bold)),
+                        style: TextButton.styleFrom(
+                          backgroundColor: Colors.white10,
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                      ),
+                      TextButton.icon(
+                        onPressed: () => _mostrarDialogAjustarCredito(dataService),
+                        icon: const Icon(Icons.balance, color: Colors.orangeAccent, size: 18),
+                        label: const Text('AJUSTAR CRÉDITO', style: TextStyle(color: Colors.orangeAccent, fontSize: 11, fontWeight: FontWeight.bold)),
+                        style: TextButton.styleFrom(
+                          backgroundColor: Colors.white10,
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                      ),
+                      TextButton.icon(
+                        onPressed: () => _quitarSaldoDevedor(dataService),
+                        icon: const Icon(Icons.add_circle, color: Colors.greenAccent, size: 18),
+                        label: const Text('RECEBER VALOR', style: TextStyle(color: Colors.greenAccent, fontSize: 11, fontWeight: FontWeight.bold)),
+                        style: TextButton.styleFrom(
+                          backgroundColor: Colors.white10,
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildStatFinanceiro(
+                      'Total Compras',
+                      formatoMoeda.format(totalCompras),
+                      Icons.shopping_cart,
+                      Colors.blue,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildStatFinanceiro(
+                      'Total Pago',
+                      formatoMoeda.format(totalPago),
+                      Icons.check_circle,
+                      Colors.green,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildStatFinanceiro(
+                      'Pendente',
+                      formatoMoeda.format(totalPendente),
+                      Icons.schedule,
+                      Colors.orange,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildStatFinanceiro(
+                      'Vencido',
+                      formatoMoeda.format(totalVencido),
+                      Icons.warning,
+                      totalVencido > 0 ? Colors.red : Colors.grey,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: _buildStatFinanceiro(
-                  'Total Compras',
-                  formatoMoeda.format(totalCompras),
-                  Icons.shopping_cart,
-                  Colors.blue,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildStatFinanceiro(
-                  'Total Pago',
-                  formatoMoeda.format(totalPago),
-                  Icons.check_circle,
-                  Colors.green,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: _buildStatFinanceiro(
-                  'Pendente',
-                  formatoMoeda.format(totalPendente),
-                  Icons.schedule,
-                  Colors.orange,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildStatFinanceiro(
-                  'Vencido',
-                  formatoMoeda.format(totalVencido),
-                  Icons.warning,
-                  totalVencido > 0 ? Colors.red : Colors.grey,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
+      ],
     );
   }
 
@@ -4565,6 +4622,371 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                 ),
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _quitarSaldoDevedor(DataService dataService) {
+    if (widget.cliente == null) return;
+    final saldo = widget.cliente!.saldoDevedor;
+    if (saldo <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Este cliente não possui saldo devedor.')),
+      );
+      return;
+    }
+
+    final valorController = TextEditingController(text: saldo.toStringAsFixed(2));
+    TipoPagamento formaSelecionada = TipoPagamento.dinheiro;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            backgroundColor: const Color(0xFF1E1E2E),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: const Text('Receber Valor (Fiado)', style: TextStyle(color: Colors.white)),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                  TextField(
+                    controller: valorController,
+                    style: const TextStyle(color: Colors.white),
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(
+                      labelText: 'Valor a Receber',
+                      labelStyle: TextStyle(color: Colors.white70),
+                      prefixText: r'R$ ',
+                      prefixStyle: TextStyle(color: Colors.white),
+                    ),
+                  ),
+                const SizedBox(height: 20),
+                const Text('Forma de Pagamento:', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [TipoPagamento.dinheiro, TipoPagamento.pix, TipoPagamento.cartaoDebito, TipoPagamento.cartaoCredito].map((tipo) {
+                    final isSelected = formaSelecionada == tipo;
+                    return ChoiceChip(
+                      label: Text(tipo.nome),
+                      selected: isSelected,
+                      onSelected: (v) => setDialogState(() => formaSelecionada = tipo),
+                      selectedColor: Colors.blueAccent.withOpacity(0.3),
+                      labelStyle: TextStyle(color: isSelected ? Colors.blueAccent : Colors.white70),
+                    );
+                  }).toList(),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
+              ElevatedButton(
+                onPressed: () async {
+                  final valor = double.tryParse(valorController.text.replaceAll(',', '.')) ?? 0;
+                  if (valor <= 0) return;
+
+                  // 1. Atualizar saldo do cliente e log de extrato
+                  final novoSaldo = (widget.cliente!.saldoDevedor - valor).clamp(0.0, double.infinity);
+                  
+                  final log = {
+                    'tipo': 'recebimento_fiado',
+                    'data': DateTime.now().toIso8601String(),
+                    'valor': valor,
+                    'descricao': 'Recebimento de fiado via ${formaSelecionada.nome}',
+                    'saldo_devedor_anterior': widget.cliente!.saldoDevedor,
+                    'saldo_devedor_atual': novoSaldo,
+                  };
+                  
+                  final listExtrato = List<Map<String, dynamic>>.from(widget.cliente!.dadosExtras?['extrato_financeiro'] ?? []);
+                  listExtrato.add(log);
+                  
+                  final dadosExtrasAtualizados = Map<String, dynamic>.from(widget.cliente!.dadosExtras ?? {});
+                  dadosExtrasAtualizados['extrato_financeiro'] = listExtrato;
+
+                  final clienteAtualizado = widget.cliente!.copyWith(
+                    saldoDevedor: novoSaldo,
+                    dadosExtras: dadosExtrasAtualizados,
+                    updatedAt: DateTime.now(),
+                  );
+                  dataService.updateCliente(clienteAtualizado);
+
+                  // 2. Registrar no Caixa como Suprimento para aparecer no Histórico
+                  if (dataService.caixaAberto) {
+                    final authService = Provider.of<AuthService>(context, listen: false);
+                    final operador = authService.usuarioAtual?.nome ?? 'Sistema';
+
+                    await dataService.registrarSuprimento(
+                      valor: valor,
+                      motivo: '[RECEBIMENTO FIADO] ${widget.cliente!.nome}',
+                      observacao: 'Recebido via ${formaSelecionada.nome}',
+                      responsavel: operador,
+                    );
+                  }
+
+                },
+                child: const Text('Confirmar'),
+              ),
+            ],
+          );
+        }
+      ),
+    );
+  }
+
+  void _mostrarDialogAjustarCredito(DataService dataService) {
+    if (widget.cliente == null) return;
+    final creditoAtual = double.tryParse(widget.cliente!.dadosExtras?['credito_inicial']?.toString() ?? '0.0') ?? 0.0;
+    
+    final valorController = TextEditingController();
+    final motivoController = TextEditingController();
+    String operacao = 'adicionar'; // 'adicionar' ou 'remover'
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            backgroundColor: const Color(0xFF1E1E2E),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: const Text('Ajustar Crédito do Cliente', style: TextStyle(color: Colors.white)),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Saldo de Crédito Atual: R\$ ${creditoAtual.toStringAsFixed(2)}',
+                    style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 14),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text('Tipo de Operação:', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ChoiceChip(
+                          label: const Center(child: Text('Adicionar Crédito')),
+                          selected: operacao == 'adicionar',
+                          onSelected: (v) => setDialogState(() => operacao = 'adicionar'),
+                          selectedColor: Colors.green.withOpacity(0.2),
+                          labelStyle: TextStyle(color: operacao == 'adicionar' ? Colors.greenAccent : Colors.white70),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: ChoiceChip(
+                          label: const Center(child: Text('Retirar Crédito')),
+                          selected: operacao == 'remover',
+                          onSelected: (v) => setDialogState(() => operacao = 'remover'),
+                          selectedColor: Colors.red.withOpacity(0.2),
+                          labelStyle: TextStyle(color: operacao == 'remover' ? Colors.redAccent : Colors.white70),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: valorController,
+                    style: const TextStyle(color: Colors.white),
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(
+                      labelText: 'Valor do Ajuste (R\$)',
+                      labelStyle: TextStyle(color: Colors.white70),
+                      prefixText: r'R$ ',
+                      prefixStyle: TextStyle(color: Colors.white),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: motivoController,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(
+                      labelText: 'Motivo/Observação',
+                      labelStyle: TextStyle(color: Colors.white70),
+                      hintText: 'Ex: Troca de mercadoria, correção de saldo...',
+                      hintStyle: TextStyle(color: Colors.white38, fontSize: 12),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
+              ElevatedButton(
+                onPressed: () {
+                  final valor = double.tryParse(valorController.text.replaceAll(',', '.')) ?? 0;
+                  if (valor <= 0) return;
+
+                  double novoCredito = creditoAtual;
+                  if (operacao == 'adicionar') {
+                    novoCredito += valor;
+                  } else {
+                    novoCredito = (creditoAtual - valor).clamp(0.0, double.infinity);
+                  }
+
+                  // Registrar extrato
+                  final log = {
+                    'tipo': operacao == 'adicionar' ? 'adicao_credito' : 'retirada_credito',
+                    'data': DateTime.now().toIso8601String(),
+                    'valor': valor,
+                    'descricao': motivoController.text.trim().isEmpty 
+                        ? (operacao == 'adicionar' ? 'Crédito Adicionado' : 'Crédito Retirado')
+                        : motivoController.text.trim(),
+                    'credito_anterior': creditoAtual,
+                    'credito_atual': novoCredito,
+                  };
+
+                  final listExtrato = List<Map<String, dynamic>>.from(widget.cliente!.dadosExtras?['extrato_financeiro'] ?? []);
+                  listExtrato.add(log);
+
+                  final dadosExtrasAtualizados = Map<String, dynamic>.from(widget.cliente!.dadosExtras ?? {});
+                  dadosExtrasAtualizados['credito_inicial'] = novoCredito;
+                  dadosExtrasAtualizados['extrato_financeiro'] = listExtrato;
+
+                  final clienteAtualizado = widget.cliente!.copyWith(
+                    dadosExtras: dadosExtrasAtualizados,
+                    updatedAt: DateTime.now(),
+                  );
+
+                  dataService.updateCliente(clienteAtualizado);
+
+                  Navigator.pop(ctx);
+                  setState(() {
+                    _carregarDados();
+                  });
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('✓ Crédito ajustado com sucesso para R\$ ${novoCredito.toStringAsFixed(2)}!'),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                },
+                child: const Text('Salvar Ajuste'),
+              ),
+            ],
+          );
+        }
+      ),
+    );
+  }
+
+  void _mostrarDialogExtrato(DataService dataService) {
+    if (widget.cliente == null) return;
+    
+    // Obter todos os logs de extrato_financeiro em dadosExtras
+    final listExtrato = List<Map<String, dynamic>>.from(widget.cliente!.dadosExtras?['extrato_financeiro'] ?? [])
+      ..sort((a, b) => DateTime.parse(b['data'].toString()).compareTo(DateTime.parse(a['data'].toString())));
+      
+    final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+    final formatoData = DateFormat('dd/MM/yyyy HH:mm');
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            const Icon(Icons.receipt_long, color: Colors.cyanAccent, size: 24),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Extrato Financeiro - ${widget.cliente!.nome}',
+                style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+        content: Container(
+          width: MediaQuery.of(context).size.width * 0.8,
+          height: MediaQuery.of(context).size.height * 0.6,
+          child: listExtrato.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.inbox, size: 48, color: Colors.white.withOpacity(0.3)),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Nenhuma movimentação de crédito/fiado encontrada.',
+                        style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 13),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  ),
+                )
+              : ListView.separated(
+                  itemCount: listExtrato.length,
+                  separatorBuilder: (context, index) => const Divider(color: Colors.white12),
+                  itemBuilder: (context, index) {
+                    final log = listExtrato[index];
+                    final tipo = log['tipo']?.toString() ?? '';
+                    final dataStr = log['data']?.toString() ?? '';
+                    final data = DateTime.parse(dataStr);
+                    final valor = double.tryParse(log['valor']?.toString() ?? '0.0') ?? 0.0;
+                    final descricao = log['descricao']?.toString() ?? 'Lançamento';
+                    
+                    Color corValor;
+                    IconData iconeLog;
+                    String prefixo = '';
+                    
+                    if (tipo == 'adicao_credito' || tipo == 'recebimento_fiado') {
+                      corValor = Colors.greenAccent;
+                      iconeLog = Icons.arrow_upward;
+                      prefixo = '+ ';
+                    } else {
+                      corValor = Colors.redAccent;
+                      iconeLog = Icons.arrow_downward;
+                      prefixo = '- ';
+                    }
+
+                    return ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: corValor.withOpacity(0.15),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(iconeLog, color: corValor, size: 18),
+                      ),
+                      title: Text(
+                        descricao,
+                        style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                      ),
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const SizedBox(height: 4),
+                          Text(formatoData.format(data), style: const TextStyle(color: Colors.white54, fontSize: 11)),
+                          if (log['saldo_devedor_atual'] != null)
+                            Text(
+                              'Saldo devedor: ${formatoMoeda.format(log['saldo_devedor_atual'])}', 
+                              style: const TextStyle(color: Colors.white38, fontSize: 11)
+                            ),
+                          if (log['credito_atual'] != null)
+                            Text(
+                              'Saldo crédito: ${formatoMoeda.format(log['credito_atual'])}', 
+                              style: const TextStyle(color: Colors.white38, fontSize: 11)
+                            ),
+                        ],
+                      ),
+                      trailing: Text(
+                        '$prefixo${formatoMoeda.format(valor)}',
+                        style: TextStyle(color: corValor, fontWeight: FontWeight.w900, fontSize: 14),
+                      ),
+                    );
+                  },
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Fechar', style: TextStyle(color: Colors.white70)),
           ),
         ],
       ),
@@ -5482,7 +5904,7 @@ class _PedidoHistoricoExpandivelState
                     ...widget.pedido.servicos.map(
                       (item) => _buildItemPedido(
                         item.descricao,
-                        1,
+                        1.0,
                         item.valor,
                         widget.formatoMoeda,
                         Icons.build,
@@ -5587,7 +6009,7 @@ class _PedidoHistoricoExpandivelState
 
   Widget _buildItemPedido(
     String nome,
-    int quantidade,
+    double quantidade,
     double preco,
     NumberFormat formatoMoeda,
     IconData icone,
@@ -5606,7 +6028,7 @@ class _PedidoHistoricoExpandivelState
             ),
           ),
           Text(
-            '${quantidade}x',
+            '${quantidade.toStringAsFixed(quantidade.truncateToDouble() == quantidade ? 0 : 2)}x',
             style: TextStyle(
               color: Colors.white.withOpacity(0.5),
               fontSize: 12,

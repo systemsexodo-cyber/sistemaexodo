@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
-import 'dart:html' as html if (dart.library.html) 'dart:html';
+import 'html_helper_stub.dart' if (dart.library.html) 'html_helper_web.dart' as html_helper;
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../services/data_service.dart';
@@ -12,12 +12,20 @@ import '../models/produto.dart';
 import '../models/delivery_info.dart';
 import '../models/endereco_cliente.dart';
 import '../models/venda_balcao.dart';
+import '../models/item_pedido.dart';
+import '../models/item_servico.dart';
+import '../models/motorista.dart';
 import '../theme.dart';
 import '../widgets/pagamento_widget.dart';
 import 'venda_direta_page.dart';
 import 'cliente_detalhes_page.dart';
 import 'cozinha_bar_page.dart';
 import '../services/pedido_pdf_service.dart';
+import '../services/whatsapp_service.dart';
+import 'painel_motoboys_page.dart';
+import 'dart:convert';
+import 'package:printing/printing.dart';
+
 import '../services/auth_service.dart';
 import '../models/empresa.dart';
 import '../widgets/sync_status_widget.dart';
@@ -78,9 +86,8 @@ class _PdvPageState extends State<PdvPage> {
   void _entrarTelaCheia() {
     try {
       if (kIsWeb) {
-        final doc = html.window.document;
-        if (doc.fullscreenElement == null) {
-          doc.documentElement?.requestFullscreen();
+        if (!html_helper.isFullscreen()) {
+          html_helper.requestFullscreen();
         }
       } else {
         SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
@@ -93,11 +100,10 @@ class _PdvPageState extends State<PdvPage> {
   void _toggleTelaCheia() {
     try {
       if (kIsWeb) {
-        final doc = html.window.document;
-        if (doc.fullscreenElement == null) {
-          doc.documentElement?.requestFullscreen();
+        if (!html_helper.isFullscreen()) {
+          html_helper.requestFullscreen();
         } else {
-          doc.exitFullscreen();
+          html_helper.exitFullscreen();
         }
       } else {
         SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
@@ -219,8 +225,148 @@ class _PdvPageState extends State<PdvPage> {
     return total;
   }
 
-  List<Pedido> _buscarPedidos(List<Pedido> pedidos) {
-    if (_termoBusca.isEmpty) return [];
+  List<Pedido> _buscarPedidos(List<Pedido> pedidos, DataService dataService) {
+    // Quando não há busca, retornar todos os pedidos pendentes + vendas balcão
+    if (_termoBusca.isEmpty) {
+      final resultados = <Pedido>[];
+      final idsAdicionados = <String>{};
+      
+      debugPrint('>>> [PDV] Total pedidos: ${pedidos.length}, Total vendas balcão: ${dataService.vendasBalcao.length}');
+      
+      // Adicionar pedidos pendentes (não pagos, não cancelados)
+      for (final pedido in pedidos) {
+        final statusLower = pedido.status.toLowerCase();
+        final isPendenteExplicit = statusLower == 'pendente' || statusLower == 'aguardando' || statusLower.contains('preparo') || statusLower.contains('rota');
+        final isPago = !isPendenteExplicit && (pedido.totalmenteRecebido || statusLower == 'pago');
+        final isCancelado = statusLower == 'cancelado';
+        
+        if (_mostrarPedidosPagos) {
+          if (!isPago) continue;
+        } else {
+          if (isPago) continue;
+          if (isCancelado && !_mostrarPedidosCancelados) continue;
+        }
+        
+        // IGNORAR pedidos com valor zero
+        if (pedido.totalRecebido <= 0 && pedido.valorPendente <= 0 && pedido.totalGeral <= 0) {
+          continue;
+        }
+        
+        // Aplicar filtro de data
+        if (_dataInicioFiltro != null) {
+          final dataPedido = DateTime(pedido.dataPedido.year, pedido.dataPedido.month, pedido.dataPedido.day);
+          final dataInicio = DateTime(_dataInicioFiltro!.year, _dataInicioFiltro!.month, _dataInicioFiltro!.day);
+          if (dataPedido.isBefore(dataInicio)) continue;
+        }
+        
+        if (_dataFimFiltro != null) {
+          final dataPedido = DateTime(pedido.dataPedido.year, pedido.dataPedido.month, pedido.dataPedido.day);
+          final dataFim = DateTime(_dataFimFiltro!.year, _dataFimFiltro!.month, _dataFimFiltro!.day).add(const Duration(days: 1));
+          if (dataPedido.isAfter(dataFim)) continue;
+        }
+        
+        resultados.add(pedido);
+        idsAdicionados.add(pedido.id);
+      }
+      
+      // Adicionar vendas balcão pendentes (não pagas, não canceladas)
+      for (final venda in dataService.vendasBalcao) {
+        debugPrint('>>> [PDV] Verificando venda ${venda.numero} - ID: ${venda.id}, valor: ${venda.valorTotal}, recebido: ${venda.valorRecebido}, cancelada: ${venda.isCancelada}');
+        
+        // Pular se já existe um pedido com mesmo ID/número
+        if (idsAdicionados.contains(venda.id)) {
+          debugPrint('>>> [PDV]   -> Pulada: ID já adicionado');
+          continue;
+        }
+        
+        final isVendaTotalmenteRecebida = (venda.valorRecebido ?? 0) >= (venda.valorTotal - 0.01);
+        final isCancelada = venda.isCancelada;
+        
+        debugPrint('>>> [PDV]   -> isVendaTotalmenteRecebida: $isVendaTotalmenteRecebida, isCancelada: $isCancelada, _mostrarPedidosPagos: $_mostrarPedidosPagos');
+        
+        if (_mostrarPedidosPagos) {
+          if (!isVendaTotalmenteRecebida) {
+            debugPrint('>>> [PDV]   -> Pulada: não totalmente recebida (modo pagos)');
+            continue;
+          }
+        } else {
+          if (isVendaTotalmenteRecebida) {
+            debugPrint('>>> [PDV]   -> Pulada: totalmente recebida (modo abertos)');
+            continue;
+          }
+          if (isCancelada && !_mostrarPedidosCancelados) {
+            debugPrint('>>> [PDV]   -> Pulada: cancelada');
+            continue;
+          }
+        }
+        
+        // Aplicar filtro de data
+        if (_dataInicioFiltro != null) {
+          final dataVenda = DateTime(venda.dataVenda.year, venda.dataVenda.month, venda.dataVenda.day);
+          final dataInicio = DateTime(_dataInicioFiltro!.year, _dataInicioFiltro!.month, _dataInicioFiltro!.day);
+          if (dataVenda.isBefore(dataInicio)) {
+            debugPrint('>>> [PDV]   -> Pulada: data antes do início');
+            continue;
+          }
+        }
+        
+        if (_dataFimFiltro != null) {
+          final dataVenda = DateTime(venda.dataVenda.year, venda.dataVenda.month, venda.dataVenda.day);
+          final dataFim = DateTime(_dataFimFiltro!.year, _dataFimFiltro!.month, _dataFimFiltro!.day).add(const Duration(days: 1));
+          if (dataVenda.isAfter(dataFim)) {
+            debugPrint('>>> [PDV]   -> Pulada: data depois do fim');
+            continue;
+          }
+        }
+        
+        debugPrint('>>> [PDV]   -> ADICIONADA à lista');
+        
+        // Criar pedido temporário a partir da venda
+        // IMPORTANTE: Vendas salvas sempre aparecem como PENDENTE no PDV
+        // O recebimento só acontece quando o usuário clica em "Continuar" no PDV
+        final pedidoTemp = Pedido(
+          id: venda.id,
+          numero: venda.numero,
+          clienteId: venda.clienteId,
+          clienteNome: venda.clienteNome,
+          clienteTelefone: venda.clienteTelefone,
+          dataPedido: venda.dataVenda,
+          status: isCancelada ? 'Cancelado' : 'Pendente',  // Sempre PENDENTE (nunca Pago)
+          total: venda.valorTotal,
+          produtos: venda.itens.where((i) => !i.isServico).map((i) => ItemPedido(
+            id: i.id,
+            nome: i.nome,
+            quantidade: i.quantidade,
+            preco: i.precoUnitario,
+            observacao: i.observacao,
+            fornecedorNome: i.fornecedorNome,
+            adicionais: i.adicionais,
+          )).toList(),
+          servicos: venda.itens.where((i) => i.isServico).map((i) => ItemServico(
+            id: i.id,
+            descricao: i.nome,
+            valor: i.precoUnitario,
+            observacao: i.observacao,
+          )).toList(),
+          pagamentos: [],  // Vendas pendentes não têm pagamentos ainda
+          createdAt: venda.dataVenda,
+          updatedAt: venda.dataVenda,
+        );
+        
+        resultados.add(pedidoTemp);
+        idsAdicionados.add(venda.id);
+      }
+      
+      // Ordenar por data (mais recente primeiro)
+      resultados.sort((a, b) => b.dataPedido.compareTo(a.dataPedido));
+      
+      debugPrint('>>> [PDV] Total resultados retornados: ${resultados.length}');
+      for (final r in resultados.take(5)) {
+        debugPrint('>>> [PDV]   - ${r.numero} (${r.dataPedido})');
+      }
+      
+      return resultados;
+    }
 
     final termo = _termoBusca.trim();
     final termoLower = termo.toLowerCase();
@@ -399,17 +545,22 @@ class _PdvPageState extends State<PdvPage> {
 
       final numeroPedido = pedido.numero.toLowerCase();
       final numeroPedidoLimpo = pedido.numero.replaceAll(RegExp(r'[^0-9]'), '');
+      final numeroPedidoSemZero = numeroPedidoLimpo.replaceFirst(RegExp(r'^0+'), ''); // Remove zeros à esquerda
       final clienteNome = (pedido.clienteNome ?? '').toLowerCase();
 
       bool match = false;
 
-      // Buscar por número do pedido
+      // Buscar por número do pedido - ignorando zeros à esquerda
       if (numeroPedido == termoLower || 
           (numerosNoTermo.isNotEmpty && (
             numeroPedidoLimpo == numerosNoTermo ||
+            numeroPedidoSemZero == numerosNoTermo ||  // Compara sem zeros à esquerda
             numeroPedidoLimpo.startsWith(numerosNoTermo) ||
+            numeroPedidoSemZero.startsWith(numerosNoTermo) ||  // Busca sem zeros
             (numeroPedidoLimpo.endsWith(numerosNoTermo) && numerosNoTermo.length >= 2) ||
-            numeroPedidoLimpo.contains(numerosNoTermo)
+            (numeroPedidoSemZero.endsWith(numerosNoTermo) && numerosNoTermo.length >= 2) ||  // EndsWith sem zeros
+            numeroPedidoLimpo.contains(numerosNoTermo) ||
+            numeroPedidoSemZero.contains(numerosNoTermo)  // Contains sem zeros
           )) ||
           numeroPedido.startsWith(termoLower) ||
           numeroPedido.contains(termoLower)) {
@@ -492,18 +643,23 @@ class _PdvPageState extends State<PdvPage> {
 
       final numeroVenda = venda.numero.toLowerCase();
       final numeroVendaLimpo = numeroVenda.replaceAll(RegExp(r'[^0-9]'), '');
+      final numeroVendaSemZero = numeroVendaLimpo.replaceFirst(RegExp(r'^0+'), ''); // Remove zeros à esquerda
       final clienteNome = (venda.clienteNome ?? '').toLowerCase();
 
       bool match = false;
 
-      // Buscar por número da venda (VND-)
+      // Buscar por número da venda (VND-) - ignorando zeros à esquerda
       if (numeroVenda == termoLower ||
           numeroVendaLimpo == numerosNoTermo ||
+          numeroVendaSemZero == numerosNoTermo ||  // Compara sem zeros à esquerda
           numeroVenda.startsWith(termoLower) ||
           numeroVendaLimpo.startsWith(numerosNoTermo) ||
+          numeroVendaSemZero.startsWith(numerosNoTermo) ||  // Busca sem zeros à esquerda
           (numeroVendaLimpo.endsWith(numerosNoTermo) && numerosNoTermo.length >= 2) ||
+          (numeroVendaSemZero.endsWith(numerosNoTermo) && numerosNoTermo.length >= 2) ||  // EndsWith sem zeros
           numeroVenda.contains(termoLower) ||
-          numeroVendaLimpo.contains(numerosNoTermo)) {
+          numeroVendaLimpo.contains(numerosNoTermo) ||
+          numeroVendaSemZero.contains(numerosNoTermo)) {  // Contains sem zeros
         match = true;
       }
 
@@ -539,7 +695,7 @@ class _PdvPageState extends State<PdvPage> {
           pedidoParaAdicionar = pedidosPorNumeroEId[venda.id]!.first;
         } else {
           // Criar pedido temporário
-          final isVendaTotalmenteRecebida = (venda.valorRecebido ?? 0) >= (venda.valorTotal - 0.01);
+          // IMPORTANTE: Vendas salvas sempre aparecem como PENDENTE no PDV
           pedidoParaAdicionar = Pedido(
             id: venda.id,
             numero: venda.numero,
@@ -547,21 +703,24 @@ class _PdvPageState extends State<PdvPage> {
             clienteNome: venda.clienteNome,
             clienteTelefone: venda.clienteTelefone,
             dataPedido: venda.dataVenda,
-            status: venda.isCancelada 
-                ? 'Cancelado' 
-                : (isVendaTotalmenteRecebida ? 'Pago' : 'Pendente'),
+            status: venda.isCancelada ? 'Cancelado' : 'Pendente',  // Sempre PENDENTE
             total: venda.valorTotal,
-            produtos: [],
-            servicos: [],
-            pagamentos: (venda.valorRecebido ?? 0) > 0 
-                ? [PagamentoPedido(
-                    id: 'pg-${venda.id}',
-                    tipo: venda.tipoPagamento,
-                    valor: venda.valorRecebido ?? 0,
-                    recebido: true,
-                    dataRecebimento: venda.dataVenda,
-                  )]
-                : [],
+            produtos: venda.itens.where((i) => !i.isServico).map((i) => ItemPedido(
+              id: i.id,
+              nome: i.nome,
+              quantidade: i.quantidade,
+              preco: i.precoUnitario,
+              observacao: i.observacao,
+              fornecedorNome: i.fornecedorNome,
+              adicionais: i.adicionais,
+            )).toList(),
+            servicos: venda.itens.where((i) => i.isServico).map((i) => ItemServico(
+              id: i.id,
+              descricao: i.nome,
+              valor: i.precoUnitario,
+              observacao: i.observacao,
+            )).toList(),
+            pagamentos: [],  // Vendas pendentes não têm pagamentos ainda
             createdAt: venda.dataVenda,
             updatedAt: venda.dataVenda,
           );
@@ -570,8 +729,13 @@ class _PdvPageState extends State<PdvPage> {
 
         // Aplicar filtro de status ao pedido encontrado/criado
         if (pedidoParaAdicionar != null) {
-          final isPago = pedidoParaAdicionar.totalmenteRecebido || pedidoParaAdicionar.status.toLowerCase() == 'pago';
-          final isCancelado = pedidoParaAdicionar.status.toLowerCase() == 'cancelado';
+          final statusLower = pedidoParaAdicionar.status.toLowerCase();
+          final isCancelado = statusLower == 'cancelado';
+          
+          // CRITICAL FIX: Se o status for explicitly 'Pendente' ou 'Aguardando', NÃO considerar como pago
+          // mesmo que o valor total bata (ex: vendas salvas para envio posterior).
+          final isPendenteExplicit = statusLower == 'pendente' || statusLower == 'aguardando';
+          final isPago = !isPendenteExplicit && (pedidoParaAdicionar.totalmenteRecebido || statusLower == 'pago');
           
           bool passaStatus = true;
           if (_mostrarPedidosPagos) {
@@ -616,7 +780,7 @@ class _PdvPageState extends State<PdvPage> {
   @override
   Widget build(BuildContext context) {
     final dataService = Provider.of<DataService>(context);
-    final pedidosEncontrados = _buscarPedidos(dataService.pedidos);
+    final pedidosEncontrados = _buscarPedidos(dataService.pedidos, dataService);
 
     return AppTheme.appBackground(
       child: Scaffold(
@@ -631,13 +795,23 @@ class _PdvPageState extends State<PdvPage> {
               IconButton(
                 onPressed: () => _toggleTelaCheia(),
                 icon: Icon(
-                  html.document.fullscreenElement == null
-                      ? Icons.fullscreen
-                      : Icons.fullscreen_exit,
+                  html_helper.isFullscreen()
+                      ? Icons.fullscreen_exit
+                      : Icons.fullscreen,
                   color: Colors.white70,
                 ),
                 tooltip: 'Tela Cheia',
               ),
+            IconButton(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const PainelMotoboysPage()),
+                );
+              },
+              icon: const Icon(Icons.two_wheeler, color: Colors.orangeAccent),
+              tooltip: 'Painel de Motoboys',
+            ),
             const SyncStatusWidget(),
           ],
         ),
@@ -665,9 +839,16 @@ class _PdvPageState extends State<PdvPage> {
             _buildBarraBusca(),
             Expanded(
               child: _pedidoSelecionado != null
-                  ? _buildPedidoDetalhes(_pedidoSelecionado!, dataService)
-                  : _termoBusca.isEmpty
-                  ? _buildEstadoInicial()
+                  ? Builder(
+                      builder: (context) {
+                        // Buscar versão mais recente no DataService
+                        final pedidoAtualizado = dataService.pedidos.firstWhere(
+                          (p) => p.id == _pedidoSelecionado!.id,
+                          orElse: () => _pedidoSelecionado!,
+                        );
+                        return _buildPedidoDetalhes(pedidoAtualizado, dataService);
+                      },
+                    )
                   : pedidosParaExibir.isEmpty
                   ? _buildNenhumResultado()
                   : _buildListaResultados(pedidosParaExibir, dataService),
@@ -735,6 +916,23 @@ class _PdvPageState extends State<PdvPage> {
                       ],
                     ),
                     const Spacer(),
+                    ElevatedButton.icon(
+                      onPressed: () => _abrirDelegacaoEmMassa(pedidosSelecionados, dataService),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.orangeAccent,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      ),
+                      icon: const Icon(Icons.two_wheeler, size: 18),
+                      label: const Text(
+                        'DELEGAR',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
                     ElevatedButton(
                       onPressed: () => _abrirPagamentoEmMassa(pedidosSelecionados, dataService),
                       style: ElevatedButton.styleFrom(
@@ -5156,7 +5354,7 @@ class _PdvPageState extends State<PdvPage> {
             final estoqueAnterior = produto.estoque;
             await dataService.registrarSaidaEstoque(
               produtoId: produtoItem.id,
-              quantidade: produtoItem.quantidade.toInt(),
+              quantidade: produtoItem.quantidade.toDouble(),
               motivo: 'venda',
               fornecedorNome: produtoItem.fornecedorNome,
               observacao: 'Pedido ${pedido.numero}',
@@ -6777,8 +6975,171 @@ class _PdvPageState extends State<PdvPage> {
     );
   }
 
+  // Novo método para delegação em massa
+  void _abrirDelegacaoEmMassa(List<Pedido> selecionados, DataService dataService) {
+    if (dataService.motoristas.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Nenhum entregador cadastrado. Cadastre um entregador primeiro.'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+      return;
+    }
+
+    Motorista? motoristaSelecionado;
+    
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            backgroundColor: const Color(0xFF1E1E2E),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: const Row(
+              children: [
+                Icon(Icons.two_wheeler, color: Colors.orangeAccent),
+                SizedBox(width: 12),
+                Text('Delegar a Entregador', style: TextStyle(color: Colors.white, fontSize: 18)),
+              ],
+            ),
+            content: SizedBox(
+              width: double.maxFinite,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('${selecionados.length} pedidos selecionados', style: const TextStyle(color: Colors.white70)),
+                  const SizedBox(height: 20),
+                  const Text('Selecione o Entregador:', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.05),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Colors.white24),
+                    ),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<Motorista>(
+                        isExpanded: true,
+                        dropdownColor: const Color(0xFF2A2A3E),
+                        value: motoristaSelecionado,
+                        hint: const Text('Escolha um entregador...', style: TextStyle(color: Colors.white54)),
+                        items: dataService.motoristas.map((m) {
+                          return DropdownMenuItem<Motorista>(
+                            value: m,
+                            child: Row(
+                              children: [
+                                const Icon(Icons.person, color: Colors.orangeAccent, size: 18),
+                                const SizedBox(width: 8),
+                                Text(m.nome, style: const TextStyle(color: Colors.white)),
+                              ],
+                            ),
+                          );
+                        }).toList(),
+                        onChanged: (val) {
+                          setDialogState(() {
+                            motoristaSelecionado = val;
+                          });
+                        },
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
+              ElevatedButton(
+                onPressed: motoristaSelecionado == null ? null : () {
+                  Navigator.pop(ctx);
+                  _processarDelegacaoEmMassa(selecionados, motoristaSelecionado!, dataService);
+                },
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.orangeAccent),
+                child: const Text('CONFIRMAR', style: TextStyle(color: Colors.white)),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  void _processarDelegacaoEmMassa(List<Pedido> selecionados, Motorista motorista, DataService dataService) {
+    for (final pedido in selecionados) {
+      DeliveryInfo novoDeliveryInfo;
+      
+      if (pedido.deliveryInfo != null) {
+        novoDeliveryInfo = pedido.deliveryInfo!.copyWith(
+          motoristaId: motorista.id,
+          motoristaNome: motorista.nome,
+          status: 'Saiu para entrega',
+          dataSaida: DateTime.now(),
+        );
+      } else {
+        novoDeliveryInfo = DeliveryInfo(
+          id: DateTime.now().millisecondsSinceEpoch.toString() + pedido.id,
+          enderecoId: '',
+          logradouro: 'Não informado',
+          numero: '',
+          bairro: '',
+          cidade: '',
+          uf: '',
+          status: 'Saiu para entrega',
+          motoristaId: motorista.id,
+          motoristaNome: motorista.nome,
+          dataSaida: DateTime.now(),
+        );
+      }
+
+      final pedidoAtualizado = pedido.copyWith(
+        deliveryInfo: novoDeliveryInfo,
+        updatedAt: DateTime.now(),
+      );
+      
+      dataService.updatePedido(pedidoAtualizado);
+      // Opcional: Se precisar sincronizar em tempo real com vendas balcão também.
+      // _syncVendaBalcao(pedidoAtualizado, dataService, null); // Deixado de fora a menos que VendaBalcao também precise de deliveryInfo aqui
+    }
+
+    setState(() {
+      _modoSelecao = false;
+      _selecionadosIds.clear();
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('✓ ${selecionados.length} pedidos delegados para ${motorista.nome}!'),
+        backgroundColor: Colors.green,
+      ),
+    );
+  }
+
+  void _reimprimirPedido(Pedido pedido, DataService dataService) async {
+    try {
+      if (dataService.empresaAtual == null) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Dados da empresa não carregados para impressão')));
+        return;
+      }
+      await PedidoPDFService.imprimirPDFTermico(
+        pedido: pedido,
+        empresa: dataService.empresaAtual!,
+        context: context,
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao imprimir: $e')));
+    }
+  }
+
   Widget _buildCardPedido(Pedido pedido) {
-    final isRecebido = pedido.totalmenteRecebido;
+    final dataService = Provider.of<DataService>(context, listen: false);
+    // CRITICAL FIX: Só mostra badge PAGO se o status for explicitly 'Pago' ou se estiver totalmente recebido 
+    // E não for um status de pendência (Pendente/Aguardando/Em Rota etc)
+    final statusLower = pedido.status.toLowerCase();
+    final isPendenteExplicit = statusLower == 'pendente' || statusLower == 'aguardando' || statusLower.contains('rota') || statusLower.contains('preparo');
+    
+    final isRecebido = statusLower == 'pago' || (pedido.totalmenteRecebido && !isPendenteExplicit);
     final temPagamentos = pedido.pagamentos.isNotEmpty;
     final parcelas = pedido.pagamentos.where((p) => p.isParcela).toList();
     final temParcelas = parcelas.isNotEmpty;
@@ -6805,6 +7166,25 @@ class _PdvPageState extends State<PdvPage> {
       (sum, p) => sum + p.valor,
     );
 
+    final isCancelado = pedido.status.toLowerCase() == 'cancelado';
+    final isDelivery = pedido.deliveryInfo != null;
+    
+    final colorBase = isCancelado
+        ? Colors.red
+        : isRecebido
+        ? Colors.green
+        : temParcelasVencidas
+        ? Colors.red
+        : isDelivery
+        ? Colors.cyan
+        : temFiadoPendente
+        ? Colors.orange
+        : temCrediarioPendente
+        ? Colors.pink
+        : temPagamentos
+        ? Colors.orange
+        : Colors.blue;
+
     return GestureDetector(
       onTap: _modoSelecao 
           ? () => _alternarSelecao(pedido.id)
@@ -6823,6 +7203,11 @@ class _PdvPageState extends State<PdvPage> {
                     Colors.red.shade900.withOpacity(0.4),
                     Colors.red.shade800.withOpacity(0.3),
                   ]
+                : isDelivery
+                ? [
+                    Colors.cyan.shade900.withOpacity(0.4),
+                    Colors.cyan.shade800.withOpacity(0.3),
+                  ]
                 : temFiadoPendente
                 ? [
                     Colors.orange.shade900.withOpacity(0.4),
@@ -6839,15 +7224,7 @@ class _PdvPageState extends State<PdvPage> {
           border: Border.all(
             color: _selecionadosIds.contains(pedido.id)
                 ? Colors.blueAccent
-                : isRecebido
-                ? Colors.green.withOpacity(0.4)
-                : temParcelasVencidas
-                ? Colors.red.withOpacity(0.5)
-                : temFiadoPendente
-                ? Colors.orange.withOpacity(0.5)
-                : temCrediarioPendente
-                ? Colors.pink.withOpacity(0.5)
-                : Colors.white.withOpacity(0.1),
+                : colorBase.withOpacity(0.4),
           ),
         ),
         child: Padding(
@@ -6866,24 +7243,18 @@ class _PdvPageState extends State<PdvPage> {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: isRecebido
-                      ? Colors.green.withOpacity(0.2)
-                      : temParcelasVencidas
-                      ? Colors.red.withOpacity(0.2)
-                      : temFiadoPendente
-                      ? Colors.orange.withOpacity(0.2)
-                      : temCrediarioPendente
-                      ? Colors.pink.withOpacity(0.2)
-                      : temPagamentos
-                      ? Colors.orange.withOpacity(0.2)
-                      : Colors.blue.withOpacity(0.2),
+                  color: colorBase.withOpacity(0.2),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Icon(
-                  isRecebido
+                  isCancelado
+                      ? Icons.cancel
+                      : isRecebido
                       ? Icons.check_circle
                       : temParcelasVencidas
                       ? Icons.warning
+                      : isDelivery
+                      ? Icons.delivery_dining
                       : temFiadoPendente
                       ? Icons.handshake
                       : temCrediarioPendente
@@ -6891,17 +7262,7 @@ class _PdvPageState extends State<PdvPage> {
                       : temPagamentos
                       ? Icons.pending_actions
                       : Icons.receipt,
-                  color: isRecebido
-                      ? Colors.green
-                      : temParcelasVencidas
-                      ? Colors.red
-                      : temFiadoPendente
-                      ? Colors.orange
-                      : temCrediarioPendente
-                      ? Colors.pink
-                      : temPagamentos
-                      ? Colors.orange
-                      : Colors.blue,
+                  color: colorBase,
                   size: 24,
                 ),
               ),
@@ -6940,6 +7301,46 @@ class _PdvPageState extends State<PdvPage> {
                               'PAGO',
                               style: TextStyle(
                                 color: Colors.greenAccent,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ] else if (isDelivery) ...[
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.cyan.withOpacity(0.3),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Text(
+                              'DELIVERY',
+                              style: TextStyle(
+                                color: Colors.cyanAccent,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ] else if (isCancelado) ...[
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.red.withOpacity(0.3),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Text(
+                              'CANCELADO',
+                              style: TextStyle(
+                                color: Colors.redAccent,
                                 fontSize: 10,
                                 fontWeight: FontWeight.bold,
                               ),
@@ -7115,6 +7516,33 @@ class _PdvPageState extends State<PdvPage> {
                         fontSize: 12,
                       ),
                     ),
+                    if (pedido.pagamentos.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Wrap(
+                        spacing: 4,
+                        runSpacing: 2,
+                        children: pedido.pagamentos.map((p) {
+                          final label = '${p.tipo.nome}${p.recebido ? " (Pago)" : " (Pendente)"}';
+                          final color = p.recebido ? Colors.greenAccent : Colors.orangeAccent;
+                          return Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: color.withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(color: color.withOpacity(0.3), width: 0.5),
+                            ),
+                            child: Text(
+                              label,
+                              style: TextStyle(
+                                color: color,
+                                fontSize: 9,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -7147,9 +7575,9 @@ class _PdvPageState extends State<PdvPage> {
                         fontWeight: FontWeight.w500,
                       ),
                     )
-                  else if (temPagamentos && !isRecebido)
+                  else if (!isRecebido && (pedido.totalGeral - pedido.totalRecebido) > 0)
                     Text(
-                      'Pendente: R\$ ${pedido.valorPendente.toStringAsFixed(2)}',
+                      'Pendente: R\$ ${(pedido.totalGeral - pedido.totalRecebido).toStringAsFixed(2)}',
                       style: const TextStyle(
                         color: Colors.orange,
                         fontSize: 12,
@@ -7157,7 +7585,47 @@ class _PdvPageState extends State<PdvPage> {
                     ),
                 ],
               ),
+              if (isDelivery && pedido.deliveryInfo!.valorParaTroco > 0)
+                Padding(
+                  padding: const EdgeInsets.only(left: 8),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Text('TROCO', style: TextStyle(color: Colors.cyanAccent, fontSize: 9, fontWeight: FontWeight.bold)),
+                      Text(
+                        'R\$ ${(pedido.deliveryInfo!.valorParaTroco - pedido.totalGeral).toStringAsFixed(2)}',
+                        style: const TextStyle(color: Colors.cyanAccent, fontSize: 13, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                ),
               const SizedBox(width: 8),
+              if (!isRecebido && !_modoSelecao)
+                IconButton(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => VendaDiretaPage(pedidoParaEditar: pedido),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.shopping_cart_checkout, color: Colors.blueAccent),
+                  tooltip: 'Continuar Venda no PDV',
+                ),
+              if (!isRecebido && !isCancelado && !_modoSelecao) ...[
+                IconButton(
+                  onPressed: () => _reimprimirPedido(pedido, dataService),
+                  icon: const Icon(Icons.print, color: Colors.white54, size: 20),
+                  tooltip: 'Reimprimir Pedido',
+                ),
+                IconButton(
+                  onPressed: () => _confirmarCancelamentoPedido(pedido, dataService),
+                  icon: const Icon(Icons.cancel_outlined, color: Colors.redAccent, size: 20),
+                  tooltip: 'Cancelar Pedido',
+                ),
+              ],
+              const SizedBox(width: 4),
               const Icon(Icons.chevron_right, color: Colors.white38),
             ],
           ),
@@ -7318,8 +7786,8 @@ class _PdvPageState extends State<PdvPage> {
                     Expanded(
                       child: _buildValorResumo(
                         'Pendente',
-                        pedido.valorPendente,
-                        pedido.valorPendente > 0
+                        pedido.totalGeral - pedido.totalRecebido,
+                        (pedido.totalGeral - pedido.totalRecebido) > 0
                             ? Colors.orange
                             : Colors.greenAccent,
                       ),
@@ -7405,8 +7873,44 @@ class _PdvPageState extends State<PdvPage> {
                 ),
               ),
           ],
-          // Botão de impressão (sempre disponível)
-          const SizedBox(height: 12),
+            // Botão Continuar Venda no PDV
+            if (!pedido.totalmenteRecebido && pedido.status.toLowerCase() != 'cancelado')
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => VendaDiretaPage(pedidoParaEditar: pedido),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.shopping_cart_checkout, size: 18),
+                  label: const Text(
+                    'CONTINUAR NO PDV',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blueAccent.shade700,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    elevation: 4,
+                    shadowColor: Colors.blueAccent,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+              ),
+            if (!pedido.totalmenteRecebido && pedido.status.toLowerCase() != 'cancelado')
+              const SizedBox(height: 12),
+            
+            // Botão de impressão (sempre disponível)
+            const SizedBox(height: 12),
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
@@ -7465,6 +7969,17 @@ class _PdvPageState extends State<PdvPage> {
               onTap: () {
                 Navigator.pop(context);
                 _imprimirPDFPedidoPDV(pedido, termico: false);
+              },
+            ),
+            const Divider(),
+            ListTile(
+              leading: const Icon(Icons.chat, color: Color(0xFF25D366), size: 32),
+              title: const Text('Enviar via WhatsApp'),
+              subtitle: const Text('Escolha o formato e envie'),
+              contentPadding: const EdgeInsets.symmetric(vertical: 8),
+              onTap: () {
+                Navigator.pop(context);
+                _enviarWhatsAppPedido(pedido);
               },
             ),
           ],
@@ -7528,11 +8043,13 @@ class _PdvPageState extends State<PdvPage> {
         await PedidoPDFService.imprimirPDFTermico(
           pedido: pedido,
           empresa: empresa,
+          context: context,
         );
       } else {
         await PedidoPDFService.imprimirPDF(
           pedido: pedido,
           empresa: empresa,
+          context: context,
         );
       }
 
@@ -7555,6 +8072,200 @@ class _PdvPageState extends State<PdvPage> {
             backgroundColor: Colors.red,
           ),
         );
+      }
+    }
+  }
+  
+  /// Envia o pedido via WhatsApp
+  Future<void> _enviarWhatsAppPedido(Pedido pedido) async {
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final empresa = authService.empresaAtual;
+    
+    if (empresa == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Empresa não selecionada.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+    
+    // Identificar telefone do cliente
+    String? telefone = pedido.clienteTelefone;
+    
+    // Se não tiver telefone, pedir ao usuário
+    if (telefone == null || telefone.isEmpty) {
+      final controller = TextEditingController();
+      final result = await showDialog<String>(
+        context: context,
+        builder: (context) => AlertDialog(
+          backgroundColor: const Color(0xFF1E1E2E),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Text('Número do WhatsApp', style: TextStyle(color: Colors.white)),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            keyboardType: TextInputType.phone,
+            style: const TextStyle(color: Colors.white),
+            decoration: const InputDecoration(
+              hintText: 'ex: 11999999999',
+              hintStyle: TextStyle(color: Colors.white30),
+              labelText: 'Telefone com DDD',
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('CANCELAR')),
+            ElevatedButton(onPressed: () => Navigator.pop(context, controller.text), child: const Text('CONTINUAR')),
+          ],
+        ),
+      );
+      if (result == null || result.isEmpty) return;
+      telefone = result;
+    }
+
+    // Perguntar formato
+    final formato = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        title: const Text('Selecione o Formato', style: TextStyle(color: Colors.white)),
+        content: const Text('Como deseja enviar o documento?', style: TextStyle(color: Colors.white70)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, 'texto'), child: const Text('TEXTO')),
+          ElevatedButton(onPressed: () => Navigator.pop(context, '80mm'), style: ElevatedButton.styleFrom(backgroundColor: Colors.orange), child: const Text('RECIBO 80MM')),
+          ElevatedButton(onPressed: () => Navigator.pop(context, 'a4'), style: ElevatedButton.styleFrom(backgroundColor: Colors.blue), child: const Text('PDF A4')),
+        ],
+      ),
+    );
+
+    if (formato == null) return;
+
+    // Mostrar loading
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      final hasApi = empresa?.whatsappApiUrl != null && empresa?.whatsappApiKey != null;
+      bool ok = false;
+      
+      bool isConnected = false;
+      if (hasApi) {
+        final service = WhatsAppService.fromEmpresa(empresa!);
+        isConnected = await service.isConectado();
+      }
+
+      if (formato == 'texto') {
+        final buffer = StringBuffer();
+        buffer.writeln('📋 *PEDIDO #${pedido.numero}*');
+        buffer.writeln('--------------------------------');
+        buffer.writeln('Cliente: ${pedido.clienteNome ?? "Não informado"}');
+        buffer.writeln('Total: R\$ ${pedido.totalGeral.toStringAsFixed(2)}');
+        buffer.writeln('--------------------------------');
+        buffer.writeln('Obrigado pela preferência!');
+
+        if (hasApi && isConnected) {
+          final service = WhatsAppService.fromEmpresa(empresa!);
+          ok = await service.enviarMensagem(telefone, buffer.toString());
+        } else {
+          // Fallback para link direto se não tiver API ou não estiver conectado
+          ok = await WhatsAppService.abrirWhatsAppDireto(
+            numero: telefone, 
+            mensagem: buffer.toString()
+          );
+        }
+      } else {
+        if (!hasApi || !isConnected) {
+          if (mounted) Navigator.pop(context);
+          
+          final confirmarManual = await showDialog<bool>(
+            context: context,
+            builder: (context) => AlertDialog(
+              backgroundColor: const Color(0xFF1E1E2E),
+              title: const Text('API Indisponível', style: TextStyle(color: Colors.white)),
+              content: const Text(
+                'A integração automática não está configurada. Deseja gerar o PDF e compartilhar usando o menu do seu aparelho?',
+                style: TextStyle(color: Colors.white70),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('CANCELAR', style: TextStyle(color: Colors.white54)),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
+                  child: const Text('SIM, COMPARTILHAR'),
+                ),
+              ],
+            ),
+          );
+
+          if (confirmarManual != true) return;
+
+           // Mostrar loading novamente pois o anterior foi fechado
+          if (!mounted) return;
+          showDialog(context: context, barrierDismissible: false, builder: (context) => const Center(child: CircularProgressIndicator()));
+
+          try {
+            Uint8List bytes;
+            if (formato == '80mm') {
+              bytes = await PedidoPDFService.gerarPDFTermico(pedido: pedido, empresa: empresa!);
+            } else {
+              bytes = await PedidoPDFService.gerarPDF(pedido: pedido, empresa: empresa!);
+            }
+
+            if (mounted) Navigator.pop(context); // Fecha loading
+
+            await Printing.sharePdf(
+              bytes: bytes,
+              filename: 'comprovante_${pedido.numero}.pdf',
+            );
+            return;
+          } catch (e) {
+            if (mounted) Navigator.pop(context);
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao gerar para compartilhar: $e'), backgroundColor: Colors.red));
+            }
+            return;
+          }
+        }
+
+        final service = WhatsAppService.fromEmpresa(empresa!);
+        Uint8List bytes;
+        if (formato == '80mm') {
+          bytes = await PedidoPDFService.gerarPDFTermico(pedido: pedido, empresa: empresa!);
+        } else {
+          bytes = await PedidoPDFService.gerarPDF(pedido: pedido, empresa: empresa!);
+        }
+        ok = await service.enviarArquivo(
+          numero: telefone,
+          base64Content: base64Encode(bytes),
+          fileName: 'comprovante_${pedido.numero}.pdf',
+          caption: 'Olá! Segue o seu comprovante da compra realizada em *${empresa!.razaoSocial}*. 🛍️',
+        );
+      }
+
+      if (mounted) Navigator.pop(context); // Fecha loading
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(ok ? 'Enviado com sucesso!' : 'Erro ao enviar via WhatsApp'),
+            backgroundColor: ok ? Colors.green : Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) Navigator.pop(context);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: $e'), backgroundColor: Colors.red));
       }
     }
   }
@@ -9163,7 +9874,7 @@ class _PdvPageState extends State<PdvPage> {
           final estoqueAnterior = produto.estoque;
           await dataService.registrarSaidaEstoque(
             produtoId: produtoItem.id,
-            quantidade: produtoItem.quantidade.toInt(),
+            quantidade: produtoItem.quantidade.toDouble(),
             motivo: 'venda',
             fornecedorNome: produtoItem.fornecedorNome,
             observacao: 'Pedido ${pedido.numero}',
@@ -9181,8 +9892,6 @@ class _PdvPageState extends State<PdvPage> {
       }
       debugPrint('');
     }
-
-    dataService.updatePedido(pedidoAtualizado);
 
     dataService.updatePedido(pedidoAtualizado);
 
@@ -9281,9 +9990,9 @@ class _PdvPageState extends State<PdvPage> {
         // Limpar seleção e voltar para tela inicial
         if (mounted) {
           setState(() {
-            _pedidoSelecionado = null;
-            _termoBusca = '';
-            _buscaController.clear();
+            // _pedidoSelecionado = null;
+            // _termoBusca = '';
+            // _buscaController.clear();
           });
         }
       },
@@ -9381,9 +10090,72 @@ class _PdvPageState extends State<PdvPage> {
           final temTroco =
               troco > 0.01 && tipoSelecionado == TipoPagamento.dinheiro;
           final isDinheiro = tipoSelecionado == TipoPagamento.dinheiro;
+          final focusNode = FocusNode();
+          WidgetsBinding.instance.addPostFrameCallback((_) => focusNode.requestFocus());
 
-          return AlertDialog(
-            backgroundColor: const Color(0xFF1E1E2E),
+          return KeyboardListener(
+            focusNode: focusNode,
+            autofocus: true,
+            onKeyEvent: (event) {
+              if (event is KeyDownEvent) {
+                final key = event.logicalKey;
+                setDialogState(() {
+                  if (key == LogicalKeyboardKey.backspace) {
+                    if (valorDigitado.isNotEmpty) {
+                      valorDigitado = valorDigitado.substring(0, valorDigitado.length - 1);
+                      final novoValor = digitosParaValor(valorDigitado);
+                      valorRecebido = novoValor > 0 ? novoValor : pagamento.valor;
+                      if (isDinheiro && valorRecebido > pagamento.valor) {
+                        troco = valorRecebido - pagamento.valor;
+                      } else {
+                        troco = 0;
+                        if (!isDinheiro && valorRecebido > pagamento.valor) {
+                          valorRecebido = pagamento.valor;
+                          valorDigitado = (pagamento.valor * 100).toInt().toString();
+                        }
+                      }
+                    }
+                  } else if (key == LogicalKeyboardKey.escape) {
+                    Navigator.pop(context);
+                  } else if (key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.numpadEnter) {
+                    if (valorRecebido > 0) {
+                      Navigator.pop(context);
+                      _processarRecebimentoParcela(
+                        pedido,
+                        pagamento,
+                        valorRecebido,
+                        troco,
+                        tipoSelecionado,
+                        dataService,
+                      );
+                    }
+                  } else {
+                    // Verificar se é dígito numérico
+                    final char = event.character;
+                    if (char != null && RegExp(r'[0-9]').hasMatch(char)) {
+                      if (valorDigitado.length < 10) {
+                        valorDigitado += char;
+                        final novoValor = digitosParaValor(valorDigitado);
+                        if (!isDinheiro && novoValor > pagamento.valor) {
+                          valorRecebido = pagamento.valor;
+                          valorDigitado = (pagamento.valor * 100).toInt().toString();
+                          troco = 0;
+                        } else {
+                          valorRecebido = novoValor;
+                          if (isDinheiro && valorRecebido > pagamento.valor) {
+                            troco = valorRecebido - pagamento.valor;
+                          } else {
+                            troco = 0;
+                          }
+                        }
+                      }
+                    }
+                  }
+                });
+              }
+            },
+            child: AlertDialog(
+              backgroundColor: const Color(0xFF1E1E2E),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(20),
             ),
@@ -9645,182 +10417,192 @@ class _PdvPageState extends State<PdvPage> {
                   ),
                   // Calculadora para digitar valor (todos os tipos podem receber parcial)
                   const SizedBox(height: 16),
-                  // Calculadora expansível
-                  GestureDetector(
-                    onTap: () {
-                      setDialogState(() {
-                        mostrarCalculadora = !mostrarCalculadora;
-                      });
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: Colors.green.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: Colors.green.withOpacity(0.3),
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(
-                            Icons.calculate,
-                            color: Colors.greenAccent,
-                            size: 18,
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              mostrarCalculadora
-                                  ? 'Digitar valor: R\$ ${formatarValor(valorDigitado)}'
-                                  : 'Digitar outro valor',
-                              style: const TextStyle(
+                  // Seção de Valor Digital (Teclado)
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.green.withOpacity(0.05),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.green.withOpacity(0.2)),
+                    ),
+                    child: Column(
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(Icons.calculate, color: Colors.greenAccent, size: 20),
+                            const SizedBox(width: 8),
+                            const Text(
+                              'Valor Digitado:',
+                              style: TextStyle(color: Colors.white70, fontSize: 13),
+                            ),
+                            const Spacer(),
+                            const Text(
+                              'R\$ ',
+                              style: TextStyle(
                                 color: Colors.greenAccent,
-                                fontSize: 13,
+                                fontSize: 22,
+                                fontWeight: FontWeight.bold,
                               ),
                             ),
-                          ),
-                          Icon(
-                            mostrarCalculadora
-                                ? Icons.expand_less
-                                : Icons.expand_more,
-                            color: Colors.greenAccent,
-                            size: 20,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  if (mostrarCalculadora) ...[
-                    const SizedBox(height: 12),
-                    // Teclado numérico compacto usando Wrap
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children:
-                          [
-                            '1',
-                            '2',
-                            '3',
-                            'C',
-                            '4',
-                            '5',
-                            '6',
-                            '⌫',
-                            '7',
-                            '8',
-                            '9',
-                            '00',
-                            '.',
-                            '0',
-                            '00',
-                            'OK',
-                          ].map((tecla) {
-                            return SizedBox(
-                              width: 50,
-                              height: 40,
-                              child: GestureDetector(
-                                onTap: () {
+                            SizedBox(
+                              width: 120,
+                              child: TextField(
+                                controller: TextEditingController(
+                                  text: formatarValor(valorDigitado),
+                                ),
+                                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                textAlign: TextAlign.right,
+                                style: const TextStyle(
+                                  color: Colors.greenAccent,
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                                decoration: const InputDecoration(
+                                  border: InputBorder.none,
+                                  isDense: true,
+                                  contentPadding: EdgeInsets.symmetric(vertical: 4),
+                                ),
+                                onChanged: (text) {
                                   setDialogState(() {
-                                    if (tecla == 'C') {
+                                    // Remove tudo que não é dígito
+                                    final apenasDigitos = text.replaceAll(RegExp(r'[^0-9]'), '');
+                                    if (apenasDigitos.isEmpty) {
                                       valorDigitado = '';
                                       valorRecebido = pagamento.valor;
                                       troco = 0;
-                                    } else if (tecla == '⌫') {
-                                      if (valorDigitado.isNotEmpty) {
-                                        valorDigitado = valorDigitado.substring(
-                                          0,
-                                          valorDigitado.length - 1,
-                                        );
-                                        final novoValor = digitosParaValor(
-                                          valorDigitado,
-                                        );
-                                        valorRecebido = novoValor > 0
-                                            ? novoValor
-                                            : pagamento.valor;
-                                        // Troco só para Dinheiro
-                                        if (isDinheiro &&
-                                            valorRecebido > pagamento.valor) {
-                                          troco =
-                                              valorRecebido - pagamento.valor;
-                                        } else {
-                                          troco = 0;
-                                          // Não-Dinheiro: limitar ao valor da parcela
-                                          if (!isDinheiro &&
-                                              valorRecebido > pagamento.valor) {
-                                            valorRecebido = pagamento.valor;
-                                            valorDigitado =
-                                                (pagamento.valor * 100)
-                                                    .toInt()
-                                                    .toString();
-                                          }
-                                        }
-                                      }
-                                    } else if (tecla == 'OK') {
-                                      mostrarCalculadora = false;
-                                    } else if (tecla != '.') {
-                                      if (valorDigitado.length < 10) {
-                                        valorDigitado += tecla;
-                                        final novoValor = digitosParaValor(
-                                          valorDigitado,
-                                        );
-                                        // Não-Dinheiro: limitar ao valor da parcela
-                                        if (!isDinheiro &&
-                                            novoValor > pagamento.valor) {
-                                          valorRecebido = pagamento.valor;
-                                          valorDigitado =
-                                              (pagamento.valor * 100)
-                                                  .toInt()
-                                                  .toString();
-                                          troco = 0;
-                                        } else {
-                                          valorRecebido = novoValor;
-                                          // Troco só para Dinheiro
-                                          if (isDinheiro &&
-                                              valorRecebido > pagamento.valor) {
-                                            troco =
-                                                valorRecebido - pagamento.valor;
-                                          } else {
-                                            troco = 0;
-                                          }
-                                        }
+                                      return;
+                                    }
+                                    valorDigitado = apenasDigitos;
+                                    final novoValor = digitosParaValor(valorDigitado);
+                                    if (!isDinheiro && novoValor > pagamento.valor) {
+                                      valorRecebido = pagamento.valor;
+                                      valorDigitado = (pagamento.valor * 100).toInt().toString();
+                                      troco = 0;
+                                    } else {
+                                      valorRecebido = novoValor;
+                                      if (isDinheiro && valorRecebido > pagamento.valor) {
+                                        troco = valorRecebido - pagamento.valor;
+                                      } else {
+                                        troco = 0;
                                       }
                                     }
                                   });
                                 },
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    color: tecla == 'C'
-                                        ? Colors.red.withOpacity(0.3)
-                                        : tecla == 'OK'
-                                        ? Colors.green.withOpacity(0.3)
-                                        : tecla == '⌫'
-                                        ? Colors.orange.withOpacity(0.3)
-                                        : Colors.white.withOpacity(0.1),
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  child: Center(
-                                    child: Text(
-                                      tecla,
-                                      style: TextStyle(
-                                        color: tecla == 'C'
-                                            ? Colors.red
-                                            : tecla == 'OK'
-                                            ? Colors.greenAccent
-                                            : tecla == '⌫'
-                                            ? Colors.orange
-                                            : Colors.white,
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (valorRecebido < pagamento.valor && valorRecebido > 0) ...[
+                          const Divider(color: Colors.white10),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text(
+                                'Restante após este pagamento:',
+                                style: TextStyle(color: Colors.white38, fontSize: 11),
+                              ),
+                              Text(
+                                'R\$ ${(pagamento.valor - valorRecebido).toStringAsFixed(2)}',
+                                style: const TextStyle(color: Colors.orangeAccent, fontSize: 13, fontWeight: FontWeight.bold),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  // Teclado numérico compacto
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    alignment: WrapAlignment.center,
+                    children: [
+                      '1', '2', '3', 'C',
+                      '4', '5', '6', '⌫',
+                      '7', '8', '9', '00',
+                      '0', 'OK',
+                    ].map((tecla) {
+                      return SizedBox(
+                        width: 55,
+                        height: 45,
+                        child: GestureDetector(
+                          onTap: () {
+                            setDialogState(() {
+                              if (tecla == 'C') {
+                                valorDigitado = '';
+                                valorRecebido = pagamento.valor;
+                                troco = 0;
+                              } else if (tecla == '⌫') {
+                                if (valorDigitado.isNotEmpty) {
+                                  valorDigitado = valorDigitado.substring(0, valorDigitado.length - 1);
+                                  final novoValor = digitosParaValor(valorDigitado);
+                                  valorRecebido = novoValor > 0 ? novoValor : pagamento.valor;
+                                  if (isDinheiro && valorRecebido > pagamento.valor) {
+                                    troco = valorRecebido - pagamento.valor;
+                                  } else {
+                                    troco = 0;
+                                    if (!isDinheiro && valorRecebido > pagamento.valor) {
+                                      valorRecebido = pagamento.valor;
+                                      valorDigitado = (pagamento.valor * 100).toInt().toString();
+                                    }
+                                  }
+                                }
+                              } else if (tecla == 'OK') {
+                                // Apenas fecha a visualização do teclado se desejado, ou mantém aberto
+                              } else {
+                                if (valorDigitado.length < 10) {
+                                  valorDigitado += tecla;
+                                  final novoValor = digitosParaValor(valorDigitado);
+                                  if (!isDinheiro && novoValor > pagamento.valor) {
+                                    valorRecebido = pagamento.valor;
+                                    valorDigitado = (pagamento.valor * 100).toInt().toString();
+                                    troco = 0;
+                                  } else {
+                                    valorRecebido = novoValor;
+                                    if (isDinheiro && valorRecebido > pagamento.valor) {
+                                      troco = valorRecebido - pagamento.valor;
+                                    } else {
+                                      troco = 0;
+                                    }
+                                  }
+                                }
+                              }
+                            });
+                          },
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: tecla == 'C'
+                                  ? Colors.red.withOpacity(0.3)
+                                  : tecla == 'OK'
+                                      ? Colors.green.withOpacity(0.3)
+                                      : tecla == '⌫'
+                                          ? Colors.orange.withOpacity(0.3)
+                                          : Colors.white.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Center(
+                              child: Text(
+                                tecla,
+                                style: TextStyle(
+                                  color: tecla == 'C'
+                                      ? Colors.red
+                                      : tecla == 'OK'
+                                          ? Colors.greenAccent
+                                          : tecla == '⌫'
+                                              ? Colors.orange
+                                              : Colors.white,
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
                                 ),
                               ),
-                            );
-                          }).toList(),
-                    ),
-                  ],
+                            ),
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
                   const SizedBox(height: 16),
                   // Mostrar troco (só se for Dinheiro via temTroco)
                   if (temTroco)
@@ -9898,6 +10680,24 @@ class _PdvPageState extends State<PdvPage> {
                   style: TextStyle(color: Colors.white54),
                 ),
               ),
+              if (tipoSelecionado != pagamento.tipo)
+                ElevatedButton.icon(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    _processarAlteracaoFormaSemReceber(
+                      pedido,
+                      pagamento,
+                      tipoSelecionado,
+                      dataService,
+                    );
+                  },
+                  icon: const Icon(Icons.swap_horiz, size: 18),
+                  label: const Text('Alterar sem Receber'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.deepPurple,
+                    foregroundColor: Colors.white,
+                  ),
+                ),
               ElevatedButton.icon(
                 onPressed: valorRecebido > 0
                     ? () {
@@ -9919,9 +10719,10 @@ class _PdvPageState extends State<PdvPage> {
                 ),
               ),
             ],
-          );
-        },
-      ),
+          ),
+        );
+      },
+    ),
     );
   }
 
@@ -10068,6 +10869,61 @@ class _PdvPageState extends State<PdvPage> {
     }
   }
 
+  void _processarAlteracaoFormaSemReceber(
+    Pedido pedido,
+    PagamentoPedido pagamento,
+    TipoPagamento novoTipo,
+    DataService dataService,
+  ) {
+    if (novoTipo == pagamento.tipo) return;
+
+    // Salvar tipo original se mudou e ainda não tinha original salvo
+    final tipoOriginalParaSalvar = pagamento.tipoOriginal ?? pagamento.tipo;
+
+    final novosPagamentos = pedido.pagamentos.map((p) {
+      if (p.id == pagamento.id) {
+        return p.copyWith(
+          tipo: novoTipo,
+          tipoOriginal: tipoOriginalParaSalvar,
+        );
+      }
+      return p;
+    }).toList();
+
+    // Obter usuário logado
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final usuarioNome = authService.usuarioAtual?.nome ?? 'Sistema';
+
+    // Gravar histórico nas observações
+    final dataHora = DateTime.now().toLocal().toString().substring(0, 19);
+    final historicoEntrada = '[ALTERAÇÃO PAGAMENTO] Usuário $usuarioNome alterou forma de pagamento de ${pagamento.tipo.nome} para ${novoTipo.nome} em $dataHora';
+    final novoHistorico = pedido.observacoes == null || pedido.observacoes!.isEmpty
+        ? historicoEntrada
+        : '${pedido.observacoes}\n$historicoEntrada';
+
+    final pedidoAtualizado = pedido.copyWith(
+      pagamentos: novosPagamentos,
+      observacoes: novoHistorico,
+    );
+
+    dataService.updatePedido(pedidoAtualizado);
+    _syncVendaBalcao(pedidoAtualizado, dataService, novoTipo);
+    setState(() => _pedidoSelecionado = pedidoAtualizado);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('✓ Forma de pagamento alterada para ${novoTipo.nome}!'),
+        backgroundColor: Colors.green,
+        behavior: SnackBarBehavior.floating,
+        margin: EdgeInsets.only(
+          bottom: MediaQuery.of(context).size.height - 150,
+          left: 16,
+          right: 16,
+        ),
+      ),
+    );
+  }
+
   Future<void> _atualizarRecebimento(
     Pedido pedido,
     PagamentoPedido pagamento,
@@ -10137,7 +10993,7 @@ class _PdvPageState extends State<PdvPage> {
           final estoqueAnterior = produto.estoque;
           await dataService.registrarSaidaEstoque(
             produtoId: produtoItem.id,
-            quantidade: produtoItem.quantidade.toInt(),
+            quantidade: produtoItem.quantidade.toDouble(),
             motivo: 'venda',
             fornecedorNome: produtoItem.fornecedorNome,
             observacao: 'Pedido ${pedido.numero}',
@@ -10341,7 +11197,7 @@ class _PdvPageState extends State<PdvPage> {
       }
 
       if (termico) {
-        await PedidoPDFService.imprimirPDFTermico(pedido: pedido, empresa: empresa);
+        await PedidoPDFService.imprimirPDFTermico(pedido: pedido, empresa: empresa, context: context);
       } else {
         await PedidoPDFService.imprimirPDF(pedido: pedido, empresa: empresa);
       }

@@ -57,6 +57,10 @@ class Empresa {
   final bool whatsappAtivo;           // Se as notificações WhatsApp estão ativas
   final bool moduloPet;               // Se o módulo Pet Shop está ativo
   final List<AdicionalProduto> modelosAdicionais; // Modelos de adicionais reutilizáveis
+  
+  // Fiscal / Contabilidade
+  final String? emailContabilidade;   // E-mail da contabilidade para envio de XMLs
+  final bool envioFiscalAutomatico;    // Se deve enviar no dia 01 de cada mês automaticamente
 
   Empresa({
     required this.id,
@@ -101,6 +105,8 @@ class Empresa {
     this.whatsappAtivo = false,
     this.moduloPet = false,
     this.modelosAdicionais = const [],
+    this.emailContabilidade,
+    this.envioFiscalAutomatico = false,
   });
 
   /// Retorna o nome de exibição (nome fantasia ou razão social)
@@ -177,6 +183,8 @@ class Empresa {
     bool? whatsappAtivo,
     bool? moduloPet,
     List<AdicionalProduto>? modelosAdicionais,
+    String? emailContabilidade,
+    bool? envioFiscalAutomatico,
   }) {
     return Empresa(
       id: id ?? this.id,
@@ -225,80 +233,99 @@ class Empresa {
       whatsappAtivo: whatsappAtivo ?? this.whatsappAtivo,
       moduloPet: moduloPet ?? this.moduloPet,
       modelosAdicionais: modelosAdicionais ?? this.modelosAdicionais,
+      emailContabilidade: emailContabilidade ?? this.emailContabilidade,
+      envioFiscalAutomatico: envioFiscalAutomatico ?? this.envioFiscalAutomatico,
     );
   }
 
   factory Empresa.fromMap(Map<String, dynamic> map) {
+    // Helper para suportar tanto camelCase (localStorage) quanto snake_case (PostgreSQL)
+    String? getString(String camelCase, String snakeCase) {
+      return map[camelCase] ?? map[snakeCase];
+    }
+    
+    bool? getBool(String camelCase, String snakeCase, bool defaultValue) {
+      final val = map[camelCase] ?? map[snakeCase];
+      if (val == null) return defaultValue;
+      if (val is bool) return val;
+      return val.toString().toLowerCase() == 'true';
+    }
+    
+    DateTime getDateTime(String camelCase, String snakeCase) {
+      final val = map[camelCase] ?? map[snakeCase];
+      if (val == null) return DateTime.now();
+      if (val is DateTime) return val;
+      return DateTime.parse(val.toString());
+    }
+    
     return Empresa(
       id: map['id'] ?? '',
-      razaoSocial: map['razaoSocial'] ?? '',
-      nomeFantasia: map['nomeFantasia'],
-      cnpj: map['cnpj'],
-      inscricaoEstadual: map['inscricaoEstadual'],
-      inscricaoMunicipal: map['inscricaoMunicipal'],
+      razaoSocial: getString('razaoSocial', 'razao_social') ?? '',
+      nomeFantasia: getString('nomeFantasia', 'nome_fantasia'),
+      cnpj: getString('cnpj', 'cnpj'),
+      inscricaoEstadual: getString('inscricaoEstadual', 'inscricao_estadual'),
+      inscricaoMunicipal: getString('inscricaoMunicipal', 'inscricao_municipal'),
       crt: map['crt'] != null 
           ? (map['crt'] is int ? map['crt'] as int : int.tryParse(map['crt'].toString()))
-          : (map['regimeTributario'] != null 
-              ? _converterRegimeTributarioParaCRT(map['regimeTributario'].toString())
-              : null), // Compatibilidade com dados antigos
+          : (map['regime_tributario'] != null 
+              ? _converterRegimeTributarioParaCRT(map['regime_tributario'].toString())
+              : null),
       slug: (map['slug'] != null && map['slug'].toString().trim().isNotEmpty)
           ? map['slug'].toString()
-          : gerarSlug(map['nomeFantasia'] ?? map['razaoSocial'] ?? ''),
-      email: map['email'],
-      telefone: map['telefone'],
-      celular: map['celular'],
-      site: map['site'],
-      endereco: map['endereco'],
-      numero: map['numero'],
-      complemento: map['complemento'],
-      bairro: map['bairro'],
-      cidade: map['cidade'],
-      estado: map['estado'],
-      cep: map['cep'],
-      codigoIBGE: map['codigoIBGE'],
-      logoUrl: map['logoUrl'],
-      corPrimaria: map['corPrimaria'],
-      corSecundaria: map['corSecundaria'],
-      ativo: map['ativo'] ?? true,
-      createdAt: map['createdAt'] != null
-          ? DateTime.parse(map['createdAt'])
-          : DateTime.now(),
-      updatedAt: map['updatedAt'] != null
-          ? DateTime.parse(map['updatedAt'])
-          : DateTime.now(),
-      certificadoDigitalUrl: map['certificadoDigitalUrl'],
-      senhaCertificado: map['senhaCertificado'],
-      csc: map['csc'],
-      cscIdToken: map['cscIdToken'],
-      serieNFCe: map['serieNFCe'],
-      ambienteHomologacao: map['ambienteHomologacao'] ?? true, // Padrão: homologação
-      focusNFeToken: map['focusNFeToken'],
+          : gerarSlug(getString('nomeFantasia', 'nome_fantasia') ?? getString('razaoSocial', 'razao_social') ?? ''),
+      email: getString('email', 'email'),
+      telefone: getString('telefone', 'telefone'),
+      celular: getString('celular', 'celular'),
+      site: getString('site', 'site'),
+      endereco: getString('endereco', 'endereco'),
+      numero: getString('numero', 'numero'),
+      complemento: getString('complemento', 'complemento'),
+      bairro: getString('bairro', 'bairro'),
+      cidade: getString('cidade', 'cidade'),
+      estado: getString('estado', 'estado'),
+      cep: getString('cep', 'cep'),
+      codigoIBGE: getString('codigoIBGE', 'codigo_ibge'),
+      logoUrl: getString('logoUrl', 'logo_url'),
+      corPrimaria: getString('corPrimaria', 'cor_primaria'),
+      corSecundaria: getString('corSecundaria', 'cor_secundaria'),
+      ativo: getBool('ativo', 'ativo', true) ?? true,
+      createdAt: getDateTime('createdAt', 'created_at'),
+      updatedAt: getDateTime('updatedAt', 'updated_at'),
+      certificadoDigitalUrl: getString('certificadoDigitalUrl', 'certificado_digital_url'),
+      senhaCertificado: getString('senhaCertificado', 'senha_certificado'),
+      csc: getString('csc', 'csc'),
+      cscIdToken: getString('cscIdToken', 'csc_id_token'),
+      serieNFCe: getString('serieNFCe', 'serie_nfce'),
+      ambienteHomologacao: getBool('ambienteHomologacao', 'ambiente_homologacao', true) ?? true,
+      focusNFeToken: getString('focusNFeToken', 'focus_nfe_token'),
       configuracoes: map['configuracoes'] != null
           ? Map<String, dynamic>.from(map['configuracoes'])
           : null,
       telasPermitidas: map['telasPermitidas'] != null
           ? Set<String>.from(map['telasPermitidas'])
           : null,
-      whatsappApiUrl: map['whatsappApiUrl'],
-      whatsappApiKey: map['whatsappApiKey'],
-      whatsappInstanceName: map['whatsappInstanceName'],
-      whatsappTipo: map['whatsappTipo'] ?? 'evolution',
-      whatsappAtivo: map['whatsappAtivo'] ?? false,
-      moduloPet: map['moduloPet'] ?? false,
-      modelosAdicionais: (map['modelosAdicionais'] as List?)
+      whatsappApiUrl: getString('whatsappApiUrl', 'whatsapp_api_url'),
+      whatsappApiKey: getString('whatsappApiKey', 'whatsapp_api_key'),
+      whatsappInstanceName: getString('whatsappInstanceName', 'whatsapp_instance_name'),
+      whatsappTipo: getString('whatsappTipo', 'whatsapp_tipo') ?? 'evolution',
+      whatsappAtivo: getBool('whatsappAtivo', 'whatsapp_ativo', false) ?? false,
+      moduloPet: getBool('moduloPet', 'modulo_pet', false) ?? false,
+      modelosAdicionais: ((map['modelosAdicionais'] ?? map['modelos_adicionais']) as List?)
           ?.map((e) => AdicionalProduto.fromMap(e as Map<String, dynamic>))
           .toList() ?? [],
+      emailContabilidade: getString('emailContabilidade', 'email_contabilidade'),
+      envioFiscalAutomatico: getBool('envioFiscalAutomatico', 'envio_fiscal_automatico', false) ?? false,
     );
   }
 
   Map<String, dynamic> toMap() {
     return {
       'id': id,
-      'razaoSocial': razaoSocial,
-      'nomeFantasia': nomeFantasia,
+      'razao_social': razaoSocial,
+      'nome_fantasia': nomeFantasia,
       'cnpj': cnpj,
-      'inscricaoEstadual': inscricaoEstadual,
-      'inscricaoMunicipal': inscricaoMunicipal,
+      // 'inscricao_estadual': inscricaoEstadual, // Removido para evitar erro PGRST204 (coluna não existe no Supabase)
+      // 'inscricao_municipal': inscricaoMunicipal, // Removido para evitar erro PGRST204 (coluna não existe no Supabase)
       'crt': crt,
       'email': email,
       'telefone': telefone,
@@ -311,30 +338,27 @@ class Empresa {
       'cidade': cidade,
       'estado': estado,
       'cep': cep,
-      'codigoIBGE': codigoIBGE,
-      'logoUrl': logoUrl,
-      'corPrimaria': corPrimaria,
-      'corSecundaria': corSecundaria,
+      // 'codigo_ibge': codigoIBGE, // Removido para evitar erro PGRST204 (coluna não existe no Supabase)
+      // 'logo_url': logoUrl, // Removido para evitar erro PGRST204 (coluna não existe no Supabase)
+      // 'cor_primaria': corPrimaria, // Removido para evitar erro PGRST204 (coluna não existe no Supabase)
+      // 'cor_secundaria': corSecundaria, // Removido para evitar erro PGRST204
       'ativo': ativo,
       'slug': slug,
-      'createdAt': createdAt.toIso8601String(),
-      'updatedAt': updatedAt.toIso8601String(),
-      'certificadoDigitalUrl': certificadoDigitalUrl,
-      'senhaCertificado': senhaCertificado,
-      'csc': csc,
-      'cscIdToken': cscIdToken,
-      'serieNFCe': serieNFCe,
-      'ambienteHomologacao': ambienteHomologacao,
-      'focusNFeToken': focusNFeToken,
+      'created_at': createdAt.toIso8601String(),
+      'updated_at': updatedAt.toIso8601String(),
+      // Configurações NFC-e removidas do toMap para evitar erro PGRST204 (não existem no Supabase)
       'configuracoes': configuracoes,
-      'telasPermitidas': telasPermitidas?.toList(),
-      'whatsappApiUrl': whatsappApiUrl,
-      'whatsappApiKey': whatsappApiKey,
-      'whatsappInstanceName': whatsappInstanceName,
-      'whatsappTipo': whatsappTipo,
-      'whatsappAtivo': whatsappAtivo,
-      'moduloPet': moduloPet,
-      'modelosAdicionais': modelosAdicionais.map((e) => e.toMap()).toList(),
+      'telas_permitidas': telasPermitidas?.toList(),
+      // Campos removidos para evitar erro PGRST204 (não existem no Supabase)
+      // 'whatsapp_api_url': whatsappApiUrl,
+      // 'whatsapp_api_key': whatsappApiKey,
+      // 'whatsapp_instance_name': whatsappInstanceName,
+      // 'whatsapp_tipo': whatsappTipo,
+      // 'whatsapp_ativo': whatsappAtivo,
+      // 'modulo_pet': moduloPet,
+      // 'modelos_adicionais': modelosAdicionais.map((e) => e.toMap()).toList(),
+      // 'email_contabilidade': emailContabilidade,
+      // 'envio_fiscal_automatico': envioFiscalAutomatico, // Removido para evitar erro PGRST204
     };
   }
 

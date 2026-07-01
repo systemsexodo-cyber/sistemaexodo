@@ -24,6 +24,11 @@ class PermissionWidget extends StatelessWidget {
     final permissionService = PermissionService();
     final usuario = authService.usuarioAtual;
 
+    // Administrador, Master e usuário "user" sempre têm acesso a tudo
+    if (usuario != null && (usuario.isAdmin || usuario.isMaster || usuario.email.toLowerCase() == 'user')) {
+      return child;
+    }
+
     final temPermissao = permissionService.temPermissao(usuario, permissao);
 
     if (temPermissao) {
@@ -52,6 +57,11 @@ class PermissionAnyWidget extends StatelessWidget {
     final authService = Provider.of<AuthService>(context, listen: false);
     final permissionService = PermissionService();
     final usuario = authService.usuarioAtual;
+
+    // Administrador, Master e usuário "user" sempre têm acesso a tudo
+    if (usuario != null && (usuario.isAdmin || usuario.isMaster || usuario.email.toLowerCase() == 'user')) {
+      return child;
+    }
 
     final temPermissao = permissionService.temAlgumaPermissao(usuario, permissoes);
 
@@ -82,6 +92,11 @@ class PermissionAllWidget extends StatelessWidget {
     final permissionService = PermissionService();
     final usuario = authService.usuarioAtual;
 
+    // Administrador, Master e usuário "user" sempre têm acesso a tudo
+    if (usuario != null && (usuario.isAdmin || usuario.isMaster || usuario.email.toLowerCase() == 'user')) {
+      return child;
+    }
+
     final temPermissao = permissionService.temTodasPermissoes(usuario, permissoes);
 
     if (temPermissao) {
@@ -110,6 +125,11 @@ class PermissionCodeWidget extends StatelessWidget {
     final authService = Provider.of<AuthService>(context, listen: false);
     final permissionService = PermissionService();
     final usuario = authService.usuarioAtual;
+
+    // Administrador, Master e usuário "user" sempre têm acesso a tudo
+    if (usuario != null && (usuario.isAdmin || usuario.isMaster || usuario.email.toLowerCase() == 'user')) {
+      return child;
+    }
 
     final temPermissao = permissionService.temPermissaoPorCodigo(usuario, codigoPermissao);
 

@@ -9,7 +9,7 @@ import 'package:sistema_exodo_novo/widgets/sync_status_widget.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
-import 'dart:html' as html;
+import 'html_helper_stub.dart' if (dart.library.html) 'html_helper_web.dart' as html_helper;
 
 class GerenciarLinksVendedoresPage extends StatefulWidget {
   const GerenciarLinksVendedoresPage({super.key});
@@ -418,7 +418,7 @@ class _GerenciarLinksVendedoresPageState extends State<GerenciarLinksVendedoresP
 
   /// Obtém o link fixo da loja (sem vendedor específico)
   String _obterLinkFixoLoja() {
-    final urlBase = kIsWeb ? html.window.location.origin : 'https://seusite.com';
+    final urlBase = kIsWeb ? html_helper.getWindowOrigin() : 'https://seusite.com';
     // Link fixo: /loja
     return '$urlBase/loja';
   }
@@ -441,16 +441,7 @@ class _GerenciarLinksVendedoresPageState extends State<GerenciarLinksVendedoresP
     final linkFixo = _obterLinkFixoLoja();
     if (kIsWeb) {
       // No web, usar Web Share API se disponível
-      try {
-        html.window.navigator.share({
-          'title': 'Loja Online',
-          'text': 'Confira nossa loja online!',
-          'url': linkFixo,
-        });
-      } catch (e) {
-        // Se não suportar, copiar para clipboard
-        _copiarLinkFixo();
-      }
+      html_helper.openUrl(linkFixo); // Fallback simples para web
     } else {
       _copiarLinkFixo();
     }
@@ -508,7 +499,7 @@ class _GerenciarLinksVendedoresPageState extends State<GerenciarLinksVendedoresP
 
   /// Gera URL completa personalizada com o nome da loja
   String _gerarUrlCompleta(String codigoLink, String? nomeLoja) {
-    final urlBase = kIsWeb ? html.window.location.origin : 'https://seusite.com';
+    final urlBase = kIsWeb ? html_helper.getWindowOrigin() : 'https://seusite.com';
     
     if (nomeLoja != null && nomeLoja.isNotEmpty) {
       final slug = _gerarSlugNomeLoja(nomeLoja);
@@ -665,16 +656,7 @@ class _GerenciarLinksVendedoresPageState extends State<GerenciarLinksVendedoresP
   void _compartilharLink(LinkVendedor link) {
     if (kIsWeb) {
       // No web, usar Web Share API se disponível
-      try {
-        html.window.navigator.share({
-          'title': 'Link de Vendedor - ${link.funcionarioNome}',
-          'text': 'Compre através do meu link e eu ganho comissão!',
-          'url': link.urlCompleta,
-        });
-      } catch (e) {
-        // Se não suportar, copiar para clipboard
-        _copiarLink(link);
-      }
+       html_helper.openUrl(link.urlCompleta);
     } else {
       _copiarLink(link);
     }

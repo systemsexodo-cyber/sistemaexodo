@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:io';
 import '../services/auth_service.dart';
 import '../services/data_service.dart';
@@ -13,6 +12,23 @@ import 'login_page.dart';
 import '../services/google_drive_service.dart';
 import '../services/bridge_management_service.dart';
 import 'google_drive_backup_page.dart';
+import '../services/supabase_service.dart';
+import '../services/app_update_service.dart';
+
+/// Classe para armazenar o progresso da importação
+class ImportProgress {
+  final int processados;
+  final int total;
+  final String etapa;
+  final List<String> mensagens;
+
+  ImportProgress({
+    required this.processados,
+    required this.total,
+    required this.etapa,
+    required this.mensagens,
+  });
+}
 
 /// Página de gerenciamento de empresas
 class EmpresasPage extends StatefulWidget {
@@ -193,6 +209,12 @@ class _EmpresasPageState extends State<EmpresasPage> {
                 children: [
                   // Card de importação SEMPRE no topo (sempre visível)
                   _buildCardImportacao(context),
+                  // NOVO: Card de Sincronização Supabase (Roxo)
+                  if (podeAcessar)
+                    _buildCardSupabaseSync(context),
+                  // NOVO: Card de Diagnóstico Supabase (Laranja)
+                  if (podeAcessar)
+                    _buildCardSupabaseDiagnostico(context),
                   // Card do Google Drive - BACKUP (Azul)
                   _buildCardGoogleDriveBackup(context),
                   // NOVO: Card do Google Drive - RESTAURAR (Verde)
@@ -525,10 +547,8 @@ class _EmpresasPageState extends State<EmpresasPage> {
         content: SizedBox(
           width: double.maxFinite,
           height: 300,
-          child: StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance
-                .collection('bridge_status')
-                .snapshots(),
+          child: FutureBuilder<List<Map<String, dynamic>>>(
+            future: SupabaseService.instance.getBridgeStatus(),
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
                 return const Center(child: CircularProgressIndicator());
@@ -537,7 +557,7 @@ class _EmpresasPageState extends State<EmpresasPage> {
                 return Center(child: Text('Erro: ${snapshot.error}', style: const TextStyle(color: Colors.white)));
               }
 
-              final docs = snapshot.data?.docs ?? [];
+              final docs = snapshot.data ?? [];
               
               if (docs.isEmpty) {
                 return const Center(
@@ -558,19 +578,15 @@ class _EmpresasPageState extends State<EmpresasPage> {
                   ),
                   const Divider(color: Colors.white24),
                   // Lista de Pcs Específicos
-                  ...docs.where((doc) => !doc.id.startsWith('watchdog_')).map((doc) {
-                    // Extração de dados segura e dinâmica para o Flutter Web
-                    final dynamic rawData = doc.data();
-                    final Map<dynamic, dynamic> data = (rawData is Map) ? rawData : {};
-                    final String pcName = (data['pc_name'] ?? doc.id).toString();
+                  ...docs.where((data) => !(data['id']?.toString() ?? '').startsWith('watchdog_')).map((data) {
+                    final String pcName = (data['pc_name'] ?? data['id'] ?? 'Desconhecido').toString();
                     final bool isOnline = data['online'] == true;
                     
-                    // Busca o watchdog de forma manual para evitar crashes de tipo
+                    // Busca o watchdog de forma manual
                     bool watchdogOnline = false;
                     for (var d in docs) {
-                      if (d.id == 'watchdog_$pcName') {
-                        final dynamic dRaw = d.data();
-                        if (dRaw is Map && dRaw['online'] == true) {
+                      if (d['id'] == 'watchdog_$pcName') {
+                        if (d['online'] == true) {
                           watchdogOnline = true;
                         }
                         break;
@@ -590,6 +606,14 @@ class _EmpresasPageState extends State<EmpresasPage> {
                             isOnline ? 'Bridge Online' : (watchdogOnline ? 'Proteção Ativa' : 'Offline total'),
                             style: TextStyle(color: isOnline ? Colors.green : (watchdogOnline ? Colors.orange : Colors.white24), fontSize: 11),
                           ),
+                          if (data['versao_software'] != null || data['versao_windows'] != null)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 2, bottom: 2),
+                              child: Text(
+                                'Versão: ${data['versao_software'] ?? "Desconhecida"} (${data['versao_windows'] ?? "Windows"})',
+                                style: const TextStyle(color: Colors.white38, fontSize: 10),
+                              ),
+                            ),
                           if (data['ultima_empresa'] != null)
                             Text(
                               '🏢 ${data['ultima_empresa']}',
@@ -684,6 +708,350 @@ class _EmpresasPageState extends State<EmpresasPage> {
         ],
       ),
     );
+  }
+
+  Widget _buildCardSupabaseSync(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Colors.purple.withOpacity(0.3), Colors.purple.withOpacity(0.1)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.purple, width: 2),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.purple.withOpacity(0.2),
+            blurRadius: 8,
+            spreadRadius: 1,
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () => _sincronizarComSupabase(context),
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: Colors.purple,
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: const Icon(Icons.sync, color: Colors.white, size: 36),
+                ),
+                const SizedBox(width: 20),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '🗄️ SINCRONIZAR COM SUPABASE',
+                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
+                      ),
+                      SizedBox(height: 6),
+                      Text(
+                        'Enviar dados locais (produtos, clientes, vendas) para nuvem.',
+                        style: TextStyle(fontSize: 14, color: Colors.white70),
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.cloud_sync, color: Colors.white, size: 24),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _sincronizarComSupabase(BuildContext context) async {
+    if (!SupabaseService.isAvailable) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('❌ Supabase não está disponível'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final empresas = authService.getEmpresasDoUsuario();
+
+    if (empresas.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('❌ Nenhuma empresa encontrada'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+
+    // Mostrar diálogo para selecionar empresa
+    String? empresaSelecionadaId;
+    
+    if (mounted) {
+      empresaSelecionadaId = await showDialog<String>(
+        context: context,
+        builder: (context) => AlertDialog(
+          backgroundColor: const Color(0xFF1E1E2E),
+          title: const Text('Selecione a Empresa', style: TextStyle(color: Colors.white)),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: empresas.length,
+              itemBuilder: (context, index) {
+                final empresa = empresas[index];
+                return ListTile(
+                  title: Text(
+                    empresa.nomeFantasia ?? empresa.razaoSocial ?? 'Empresa',
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  subtitle: Text(
+                    empresa.cnpj ?? '',
+                    style: const TextStyle(color: Colors.white70),
+                  ),
+                  onTap: () => Navigator.pop(context, empresa.id),
+                );
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancelar'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (empresaSelecionadaId == null) return;
+
+    // Carregar dados da empresa selecionada
+    final empresaSelecionada = empresas.firstWhere((e) => e.id == empresaSelecionadaId);
+    
+    // Trocar para a empresa temporariamente para sincronizar
+    final dataService = Provider.of<DataService>(context, listen: false);
+    await authService.selecionarEmpresa(empresaSelecionada);
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const AlertDialog(
+        backgroundColor: Color(0xFF1E1E2E),
+        title: Text('Sincronizando...', style: TextStyle(color: Colors.white)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(color: Colors.purple),
+            SizedBox(height: 24),
+            Text(
+              'Enviando dados para o Supabase...\nIsso pode levar alguns minutos.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.white70),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    try {
+      await dataService.publicarSincronizacaoTotal();
+      if (mounted) {
+        Navigator.pop(context);
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            backgroundColor: const Color(0xFF1E1E2E),
+            title: const Row(
+              children: [
+                Icon(Icons.check_circle, color: Colors.green),
+                SizedBox(width: 12),
+                Text('Sincronizado!', style: TextStyle(color: Colors.white)),
+              ],
+            ),
+            content: Text(
+              'Dados de "${empresaSelecionada.nomeFantasia ?? empresaSelecionada.razaoSocial ?? 'Empresa'}" sincronizados com sucesso.',
+              style: const TextStyle(color: Colors.white70),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('❌ Erro ao sincronizar: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Widget _buildCardSupabaseDiagnostico(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Colors.orange.withOpacity(0.3), Colors.orange.withOpacity(0.1)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.orange, width: 2),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.orange.withOpacity(0.2),
+            blurRadius: 8,
+            spreadRadius: 1,
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () => _testarSupabase(context),
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: Colors.orange,
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: const Icon(Icons.bug_report, color: Colors.white, size: 36),
+                ),
+                const SizedBox(width: 20),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '🔍 TESTAR SUPABASE',
+                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
+                      ),
+                      SizedBox(height: 6),
+                      Text(
+                        'Diagnóstico: verificar se consegue inserir dados.',
+                        style: TextStyle(fontSize: 14, color: Colors.white70),
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.network_check, color: Colors.white, size: 24),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _testarSupabase(BuildContext context) async {
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final empresaId = dataService.currentEmpresaId;
+    
+    if (empresaId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('❌ Selecione uma empresa primeiro'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const AlertDialog(
+        backgroundColor: Color(0xFF1E1E2E),
+        title: Text('Testando...', style: TextStyle(color: Colors.white)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(color: Colors.orange),
+            SizedBox(height: 24),
+            Text(
+              'Testando conexão com Supabase...',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.white70),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    try {
+      final resultado = await SupabaseService.instance.testarInsercao(empresaId);
+      
+      if (mounted) Navigator.pop(context);
+      
+      if (resultado['sucesso'] == true) {
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            backgroundColor: const Color(0xFF1E1E2E),
+            title: const Row(
+              children: [
+                Icon(Icons.check_circle, color: Colors.green),
+                SizedBox(width: 12),
+                Text('Teste OK!', style: TextStyle(color: Colors.white)),
+              ],
+            ),
+            content: const Text(
+              'Consegui inserir um registro de teste no Supabase.\n\nA conexão está funcionando!',
+              style: TextStyle(color: Colors.white70),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+      } else {
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            backgroundColor: const Color(0xFF1E1E2E),
+            title: const Row(
+              children: [
+                Icon(Icons.error, color: Colors.red),
+                SizedBox(width: 12),
+                Text('FALHA!', style: TextStyle(color: Colors.white)),
+              ],
+            ),
+            content: Text(
+              'Não consegui inserir dados:\n\n${resultado['erro']}',
+              style: const TextStyle(color: Colors.white70),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('❌ Erro: $e'), backgroundColor: Colors.red),
+      );
+    }
   }
 
   Widget _buildCardGoogleDriveBackup(BuildContext context) {
@@ -1454,7 +1822,7 @@ class _EmpresasPageState extends State<EmpresasPage> {
       result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['xlsx', 'xls'],
-        withData: false,
+        withData: true, // IMPORTANTE: precisa dos bytes na web
       );
     } catch (e) {
       if (mounted) {
@@ -1468,42 +1836,137 @@ class _EmpresasPageState extends State<EmpresasPage> {
       return;
     }
 
-    if (result == null || result.files.single.path == null) {
+    if (result == null || result.files.isEmpty) {
       return; // Usuário cancelou
     }
 
-    final arquivo = File(result.files.single.path!);
+    final platformFile = result.files.single;
+    
+    // Verificar se tem bytes (web) ou path (desktop/mobile)
+    if (platformFile.bytes == null && platformFile.path == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Erro: não foi possível ler o arquivo'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
 
-    // Mostrar loading
+    // Mostrar diálogo de progresso com atualização em tempo real
+    final progressNotifier = ValueNotifier<ImportProgress>(
+      ImportProgress(processados: 0, total: 0, etapa: 'Iniciando...', mensagens: []),
+    );
+    
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => const Center(
-        child: Card(
-          child: Padding(
-            padding: EdgeInsets.all(20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                CircularProgressIndicator(),
-                SizedBox(height: 16),
-                Text('Importando produtos...'),
+      builder: (context) => ValueListenableBuilder<ImportProgress>(
+        valueListenable: progressNotifier,
+        builder: (context, progress, child) {
+          final percentual = progress.total > 0 
+              ? (progress.processados / progress.total * 100).toStringAsFixed(1)
+              : '0.0';
+          
+          return AlertDialog(
+            backgroundColor: const Color(0xFF1E1E2E),
+            title: const Text(
+              'Importando Produtos',
+              style: TextStyle(color: Colors.white, fontSize: 18),
+            ),
+            content: SizedBox(
+              width: 400,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                // Barra de progresso
+                LinearProgressIndicator(
+                  value: progress.total > 0 ? progress.processados / progress.total : 0,
+                  backgroundColor: Colors.white10,
+                  valueColor: const AlwaysStoppedAnimation<Color>(Colors.blueAccent),
+                  minHeight: 8,
+                ),
+                const SizedBox(height: 16),
+                // Texto do progresso
+                Text(
+                  '${progress.processados} de ${progress.total} (${percentual}%)',
+                  style: const TextStyle(color: Colors.white70, fontSize: 14),
+                ),
+                const SizedBox(height: 8),
+                // Etapa atual
+                Text(
+                  progress.etapa,
+                  style: const TextStyle(color: Colors.blueAccent, fontSize: 12),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                // Lista de mensagens (últimas 5)
+                if (progress.mensagens.isNotEmpty) ...[
+                  Container(
+                    height: 120,
+                    decoration: BoxDecoration(
+                      color: Colors.black26,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: ListView.builder(
+                      shrinkWrap: true,
+                      reverse: true,
+                      itemCount: progress.mensagens.length > 5 ? 5 : progress.mensagens.length,
+                      itemBuilder: (context, index) {
+                        final msgIndex = progress.mensagens.length - 1 - index;
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          child: Text(
+                            progress.mensagens[msgIndex],
+                            style: const TextStyle(
+                              color: Colors.white54,
+                              fontSize: 10,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
-        ),
-      ),
-    );
+        );
+      },
+    ),
+  );
+
+    // Callback de progresso
+    void onProgress(int processados, int total, String etapa) {
+      progressNotifier.value = ImportProgress(
+        processados: processados,
+        total: total,
+        etapa: etapa,
+        mensagens: [...progressNotifier.value.mensagens, etapa].take(20).toList(),
+      );
+    }
 
     // Importar produtos
     try {
-      final resultado = await ExcelImportService.importarProdutos(
-        arquivo,
-        dataService,
-      );
+      // Usar bytes se disponível (web), senão usar path (desktop/mobile)
+      final resultado = platformFile.bytes != null
+          ? await ExcelImportService.importarProdutosDeBytes(
+              platformFile.bytes!,
+              dataService,
+              onProgress: onProgress,
+            )
+          : await ExcelImportService.importarProdutos(
+              File(platformFile.path!),
+              dataService,
+              onProgress: onProgress,
+            );
 
       if (mounted) {
-        Navigator.pop(context); // Fechar loading
+        Navigator.pop(context); // Fechar diálogo de progresso
 
         // Mostrar resultado
         final mensagem = resultado['mensagens'] as List<String>;
@@ -1585,6 +2048,10 @@ class _EmpresasPageState extends State<EmpresasPage> {
               duration: const Duration(seconds: 3),
             ),
           );
+          
+          // Aguardar Firebase sincronizar e salvar localmente
+          await Future.delayed(const Duration(seconds: 2));
+          await dataService.salvarImediatamente();
         }
       }
     } catch (e) {

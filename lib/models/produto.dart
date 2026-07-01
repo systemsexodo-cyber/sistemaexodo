@@ -1,5 +1,7 @@
+import 'package:sistema_exodo_novo/utils/date_parser.dart';
 import 'package:sistema_exodo_novo/models/variacao_produto.dart';
 import 'package:sistema_exodo_novo/models/adicional_produto.dart';
+import 'package:sistema_exodo_novo/models/item_composicao.dart';
 
 class Produto {
   final String id;
@@ -11,7 +13,7 @@ class Produto {
   final String grupo; // Novo: Grupo/Categoria do produto
   final double preco;
   final double? precoCusto; // Preço de custo do produto
-  final int estoque;
+  final double estoque;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -70,14 +72,19 @@ class Produto {
   // Campos de Fornecedor
   final String? fornecedorId;
   final String? fornecedorNome;
-  final int estoqueMinimo; // Novo: Estoque mínimo para alerta/compra
+  final double estoqueMinimo; // Novo: Estoque mínimo para alerta/compra
+  
+  // Produto Composto
+  final bool ehComposto;
+  final List<ItemComposicao> composicao;
   
   // Tracking de Pedidos de Compra
   final bool pedidoCompraGerado;
   final DateTime? dataUltimoPedido;
 
-  // Mapeamento de estoque por fornecedor (Ex: {"Ambev": 10, "Coca": 10})
-  final Map<String, int> estoquePorFornecedor; 
+  // Mapeamento de estoque por fornecedor (Ex: {"Ambev": 10.0, "Coca": 10.0})
+  final Map<String, double> estoquePorFornecedor; 
+  final bool enviaBalanca; // Se true, produto é enviado para a balança 
 
   Produto({
     required this.id,
@@ -115,6 +122,7 @@ class Produto {
     this.paraBar,
     this.exibirNaLoja = false,
     this.emDestaque = false,
+    this.enviaBalanca = false,
     List<String>? fotosUrls,
     this.fotoPrincipalUrl,
     this.descricaoEcommerce,
@@ -130,10 +138,12 @@ class Produto {
     this.observacaoPadrao,
     this.fornecedorId,
     this.fornecedorNome,
-    this.estoqueMinimo = 0,
+    this.estoqueMinimo = 0.0,
+    this.ehComposto = false,
+    List<ItemComposicao>? composicao,
     this.pedidoCompraGerado = false,
     this.dataUltimoPedido,
-    Map<String, int>? estoquePorFornecedor,
+    Map<String, double>? estoquePorFornecedor,
   }) : codigosFornecedor = codigosFornecedor ?? [],
        fotosUrls = fotosUrls ?? [],
        tags = tags ?? [],
@@ -141,6 +151,7 @@ class Produto {
        temVariacoes = temVariacoes ?? false,
        adicionais = adicionais ?? [],
        temAdicionais = temAdicionais ?? false,
+       composicao = composicao ?? [],
        estoquePorFornecedor = estoquePorFornecedor ?? {};
 
   // Verifica se a promoção está ativa agora
@@ -171,15 +182,15 @@ class Produto {
   }
   
   // Retorna o estoque total considerando variações
-  int get estoqueTotal {
+  double get estoqueTotal {
     if (temVariacoes && variacoes.isNotEmpty) {
-      return variacoes.fold(0, (sum, v) => sum + v.estoque);
+      return variacoes.fold(0.0, (sum, v) => sum + v.estoque);
     }
     return estoque;
   }
   
   // Retorna o estoque de uma variação específica
-  int? estoqueVariacao(List<VariacaoProduto>? variacoesSelecionadas) {
+  double? estoqueVariacao(List<VariacaoProduto>? variacoesSelecionadas) {
     if (!temVariacoes || variacoesSelecionadas == null || variacoesSelecionadas.isEmpty) {
       return estoque;
     }
@@ -221,166 +232,148 @@ class Produto {
     return {
       'id': id,
       'codigo': codigo,
-      'codigoBarras': codigoBarras,
+      'codigo_barras': codigoBarras,
       'nome': nome,
       'descricao': descricao,
       'unidade': unidade,
       'grupo': grupo,
       'preco': preco,
-      'precoCusto': precoCusto,
+      'preco_custo': precoCusto,
       'estoque': estoque,
-      'estoqueMinimo': estoqueMinimo,
-      'createdAt': createdAt.toIso8601String(),
-      'updatedAt': updatedAt.toIso8601String(),
-      'precoPromocional': precoPromocional,
-      'promocaoInicio': promocaoInicio?.toIso8601String(),
-      'promocaoFim': promocaoFim?.toIso8601String(),
-      'codigosFornecedor': codigosFornecedor,
+      'estoque_minimo': estoqueMinimo,
+      'created_at': createdAt.toIso8601String(),
+      'updated_at': updatedAt.toIso8601String(),
+      'preco_promocional': precoPromocional,
+      'promocao_inicio': promocaoInicio?.toIso8601String(),
+      'promocao_fim': promocaoFim?.toIso8601String(),
+      'codigos_fornecedor': codigosFornecedor,
       'ncm': ncm,
-      'icmsAliquota': icmsAliquota,
-      'icmsCst': icmsCst,
-      'ipiAliquota': ipiAliquota,
-      'ipiCst': ipiCst,
-      'pisAliquota': pisAliquota,
-      'pisCst': pisCst,
-      'cofinsAliquota': cofinsAliquota,
-      'cofinsCst': cofinsCst,
-      'issAliquota': issAliquota,
+      'icms_aliquota': icmsAliquota,
+      'icms_cst': icmsCst,
+      'ipi_aliquota': ipiAliquota,
+      'ipi_cst': ipiCst,
+      'pis_aliquota': pisAliquota,
+      'pis_cst': pisCst,
+      'cofins_aliquota': cofinsAliquota,
+      'cofins_cst': cofinsCst,
+      'iss_aliquota': issAliquota,
       'origem': origem,
       'cfop': cfop,
       'cest': cest,
       'csosn': csosn,
-      'simplesNacionalAliquota': simplesNacionalAliquota,
-      'paraCozinha': paraCozinha,
-      'paraBar': paraBar,
-      'exibirNaLoja': exibirNaLoja,
-      'emDestaque': emDestaque,
-      'fotosUrls': fotosUrls,
-      'fotoPrincipalUrl': fotoPrincipalUrl,
-      'descricaoEcommerce': descricaoEcommerce,
-      'pesoGramas': pesoGramas,
-      'alturaCm': alturaCm,
-      'larguraCm': larguraCm,
-      'profundidadeCm': profundidadeCm,
+      'simples_nacional_aliquota': simplesNacionalAliquota,
+      'para_cozinha': paraCozinha,
+      'para_bar': paraBar,
+      'exibir_na_loja': exibirNaLoja,
+      'em_destaque': emDestaque,
+      'envia_balanca': enviaBalanca,
+      'fotos_urls': fotosUrls,
+      'foto_principal_url': fotoPrincipalUrl,
+      'descricao_ecommerce': descricaoEcommerce,
+      'peso_gramas': pesoGramas,
+      'altura_cm': alturaCm,
+      'largura_cm': larguraCm,
+      'profundidade_cm': profundidadeCm,
       'tags': tags,
       'variacoes': variacoes.map((v) => v.toMap()).toList(),
-      'temVariacoes': temVariacoes,
+      'tem_variacoes': temVariacoes,
       'adicionais': adicionais.map((a) => a.toMap()).toList(),
-      'temAdicionais': temAdicionais,
-      'observacaoPadrao': observacaoPadrao,
-      'fornecedorId': fornecedorId,
-      'fornecedorNome': fornecedorNome,
-      'estoquePorFornecedor': estoquePorFornecedor,
-      'pedidoCompraGerado': pedidoCompraGerado,
-      'dataUltimoPedido': dataUltimoPedido?.toIso8601String(),
+      'tem_adicionais': temAdicionais,
+      'eh_composto': ehComposto,
+      'composicao': composicao.map((c) => c.toMap()).toList(),
+      'observacao_padrao': observacaoPadrao,
+      'fornecedor_id': fornecedorId,
+      'fornecedor_nome': fornecedorNome,
+      'estoque_por_fornecedor': estoquePorFornecedor,
+      'pedido_compra_gerado': pedidoCompraGerado,
+      'data_ultimo_pedido': dataUltimoPedido?.toIso8601String(),
     };
   }
 
   factory Produto.fromMap(Map<String, dynamic> map) {
+    // Helper para pegar valor de ambos camelCase (localStorage) ou snake_case (Supabase)
+    T? get<T>(String camel, String snake) {
+      if (map.containsKey(camel)) return map[camel] as T?;
+      if (map.containsKey(snake)) return map[snake] as T?;
+      return null;
+    }
+
+    String? getStr(String camel, String snake) => get<String>(camel, snake);
+    num? getNum(String camel, String snake) {
+      final val = get<dynamic>(camel, snake);
+      if (val == null) return null;
+      if (val is num) return val;
+      if (val is String) return num.tryParse(val);
+      return null;
+    }
+    bool? getBool(String camel, String snake) => get<bool>(camel, snake);
+    List? getList(String camel, String snake) => get<List>(camel, snake);
+    Map? getMap(String camel, String snake) => get<Map>(camel, snake);
+
+    DateTime? getDate(String camel, String snake) {
+      final val = map[camel] ?? map[snake];
+      if (val == null) return null;
+      return DateParser.parse(val);
+    }
+
     return Produto(
       id: map['id'] as String,
       codigo: map['codigo'] as String?,
-      codigoBarras: map['codigoBarras'] as String?,
+      codigoBarras: getStr('codigoBarras', 'codigo_barras'),
       nome: map['nome'] as String,
       descricao: map['descricao'] as String?,
       unidade: map['unidade'] as String? ?? '',
       grupo: map['grupo'] as String? ?? 'Sem Grupo',
-      preco: (map['preco'] as num).toDouble(),
-      precoCusto: map['precoCusto'] != null
-          ? (map['precoCusto'] as num).toDouble()
-          : null,
-      estoque: (map['estoque'] as num).toInt(),
-      estoqueMinimo: (map['estoqueMinimo'] as num?)?.toInt() ?? 0,
-      createdAt: DateTime.parse(map['createdAt'] as String),
-      updatedAt: DateTime.parse(map['updatedAt'] as String),
-      precoPromocional: map['precoPromocional'] != null
-          ? (map['precoPromocional'] as num).toDouble()
-          : null,
-      promocaoInicio: map['promocaoInicio'] != null
-          ? DateTime.parse(map['promocaoInicio'] as String)
-          : null,
-      promocaoFim: map['promocaoFim'] != null
-          ? DateTime.parse(map['promocaoFim'] as String)
-          : null,
-      codigosFornecedor: map['codigosFornecedor'] != null
-          ? List<String>.from(map['codigosFornecedor'] as List)
-          : [],
+      preco: (getNum('preco', 'preco') ?? 0.0).toDouble(),
+      precoCusto: getNum('precoCusto', 'preco_custo')?.toDouble(),
+      estoque: (getNum('estoque', 'estoque') ?? 0.0).toDouble(),
+      estoqueMinimo: getNum('estoqueMinimo', 'estoque_minimo')?.toDouble() ?? 0.0,
+      createdAt: getDate('createdAt', 'created_at') ?? DateTime.now(),
+      updatedAt: getDate('updatedAt', 'updated_at') ?? DateTime.now(),
+      precoPromocional: getNum('precoPromocional', 'preco_promocional')?.toDouble(),
+      promocaoInicio: getDate('promocaoInicio', 'promocao_inicio'),
+      promocaoFim: getDate('promocaoFim', 'promocao_fim'),
+      codigosFornecedor: getList('codigosFornecedor', 'codigos_fornecedor')?.cast<String>() ?? [],
       ncm: map['ncm'] as String?,
-      icmsAliquota: map['icmsAliquota'] != null
-          ? (map['icmsAliquota'] as num).toDouble()
-          : null,
-      icmsCst: map['icmsCst'] as String?,
-      ipiAliquota: map['ipiAliquota'] != null
-          ? (map['ipiAliquota'] as num).toDouble()
-          : null,
-      ipiCst: map['ipiCst'] as String?,
-      pisAliquota: map['pisAliquota'] != null
-          ? (map['pisAliquota'] as num).toDouble()
-          : null,
-      pisCst: map['pisCst'] as String?,
-      cofinsAliquota: map['cofinsAliquota'] != null
-          ? (map['cofinsAliquota'] as num).toDouble()
-          : null,
-      cofinsCst: map['cofinsCst'] as String?,
-      issAliquota: map['issAliquota'] != null
-          ? (map['issAliquota'] as num).toDouble()
-          : null,
+      icmsAliquota: getNum('icmsAliquota', 'icms_aliquota')?.toDouble(),
+      icmsCst: getStr('icmsCst', 'icms_cst'),
+      ipiAliquota: getNum('ipiAliquota', 'ipi_aliquota')?.toDouble(),
+      ipiCst: getStr('ipiCst', 'ipi_cst'),
+      pisAliquota: getNum('pisAliquota', 'pis_aliquota')?.toDouble(),
+      pisCst: getStr('pisCst', 'pis_cst'),
+      cofinsAliquota: getNum('cofinsAliquota', 'cofins_aliquota')?.toDouble(),
+      cofinsCst: getStr('cofinsCst', 'cofins_cst'),
+      issAliquota: getNum('issAliquota', 'iss_aliquota')?.toDouble(),
       origem: map['origem'] as String?,
       cfop: map['cfop'] as String?,
       cest: map['cest'] as String?,
       csosn: map['csosn'] as String?,
-      simplesNacionalAliquota: map['simplesNacionalAliquota'] != null
-          ? (map['simplesNacionalAliquota'] as num).toDouble()
-          : null,
-      paraCozinha: map['paraCozinha'] as bool?,
-      paraBar: map['paraBar'] as bool?,
-      // Garantir que exibirNaLoja seja lido corretamente (pode ser bool, null ou não existir)
-      exibirNaLoja: map.containsKey('exibirNaLoja') 
-          ? (map['exibirNaLoja'] as bool? ?? false)
-          : false,
-      emDestaque: map.containsKey('emDestaque')
-          ? (map['emDestaque'] as bool? ?? false)
-          : false,
-      fotosUrls: map['fotosUrls'] != null
-          ? List<String>.from(map['fotosUrls'] as List)
-          : [],
-      fotoPrincipalUrl: map['fotoPrincipalUrl'] as String?,
-      descricaoEcommerce: map['descricaoEcommerce'] as String?,
-      pesoGramas: map['pesoGramas'] as int?,
-      alturaCm: map['alturaCm'] != null
-          ? (map['alturaCm'] as num).toDouble()
-          : null,
-      larguraCm: map['larguraCm'] != null
-          ? (map['larguraCm'] as num).toDouble()
-          : null,
-      profundidadeCm: map['profundidadeCm'] != null
-          ? (map['profundidadeCm'] as num).toDouble()
-          : null,
-      tags: map['tags'] != null
-          ? List<String>.from(map['tags'] as List)
-          : [],
-      variacoes: map['variacoes'] != null
-          ? (map['variacoes'] as List)
-              .map((v) => VariacaoProduto.fromMap(v as Map<String, dynamic>))
-              .toList()
-          : [],
-      temVariacoes: map['temVariacoes'] as bool? ?? false,
-      adicionais: map['adicionais'] != null
-          ? (map['adicionais'] as List)
-              .map((a) => AdicionalProduto.fromMap(a as Map<String, dynamic>))
-              .toList()
-          : [],
-      temAdicionais: map['temAdicionais'] as bool? ?? false,
-      observacaoPadrao: map['observacaoPadrao'] as String?,
-      fornecedorId: map['fornecedorId'] as String?,
-      fornecedorNome: map['fornecedorNome'] as String?,
-      estoquePorFornecedor: map['estoquePorFornecedor'] != null
-          ? Map<String, int>.from(map['estoquePorFornecedor'] as Map)
-          : {},
-      pedidoCompraGerado: map['pedidoCompraGerado'] as bool? ?? false,
-      dataUltimoPedido: map['dataUltimoPedido'] != null
-          ? DateTime.parse(map['dataUltimoPedido'] as String)
-          : null,
+      simplesNacionalAliquota: getNum('simplesNacionalAliquota', 'simples_nacional_aliquota')?.toDouble(),
+      paraCozinha: getBool('paraCozinha', 'para_cozinha'),
+      paraBar: getBool('paraBar', 'para_bar'),
+      exibirNaLoja: getBool('exibirNaLoja', 'exibir_na_loja') ?? false,
+      emDestaque: getBool('emDestaque', 'em_destaque') ?? false,
+      enviaBalanca: getBool('enviaBalanca', 'envia_balanca') ?? false,
+      fotosUrls: getList('fotosUrls', 'fotos_urls')?.cast<String>() ?? [],
+      fotoPrincipalUrl: getStr('fotoPrincipalUrl', 'foto_principal_url'),
+      descricaoEcommerce: getStr('descricaoEcommerce', 'descricao_ecommerce'),
+      pesoGramas: getNum('pesoGramas', 'peso_gramas')?.toInt(),
+      alturaCm: getNum('alturaCm', 'altura_cm')?.toDouble(),
+      larguraCm: getNum('larguraCm', 'largura_cm')?.toDouble(),
+      profundidadeCm: getNum('profundidadeCm', 'profundidade_cm')?.toDouble(),
+      tags: getList('tags', 'tags')?.cast<String>() ?? [],
+      variacoes: getList('variacoes', 'variacoes')?.map((v) => VariacaoProduto.fromMap(v as Map<String, dynamic>)).toList() ?? [],
+      temVariacoes: getBool('temVariacoes', 'tem_variacoes') ?? false,
+      adicionais: getList('adicionais', 'adicionais')?.map((a) => AdicionalProduto.fromMap(a as Map<String, dynamic>)).toList() ?? [],
+      temAdicionais: getBool('temAdicionais', 'tem_adicionais') ?? false,
+      ehComposto: getBool('ehComposto', 'eh_composto') ?? false,
+      composicao: getList('composicao', 'composicao')?.map((c) => ItemComposicao.fromMap(c as Map<String, dynamic>)).toList() ?? [],
+      observacaoPadrao: getStr('observacaoPadrao', 'observacao_padrao'),
+      fornecedorId: getStr('fornecedorId', 'fornecedor_id'),
+      fornecedorNome: getStr('fornecedorNome', 'fornecedor_nome'),
+      estoquePorFornecedor: getMap('estoquePorFornecedor', 'estoque_por_fornecedor')?.map((k, v) => MapEntry(k as String, (v is num) ? v.toDouble() : (double.tryParse(v.toString()) ?? 0.0))) ?? {},
+      pedidoCompraGerado: getBool('pedidoCompraGerado', 'pedido_compra_gerado') ?? false,
+      dataUltimoPedido: getDate('dataUltimoPedido', 'data_ultimo_pedido'),
     );
   }
 
@@ -395,8 +388,8 @@ class Produto {
     String? grupo,
     double? preco,
     double? precoCusto,
-    int? estoque,
-    int? estoqueMinimo,
+    double? estoque,
+    double? estoqueMinimo,
     DateTime? createdAt,
     DateTime? updatedAt,
     double? precoPromocional,
@@ -434,12 +427,15 @@ class Produto {
     bool? temVariacoes,
     List<AdicionalProduto>? adicionais,
     bool? temAdicionais,
+    bool? ehComposto,
+    List<ItemComposicao>? composicao,
     String? observacaoPadrao,
     String? fornecedorId,
     String? fornecedorNome,
-    Map<String, int>? estoquePorFornecedor,
+    Map<String, double>? estoquePorFornecedor,
     bool? pedidoCompraGerado,
     DateTime? dataUltimoPedido,
+    bool? enviaBalanca,
   }) {
     return Produto(
       id: id ?? this.id,
@@ -490,12 +486,15 @@ class Produto {
       temVariacoes: temVariacoes ?? this.temVariacoes,
       adicionais: adicionais ?? this.adicionais,
       temAdicionais: temAdicionais ?? this.temAdicionais,
+      ehComposto: ehComposto ?? this.ehComposto,
+      composicao: composicao ?? this.composicao,
       observacaoPadrao: observacaoPadrao ?? this.observacaoPadrao,
       fornecedorId: fornecedorId ?? this.fornecedorId,
       fornecedorNome: fornecedorNome ?? this.fornecedorNome,
       estoquePorFornecedor: estoquePorFornecedor ?? this.estoquePorFornecedor,
       pedidoCompraGerado: pedidoCompraGerado ?? this.pedidoCompraGerado,
       dataUltimoPedido: dataUltimoPedido ?? this.dataUltimoPedido,
+      enviaBalanca: enviaBalanca ?? this.enviaBalanca,
     );
   }
   

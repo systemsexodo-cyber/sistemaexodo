@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/agendamento_servico.dart';
 import '../models/empresa.dart';
 
@@ -206,13 +207,38 @@ class WhatsAppService {
     return limpo;
   }
 
-  /// Envia uma mensagem de texto (Detecta se é Evolution ou Twilio)
+  /// Abre o WhatsApp diretamente no aparelho ou navegador (não depende de API Evolution)
+  static Future<bool> abrirWhatsAppDireto({required String numero, required String mensagem}) async {
+    try {
+      String limpo = numero.replaceAll(RegExp(r'[^0-9]'), '');
+      if (limpo.isEmpty) return false;
+      
+      if (!limpo.startsWith('55') && limpo.length <= 11) {
+        if (limpo.startsWith('0')) limpo = limpo.substring(1);
+        limpo = '55$limpo';
+      }
+      
+      final url = 'https://wa.me/$limpo?text=${Uri.encodeComponent(mensagem)}';
+      final uri = Uri.parse(url);
+      
+      if (await canLaunchUrl(uri)) {
+        return await launchUrl(uri, mode: LaunchMode.externalApplication);
+      }
+      return false;
+    } catch (e) {
+      print('>>> [WhatsApp] Erro ao abrir link direto: $e');
+      return false;
+    }
+  }
+
+  /// Envia mensagem de texto
   Future<bool> enviarMensagem(String numero, String mensagem) async {
+    print('>>> [WhatsApp] Enviando mensagem para: $numero');
     try {
       final numFmt = formatarNumero(numero);
       
       if (isTwilioBridge) {
-        // Lógica para a nova Ponte no Render (Twilio)
+        // Para Twilio via Render Bridge
         final response = await http.post(
           Uri.parse('$_baseUrl/send-message'),
           headers: {
@@ -224,9 +250,11 @@ class WhatsAppService {
             'message': mensagem,
           }),
         ).timeout(const Duration(seconds: 30));
+        
+        print('>>> [WhatsApp] Resposta enviarMensagem (Twilio): ${response.statusCode} - ${response.body}');
         return response.statusCode == 200;
       } else {
-        // Lógica para Evolution API
+        // Para Evolution API
         final response = await http.post(
           Uri.parse('$_baseUrl/message/sendText/$instanceName'),
           headers: _headers,
@@ -235,10 +263,59 @@ class WhatsAppService {
             'text': mensagem,
           }),
         ).timeout(const Duration(seconds: 30));
+
+        print('>>> [WhatsApp] Resposta enviarMensagem (Evolution): ${response.statusCode} - ${response.body}');
         return response.statusCode == 200 || response.statusCode == 201;
       }
     } catch (e) {
       print('>>> [WhatsApp] Erro ao enviar mensagem: $e');
+      return false;
+    }
+  }
+
+  /// Envia um arquivo (PDF, imagem, etc) via base64
+  Future<bool> enviarArquivo({
+    required String numero,
+    required String base64Content,
+    required String fileName,
+    String? caption,
+  }) async {
+    try {
+      final numFmt = formatarNumero(numero);
+      
+      if (isTwilioBridge) {
+        // Para Twilio via Render Bridge (ainda não suporta arquivos no bridge atual, mas prepararemos o corpo)
+        final response = await http.post(
+          Uri.parse('$_baseUrl/send-media'),
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': apiKey,
+          },
+          body: jsonEncode({
+            'to': numFmt,
+            'media': base64Content,
+            'fileName': fileName,
+            'caption': caption,
+          }),
+        ).timeout(const Duration(seconds: 45));
+        return response.statusCode == 200;
+      } else {
+        // Para Evolution API
+        final response = await http.post(
+          Uri.parse('$_baseUrl/message/sendMedia/$instanceName'),
+          headers: _headers,
+          body: jsonEncode({
+            'number': numFmt,
+            'media': base64Content,
+            'fileName': fileName,
+            'caption': caption ?? '',
+            'mediaType': 'document',
+          }),
+        ).timeout(const Duration(seconds: 45));
+        return response.statusCode == 200 || response.statusCode == 201;
+      }
+    } catch (e) {
+      print('>>> [WhatsApp] Erro ao enviar arquivo: $e');
       return false;
     }
   }

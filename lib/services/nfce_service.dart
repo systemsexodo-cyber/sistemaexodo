@@ -6,7 +6,7 @@ import '../models/cliente.dart';
 import '../models/empresa.dart';
 
 class NfceService {
-  // URL base dinâmica para permitir uso de túneis (Ngrok/Zrok) quando no Firebase
+  // URL base para comunicação com o emissor NFC-e local
   String _baseUrl = 'http://localhost:8000';
 
   void setBaseUrl(String url) {

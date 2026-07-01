@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:convert';
 import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart';
@@ -10,9 +9,12 @@ import '../services/data_service.dart';
 import '../services/nfce_service_factory.dart';
 import '../services/nfce_backend_service.dart';
 import '../services/danfe_service.dart';
+import '../services/supabase_service.dart';
 import 'package:intl/intl.dart';
 import '../models/produto.dart';
 import 'exodo_cancel_success_dialog.dart';
+import '../services/fiscal_pdf_service.dart';
+import 'package:excel/excel.dart' hide Border, Font;
 import '../pages/html_helper_stub.dart' if (dart.library.html) '../pages/html_helper_web.dart' as html_helper;
 
 class HistoricoNFCePDVDialog extends StatefulWidget {
@@ -30,7 +32,7 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
   List<NFCe> _nfcesFiltradas = [];
 
   final TextEditingController _buscaController = TextEditingController();
-  DateTime? _dataFiltro;
+  DateTimeRange? _periodoFiltro;
 
   @override
   void initState() {
@@ -48,20 +50,16 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
   Future<void> _loadData() async {
     setState(() => _isLoading = true);
     try {
-      final results = await FirebaseFirestore.instance
-          .collection('empresas')
-          .doc(widget.empresa.id)
-          .collection('nfces')
-          .orderBy('createdAt', descending: true)
-          .limit(200)
-          .get();
+      final results = await SupabaseService.instance.select(
+        SupabaseService.tableNFCes,
+        filters: {'empresaId': widget.empresa.id},
+        orderBy: 'createdAt',
+        descending: true,
+        limit: 200,
+      );
           
       setState(() {
-         _todasNfces = results.docs.map((d) => (() {
-            var map = d.data();
-            map['id'] = d.id;
-            return NFCe.fromMap(map);
-         })()).toList();
+         _todasNfces = results.map((map) => NFCe.fromMap(map)).toList();
          _isLoading = false;
          _filtrar();
       });
@@ -84,10 +82,13 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
         }
 
         bool matchData = true;
-        if (_dataFiltro != null && nfce.createdAt != null) {
-          matchData = nfce.createdAt!.year == _dataFiltro!.year && 
-                      nfce.createdAt!.month == _dataFiltro!.month && 
-                      nfce.createdAt!.day == _dataFiltro!.day;
+        if (_periodoFiltro != null && nfce.createdAt != null) {
+          final data = nfce.createdAt!;
+          // Normalizar para comparação de datas apenas (sem horas)
+          final inicio = DateTime(_periodoFiltro!.start.year, _periodoFiltro!.start.month, _periodoFiltro!.start.day);
+          final fim = DateTime(_periodoFiltro!.end.year, _periodoFiltro!.end.month, _periodoFiltro!.end.day, 23, 59, 59);
+          matchData = data.isAfter(inicio.subtract(const Duration(seconds: 1))) && 
+                      data.isBefore(fim.add(const Duration(seconds: 1)));
         }
 
         return matchTermo && matchData;
@@ -95,29 +96,126 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
     });
   }
 
-  Future<void> _selecionarData() async {
-    final picked = await showDatePicker(
+  Future<void> _selecionarPeriodo() async {
+    DateTime? novaDataInicio = _periodoFiltro?.start ?? DateTime.now();
+    DateTime? novaDataFim = _periodoFiltro?.end ?? DateTime.now();
+
+    final result = await showDialog<DateTimeRange>(
       context: context,
-      initialDate: _dataFiltro ?? DateTime.now(),
-      firstDate: DateTime(2023),
-      lastDate: DateTime.now(),
-      builder: (context, child) {
-        return Theme(
-          data: ThemeData.dark().copyWith(
-            colorScheme: const ColorScheme.dark(
-              primary: Colors.orange,
-              onPrimary: Colors.white,
-              surface: Color(0xFF1E1E2E),
-              onSurface: Colors.white,
-            ),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: const Color(0xFF1E1E2E),
+          title: const Text('Selecionar Período', style: TextStyle(color: Colors.white)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('Escolha o intervalo de datas para o filtro:', style: TextStyle(color: Colors.white70, fontSize: 13)),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('Início', style: TextStyle(color: Colors.white54, fontSize: 11)),
+                        const SizedBox(height: 4),
+                        InkWell(
+                          onTap: () async {
+                            final picked = await showDatePicker(
+                              context: context,
+                              initialDate: novaDataInicio!,
+                              firstDate: DateTime(2023),
+                              lastDate: DateTime.now(),
+                            );
+                            if (picked != null) {
+                              setDialogState(() => novaDataInicio = picked);
+                            }
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.05),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: Colors.white12),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.calendar_today, size: 16, color: Colors.orange),
+                                const SizedBox(width: 8),
+                                Text(DateFormat('dd/MM/yyyy').format(novaDataInicio!), style: const TextStyle(color: Colors.white)),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('Fim', style: TextStyle(color: Colors.white54, fontSize: 11)),
+                        const SizedBox(height: 4),
+                        InkWell(
+                          onTap: () async {
+                            final picked = await showDatePicker(
+                              context: context,
+                              initialDate: novaDataFim!,
+                              firstDate: DateTime(2023),
+                              lastDate: DateTime.now(),
+                            );
+                            if (picked != null) {
+                              setDialogState(() => novaDataFim = picked);
+                            }
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.05),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: Colors.white12),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.calendar_today, size: 16, color: Colors.orange),
+                                const SizedBox(width: 8),
+                                Text(DateFormat('dd/MM/yyyy').format(novaDataFim!), style: const TextStyle(color: Colors.white)),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ),
-          child: child!,
-        );
-      },
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('CANCELAR', style: TextStyle(color: Colors.white54)),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                if (novaDataFim!.isBefore(novaDataInicio!)) {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('A data final não pode ser anterior à inicial.')));
+                  return;
+                }
+                Navigator.pop(context, DateTimeRange(start: novaDataInicio!, end: novaDataFim!));
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+              child: const Text('APLICAR FILTRO'),
+            ),
+          ],
+        ),
+      ),
     );
-    if (picked != null) {
+
+    if (result != null) {
       setState(() {
-        _dataFiltro = picked;
+        _periodoFiltro = result;
         _filtrar();
       });
     }
@@ -135,130 +233,170 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
       );
       return;
     }
-
-    DateTime? mesRef = _dataFiltro;
-    if (mesRef == null) {
-      mesRef = await showDatePicker(
+    
+    DateTimeRange? periodo = _periodoFiltro;
+    if (periodo == null) {
+      periodo = await showDateRangePicker(
         context: context,
-        initialDate: DateTime.now(),
+        initialDateRange: DateTimeRange(
+          start: DateTime(DateTime.now().year, DateTime.now().month, 1),
+          end: DateTime.now(),
+        ),
         firstDate: DateTime(2023),
         lastDate: DateTime.now(),
-        helpText: 'Selecionar mês para exportação',
+        helpText: 'Selecione o período para exportação',
       );
     }
+    if (periodo == null) return;
 
-    if (mesRef == null) return;
+    setState(() => _isLoading = true);
+    await Future.delayed(const Duration(milliseconds: 100));
 
-    final nfcesMes = _todasNfces.where((n) {
-      final d = n.createdAt ?? n.dataEmissao;
-      return d.year == mesRef!.year && d.month == mesRef.month;
-    }).toList();
+    try {
+      final nfcesNoPeriodo = _todasNfces.where((n) {
+        final d = n.createdAt ?? n.dataEmissao;
+        final inicio = DateTime(periodo!.start.year, periodo.start.month, periodo.start.day);
+        final fim = DateTime(periodo.end.year, periodo.end.month, periodo.end.day, 23, 59, 59);
+        return d.isAfter(inicio.subtract(const Duration(seconds: 1))) && 
+               d.isBefore(fim.add(const Duration(seconds: 1)));
+      }).toList();
 
-    if (nfcesMes.isEmpty) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Nenhuma NFC-e encontrada para ${DateFormat('MM/yyyy').format(mesRef)}.',
+      if (nfcesNoPeriodo.isEmpty) {
+        setState(() => _isLoading = false);
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Nenhuma NFC-e encontrada no período ${DateFormat('dd/MM').format(periodo.start)} a ${DateFormat('dd/MM').format(periodo.end)}.',
+            ),
           ),
-        ),
-      );
-      return;
-    }
-
-    final archive = Archive();
-    int xmlCount = 0;
-
-    final csv = StringBuffer();
-    csv.writeln(
-      'data_emissao,numero,serie,status,chave_acesso,venda,pagamentos,valor_total,item_codigo,item_descricao,ncm,cfop,csosn,cst_icms,origem,aliquota_icms,quantidade,valor_unitario,valor_item',
-    );
-
-    for (final n in nfcesMes) {
-      final dataEmissao = DateFormat('dd/MM/yyyy HH:mm').format(n.dataEmissao);
-      final pagamentos = n.pagamentos.map((p) => p.tipoDescricao).join(' + ');
-      final chave = n.chaveAcesso ?? '';
-      final venda = n.vendaNumero ?? n.vendaId ?? n.id;
-
-      for (final item in n.itens) {
-        csv.writeln([
-          _csvField(dataEmissao),
-          _csvField(n.numero),
-          _csvField(n.serie),
-          _csvField((n.status ?? '').toUpperCase()),
-          _csvField(chave),
-          _csvField(venda),
-          _csvField(pagamentos),
-          _csvField(n.valorTotal.toStringAsFixed(2)),
-          _csvField(item.codigo),
-          _csvField(item.descricao),
-          _csvField(item.ncm),
-          _csvField(item.cfop),
-          _csvField(item.csosn ?? ''),
-          _csvField(item.icmsCst ?? ''),
-          _csvField(item.origem ?? ''),
-          _csvField(item.icmsAliquota?.toStringAsFixed(2) ?? ''),
-          _csvField(item.quantidade.toStringAsFixed(4)),
-          _csvField(item.valorUnitario.toStringAsFixed(2)),
-          _csvField(item.valorTotal.toStringAsFixed(2)),
-        ].join(','));
+        );
+        return;
       }
 
-      final xml = (n.xmlEnviado ?? '').trim();
-      if (xml.isNotEmpty) {
-        final nomeArquivo =
-            (chave.isNotEmpty ? chave : 'nfce_${n.numero}_${n.id}').replaceAll(RegExp(r'[^a-zA-Z0-9_\-]'), '_');
-        final bytes = utf8.encode(xml);
-        archive.addFile(ArchiveFile('xml/$nomeArquivo.xml', bytes.length, bytes));
-        xmlCount++;
+      final archive = Archive();
+      int xmlCount = 0;
+
+      final excelDetalhado = Excel.createExcel();
+      // Usamos a primeira aba que já vem criada por padrão para evitar erros de lista imutável
+      final String sheetName = excelDetalhado.sheets.keys.first;
+
+      final List<String> headers = [
+        'Data Emissão', 'Número', 'Série', 'Status', 'Chave de Acesso', 'Venda', 
+        'Pagamentos', 'Valor Total NFC-e', 'Código Item', 'Descrição Item', 
+        'NCM', 'CFOP', 'CSOSN', 'CST ICMS', 'Origem', 'Aliq. ICMS', 
+        'Quantidade', 'V. Unitário', 'V. Total Item'
+      ];
+
+      for (int i = 0; i < headers.length; i++) {
+        excelDetalhado.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: i, rowIndex: 0), headers[i]);
       }
-    }
 
-    final mesTag =
-        '${mesRef.year}_${mesRef.month.toString().padLeft(2, '0')}';
-    final csvBytes = utf8.encode(csv.toString());
-    archive.addFile(
-      ArchiveFile('relatorio_fiscal_nfce_$mesTag.csv', csvBytes.length, csvBytes),
-    );
+      int rowIdx = 1;
+      for (final n in nfcesNoPeriodo) {
+        final dataEmissao = DateFormat('dd/MM/yyyy HH:mm').format(n.dataEmissao);
+        final pagamentos = n.pagamentos.map((p) => p.tipoDescricao).join(' + ');
+        final chave = n.chaveAcesso ?? '';
+        final venda = n.vendaNumero ?? n.vendaId ?? n.id;
 
-    final resumo = StringBuffer()
-      ..writeln('PACOTE CONTÁBIL NFC-e')
-      ..writeln('Mês de referência: ${DateFormat('MM/yyyy').format(mesRef)}')
-      ..writeln('Total de NFC-e no período: ${nfcesMes.length}')
-      ..writeln('Total de XML incluídos: $xmlCount')
-      ..writeln('Gerado em: ${DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now())}');
-    final resumoBytes = utf8.encode(resumo.toString());
-    archive.addFile(ArchiveFile('LEIA-ME.txt', resumoBytes.length, resumoBytes));
+        for (final item in n.itens) {
+          excelDetalhado.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: rowIdx), dataEmissao);
+          excelDetalhado.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: rowIdx), n.numero ?? '');
+          excelDetalhado.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 2, rowIndex: rowIdx), n.serie ?? '');
+          excelDetalhado.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 3, rowIndex: rowIdx), (n.status ?? '').toUpperCase());
+          excelDetalhado.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 4, rowIndex: rowIdx), chave);
+          excelDetalhado.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 5, rowIndex: rowIdx), venda);
+          excelDetalhado.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 6, rowIndex: rowIdx), pagamentos);
+          excelDetalhado.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 7, rowIndex: rowIdx), n.valorTotal);
+          excelDetalhado.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 8, rowIndex: rowIdx), item.codigo);
+          excelDetalhado.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 9, rowIndex: rowIdx), item.descricao);
+          excelDetalhado.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 10, rowIndex: rowIdx), item.ncm);
+          excelDetalhado.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 11, rowIndex: rowIdx), item.cfop);
+          excelDetalhado.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 12, rowIndex: rowIdx), item.csosn ?? '');
+          excelDetalhado.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 13, rowIndex: rowIdx), item.icmsCst ?? '');
+          excelDetalhado.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 14, rowIndex: rowIdx), item.origem ?? '');
+          excelDetalhado.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 15, rowIndex: rowIdx), item.icmsAliquota ?? 0.0);
+          excelDetalhado.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 16, rowIndex: rowIdx), item.quantidade);
+          excelDetalhado.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 17, rowIndex: rowIdx), item.valorUnitario);
+          excelDetalhado.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 18, rowIndex: rowIdx), item.valorTotal);
+          rowIdx++;
+        }
 
-    final zipBytes = ZipEncoder().encode(archive);
-    if (zipBytes == null || zipBytes.isEmpty) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Falha ao gerar arquivo ZIP.')),
+        final xml = (n.xmlEnviado ?? '').trim();
+        if (xml.isNotEmpty) {
+          final nomeArquivo = (chave.isNotEmpty ? chave : 'nfce_${n.numero}_${n.id}').replaceAll(RegExp(r'[^a-zA-Z0-9_\-]'), '_');
+          final bytes = utf8.encode(xml);
+          archive.addFile(ArchiveFile('xml/$nomeArquivo.xml', bytes.length, bytes));
+          xmlCount++;
+        }
+      }
+
+      final periodoTag = '${DateFormat('yyyyMMdd').format(periodo.start)}_${DateFormat('yyyyMMdd').format(periodo.end)}';
+
+      final pdfFiscalBytes = await FiscalPDFService.gerarRelatorioMensal(
+        empresa: widget.empresa,
+        mesRef: periodo.start,
+        nfces: nfcesNoPeriodo,
       );
-      return;
-    }
+      archive.addFile(ArchiveFile('relatorio_fiscal_agrupado_$periodoTag.pdf', pdfFiscalBytes.length, pdfFiscalBytes));
 
-    final fileName = 'pacote_contabil_nfce_$mesTag.zip';
+      final excelBytes = excelDetalhado.encode();
+      if (excelBytes != null) {
+        archive.addFile(ArchiveFile('detalhado_dados_nfce_$periodoTag.xlsx', excelBytes.length, excelBytes));
+      }
 
-    if (kIsWeb) {
-      html_helper.downloadBytes(zipBytes, fileName, 'application/zip');
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Download iniciado: $fileName'),
-          backgroundColor: Colors.green,
-        ),
-      );
-    } else {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'No desktop/mobile, conecte este botão a salvar arquivo local ou compartilhamento.',
-          ),
-        ),
-      );
+      final resumo = StringBuffer()
+        ..writeln('PACOTE CONTÁBIL NFC-e')
+        ..writeln('Período: ${DateFormat('dd/MM/yyyy').format(periodo.start)} a ${DateFormat('dd/MM/yyyy').format(periodo.end)}')
+        ..writeln('Total de NFC-e no período: ${nfcesNoPeriodo.length}')
+        ..writeln('Total de XML incluídos: $xmlCount')
+        ..writeln('Arquivos gerados: XMLs individuais, PDF Agrupado (CFOP/CSOSN) e Excel Detalhado.')
+        ..writeln('Gerado em: ${DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now())}');
+      final resumoBytes = utf8.encode(resumo.toString());
+      archive.addFile(ArchiveFile('LEIA-ME.txt', resumoBytes.length, resumoBytes));
+
+      final zipBytes = ZipEncoder().encode(archive);
+      if (zipBytes == null || zipBytes.isEmpty) throw Exception('Falha ao gerar arquivo ZIP.');
+
+      final fileName = 'pacote_contabil_nfce_$periodoTag.zip';
+
+      if (kIsWeb) {
+        html_helper.downloadBytes(zipBytes, fileName, 'application/zip');
+        
+        final emailContador = widget.empresa.emailContabilidade;
+        if (emailContador != null && emailContador.isNotEmpty) {
+          if (!mounted) return;
+          showDialog(
+            context: context,
+            builder: (context) => AlertDialog(
+              backgroundColor: const Color(0xFF1E1E2E),
+              title: const Text('Enviar p/ Contabilidade', style: TextStyle(color: Colors.white)),
+              content: Text('O pacote fiscal para o período ${DateFormat('dd/MM').format(periodo!.start)} a ${DateFormat('dd/MM').format(periodo.end)} foi baixado.\n\nDeseja abrir o e-mail para enviar agora para:\n$emailContador?', style: const TextStyle(color: Colors.white70)),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(context), child: const Text('BAIXAR APENAS')),
+                ElevatedButton.icon(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    final subject = 'ARQUIVOS FISCAIS - ${widget.empresa.razaoSocial} - $periodoTag';
+                    final body = 'Olá,\n\nSegue em anexo o pacote fiscal das NFC-e emitidas entre ${DateFormat('dd/MM/yyyy').format(periodo!.start)} e ${DateFormat('dd/MM/yyyy').format(periodo.end)}.\n\nEmpresa: ${widget.empresa.razaoSocial}\nCNPJ: ${widget.empresa.cnpj ?? "N/D"}\n\nGerado pelo Sistema Êxodo.';
+                    html_helper.openUrl('mailto:$emailContador?subject=${Uri.encodeComponent(subject)}&body=${Uri.encodeComponent(body)}');
+                  },
+                  icon: const Icon(Icons.email),
+                  label: const Text('ABRIR E-MAIL'),
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+                )
+              ],
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('Erro na exportação: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao exportar: $e'), backgroundColor: Colors.redAccent));
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -291,71 +429,112 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: Colors.white12),
               ),
-              child: Row(
+              child: Column(
                 children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _buscaController,
-                      decoration: InputDecoration(
-                        hintText: 'Buscar por Nº da NFC-e ou ID da Venda...',
-                        hintStyle: const TextStyle(color: Colors.grey),
-                        prefixIcon: const Icon(Icons.search, color: Colors.grey),
-                        filled: true,
-                        fillColor: Colors.white.withOpacity(0.05),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          borderSide: BorderSide.none,
+                   Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _buscaController,
+                          decoration: InputDecoration(
+                            hintText: 'Buscar por Nº da NFC-e ou ID da Venda...',
+                            hintStyle: const TextStyle(color: Colors.grey),
+                            prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                            filled: true,
+                            fillColor: Colors.white.withOpacity(0.05),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              borderSide: BorderSide.none,
+                            ),
+                          ),
+                          style: const TextStyle(color: Colors.white),
                         ),
                       ),
-                      style: const TextStyle(color: Colors.white),
-                    ),
+                      const SizedBox(width: 16),
+                      ElevatedButton.icon(
+                        onPressed: _isLoading ? null : _exportarPacoteMensalContador,
+                        icon: const Icon(Icons.send_rounded, size: 18),
+                        label: const Text('Exportar / Enviar'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.green.withOpacity(0.85),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 16),
-                  ElevatedButton.icon(
-                    onPressed: _isLoading ? null : _exportarPacoteMensalContador,
-                    icon: const Icon(Icons.archive_rounded, size: 18),
-                    label: const Text('Exportar Mês'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.green.withOpacity(0.85),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  ElevatedButton.icon(
-                    onPressed: _selecionarData,
-                    icon: const Icon(Icons.calendar_today, size: 18),
-                    label: Text(
-                      _dataFiltro != null 
-                        ? DateFormat('dd/MM/yyyy').format(_dataFiltro!) 
-                        : 'Filtrar Data',
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: _dataFiltro != null ? Colors.orange : Colors.white10,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                    ),
-                  ),
-                  if (_dataFiltro != null) ...[
-                    const SizedBox(width: 8),
-                    IconButton(
-                      icon: const Icon(Icons.clear, color: Colors.redAccent),
-                      tooltip: 'Limpar Data',
-                      onPressed: () {
-                        setState(() {
-                          _dataFiltro = null;
-                          _filtrar();
-                        });
-                      },
-                    ),
-                  ]
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      const Text('Período:', style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold)),
+                      const SizedBox(width: 12),
+                      _buildQuickFilterChip('Hoje', () {
+                         final agora = DateTime.now();
+                         setState(() {
+                           _periodoFiltro = DateTimeRange(start: DateTime(agora.year, agora.month, agora.day), end: agora);
+                           _filtrar();
+                         });
+                      }),
+                      _buildQuickFilterChip('7 Dias', () {
+                         final agora = DateTime.now();
+                         setState(() {
+                           _periodoFiltro = DateTimeRange(start: agora.subtract(const Duration(days: 7)), end: agora);
+                           _filtrar();
+                         });
+                      }),
+                      _buildQuickFilterChip('Este Mês', () {
+                         final agora = DateTime.now();
+                         setState(() {
+                           _periodoFiltro = DateTimeRange(start: DateTime(agora.year, agora.month, 1), end: agora);
+                           _filtrar();
+                         });
+                      }),
+                      _buildQuickFilterChip('Personalizado', _selecionarPeriodo, isCustom: true),
+                      const Spacer(),
+                      if (_periodoFiltro != null)
+                        TextButton.icon(
+                          onPressed: () {
+                            setState(() {
+                              _periodoFiltro = null;
+                              _filtrar();
+                            });
+                          },
+                          icon: const Icon(Icons.close, size: 14, color: Colors.redAccent),
+                          label: const Text('LIMPAR', style: TextStyle(color: Colors.redAccent, fontSize: 11)),
+                        )
+                    ],
+                  )
                 ],
               ),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 16),
             
+            if (!_isLoading && _nfcesFiltradas.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Row(
+                  children: [
+                    _buildSummaryBadge(
+                      'TOTAL NOTAS: ${_nfcesFiltradas.length}',
+                      Colors.blue,
+                    ),
+                    const SizedBox(width: 12),
+                    _buildSummaryBadge(
+                      'VALOR TOTAL: ${NumberFormat.currency(locale: "pt_BR", symbol: "R\$").format(_nfcesFiltradas.where((n) => n.status == "autorizada" || n.status == "sucesso").fold(0.0, (sum, n) => sum + n.valorTotal))}',
+                      Colors.green,
+                    ),
+                    if (_nfcesFiltradas.any((n) => n.status == 'cancelada')) ...[
+                      const SizedBox(width: 12),
+                      _buildSummaryBadge(
+                        'CANCELADAS: ${NumberFormat.currency(locale: "pt_BR", symbol: "R\$").format(_nfcesFiltradas.where((n) => n.status == "cancelada").fold(0.0, (sum, n) => sum + n.valorTotal))}',
+                        Colors.redAccent,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+
             Expanded(
               child: _isLoading 
                 ? const Center(child: CircularProgressIndicator()) 
@@ -730,6 +909,57 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
             child: const Text('OK', style: TextStyle(color: Colors.white)),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildQuickFilterChip(String label, VoidCallback onTap, {bool isCustom = false}) {
+    bool selected = false;
+    final start = _periodoFiltro?.start;
+    final end = _periodoFiltro?.end;
+    final agora = DateTime.now();
+
+    if (label == 'Hoje' && start != null && end != null) {
+      selected = start.day == agora.day && start.month == agora.month && start.year == agora.year;
+    } else if (label == 'Este Mês' && start != null) {
+      selected = start.day == 1 && start.month == agora.month && start.year == agora.year;
+    } else if (isCustom && _periodoFiltro != null) {
+      // Verificamos se não cai nas outras categorias
+      final isHoje = start?.day == agora.day && start?.month == agora.month;
+      final isMes = start?.day == 1 && start?.month == agora.month;
+      selected = !isHoje && !isMes;
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: ChoiceChip(
+        label: Text(
+          isCustom && selected 
+            ? '${DateFormat('dd/MM').format(start!)} - ${DateFormat('dd/MM').format(end!)}' 
+            : label, 
+          style: TextStyle(color: selected ? Colors.white : Colors.white60, fontSize: 12)
+        ),
+        selected: selected,
+        onSelected: (_) => onTap(),
+        backgroundColor: Colors.white.withOpacity(0.05),
+        selectedColor: Colors.orange.withOpacity(0.4),
+        side: BorderSide(color: selected ? Colors.orange : Colors.white10),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      ),
+    );
+  }
+
+  Widget _buildSummaryBadge(String label, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 13),
       ),
     );
   }

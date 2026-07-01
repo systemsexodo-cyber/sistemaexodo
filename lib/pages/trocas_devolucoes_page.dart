@@ -26,6 +26,8 @@ class _TrocasDevolucoesBuscarPageState
   final _formatoData = DateFormat('dd/MM/yyyy HH:mm');
 
   String _termoBusca = '';
+  DateTime? _dataInicioFiltro;
+  DateTime? _dataFimFiltro;
   List<VendaParaTroca> _resultados = [];
 
   @override
@@ -35,7 +37,7 @@ class _TrocasDevolucoesBuscarPageState
   }
 
   void _buscar(DataService dataService) {
-    if (_termoBusca.isEmpty) {
+    if (_termoBusca.isEmpty && _dataInicioFiltro == null && _dataFimFiltro == null) {
       setState(() => _resultados = []);
       return;
     }
@@ -67,7 +69,17 @@ class _TrocasDevolucoesBuscarPageState
         }
       }
 
-      if (match) {
+      // Filtro de data
+      bool matchDate = true;
+      if (_dataInicioFiltro != null) {
+        if (pedido.dataPedido.isBefore(_dataInicioFiltro!)) matchDate = false;
+      }
+      if (_dataFimFiltro != null) {
+        final dataFim = _dataFimFiltro!.add(const Duration(days: 1));
+        if (pedido.dataPedido.isAfter(dataFim)) matchDate = false;
+      }
+
+      if (match && matchDate) {
         resultados.add(VendaParaTroca.fromPedido(pedido));
       }
     }
@@ -98,7 +110,17 @@ class _TrocasDevolucoesBuscarPageState
         }
       }
 
-      if (match) {
+      // Filtro de data
+      bool matchDate = true;
+      if (_dataInicioFiltro != null) {
+        if (venda.dataVenda.isBefore(_dataInicioFiltro!)) matchDate = false;
+      }
+      if (_dataFimFiltro != null) {
+        final dataFim = _dataFimFiltro!.add(const Duration(days: 1));
+        if (venda.dataVenda.isAfter(dataFim)) matchDate = false;
+      }
+
+      if (match && matchDate) {
         resultados.add(VendaParaTroca.fromVendaBalcao(venda));
       }
     }
@@ -236,18 +258,58 @@ class _TrocasDevolucoesBuscarPageState
             ),
           ),
 
+          // Filtro de Data
+          _buildFiltroData(),
+
           const SizedBox(height: 16),
 
           // Resultados
           Expanded(
             child: _resultados.isEmpty
                 ? _buildEstadoVazio()
-                : ListView.builder(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    itemCount: _resultados.length,
-                    itemBuilder: (context, index) {
-                      return _buildCardVenda(_resultados[index], dataService);
-                    },
+                : Column(
+                    children: [
+                      if (_termoBusca.isNotEmpty || _dataInicioFiltro != null || _dataFimFiltro != null)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          child: Row(
+                            children: [
+                              Text(
+                                '${_resultados.length} resultados encontrados',
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.5),
+                                  fontSize: 12,
+                                ),
+                              ),
+                              const Spacer(),
+                              TextButton(
+                                onPressed: () {
+                                  _buscaController.clear();
+                                  setState(() {
+                                    _termoBusca = '';
+                                    _dataInicioFiltro = null;
+                                    _dataFimFiltro = null;
+                                    _resultados = [];
+                                  });
+                                },
+                                child: const Text(
+                                  'Limpar filtros',
+                                  style: TextStyle(color: Colors.orange, fontSize: 12),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      Expanded(
+                        child: ListView.builder(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          itemCount: _resultados.length,
+                          itemBuilder: (context, index) {
+                            return _buildCardVenda(_resultados[index], dataService);
+                          },
+                        ),
+                      ),
+                    ],
                   ),
           ),
         ],
@@ -282,14 +344,16 @@ class _TrocasDevolucoesBuscarPageState
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(
-            _termoBusca.isEmpty ? Icons.swap_horiz : Icons.search_off,
+            (_termoBusca.isEmpty && _dataInicioFiltro == null && _dataFimFiltro == null) 
+                ? Icons.swap_horiz 
+                : Icons.search_off,
             size: 80,
             color: Colors.white.withOpacity(0.15),
           ),
           const SizedBox(height: 24),
           Text(
-            _termoBusca.isEmpty
-                ? 'Digite para buscar uma venda'
+            (_termoBusca.isEmpty && _dataInicioFiltro == null && _dataFimFiltro == null)
+                ? 'Busque uma venda para iniciar'
                 : 'Nenhuma venda encontrada',
             style: TextStyle(
               color: Colors.white.withOpacity(0.5),
@@ -298,9 +362,9 @@ class _TrocasDevolucoesBuscarPageState
           ),
           const SizedBox(height: 8),
           Text(
-            _termoBusca.isEmpty
-                ? 'Busque pelo número, cliente ou produto'
-                : 'Tente buscar por outro termo',
+            (_termoBusca.isEmpty && _dataInicioFiltro == null && _dataFimFiltro == null)
+                ? 'Use o campo de busca ou os filtros de data'
+                : 'Tente buscar por outro termo ou período',
             style: TextStyle(
               color: Colors.white.withOpacity(0.3),
               fontSize: 14,
@@ -309,6 +373,125 @@ class _TrocasDevolucoesBuscarPageState
         ],
       ),
     );
+  }
+
+  Widget _buildFiltroData() {
+    final dataService = Provider.of<DataService>(context, listen: false);
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E1E2E),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withOpacity(0.05)),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.calendar_today,
+            size: 16,
+            color: Colors.orange,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Row(
+              children: [
+                _buildBotaoData(
+                  label: _dataInicioFiltro != null
+                      ? DateFormat('dd/MM/yyyy').format(_dataInicioFiltro!)
+                      : 'Início',
+                  onTap: () => _selecionarData(true, dataService),
+                  isSet: _dataInicioFiltro != null,
+                ),
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 8),
+                  child: Text('até', style: TextStyle(color: Colors.white24, fontSize: 12)),
+                ),
+                _buildBotaoData(
+                  label: _dataFimFiltro != null
+                      ? DateFormat('dd/MM/yyyy').format(_dataFimFiltro!)
+                      : 'Fim',
+                  onTap: () => _selecionarData(false, dataService),
+                  isSet: _dataFimFiltro != null,
+                ),
+              ],
+            ),
+          ),
+          if (_dataInicioFiltro != null || _dataFimFiltro != null)
+            IconButton(
+              icon: const Icon(Icons.close, size: 18, color: Colors.white54),
+              onPressed: () {
+                setState(() {
+                  _dataInicioFiltro = null;
+                  _dataFimFiltro = null;
+                });
+                _buscar(dataService);
+              },
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBotaoData({required String label, required VoidCallback onTap, bool isSet = false}) {
+    return Expanded(
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+          decoration: BoxDecoration(
+            color: isSet ? Colors.orange.withOpacity(0.1) : Colors.white.withOpacity(0.05),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: isSet ? Colors.orange.withOpacity(0.3) : Colors.transparent,
+            ),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              color: isSet ? Colors.orange : Colors.white54,
+              fontSize: 12,
+              fontWeight: isSet ? FontWeight.bold : FontWeight.normal,
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _selecionarData(bool isInicio, DataService dataService) async {
+    final data = await showDatePicker(
+      context: context,
+      initialDate: (isInicio ? _dataInicioFiltro : _dataFimFiltro) ?? DateTime.now(),
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now(),
+      builder: (context, child) {
+        return Theme(
+          data: ThemeData.dark().copyWith(
+            colorScheme: const ColorScheme.dark(
+              primary: Colors.orange,
+              onPrimary: Colors.white,
+              surface: Color(0xFF1E1E2E),
+              onSurface: Colors.white,
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+
+    if (data != null) {
+      setState(() {
+        if (isInicio) {
+          _dataInicioFiltro = DateTime(data.year, data.month, data.day);
+        } else {
+          _dataFimFiltro = DateTime(data.year, data.month, data.day, 23, 59, 59);
+        }
+      });
+      _buscar(dataService);
+    }
   }
 
   Widget _buildCardVenda(VendaParaTroca venda, DataService dataService) {
@@ -578,7 +761,7 @@ class SelecionarItensTrocaPageState extends State<SelecionarItensTrocaPage> {
   final _motivoController = TextEditingController();
 
   // Mapa de itens selecionados: produtoId -> quantidade a devolver
-  final Map<String, int> _itensSelecionados = {};
+  final Map<String, double> _itensSelecionados = {};
   TipoOperacao _tipoOperacao = TipoOperacao.devolucao;
   String _motivo = '';
 
@@ -591,8 +774,8 @@ class SelecionarItensTrocaPageState extends State<SelecionarItensTrocaPage> {
     return total;
   }
 
-  int get _qtdItensSelecionados {
-    return _itensSelecionados.values.fold(0, (sum, qtd) => sum + qtd);
+  double get _qtdItensSelecionados {
+    return _itensSelecionados.values.fold(0.0, (sum, qtd) => sum + qtd);
   }
 
   @override
@@ -1589,7 +1772,7 @@ class SelecionarNovosProdutosPageState
   final _buscaController = TextEditingController();
 
   String _termoBusca = '';
-  final Map<String, int> _novosProdutos = {}; // produtoId -> quantidade
+  final Map<String, double> _novosProdutos = {}; // produtoId -> quantidade
 
   double get _valorNovos {
     final dataService = Provider.of<DataService>(context, listen: false);
@@ -2064,7 +2247,7 @@ class SelecionarNovosProdutosPageState
         }
         
         final estoqueAnterior = produto.estoque;
-        final novoEstoque = (produto.estoque - entry.value) < 0 ? 0 : (produto.estoque - entry.value);
+        final novoEstoque = ((produto.estoque - entry.value) < 0 ? 0 : (produto.estoque - entry.value)).toDouble();
         
         dataService.updateProduto(
           produto.copyWith(
@@ -2653,7 +2836,7 @@ class ItemParaTroca {
   final String id;
   final String? produtoId;
   final String nome;
-  final int quantidade;
+  final double quantidade;
   final double preco;
 
   ItemParaTroca({

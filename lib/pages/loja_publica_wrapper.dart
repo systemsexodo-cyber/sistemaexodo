@@ -201,7 +201,7 @@ class _LojaPublicaWrapperState extends State<LojaPublicaWrapper> {
 
       // 5. Configurar DataService definitivamente
       if (empresaIdParaUsar != null && empresaIdParaUsar.isNotEmpty) {
-        if (dataService.empresaIdAtual != empresaIdParaUsar) {
+        if (dataService.currentEmpresaId != empresaIdParaUsar) {
           print('>>> [LojaPublica] Definindo nova empresa no DataService: $empresaIdParaUsar');
           await dataService.definirEmpresaAtual(empresaIdParaUsar, modoLeve: true).timeout(
             const Duration(seconds: 25),

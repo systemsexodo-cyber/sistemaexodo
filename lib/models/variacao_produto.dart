@@ -5,7 +5,7 @@ class VariacaoProduto {
   final String nomeAtributo; // Ex: "Tamanho", "Cor", "Sabor"
   final String valor; // Ex: "P", "Azul", "Morango"
   final double? precoAdicional; // Preço adicional para esta variação (pode ser negativo para desconto)
-  final int estoque; // Estoque específico desta variação
+  final double estoque; // Estoque específico desta variação
   final String? codigoBarras; // Código de barras específico da variação
   final String? sku; // SKU específico da variação
   final bool ativo; // Se a variação está ativa/disponível
@@ -15,7 +15,7 @@ class VariacaoProduto {
     required this.nomeAtributo,
     required this.valor,
     this.precoAdicional,
-    this.estoque = 0,
+    this.estoque = 0.0,
     this.codigoBarras,
     this.sku,
     this.ativo = true,
@@ -27,7 +27,7 @@ class VariacaoProduto {
     String? nomeAtributo,
     String? valor,
     double? precoAdicional,
-    int? estoque,
+    double? estoque,
     String? codigoBarras,
     String? sku,
     bool? ativo,
@@ -65,7 +65,7 @@ class VariacaoProduto {
       precoAdicional: map['precoAdicional'] != null
           ? (map['precoAdicional'] as num).toDouble()
           : null,
-      estoque: map['estoque'] as int? ?? 0,
+      estoque: map['estoque'] != null ? (map['estoque'] as num).toDouble() : 0.0,
       codigoBarras: map['codigoBarras'] as String?,
       sku: map['sku'] as String?,
       ativo: map['ativo'] as bool? ?? true,

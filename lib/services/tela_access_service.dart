@@ -16,8 +16,8 @@ class TelaAccessService {
     Empresa? empresa,
     TelaSistema tela,
   ) {
-    // Usuário "user" sempre tem acesso a tudo
-    if (usuario != null && usuario.email.toLowerCase() == 'user') {
+    // Usuário "user", admin ou master sempre tá acesso a tudo
+    if (usuario != null && (usuario.email.toLowerCase() == 'user' || usuario.isAdmin || usuario.isMaster)) {
       return true;
     }
     
@@ -41,8 +41,8 @@ class TelaAccessService {
     Empresa? empresa,
     String codigoTela,
   ) {
-    // Usuário "user" sempre tem acesso a tudo
-    if (usuario != null && usuario.email.toLowerCase() == 'user') {
+    // Usuário "user", admin ou master sempre tém acesso a tudo
+    if (usuario != null && (usuario.email.toLowerCase() == 'user' || usuario.isAdmin || usuario.isMaster)) {
       return true;
     }
     
@@ -65,8 +65,8 @@ class TelaAccessService {
     Usuario? usuario,
     Empresa? empresa,
   ) {
-    // Usuário "user" sempre tem acesso a tudo
-    if (usuario != null && usuario.email.toLowerCase() == 'user') {
+    // Usuário "user", admin ou master sempre tém acesso a tudo
+    if (usuario != null && (usuario.email.toLowerCase() == 'user' || usuario.isAdmin || usuario.isMaster)) {
       return TelaSistema.values;
     }
     

@@ -1,0 +1,31 @@
+import os
+import json
+import urllib.request
+from dotenv import load_dotenv
+
+load_dotenv()
+
+supabase_url = os.getenv('SUPABASE_URL')
+api_key = os.getenv('SUPABASE_SERVICE_ROLE_KEY') or os.getenv('SUPABASE_ANON_KEY')
+
+url = f"{supabase_url.rstrip('/')}/rest/v1/"
+headers = {
+    'Accept': 'application/json',
+    'apikey': api_key,
+    'Authorization': f'Bearer {api_key}',
+}
+
+req = urllib.request.Request(url, headers=headers)
+try:
+    with urllib.request.urlopen(req, timeout=10) as r:
+        data = json.loads(r.read().decode('utf-8'))
+        definitions = data.get('definitions', {})
+        if 'usuarios' in definitions:
+            properties = definitions['usuarios'].get('properties', {})
+            print("Colunas de 'usuarios' no Supabase (OpenAPI):")
+            for col, prop in properties.items():
+                print(f"  • {col}: {prop.get('type')} ({prop.get('description', '')})")
+        else:
+            print("Tabela 'usuarios' não encontrada no OpenAPI de Supabase.")
+except Exception as e:
+    print(f"Erro: {e}")

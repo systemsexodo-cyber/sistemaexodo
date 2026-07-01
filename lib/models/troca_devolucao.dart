@@ -151,7 +151,7 @@ enum TipoOperacao {
 class ItemTrocaDevolucao {
   final String produtoId;
   final String produtoNome;
-  final int quantidade;
+  final double quantidade;
   final double precoUnitario;
   final double valorTotal;
   final String? motivo; // Motivo da devolução/troca
@@ -172,7 +172,7 @@ class ItemTrocaDevolucao {
     return ItemTrocaDevolucao(
       produtoId: map['produtoId'] ?? '',
       produtoNome: map['produtoNome'] ?? '',
-      quantidade: map['quantidade'] ?? 0,
+      quantidade: (map['quantidade'] as num?)?.toDouble() ?? 0.0,
       precoUnitario: (map['precoUnitario'] ?? 0).toDouble(),
       valorTotal: (map['valorTotal'] ?? 0).toDouble(),
       motivo: map['motivo'],
