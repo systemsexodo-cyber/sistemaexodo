@@ -5,7 +5,7 @@ class DatabaseService {
   factory DatabaseService() => _instance;
   DatabaseService._internal();
 
-  Future<void> salvarLista(String chave, List<Map<String, dynamic>> lista) async {
+  Future<void> salvarLista(String chave, List<Map<String, dynamic>> lista, {bool isSync = false}) async {
     // Stub - Não faz nada no Web
   }
 
