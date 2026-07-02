@@ -1137,19 +1137,25 @@ class DataService extends ChangeNotifier {
     try {
       // 1. Verificar se a máquina tem internet geral (DNS lookup rápido para hosts altamente confiáveis)
       bool temInternetGeral = false;
-      try {
-        final result = await InternetAddress.lookup('google.com').timeout(const Duration(seconds: 2));
-        if (result.isNotEmpty && result[0].rawAddress.isNotEmpty) {
-          temInternetGeral = true;
-        }
-      } catch (_) {
-        // Tentar um fallback rápido
+      if (kIsWeb) {
+        // Na Web, InternetAddress.lookup de dart:io não é suportado e lança erro.
+        // Assumimos true para internet geral e deixamos o ping do Supabase validar a conexão real.
+        temInternetGeral = true;
+      } else {
         try {
-          final result = await InternetAddress.lookup('cloudflare.com').timeout(const Duration(seconds: 2));
+          final result = await InternetAddress.lookup('google.com').timeout(const Duration(seconds: 2));
           if (result.isNotEmpty && result[0].rawAddress.isNotEmpty) {
             temInternetGeral = true;
           }
-        } catch (_) {}
+        } catch (_) {
+          // Tentar um fallback rápido
+          try {
+            final result = await InternetAddress.lookup('cloudflare.com').timeout(const Duration(seconds: 2));
+            if (result.isNotEmpty && result[0].rawAddress.isNotEmpty) {
+              temInternetGeral = true;
+            }
+          } catch (_) {}
+        }
       }
 
       // Se falhar na internet geral, estamos de fato sem conexão externa
