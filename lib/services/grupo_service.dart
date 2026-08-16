@@ -51,7 +51,7 @@ class GrupoService {
   static List<Produto> atualizarEstoquePorGrupo(
     List<Produto> produtos,
     String grupo,
-    int novoEstoque, {
+    double novoEstoque, {
     bool adicionar = false,
   }) {
     return produtos.map((p) {

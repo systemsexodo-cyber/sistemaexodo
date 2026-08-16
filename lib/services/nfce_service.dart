@@ -47,7 +47,7 @@ class NfceService {
         'ambiente': empresa.configuracoes?['ambiente_nfe'] == 'Produção' ? 1 : 2,
         'csc': empresa.configuracoes?['csc'] ?? '',
         'csc_id': empresa.configuracoes?['csc_id'] ?? '',
-        'crt': int.tryParse(empresa.configuracoes?['crt']?.toString() ?? '1') ?? 1,
+        'crt': int.tryParse(empresa.configuracoes?['crt']?.toString() ?? '') ?? empresa.crt ?? 1,
       },
       'venda_numero': numeroVenda,
       'data_emissao': DateTime.now().toIso8601String(),

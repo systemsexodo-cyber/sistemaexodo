@@ -11,6 +11,7 @@ enum TipoPagamento {
   fiado,
   outro,
   alimentacao,
+  transferencia,
 }
 
 /// Extensão para obter informações do tipo de pagamento
@@ -35,6 +36,8 @@ extension TipoPagamentoExtension on TipoPagamento {
         return 'Outro';
       case TipoPagamento.alimentacao:
         return 'Alimentação';
+      case TipoPagamento.transferencia:
+        return 'Transferência';
     }
   }
 
@@ -58,6 +61,8 @@ extension TipoPagamentoExtension on TipoPagamento {
         return Icons.more_horiz;
       case TipoPagamento.alimentacao:
         return Icons.restaurant;
+      case TipoPagamento.transferencia:
+        return Icons.swap_horiz;
     }
   }
 
@@ -81,6 +86,8 @@ extension TipoPagamentoExtension on TipoPagamento {
         return Colors.grey;
       case TipoPagamento.alimentacao:
         return Colors.teal;
+      case TipoPagamento.transferencia:
+        return Colors.blueAccent;
     }
   }
 
@@ -117,6 +124,8 @@ class PagamentoPedido {
   final String? observacao;
   final double? valorRecebido; // Valor que o cliente entregou (para dinheiro)
   final double? troco; // Troco a devolver (para dinheiro)
+  final double? desconto;
+  final double? acrescimo;
 
   PagamentoPedido({
     required this.id,
@@ -132,11 +141,13 @@ class PagamentoPedido {
     this.observacao,
     this.valorRecebido,
     this.troco,
+    this.desconto,
+    this.acrescimo,
   });
 
   factory PagamentoPedido.fromMap(Map<String, dynamic> map) {
     return PagamentoPedido(
-      id: map['id'] ?? '',
+      id: map['id']?.toString() ?? '',
       tipo: TipoPagamento.values.firstWhere(
         (t) => t.name == map['tipo'],
         orElse: () => TipoPagamento.outro,
@@ -161,6 +172,8 @@ class PagamentoPedido {
       observacao: map['observacao'],
       valorRecebido: map['valorRecebido']?.toDouble(),
       troco: map['troco']?.toDouble(),
+      desconto: map['desconto']?.toDouble(),
+      acrescimo: map['acrescimo']?.toDouble(),
     );
   }
 
@@ -179,6 +192,8 @@ class PagamentoPedido {
       'observacao': observacao,
       'valorRecebido': valorRecebido,
       'troco': troco,
+      'desconto': desconto,
+      'acrescimo': acrescimo,
     };
   }
 
@@ -196,6 +211,8 @@ class PagamentoPedido {
     String? observacao,
     double? valorRecebido,
     double? troco,
+    double? desconto,
+    double? acrescimo,
   }) {
     return PagamentoPedido(
       id: id ?? this.id,
@@ -211,6 +228,8 @@ class PagamentoPedido {
       observacao: observacao ?? this.observacao,
       valorRecebido: valorRecebido ?? this.valorRecebido,
       troco: troco ?? this.troco,
+      desconto: desconto ?? this.desconto,
+      acrescimo: acrescimo ?? this.acrescimo,
     );
   }
 

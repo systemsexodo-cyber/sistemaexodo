@@ -7,6 +7,7 @@ import '../services/data_service.dart';
 import '../services/supabase_service.dart';
 import 'package:provider/provider.dart';
 import '../theme.dart';
+import '../models/usuario.dart';
 
 class GoogleDriveBackupPage extends StatefulWidget {
   const GoogleDriveBackupPage({super.key});
@@ -23,7 +24,23 @@ class _GoogleDriveBackupPageState extends State<GoogleDriveBackupPage> {
   @override
   void initState() {
     super.initState();
-    _carregarBackups();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final authService = Provider.of<AuthService>(context, listen: false);
+      final user = authService.usuarioAtual;
+      final isMaster = user?.isMaster == true || user?.tipo == TipoUsuario.administrador;
+      if (!isMaster) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Acesso restrito ao usuário Administrador/Master.'),
+            backgroundColor: Colors.redAccent,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        Navigator.pop(context);
+      } else {
+        _carregarBackups();
+      }
+    });
   }
 
   Future<void> _carregarBackups() async {

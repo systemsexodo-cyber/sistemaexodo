@@ -1,4 +1,6 @@
-import 'dart:async';
+﻿import 'dart:async';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter/foundation.dart';
 import '../models/cliente.dart';
@@ -10,6 +12,7 @@ import '../models/entrega.dart';
 import '../models/venda_balcao.dart';
 import '../models/troca_devolucao.dart';
 import '../models/estoque_historico.dart';
+import '../models/lote_produto.dart';
 import '../models/caixa.dart';
 import 'package:sistema_exodo_novo/models/motorista.dart';
 import '../models/empresa.dart';
@@ -31,7 +34,12 @@ class SupabaseService {
   SupabaseService._(); // Construtor privado para singleton
   
   static final SupabaseService instance = SupabaseService._();
-  final _client = Supabase.instance.client;
+  // late final: so acessa Supabase.instance.client QUANDO FOR USADO, nao no
+  // construtor. Se o Supabase ainda nao inicializou (ex: maquina nova sem
+  // internet - timeout no boot), construir DataService/AuthService lancava
+  // excecao aqui e o app NAO ABRIA. Agora o acesso e adiado para quando os
+  // metodos sao realmente chamados (e todos ja tratam isAvailable/erro).
+  late final SupabaseClient _client = Supabase.instance.client;
 
   SupabaseClient get client => _client;
 
@@ -64,8 +72,6 @@ class SupabaseService {
         anonKey: SupabaseConfig.anonKey,
         debug: kDebugMode,
       );
-      debugPrint('>>> [Supabase] ✅ Inicializado com sucesso.');
-      
       // Verificar conectividade real
       try {
         final response = await Supabase.instance.client
@@ -97,6 +103,7 @@ class SupabaseService {
   static const String tableVendasBalcao = 'vendas_balcao';
   static const String tableTrocasDevolucoes = 'trocas_devolucoes';
   static const String tableEstoqueHistorico = 'estoque_historico';
+  static const String tableLotesProdutos = 'lotes_produto';
   static const String tableAberturasCaixa = 'aberturas_caixa';
   static const String tableFechamentosCaixa = 'fechamentos_caixa';
   static const String tableMotoristas = 'motoristas';
@@ -106,6 +113,7 @@ class SupabaseService {
   static const String tableTaxasEntrega = 'taxas_entrega';
   static const String tableContasPagar = 'contas_pagar';
   static const String tableNFCes = 'nfces';
+  static const String tableNFEs = 'nfes';
   static const String tableRomaneios = 'romaneios';
 
   static const String tableSangrias = 'sangrias_caixa';
@@ -150,6 +158,7 @@ class SupabaseService {
         tableVendasBalcao: 'vendas_balcao',
         tableTrocasDevolucoes: 'trocas_devolucoes',
         tableEstoqueHistorico: 'estoque_historico',
+        tableLotesProdutos: 'lotes_produto',
         tableAberturasCaixa: 'aberturas_caixa',
         tableFechamentosCaixa: 'fechamentos_caixa',
         tableMotoristas: 'motoristas',
@@ -159,6 +168,7 @@ class SupabaseService {
         tableTaxasEntrega: 'taxas_entrega',
         tableContasPagar: 'contas_pagar',
         tableNFCes: 'nfces',
+        tableNFEs: 'nfes',
         tableSangrias: 'sangrias',
         tableSuprimentos: 'suprimentos',
         tableMesasComandas: 'mesas_comandas',
@@ -183,7 +193,7 @@ class SupabaseService {
             
             if (lastSync != null) {
               query = query.gte('updated_at', lastSync.toUtc().toIso8601String());
-            } else if (tableName == tablePedidos || tableName == tableVendasBalcao) {
+            } else if (tableName == tablePedidos || tableName == tableVendasBalcao || tableName == tableMesasComandas) {
               query = query.gte('created_at', dataLimiteIso);
             }
 
@@ -205,7 +215,12 @@ class SupabaseService {
             debugPrint('>>> [Supabase] ⬇️ Baixado ${allRows.length} itens da tabela $tableName');
           }
         } catch (e) {
-          debugPrint('>>> [Supabase] ❌ Erro ao carregar $tableName: $e');
+          final errorStr = e.toString().toLowerCase();
+          if (tableName == tableNFCes && (errorStr.contains('empresaid') || errorStr.contains('empresa_id'))) {
+            debugPrint('>>> [Supabase] ⚠️ Aviso: A tabela nfces está com erro de coluna/RLS no Supabase. Ignorando temporariamente: $e');
+          } else {
+            debugPrint('>>> [Supabase] ❌ Erro ao carregar $tableName: $e');
+          }
           dados[dataKey] = [];
         }
       }
@@ -229,6 +244,7 @@ class SupabaseService {
     required List<VendaBalcao> vendasBalcao,
     required List<TrocaDevolucao> trocasDevolucoes,
     required List<EstoqueHistorico> estoqueHistorico,
+    List<LoteProduto>? lotesProdutos,
     required List<AberturaCaixa> aberturasCaixa,
     required List<FechamentoCaixa> fechamentosCaixa,
     required List<Motorista> motoristas,
@@ -238,6 +254,7 @@ class SupabaseService {
     required List<TaxaEntrega> taxasEntrega,
     required List<ContaPagar> contasPagar,
     required List<NFCe> nfces,
+    List<NFCe>? nfes,
     required List<SangriaCaixa> sangrias,
     required List<SuprimentoCaixa> suprimentos,
     List<LinkVendedor>? linksVendedores,
@@ -269,6 +286,7 @@ class SupabaseService {
         tableVendasBalcao: vendasBalcao,
         tableTrocasDevolucoes: trocasDevolucoes,
         tableEstoqueHistorico: estoqueHistorico,
+        tableLotesProdutos: lotesProdutos ?? [],
         tableAberturasCaixa: aberturasCaixa,
         tableFechamentosCaixa: fechamentosCaixa,
         tableMotoristas: motoristas,
@@ -278,6 +296,7 @@ class SupabaseService {
         tableTaxasEntrega: taxasEntrega,
         tableContasPagar: contasPagar,
         tableNFCes: nfces,
+        tableNFEs: nfes ?? [],
         tableSangrias: sangrias,
         tableSuprimentos: suprimentos,
         tableLinksVendedores: linksVendedores ?? [],
@@ -328,7 +347,8 @@ class SupabaseService {
             final chunk = maps.sublist(i, end);
             
             debugPrint('>>> [Supabase]    -> Enviando lote ${ (i ~/ batchSize) + 1 } (${chunk.length} itens)...');
-            await _client.from(table).upsert(chunk);
+            final typedChunk = chunk.map((m) => _toSafeMap(m)).toList();
+            await _client.from(table).upsert(typedChunk);
           }
           
           debugPrint('>>> [Supabase] ✅ $table: ${lista.length} itens sincronizados.');
@@ -349,7 +369,8 @@ class SupabaseService {
   Future<void> upsertBatch(String table, List<Map<String, dynamic>> data) async {
     if (!isAvailable || data.isEmpty) return;
     try {
-      await _client.from(table).upsert(data);
+      final typedData = data.map((m) => _toSafeMap(m)).toList();
+      await _client.from(table).upsert(typedData);
       debugPrint('>>> [Supabase] ✅ upsertBatch: ${data.length} itens em $table');
     } catch (e) {
       debugPrint('>>> [Supabase] ❌ Erro no upsertBatch em $table: $e');
@@ -362,7 +383,7 @@ class SupabaseService {
     try {
       debugPrint('>>> [Supabase] 🧪 TESTANDO inserção na tabela produtos...');
       
-      final testData = {
+      final testData = <String, Object?>{
         'id': 'test-${DateTime.now().millisecondsSinceEpoch}',
         'empresa_id': empresaId,
         'nome': 'Produto Teste',
@@ -377,7 +398,7 @@ class SupabaseService {
       
       debugPrint('>>> [Supabase] 📤 Enviando dados de teste: $testData');
       
-      final response = await _client.from(tableProdutos).upsert([testData]).select();
+      final response = await _client.from(tableProdutos).upsert([_toSafeMap(testData)]).select();
       
       debugPrint('>>> [Supabase] ✅ Teste de inserção OK! Resposta: $response');
       return {'sucesso': true, 'resposta': response};
@@ -481,8 +502,8 @@ class SupabaseService {
       if (!isAvailable) return {};
       
       Map<String, dynamic> dataToInsert = data;
-      
-      final response = await _client.from(table).insert(dataToInsert).select().single().timeout(const Duration(seconds: 8));
+      final safeInsert = _toSafeMap(dataToInsert);
+      final response = await _client.from(table).insert(safeInsert).select().single().timeout(const Duration(seconds: 8));
       return response as Map<String, dynamic>;
     } catch (e) {
       debugPrint('>>> [Supabase] ❌ Erro ao inserir em $table: $e');
@@ -501,6 +522,78 @@ class SupabaseService {
     }
   }
 
+  Map<String, dynamic> _filtrarCamposLocais(String table, Map<String, dynamic> map) {
+    final m = <String, dynamic>{};
+    
+    // Normalizar datas locais para UTC com indicador 'Z'
+    final isoPattern = RegExp(r'^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}');
+    for (final entry in map.entries) {
+      var val = entry.value;
+      if (val is String && isoPattern.hasMatch(val)) {
+        if (!val.endsWith('Z') && !val.contains(RegExp(r'[+-]\d{2}:?\d{2}$'))) {
+          final parsed = DateTime.tryParse(val);
+          if (parsed != null) {
+            val = parsed.toUtc().toIso8601String();
+          }
+        }
+      }
+      m[entry.key] = val;
+    }
+
+    if (table.contains('produtos')) {
+      m.remove('envia_balanca');
+      m.remove('enviaBalanca');
+      m.remove('cobrar_garcom');
+      m.remove('cobrarGarcom');
+      m.remove('perguntas_selecao');
+      m.remove('perguntasSelecao');
+      m.remove('precos_por_perfil');
+      m.remove('precosPorPerfil');
+      m.remove('regras_quantidade');
+      m.remove('regrasQuantidade');
+      m.remove('exibir_composicao_pdv');
+      m.remove('exibirComposicaoPdv');
+    }
+    if (table.contains('pedidos')) {
+      m.remove('acrescimoTotal');
+      m.remove('descontoTotal');
+    }
+    if (table.contains('entregas')) {
+      m.remove('dataCriacao');
+      m.remove('historico');
+      m.remove('ordemRota');
+    }
+    // estoque_historico: as colunas de custo (custo_unitario/valor_custo) e a
+    // coluna 'sync' NÃO existem no Supabase até rodar o SUPABASE_FIX_ALL.sql —
+    // enviá-las causa PGRST204 e descarta a entrada inteira da nuvem. A
+    // filtragem dinâmica no upsert() (_detectarColunasEstoqueHistorico) cuida
+    // disso; aqui removemos apenas a variação camel (que nunca existe).
+    if (table.contains('estoque_historico')) {
+      m.remove('fornecedorNome');
+    }
+    if (table.contains('empresas')) {
+      m.remove('telas_permitidas');
+      m.remove('observacao');
+      m.remove('cor_primaria');
+      m.remove('cor_secundaria');
+    }
+    if (table.contains('usuarios')) {
+      // A tabela 'usuarios' do Supabase só tem 8 colunas (id, email, nome,
+      // empresa_id, perfil, ativo, created_at, updated_at). O toMap() do app
+      // envia campos adicionais (senha, tipo, is_master, serie_nfce, etc.) que
+      // NÃO existem lá — isso fazia o upsert falhar silenciosamente e o perfil
+      // nunca chegar à nuvem (usuários 'sumiam'). Aqui filtramos e mapeamos
+      // 'tipo' -> 'perfil' para a gravação funcionar de verdade.
+      final perfil = m['tipo']?.toString() ?? 'operador';
+      m.removeWhere((k, _) => !const {
+        'id', 'email', 'nome', 'empresa_id', 'perfil', 'ativo',
+        'created_at', 'updated_at',
+      }.contains(k));
+      m['perfil'] = perfil;
+    }
+    return m;
+  }
+
   /// Realiza upsert (insert or update) de um item em uma tabela
   Future<void> upsert(String table, Map<String, dynamic> data) async {
     try {
@@ -512,20 +605,201 @@ class SupabaseService {
       debugPrint('>>> [Supabase]    ID: ${data['id']}');
       debugPrint('>>> [Supabase]    Empresa: ${data['empresa_id']}');
       
-      Map<String, dynamic> dataToUpsert = Map<String, dynamic>.from(data);
-      if (table == tableEmpresas) {
-        dataToUpsert.remove('telas_permitidas');
-        dataToUpsert.remove('observacao');
-        dataToUpsert.remove('cor_primaria');
-        dataToUpsert.remove('cor_secundaria');
+      Map<String, dynamic> dataToUpsert = _filtrarCamposLocais(table, data);
+
+      // estoque_historico: envia SOMENTE as colunas que existem na tabela real
+      // (evita PGRST204 por custo_unitario/valor_custo quando o schema ainda não
+      // foi migrado). Com o schema migrado, o custo da quebra passa a subir.
+      if (table == SupabaseService.tableEstoqueHistorico) {
+        final colunas = await _detectarColunasEstoqueHistorico();
+        dataToUpsert.removeWhere((k, _) => !colunas.contains(k));
       }
-      
-      await _client.from(table).upsert(dataToUpsert).timeout(const Duration(seconds: 8));
+
+      final safeData = _toSafeMap(dataToUpsert);
+      await _client.from(table).upsert(safeData).timeout(const Duration(seconds: 8));
       debugPrint('>>> [Supabase] ✅ Upsert concluído em $table');
     } catch (e) {
       debugPrint('>>> [Supabase] ❌ Erro ao fazer upsert em $table: $e');
       rethrow;
     }
+  }
+
+  /// Cache das colunas reais da tabela 'usuarios' no Supabase. Detectadas uma
+  /// única vez via OpenAPI (/rest/v1/) e reutilizadas em todos os salvamentos.
+  Set<String>? _colunasUsuariosCache;
+  Future<Set<String>>? _detectandoColunasUsuarios;
+
+  /// Detecta (uma única vez) as colunas reais da tabela 'usuarios' consultando
+  /// o endpoint OpenAPI do PostgREST (/rest/v1/). A chave do app (service_role)
+  /// tem acesso a esse endpoint — confirmado em teste. Com a lista de colunas em
+  /// mãos, o upsert envia SOMENTE o que existe na tabela: quando o schema está
+  /// antigo (8 colunas), isso elimina o erro PGRST204 ("Could not find the
+  /// 'is_master' column...") que era logado a cada salvamento de usuário.
+  /// Se a detecção falhar (offline/erro), retorna o fallback das 8 colunas
+  /// conhecidas do schema antigo — nunca bloqueia o fluxo de salvamento.
+  Future<Set<String>> _detectarColunasUsuarios() async {
+    final cached = _colunasUsuariosCache;
+    if (cached != null) return cached;
+    final emAndamento = _detectandoColunasUsuarios;
+    if (emAndamento != null) return emAndamento;
+
+    final futuro = _detectarColunasUsuariosInterno();
+    _detectandoColunasUsuarios = futuro;
+    try {
+      final colunas = await futuro;
+      _colunasUsuariosCache = colunas;
+      return colunas;
+    } finally {
+      _detectandoColunasUsuarios = null;
+    }
+  }
+
+  Future<Set<String>> _detectarColunasUsuariosInterno() async {
+    try {
+      final resp = await http.get(
+        Uri.parse('${SupabaseConfig.url}/rest/v1/'),
+        headers: {
+          'apikey': SupabaseConfig.anonKey,
+          'Authorization': 'Bearer ${SupabaseConfig.anonKey}',
+          'Accept': 'application/json',
+        },
+      ).timeout(const Duration(seconds: 10));
+
+      if (resp.statusCode == 200) {
+        final decoded = jsonDecode(resp.body);
+        if (decoded is Map<String, dynamic>) {
+          final definitions = decoded['definitions'];
+          if (definitions is Map<String, dynamic>) {
+            final usuarios = definitions['usuarios'];
+            if (usuarios is Map<String, dynamic>) {
+              final properties = usuarios['properties'];
+              if (properties is Map<String, dynamic>) {
+                final colunas = properties.keys.toSet();
+                debugPrint('>>> [Supabase] ℹ️ Colunas reais de usuarios detectadas (${colunas.length}): ${colunas.join(', ')}');
+                return colunas;
+              }
+            }
+          }
+        }
+      } else {
+        debugPrint('>>> [Supabase] ⚠️ Falha ao detectar colunas de usuarios (HTTP ${resp.statusCode})');
+      }
+    } catch (e) {
+      debugPrint('>>> [Supabase] ⚠️ Falha ao detectar colunas de usuarios: $e');
+    }
+    return const {
+      'id', 'email', 'nome', 'empresa_id', 'perfil', 'ativo',
+      'created_at', 'updated_at',
+    };
+  }
+
+  /// Upsert resiliente de um usuário no Supabase.
+  ///
+  /// Detecta (uma vez, em cache) as colunas reais da tabela 'usuarios' e envia
+  /// APENAS os campos que existem no banco. Assim, no schema antigo (8 colunas)
+  /// o salvamento funciona de primeira, sem tentar gravar is_master/senha/tipo
+  /// (que geravam o erro PGRST204 logado a cada usuário). Se a tabela for
+  /// migrada para o schema novo, o app passa automaticamente a enviar o perfil
+  /// completo. Só NÃO lança exceção quando o upsert falhar por outro motivo —
+  /// nesse caso o chamador registra a falha de forma persistente para nunca
+  /// mais "sumir" um usuário silenciosamente.
+  Future<void> upsertUsuario(Map<String, dynamic> dados) async {
+    if (!isAvailable) {
+      debugPrint('>>> [Supabase] ⏭️ upsertUsuario ignorado: Supabase não disponível');
+      throw Exception('Supabase não disponível');
+    }
+    if (dados['empresa_id'] == null || dados['empresa_id'].toString().isEmpty) {
+      throw Exception('Usuário sem empresa_id não pode ir para a nuvem');
+    }
+
+    // Filtra os dados para conter somente colunas que existem na tabela.
+    final colunas = await _detectarColunasUsuarios();
+    final dadosFiltrados = _toSafeMap(dados)
+      ..removeWhere((k, _) => !colunas.contains(k));
+
+    // O app usa 'tipo' (nome do enumerado); a coluna do banco é 'perfil'.
+    if (colunas.contains('perfil') && dados.containsKey('tipo')) {
+      dadosFiltrados['perfil'] = dados['tipo'].toString();
+    }
+
+    try {
+      await _client
+          .from(SupabaseService.tableUsuarios)
+          .upsert(dadosFiltrados)
+          .timeout(const Duration(seconds: 8));
+      debugPrint('>>> [Supabase] ✅ Usuário ${dados['id']} sincronizado (${dadosFiltrados.length} colunas existentes).');
+      return;
+    } catch (e) {
+      debugPrint('>>> [Supabase] ❌ ERRO GRAVE: usuário ${dados['id']} NÃO sincronizou: $e');
+      rethrow;
+    }
+  }
+
+  /// Colunas reais da tabela 'estoque_historico' no Supabase. Detectadas uma
+  /// única vez via OpenAPI (/rest/v1/). Enquanto o schema antigo não tiver as
+  /// colunas de custo (custo_unitario/valor_custo), o upsert envia só o que
+  /// existe — sem PGRST204. Quando o SUPABASE_FIX_ALL.sql for rodado, o custo
+  /// da quebra passa automaticamente a ser sincronizado.
+  Set<String>? _colunasEstoqueHistoricoCache;
+  Future<Set<String>>? _detectandoColunasEstoqueHistorico;
+
+  Future<Set<String>> _detectarColunasEstoqueHistorico() async {
+    final cached = _colunasEstoqueHistoricoCache;
+    if (cached != null) return cached;
+    final emAndamento = _detectandoColunasEstoqueHistorico;
+    if (emAndamento != null) return emAndamento;
+
+    final futuro = _detectarColunasEstoqueHistoricoInterno();
+    _detectandoColunasEstoqueHistorico = futuro;
+    try {
+      final colunas = await futuro;
+      _colunasEstoqueHistoricoCache = colunas;
+      return colunas;
+    } finally {
+      _detectandoColunasEstoqueHistorico = null;
+    }
+  }
+
+  Future<Set<String>> _detectarColunasEstoqueHistoricoInterno() async {
+    try {
+      final resp = await http.get(
+        Uri.parse('${SupabaseConfig.url}/rest/v1/'),
+        headers: {
+          'apikey': SupabaseConfig.anonKey,
+          'Authorization': 'Bearer ${SupabaseConfig.anonKey}',
+          'Accept': 'application/json',
+        },
+      ).timeout(const Duration(seconds: 10));
+
+      if (resp.statusCode == 200) {
+        final decoded = jsonDecode(resp.body);
+        if (decoded is Map<String, dynamic>) {
+          final definitions = decoded['definitions'];
+          if (definitions is Map<String, dynamic>) {
+            final tabela = definitions['estoque_historico'];
+            if (tabela is Map<String, dynamic>) {
+              final properties = tabela['properties'];
+              if (properties is Map<String, dynamic>) {
+                final colunas = properties.keys.toSet();
+                debugPrint('>>> [Supabase] ℹ️ Colunas reais de estoque_historico detectadas (${colunas.length}): ${colunas.join(', ')}');
+                return colunas;
+              }
+            }
+          }
+        }
+      } else {
+        debugPrint('>>> [Supabase] ⚠️ Falha ao detectar colunas de estoque_historico (HTTP ${resp.statusCode})');
+      }
+    } catch (e) {
+      debugPrint('>>> [Supabase] ⚠️ Falha ao detectar colunas de estoque_historico: $e');
+    }
+    // Fallback conservador: colunas conhecidas do schema (sem custo_unitario/
+    // valor_custo — que ainda não existem até rodar o SUPABASE_FIX_ALL.sql).
+    return const {
+      'id', 'empresa_id', 'produto_id', 'produto_nome', 'tipo', 'quantidade',
+      'motivo', 'operador', 'data_operacao', 'created_at', 'data',
+      'updated_at', 'fornecedor_nome', 'fornecedor_id', 'observacao', 'usuario',
+    };
   }
 
   /// Realiza upsert de múltiplos itens em uma tabela (Batch)
@@ -536,32 +810,67 @@ class SupabaseService {
       // OTIMIZAÇÃO: Batching para grandes volumes
       const int batchSize = 500;
       
-      List<Map<String, dynamic>> enrichedData = data.map((map) {
-        if (table == tableEmpresas) {
-          final m = Map<String, dynamic>.from(map);
-          m.remove('telas_permitidas');
-          m.remove('observacao');
-          m.remove('cor_primaria');
-          m.remove('cor_secundaria');
-          return m;
-        }
-        return map;
-      }).toList();
+      List<Map<String, dynamic>> enrichedData = data.map((map) => _filtrarCamposLocais(table, map)).toList();
+
+      // estoque_historico: envia apenas colunas que existem no schema real
+      // (mesma proteção do upsert individual — evita PGRST204 pelas colunas
+      // de custo que ainda não existem até rodar o SUPABASE_FIX_ALL.sql).
+      if (table == SupabaseService.tableEstoqueHistorico) {
+        final colunas = await _detectarColunasEstoqueHistorico();
+        enrichedData = enrichedData
+            .map((m) => m..removeWhere((k, _) => !colunas.contains(k)))
+            .toList();
+      }
+
+      final typedData = enrichedData.map((m) => _toSafeMap(m)).toList();
       
-      if (enrichedData.length > batchSize) {
-        debugPrint('>>> [Supabase] 📦 Fracionando upsert de ${enrichedData.length} itens em lotes de $batchSize...');
-        for (int i = 0; i < enrichedData.length; i += batchSize) {
-          final end = (i + batchSize < enrichedData.length) ? i + batchSize : enrichedData.length;
-          final chunk = enrichedData.sublist(i, end);
+      if (typedData.length > batchSize) {
+        debugPrint('>>> [Supabase] 📦 Fracionando upsert de ${typedData.length} itens em lotes de $batchSize...');
+        for (int i = 0; i < typedData.length; i += batchSize) {
+          final end = (i + batchSize < typedData.length) ? i + batchSize : typedData.length;
+          final chunk = typedData.sublist(i, end);
           await _client.from(table).upsert(chunk).timeout(const Duration(seconds: 15));
         }
       } else {
-        await _client.from(table).upsert(enrichedData).timeout(const Duration(seconds: 15));
+        await _client.from(table).upsert(typedData).timeout(const Duration(seconds: 15));
       }
     } catch (e) {
       debugPrint('>>> [Supabase] ❌ Erro ao fazer upsertLote em $table: $e');
       rethrow;
     }
+  }
+
+  /// Normaliza uma string ISO que representa hora LOCAL (sem fuso) para UTC.
+  ///
+  /// O app grava datas locais como `2026-08-14T22:41:56.938650` (sem sufixo de
+  /// fuso). As colunas do Supabase são `timestamptz`: o Postgres interpreta a
+  /// string "naive" como UTC, deslocando tudo em -3h (horário de Brasília).
+  /// Esta normalização anexa o fuso correto (Z) ANTES de enviar, preservando o
+  /// instante real. Strings que já têm fuso (Z ou +hh:mm) são mantidas.
+  static String? _normalizarDataParaUtc(dynamic val) {
+    if (val is! String) return null;
+    final isoPattern = RegExp(r'^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}');
+    if (!isoPattern.hasMatch(val)) return null;
+    if (val.endsWith('Z') || val.contains(RegExp(r'[+-]\d{2}:?\d{2}$'))) {
+      return null; // já tem fuso explícito, não mexer
+    }
+    final parsed = DateTime.tryParse(val);
+    if (parsed == null) return null;
+    return parsed.toUtc().toIso8601String();
+  }
+
+  Map<String, dynamic> _toSafeMap(Map<String, dynamic> map) {
+    final safe = Map<String, dynamic>.from(map)
+      ..removeWhere((key, value) => value == null);
+    // Normalizar datas locais para UTC em TODAS as escritas (incluindo o
+    // sincronizador em lote, que antes pulava _filtrarCamposLocais e gravava
+    // a hora local "naive" no timestamptz do Supabase, deslocando caixas,
+    // sangrias e fechamentos em -3h a cada ciclo de sincronização).
+    for (final key in safe.keys.toList()) {
+      final novo = _normalizarDataParaUtc(safe[key]);
+      if (novo != null) safe[key] = novo;
+    }
+    return safe;
   }
 
   /// Remove um item de uma tabela por ID ou Filtros
@@ -648,6 +957,42 @@ class SupabaseService {
     }
   }
 
+  // ============ MÉTODOS DE MONITORAMENTO DE SYNC ============
+
+  /// Busca o status de sincronização mais recente de uma empresa (tabela sync_status)
+  Future<Map<String, dynamic>?> getSyncStatus(String empresaId) async {
+    try {
+      if (!isAvailable) return null;
+      final response = await _client
+          .from('sync_status')
+          .select()
+          .eq('empresa_id', empresaId)
+          .limit(1);
+      if (response.isEmpty) return null;
+      return Map<String, dynamic>.from(response.first);
+    } catch (e) {
+      debugPrint('>>> [Supabase SyncStatus] ❌ Erro ao buscar sync_status: $e');
+      return null;
+    }
+  }
+
+  /// Busca os últimos logs de sincronização de uma empresa (tabela sync_logs)
+  Future<List<Map<String, dynamic>>> getSyncLogs(String empresaId, {int limit = 50}) async {
+    try {
+      if (!isAvailable) return [];
+      final response = await _client
+          .from('sync_logs')
+          .select()
+          .eq('empresa_id', empresaId)
+          .order('created_at', ascending: false)
+          .limit(limit);
+      return List<Map<String, dynamic>>.from(response);
+    } catch (e) {
+      debugPrint('>>> [Supabase SyncLogs] ❌ Erro ao buscar sync_logs: $e');
+      return [];
+    }
+  }
+
   // ============ MÉTODOS DE STORAGE ============
 
   /// Faz upload de um arquivo para o Supabase Storage
@@ -730,3 +1075,4 @@ class SupabaseService {
     return url;
   }
 }
+

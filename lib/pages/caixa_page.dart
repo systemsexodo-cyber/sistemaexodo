@@ -10,9 +10,12 @@ import 'home_page.dart';
 import '../widgets/sync_status_widget.dart';
 import '../services/caixa_pdf_service.dart';
 import '../services/auth_service.dart';
+import '../widgets/permission_widget.dart';
 import '../models/venda_balcao.dart';
 import '../models/empresa.dart';
+import '../models/usuario.dart';
 import 'package:printing/printing.dart';
+import '../models/mesa_comanda.dart';
 
 
 /// Página de gerenciamento de caixa
@@ -28,8 +31,72 @@ class _CaixaPageState extends State<CaixaPage> {
   final DateFormat formatoData = DateFormat('dd/MM/yyyy HH:mm');
   final DateFormat formatoHora = DateFormat('HH:mm');
 
+  String? _responsavelSelecionado;
+  bool _responsavelInicializado = false;
+
+  // Filtros do Histórico de Encerramentos
+  DateTime? _filtroDataInicio;
+  DateTime? _filtroDataFim;
+  String _filtroNumeroCaixa = 'Todos';
+
   @override
   Widget build(BuildContext context) {
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final usuarioLogado = authService.usuarioAtual;
+    // Operador/funcionário sem permissão (dashboard.ver_totais) não vê o total
+    // de vendas/entradas do caixa — apenas o saldo para operar.
+    final podeVerTotais = PermissionHelper.podeVerTotais(usuarioLogado);
+    // Operador/funcionário sem permissão (caixa.ver_fluxo_caixa) não vê a tela
+    // de Fluxo de Caixa (entradas, saídas e histórico de encerramentos).
+    final podeVerFluxoCaixa = PermissionHelper.podeVerFluxoCaixa(usuarioLogado);
+
+    if (!_responsavelInicializado && usuarioLogado != null) {
+      _responsavelSelecionado = usuarioLogado.email.isNotEmpty ? usuarioLogado.email : usuarioLogado.nome;
+      dataService.responsavelAtivo = _responsavelSelecionado;
+      _responsavelInicializado = true;
+    } else if (_responsavelInicializado) {
+      dataService.responsavelAtivo = _responsavelSelecionado;
+    }
+
+    // Sem a permissão caixa.ver_fluxo_caixa, a tela de Fluxo de Caixa fica
+    // bloqueada (o operador não vê entradas, saídas nem histórico).
+    if (!podeVerFluxoCaixa) {
+      return AppTheme.appBackground(
+        child: Scaffold(
+          backgroundColor: Colors.transparent,
+          appBar: AppBar(
+            title: const Text('Fluxo de Caixa'),
+            backgroundColor: Colors.transparent,
+            elevation: 0,
+            actions: const [SyncStatusWidget()],
+          ),
+          body: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.lock_outline, color: Colors.white30, size: 56),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Acesso restrito',
+                    style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Você não tem permissão para visualizar o Fluxo de Caixa.\nSolicite a liberação ao administrador.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.white54),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
     return AppTheme.appBackground(
       child: Scaffold(
         backgroundColor: Colors.transparent,
@@ -43,9 +110,99 @@ class _CaixaPageState extends State<CaixaPage> {
           builder: (context, dataService, child) {
             final caixaAberto = dataService.caixaAberto;
             final aberturaAtual = dataService.aberturaCaixaAtual;
+            final aberturasAbertas = dataService.aberturasCaixaAbertas;
+
+            // Conjunto único de identificadores de operadores (E-mail ou Nome)
+            final Set<String> todosOperadores = {};
+            if (usuarioLogado != null) {
+              todosOperadores.add(usuarioLogado.email.isNotEmpty ? usuarioLogado.email : usuarioLogado.nome);
+            }
+            for (final f in dataService.funcionarios) {
+              final idVal = (f.email != null && f.email!.isNotEmpty) ? f.email! : f.nome;
+              if (idVal.isNotEmpty) {
+                todosOperadores.add(idVal);
+              }
+            }
+            for (final a in dataService.aberturasCaixa) {
+              if (a.responsavel != null && a.responsavel!.isNotEmpty) {
+                todosOperadores.add(a.responsavel!);
+              }
+            }
 
             return CustomScrollView(
               slivers: [
+                // 0. Dropdown de Operadores (visível para Administradores e Gerentes)
+                if (usuarioLogado != null && (usuarioLogado.isAdmin || usuarioLogado.isMaster || usuarioLogado.isGerente || usuarioLogado.email.toLowerCase() == 'user'))
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.05),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: Colors.white10),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.person_search_rounded, color: Colors.blueAccent, size: 22),
+                            const SizedBox(width: 12),
+                            const Text(
+                              'Visualizar Caixa de:',
+                              style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w500),
+                            ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: DropdownButtonHideUnderline(
+                                child: DropdownButton<String>(
+                                  dropdownColor: const Color(0xFF1E1E2E),
+                                  value: _responsavelSelecionado,
+                                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                                  icon: const Icon(Icons.arrow_drop_down, color: Colors.white70),
+                                  items: todosOperadores.map((operador) {
+                                    // Obter nome amigável para exibição (ex: se for e-mail, tenta achar o nome do funcionário correspondente)
+                                    String nomeExibicao = operador;
+                                    if (operador.contains('@')) {
+                                      final func = dataService.funcionarios.firstWhereOrNull(
+                                        (f) => f.email?.toLowerCase() == operador.toLowerCase(),
+                                      );
+                                      if (func != null) {
+                                        nomeExibicao = func.nome;
+                                      } else if (usuarioLogado != null && usuarioLogado.email.toLowerCase() == operador.toLowerCase()) {
+                                        nomeExibicao = usuarioLogado.nome;
+                                      }
+                                    }
+                                    return DropdownMenuItem<String>(
+                                      value: operador,
+                                      child: Text(nomeExibicao),
+                                    );
+                                  }).toList(),
+                                  onChanged: (val) {
+                                    if (val != null) {
+                                      setState(() {
+                                        _responsavelSelecionado = val;
+                                        dataService.responsavelAtivo = val;
+                                      });
+                                    }
+                                  },
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+
+                // 0.5. Todos os caixas abertos (um por usuário da empresa)
+                if (aberturasAbertas.isNotEmpty)
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                      child: _buildCaixasAbertosSection(dataService, aberturasAbertas, usuarioLogado),
+                    ),
+                  ),
+
                 // 1. Card de Status do Caixa
                 SliverToBoxAdapter(
                   child: Padding(
@@ -59,7 +216,7 @@ class _CaixaPageState extends State<CaixaPage> {
                   SliverToBoxAdapter(
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                      child: _buildResumoSession(dataService, aberturaAtual),
+                      child: _buildResumoSession(dataService, aberturaAtual, podeVerTotais),
                     ),
                   ),
 
@@ -115,13 +272,315 @@ class _CaixaPageState extends State<CaixaPage> {
                 ),
 
                 // 6. Lista do Histórico
-                _buildSliverHistorico(dataService),
+                // 5.5 Filtros do Histórico
+                if (dataService.fechamentosCaixa.isNotEmpty)
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                      child: _buildFiltrosHistorico(dataService),
+                    ),
+                  ),
+
+                // 6. Lista do Histórico
+                _buildSliverHistorico(dataService, podeVerTotais),
                 
                 const SliverToBoxAdapter(child: SizedBox(height: 100)),
               ],
             );
           },
         ),
+      ),
+    );
+  }
+
+  /// Seção com TODOS os caixas abertos da empresa (um por usuário).
+  ///
+  /// Operador comum (não gestor) SÓ vê os caixas abertos dele mesmo — antes a
+  /// seção listava todos os caixas de todos os usuários da empresa (ex.: o
+  /// CAIXA-037 do 'user' aparecia para o carlos, que achava que era o caixa dele).
+  Widget _buildCaixasAbertosSection(DataService ds, List<AberturaCaixa> abertas, Usuario? usuarioLogado) {
+    final ehGestor = usuarioLogado != null &&
+        (usuarioLogado.isAdmin ||
+            usuarioLogado.isMaster ||
+            usuarioLogado.isGerente ||
+            usuarioLogado.email.toLowerCase() == 'user');
+
+    // Filtro para operador: só caixas abertos do próprio operador.
+    final exibir = !ehGestor
+        ? abertas.where((ab) {
+            if (ab.responsavel == null || ab.responsavel!.trim().isEmpty) return false;
+            final idLogado = usuarioLogado!.email.isNotEmpty
+                ? usuarioLogado.email
+                : usuarioLogado.nome;
+            String norm(String s) => s.toLowerCase().trim().replaceAll(RegExp(r'[^a-z0-9@]'), '');
+            final na = norm(ab.responsavel!);
+            final nb = norm(idLogado);
+            if (na.isEmpty || nb.isEmpty) return false;
+            if (na == nb) return true;
+            final localA = na.contains('@') ? na.split('@').first : na;
+            final localB = nb.contains('@') ? nb.split('@').first : nb;
+            return localA == localB && localA.isNotEmpty;
+          }).toList()
+        : abertas;
+
+    if (exibir.isEmpty) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Icon(Icons.account_balance_wallet_rounded, color: Colors.blueAccent, size: 22),
+            const SizedBox(width: 10),
+            Text(
+              'Caixas Abertos (${exibir.length})',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 17,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        ...exibir.map((ab) => _buildCardCaixaAberto(ds, ab, ehGestor)),
+      ],
+    );
+  }
+
+  Widget _buildCardCaixaAberto(DataService ds, AberturaCaixa ab, bool ehGestor) {
+    final saldo = ds.calcularSaldoDoCaixa(ab);
+    final ehSelecionado = ds.aberturaCaixaAtual?.id == ab.id;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: ehSelecionado
+            ? Colors.blueAccent.withOpacity(0.12)
+            : Colors.white.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: ehSelecionado
+              ? Colors.blueAccent.withOpacity(0.5)
+              : Colors.white.withOpacity(0.1),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            ehSelecionado ? Icons.lock_open_rounded : Icons.account_balance_rounded,
+            color: ehSelecionado ? Colors.blueAccent : Colors.white54,
+            size: 26,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${ab.numero}${ab.responsavel != null && ab.responsavel!.isNotEmpty ? ' • ${ab.responsavel}' : ''}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Saldo: ${formatoMoeda.format(saldo)}',
+                  style: const TextStyle(
+                    color: Colors.greenAccent,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Aberto ${formatoData.format(ab.dataAbertura.toLocal())}',
+                  style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 11),
+                ),
+              ],
+            ),
+          ),
+          if (ehGestor)
+            IconButton(
+              icon: const Icon(Icons.visibility, color: Colors.blueAccent, size: 20),
+              tooltip: 'Ver o que foi vendido neste caixa',
+              onPressed: () => _mostrarVendasDoCaixa(ds, ab),
+            ),
+          IconButton(
+            icon: const Icon(Icons.stop_circle_outlined, color: Colors.redAccent, size: 20),
+            tooltip: 'Fechar este caixa',
+            onPressed: () => _mostrarDialogoFechamento(context, ds, aberturaParam: ab),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Abre o modal com as vendas realizadas em um caixa (o que foi vendido)
+  void _mostrarVendasDoCaixa(DataService ds, AberturaCaixa ab,
+      {FechamentoCaixa? fechamento}) {
+    // Para caixas ja fechados, limita as vendas ate o encerramento
+    final vendas = ds.getVendasDoCaixa(ab)
+        .where((v) => fechamento == null ||
+            v.dataVenda.isBefore(
+                fechamento!.dataFechamento.add(const Duration(seconds: 1))))
+        .toList();
+    final totalVendas = vendas.fold<double>(0.0, (sum, v) => sum + v.valorTotal);
+    final nomeResp = ab.responsavel ?? '—';
+    final titulo = 'Vendas do ' + ab.numero;
+    final subtitulo = nomeResp +
+        ' • ' + vendas.length.toString() + ' venda(s) • Total: ' +
+        formatoMoeda.format(totalVendas);
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF1A1F26),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) {
+        return SizedBox(
+          height: MediaQuery.of(sheetContext).size.height * 0.8,
+          child: Column(
+            children: [
+              Container(
+                margin: const EdgeInsets.only(top: 12),
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                child: Row(
+                  children: [
+                    const Icon(Icons.shopping_basket_rounded, color: Colors.blueAccent, size: 26),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(titulo,
+                              style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                          Text(subtitulo,
+                              style: TextStyle(color: Colors.white54, fontSize: 13)),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close, color: Colors.white54),
+                      onPressed: () => Navigator.pop(sheetContext),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(color: Colors.white12, height: 1),
+              Expanded(
+                child: vendas.isEmpty
+                    ? Center(
+                        child: Text('Nenhuma venda neste caixa',
+                            style: TextStyle(color: Colors.white30)),
+                      )
+                    : ListView.builder(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        itemCount: vendas.length,
+                        itemBuilder: (context, i) {
+                          final v = vendas[i];
+                          return _buildCardVendaModal(v);
+                        },
+                      ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildCardVendaModal(VendaBalcao v) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Venda ' + v.numero,
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: Colors.blueAccent.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  _formatForma(v.tipoPagamento),
+                  style: const TextStyle(color: Colors.blueAccent, fontSize: 11, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            formatoData.format(v.dataVenda.toLocal()),
+            style: TextStyle(color: Colors.white38, fontSize: 11),
+          ),
+          const SizedBox(height: 10),
+          ...v.itens.map((item) {
+            final qtdStr = item.quantidade % 1 == 0
+                ? item.quantidade.toStringAsFixed(0)
+                : item.quantidade.toStringAsFixed(1);
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      item.nome,
+                      style: const TextStyle(color: Colors.white70, fontSize: 13),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(qtdStr + 'x', style: const TextStyle(color: Colors.white38, fontSize: 12)),
+                  const SizedBox(width: 12),
+                  Text(
+                    formatoMoeda.format(item.subtotal),
+                    style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
+                  ),
+                ],
+              ),
+            );
+          }),
+          const Divider(color: Colors.white12, height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              const Text('Total', style: TextStyle(color: Colors.white38, fontSize: 12)),
+              const SizedBox(width: 12),
+              Text(
+                formatoMoeda.format(v.valorTotal),
+                style: const TextStyle(color: Colors.greenAccent, fontSize: 15, fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -162,7 +621,7 @@ class _CaixaPageState extends State<CaixaPage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        aberto ? 'Caixa Operacional' : 'Caixa Encerrado',
+                        aberto ? 'Caixa Operacional${abertura?.responsavel != null ? " • Operador: ${abertura!.responsavel}" : ""}' : 'Caixa Encerrado',
                         style: TextStyle(
                           color: aberto ? Colors.blueAccent : Colors.white60,
                           fontWeight: FontWeight.bold,
@@ -181,7 +640,7 @@ class _CaixaPageState extends State<CaixaPage> {
                       ),
                       if (aberto && abertura != null)
                         Text(
-                          'Iniciado em: ${formatoHora.format(abertura.dataAbertura)}',
+                          'Iniciado em: ${formatoData.format(abertura.dataAbertura.toLocal())}',
                           style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 13),
                         ),
                     ],
@@ -243,17 +702,39 @@ class _CaixaPageState extends State<CaixaPage> {
         ),
       );
 
-      // Obter vendas entre abertura e fechamento
-      final vendas = dataService.vendasBalcao.where((v) {
-        return (v.dataVenda.isAfter(ab.dataAbertura) || v.dataVenda.isAtSameMomentAs(ab.dataAbertura)) &&
-               v.dataVenda.isBefore(fe.dataFechamento.add(const Duration(seconds: 1)));
-      }).toList();
+      // Obter vendas entre abertura e fechamento (somente do MESMO operador do
+      // caixa e dentro da janela [abertura, fechamento] — getVendasDoCaixa já
+      // aplica ambos os filtros). Isso impede vendas de outros caixas/usuários
+      // de aparecerem na impressão do fechamento.
+      final vendas = dataService.getVendasDoCaixa(ab)
+          .where((v) => v.dataVenda
+              .isBefore(fe.dataFechamento.add(const Duration(seconds: 1))))
+          .toList();
+
+      final List<String> canceladosExtra = [];
+      for (var mesa in dataService.mesasComandas) {
+        final cancelados = mesa.itens.where((i) {
+          if (i.status != StatusItem.cancelado) return false;
+          if (i.dataModificacao == null) return false;
+          return (i.dataModificacao!.isAfter(ab.dataAbertura) ||
+                  i.dataModificacao!.isAtSameMomentAs(ab.dataAbertura)) &&
+                 i.dataModificacao!.isBefore(fe.dataFechamento.add(const Duration(seconds: 1)));
+        }).toList();
+        if (cancelados.isNotEmpty) {
+          final labelOrigem = mesa.tipo == TipoControle.comanda ? '[COMANDA]' : '[MESA]';
+          final canceladosInfo = cancelados.map((i) => 
+            '${i.quantidade.toStringAsFixed(0)}x ${i.nome} por ${i.usuarioModificou ?? "Sistema"}'
+          ).join(', ');
+          canceladosExtra.add('$labelOrigem ${mesa.numero} (Aberta): $canceladosInfo');
+        }
+      }
 
       await CaixaPDFService.gerarPDFTermico(
         abertura: ab,
         fechamento: fe,
         empresa: empresa,
         vendas: vendas,
+        itensDeletadosExtra: canceladosExtra,
       ).then((pdfData) async {
         if (context.mounted) Navigator.pop(context);
         
@@ -365,15 +846,15 @@ class _CaixaPageState extends State<CaixaPage> {
     );
   }
 
-  Widget _buildResumoSession(DataService ds, AberturaCaixa abertura) {
-    // Pegar totais reais do DS
-    final sangrias = ds.getSangriasCaixaAtual();
-    final suprimentos = ds.getSuprimentosCaixaAtual();
+  Widget _buildResumoSession(DataService ds, AberturaCaixa abertura, bool podeVerTotais) {
+    // Pegar totais reais do DS (apenas do caixa em questão)
+    final sangrias = ds.getSangriasDoCaixa(abertura);
+    final suprimentos = ds.getSuprimentosDoCaixa(abertura);
     final totalSangrias = sangrias.fold(0.0, (sum, s) => sum + s.valor);
     final totalSuprimentos = suprimentos.fold(0.0, (sum, s) => sum + s.valor);
 
-    // Calcular Vendas
-    final vendas = ds.vendasBalcao.where((v) => !v.cancelado && (v.dataVenda.isAfter(abertura.dataAbertura) || v.dataVenda.isAtSameMomentAs(abertura.dataAbertura)));
+    // Calcular Vendas (do caixa em questão)
+    final vendas = ds.getVendasDoCaixa(abertura);
     final totalVendas = vendas.fold(0.0, (sum, v) => sum + v.valorTotal);
 
     // Saldo Atual
@@ -381,11 +862,16 @@ class _CaixaPageState extends State<CaixaPage> {
 
     return Row(
       children: [
-        _buildStatCard('Entradas', formatoMoeda.format(totalVendas + totalSuprimentos), Icons.trending_up, Colors.greenAccent),
-        const SizedBox(width: 12),
+        // Total de vendas/entradas: oculto para quem não pode ver totais
+        if (podeVerTotais)
+          _buildStatCard('Entradas', formatoMoeda.format(totalVendas + totalSuprimentos), Icons.trending_up, Colors.greenAccent),
+        if (podeVerTotais) const SizedBox(width: 12),
+        // O saldo inclui o total vendido (valorInicial + vendas + suprimentos - sangrias),
+        // então também fica oculto para quem não pode ver totais.
+        if (podeVerTotais)
+          _buildStatCard('Saldo', formatoMoeda.format(saldo), Icons.account_balance_wallet, Colors.blueAccent),
+        if (podeVerTotais) const SizedBox(width: 12),
         _buildStatCard('Saídas', formatoMoeda.format(totalSangrias), Icons.trending_down, Colors.redAccent),
-        const SizedBox(width: 12),
-        _buildStatCard('Saldo', formatoMoeda.format(saldo), Icons.account_balance_wallet, Colors.blueAccent),
       ],
     );
   }
@@ -485,7 +971,7 @@ class _CaixaPageState extends State<CaixaPage> {
                   style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
                 ),
                 subtitle: Text(
-                  '${formatoHora.format(m['data'] as DateTime)} • ${m['forma']}',
+                  '${formatoHora.format((m['data'] as DateTime).toLocal())} • ${m['forma']}',
                   style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 11),
                 ),
                 trailing: Text(
@@ -505,17 +991,208 @@ class _CaixaPageState extends State<CaixaPage> {
     );
   }
 
-  Widget _buildSliverHistorico(DataService ds) {
-    final hist = ds.aberturasCaixa.map((ab) {
+  /// Barra de filtros do Histórico de Encerramentos (data e número do caixa)
+  Widget _buildFiltrosHistorico(DataService ds) {
+    final numerosCaixa = ds.aberturasCaixa
+        .map((a) => a.numero)
+        .where((n) => n.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
+    final temFiltro = _filtroNumeroCaixa != 'Todos' ||
+        _filtroDataInicio != null || _filtroDataFim != null;
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.filter_alt_rounded, color: Colors.blueAccent, size: 20),
+              const SizedBox(width: 8),
+              const Text('Filtrar por:',
+                  style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w600)),
+              const Spacer(),
+              if (temFiltro)
+                TextButton.icon(
+                  onPressed: () => setState(() {
+                    _filtroNumeroCaixa = 'Todos';
+                    _filtroDataInicio = null;
+                    _filtroDataFim = null;
+                  }),
+                  icon: const Icon(Icons.close, size: 16, color: Colors.white54),
+                  label: const Text('Limpar',
+                      style: TextStyle(color: Colors.white54, fontSize: 12)),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              const Text('Caixa:', style: TextStyle(color: Colors.white54, fontSize: 12)),
+              const SizedBox(width: 8),
+              Expanded(
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    isExpanded: true,
+                    dropdownColor: const Color(0xFF1E1E2E),
+                    value: _filtroNumeroCaixa,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    icon: const Icon(Icons.arrow_drop_down, color: Colors.white70),
+                    items: [
+                      const DropdownMenuItem<String>(
+                          value: 'Todos', child: Text('Todos')),
+                      ...numerosCaixa.map((n) =>
+                          DropdownMenuItem<String>(value: n, child: Text(n))),
+                    ],
+                    onChanged: (v) => setState(() => _filtroNumeroCaixa = v ?? 'Todos'),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: _buildDataChip('De', _filtroDataInicio, inicial: true),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _buildDataChip('Até', _filtroDataFim, inicial: false),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDataChip(String label, DateTime? valor, {required bool inicial}) {
+    return InkWell(
+      onTap: () => _selecionarDataFiltro(inicial: inicial),
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.07),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.white10),
+        ),
+        child: Row(
+          children: [
+            Text(label, style: const TextStyle(color: Colors.white38, fontSize: 12)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                valor == null
+                    ? '—'
+                    : DateFormat('dd/MM/yyyy').format(valor!),
+                style: const TextStyle(
+                    color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _selecionarDataFiltro({required bool inicial}) async {
+    final atual = inicial ? _filtroDataInicio : _filtroDataFim;
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: atual ?? DateTime.now(),
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+      helpText: inicial ? 'Data inicial' : 'Data final',
+      cancelText: 'Cancelar',
+      confirmText: 'OK',
+    );
+    if (picked != null) {
+      setState(() {
+        final dia = DateTime(picked.year, picked.month, picked.day);
+        if (inicial) {
+          _filtroDataInicio = dia;
+          if (_filtroDataFim != null && _filtroDataFim!.isBefore(dia)) {
+            _filtroDataFim = dia;
+          }
+        } else {
+          _filtroDataFim = dia;
+          if (_filtroDataInicio != null && _filtroDataInicio!.isAfter(dia)) {
+            _filtroDataInicio = dia;
+          }
+        }
+      });
+    }
+  }
+
+  Widget _buildSliverHistorico(DataService ds, bool podeVerTotais) {
+    final usuarioLogadoHist = Provider.of<AuthService>(context, listen: false).usuarioAtual;
+    final ehGestorHist = usuarioLogadoHist != null &&
+        (usuarioLogadoHist.isAdmin ||
+            usuarioLogadoHist.isMaster ||
+            usuarioLogadoHist.isGerente ||
+            usuarioLogadoHist.email.toLowerCase() == 'user');
+
+    var hist = ds.aberturasCaixa.map((ab) {
       final fe = ds.fechamentosCaixa.firstWhereOrNull((f) => f.aberturaCaixaId == ab.id);
       return MapEntry(ab, fe);
     }).where((e) => e.value != null).toList();
 
+    // Operador comum só vê os encerramentos dos PRÓPRIOS caixas — antes o
+    // histórico listava todos os caixas de todos os usuários da empresa.
+    if (!ehGestorHist && usuarioLogadoHist != null) {
+      final idLogado = usuarioLogadoHist.email.isNotEmpty
+          ? usuarioLogadoHist.email
+          : usuarioLogadoHist.nome;
+      hist = hist.where((e) {
+        final resp = e.key.responsavel;
+        if (resp == null || resp.trim().isEmpty) return false;
+        String norm(String s) => s.toLowerCase().trim().replaceAll(RegExp(r'[^a-z0-9@]'), '');
+        final na = norm(resp);
+        final nb = norm(idLogado);
+        if (na.isEmpty || nb.isEmpty) return false;
+        if (na == nb) return true;
+        final localA = na.contains('@') ? na.split('@').first : na;
+        final localB = nb.contains('@') ? nb.split('@').first : nb;
+        return localA == localB && localA.isNotEmpty;
+      }).toList();
+    }
+
+    // Aplica os filtros de número do caixa e período
+    if (_filtroNumeroCaixa != 'Todos') {
+      hist = hist.where((e) => e.key.numero == _filtroNumeroCaixa).toList();
+    }
+    if (_filtroDataInicio != null) {
+      hist = hist.where((e) => !e.key.dataAbertura.isBefore(_filtroDataInicio!)).toList();
+    }
+    if (_filtroDataFim != null) {
+      final fim = _filtroDataFim!.add(const Duration(days: 1));
+      hist = hist.where((e) => e.key.dataAbertura.isBefore(fim)).toList();
+    }
+
     hist.sort((a, b) => b.key.dataAbertura.compareTo(a.key.dataAbertura));
 
     if (hist.isEmpty) {
+      final temFiltro = _filtroNumeroCaixa != 'Todos' ||
+          _filtroDataInicio != null || _filtroDataFim != null;
       return SliverToBoxAdapter(
-        child: Center(child: Text('Nenhum fechamento passado', style: TextStyle(color: Colors.white30))),
+        child: Center(
+          child: Text(
+            temFiltro
+                ? 'Nenhum encerramento encontrado com os filtros'
+                : 'Nenhum fechamento passado',
+            style: TextStyle(color: Colors.white30),
+          ),
+        ),
       );
     }
 
@@ -525,7 +1202,7 @@ class _CaixaPageState extends State<CaixaPage> {
         delegate: SliverChildBuilderDelegate(
           (context, index) {
             final item = hist[index];
-            return _buildCardCaixaModerno(item.key, item.value!);
+            return _buildCardCaixaModerno(item.key, item.value!, ds, podeVerTotais);
           },
           childCount: hist.length,
         ),
@@ -533,7 +1210,7 @@ class _CaixaPageState extends State<CaixaPage> {
     );
   }
 
-  Widget _buildCardCaixaModerno(AberturaCaixa ab, FechamentoCaixa fe) {
+  Widget _buildCardCaixaModerno(AberturaCaixa ab, FechamentoCaixa fe, DataService ds, bool podeVerTotais) {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
@@ -548,7 +1225,7 @@ class _CaixaPageState extends State<CaixaPage> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                DateFormat('dd MMM').format(ab.dataAbertura),
+                DateFormat('dd MMM').format(ab.dataAbertura.toLocal()),
                 style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
               ),
               Container(
@@ -564,14 +1241,23 @@ class _CaixaPageState extends State<CaixaPage> {
                       fe.diferenca >= 0 ? 'Conforme' : 'Divergente',
                       style: TextStyle(color: fe.diferenca >= 0 ? Colors.greenAccent : Colors.redAccent, fontSize: 10),
                     ),
-                    const SizedBox(width: 8),
-                    IconButton(
-                      icon: const Icon(Icons.print, color: Colors.blueAccent, size: 16),
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(),
-                      onPressed: () => _imprimirFechamento(ab, fe),
-                      tooltip: 'Imprimir Fechamento',
-                    ),
+                    const SizedBox(width: 4),
+                    if (podeVerTotais)
+                      IconButton(
+                        icon: const Icon(Icons.visibility, color: Colors.blueAccent, size: 16),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                        onPressed: () => _mostrarVendasDoCaixa(ds, ab, fechamento: fe),
+                        tooltip: 'Ver vendas deste caixa',
+                      ),
+                    if (podeVerTotais)
+                      IconButton(
+                        icon: const Icon(Icons.print, color: Colors.blueAccent, size: 16),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                        onPressed: () => _imprimirFechamento(ab, fe),
+                        tooltip: 'Imprimir Fechamento',
+                      ),
                   ],
                 ),
               ),
@@ -580,9 +1266,14 @@ class _CaixaPageState extends State<CaixaPage> {
           const SizedBox(height: 12),
           Row(
             children: [
-              Expanded(child: _miniInfo('Entrada', formatoMoeda.format(fe.valorEsperado))),
-              Expanded(child: _miniInfo('Real', formatoMoeda.format(fe.valorReal))),
-              Expanded(child: _miniInfo('Dif.', formatoMoeda.format(fe.diferenca))),
+              // Entrada/Real/Dif. revelam o total vendido — ocultos para quem não
+              // pode ver totais (operador sem dashboard.ver_totais).
+              if (podeVerTotais)
+                Expanded(child: _miniInfo('Entrada', formatoMoeda.format(fe.valorEsperado))),
+              if (podeVerTotais)
+                Expanded(child: _miniInfo('Real', formatoMoeda.format(fe.valorReal))),
+              if (podeVerTotais)
+                Expanded(child: _miniInfo('Dif.', formatoMoeda.format(fe.diferenca))),
             ],
           ),
         ],
@@ -604,9 +1295,9 @@ class _CaixaPageState extends State<CaixaPage> {
   List<Map<String, dynamic>> _getMovimentacoesExt(DataService ds, AberturaCaixa ab) {
     final list = <Map<String, dynamic>>[];
 
-    // Vendas
-    for (final v in ds.vendasBalcao) {
-      if (!v.cancelado && (v.dataVenda.isAfter(ab.dataAbertura) || v.dataVenda.isAtSameMomentAs(ab.dataAbertura))) {
+    // Vendas (apenas do caixa em questão)
+    for (final v in ds.getVendasDoCaixa(ab)) {
+      if (!v.cancelado) {
         list.add({
           'data': v.dataVenda,
           'descricao': 'Venda PDV ${v.numero}',
@@ -619,7 +1310,7 @@ class _CaixaPageState extends State<CaixaPage> {
     }
 
     // Sangrias
-    for (final s in ds.getSangriasCaixaAtual()) {
+    for (final s in ds.getSangriasDoCaixa(ab)) {
       list.add({
         'data': s.data,
         'descricao': s.motivo,
@@ -631,7 +1322,7 @@ class _CaixaPageState extends State<CaixaPage> {
     }
 
     // Suprimentos
-    for (final s in ds.getSuprimentosCaixaAtual()) {
+    for (final s in ds.getSuprimentosDoCaixa(ab)) {
       list.add({
         'data': s.data,
         'descricao': s.motivo,
@@ -702,7 +1393,7 @@ class _CaixaPageState extends State<CaixaPage> {
                         ),
                       ),
                       Text(
-                        formatoData.format(abertura.dataAbertura),
+                        formatoData.format(abertura.dataAbertura.toLocal()),
                         style: TextStyle(
                           fontSize: 12,
                           color: Colors.white.withOpacity(0.6),
@@ -828,7 +1519,7 @@ class _CaixaPageState extends State<CaixaPage> {
               ),
               const SizedBox(height: 8),
               Text(
-                'Fechado em: ${formatoData.format(fechamento.dataFechamento)}',
+                'Fechado em: ${formatoData.format(fechamento.dataFechamento.toLocal())}',
                 style: TextStyle(
                   fontSize: 11,
                   color: Colors.white.withOpacity(0.5),
@@ -1037,9 +1728,20 @@ class _CaixaPageState extends State<CaixaPage> {
     );
   }
 
-  void _mostrarDialogoFechamento(BuildContext context, DataService dataService) {
-    final abertura = dataService.aberturaCaixaAtual;
+  void _mostrarDialogoFechamento(BuildContext context, DataService dataService,
+      {AberturaCaixa? aberturaParam}) {
+    final abertura = aberturaParam ?? dataService.aberturaCaixaAtual;
     if (abertura == null) return;
+
+    // Operador/funcionário sem permissão (dashboard.ver_totais) não vê os
+    // totais de vendas no fechamento do caixa. O detalhamento por forma de
+    // pagamento é controlado por uma permissão própria
+    // (caixa.ver_totais_formas_pagamento).
+    final authServiceFech = Provider.of<AuthService>(context, listen: false);
+    final podeVerTotais = PermissionHelper.podeVerTotais(authServiceFech.usuarioAtual);
+    final podeVerFormasPagamento = PermissionHelper.podeVerTotaisFormasPagamento(authServiceFech.usuarioAtual);
+    final podeVerTotalVendido = PermissionHelper.podeVerTotalVendidoFechamento(authServiceFech.usuarioAtual);
+// (ok)
 
     final valorEsperadoController = TextEditingController();
     final valorRealController = TextEditingController();
@@ -1049,11 +1751,8 @@ class _CaixaPageState extends State<CaixaPage> {
     final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
     final formatoData = DateFormat('dd/MM/yyyy HH:mm');
 
-    // Calcular valor esperado baseado nas vendas desde a abertura do caixa
-    final vendasDoCaixa = dataService.vendasBalcao.where((v) {
-      return v.dataVenda.isAfter(abertura.dataAbertura) ||
-          v.dataVenda.isAtSameMomentAs(abertura.dataAbertura);
-    }).toList();
+    // Calcular valor esperado baseado nas vendas do caixa em questão
+    final vendasDoCaixa = dataService.getVendasDoCaixa(abertura);
 
     // --- Novos cálculos para detalhamento ---
     final totaisPorForma = <TipoPagamento, double>{};
@@ -1082,7 +1781,30 @@ class _CaixaPageState extends State<CaixaPage> {
     }
 
     // Processar Pedidos (Mesas/Comandas)
+    // IMPORTANTE: só entram pedidos do MESMO operador do caixa (responsavel),
+    // e pagamentos feitos dentro da janela [abertura, agora]. Sem esse filtro,
+    // pagamentos de mesas de OUTROS operadores eram somados no caixa errado.
+    final respCaixa = abertura.responsavel?.trim().toLowerCase();
+    final temRespCaixa = respCaixa != null && respCaixa.isNotEmpty;
+    bool mesmoOperador(String? a, String? b) {
+      if (a == null || b == null) return false;
+      String norm(String s) => s.toLowerCase().trim().replaceAll(RegExp(r'[^a-z0-9@]'), '');
+      final na = norm(a), nb = norm(b);
+      if (na.isEmpty || nb.isEmpty) return false;
+      if (na == nb) return true;
+      final localA = na.contains('@') ? na.split('@').first : na;
+      final localB = nb.contains('@') ? nb.split('@').first : nb;
+      return localA == localB && localA.isNotEmpty;
+    }
+
     for (var p in dataService.pedidos) {
+      // Filtro de operador do pedido (vendedorNome), quando o caixa é nominado.
+      if (temRespCaixa) {
+        final operadorPedido = p.vendedorNome;
+        if (operadorPedido == null || operadorPedido.trim().isEmpty) continue;
+        if (!mesmoOperador(operadorPedido, respCaixa)) continue;
+      }
+
       for (var pag in p.pagamentos) {
         if (!pag.recebido || pag.dataRecebimento == null) continue;
         if (pag.dataRecebimento!.isBefore(abertura.dataAbertura)) continue;
@@ -1111,9 +1833,9 @@ class _CaixaPageState extends State<CaixaPage> {
       }
     }
 
-    // Calcular sangrias e suprimentos do caixa atual
-    final sangriasCaixaAtual = dataService.getSangriasCaixaAtual();
-    final suprimentosCaixaAtual = dataService.getSuprimentosCaixaAtual();
+    // Calcular sangrias e suprimentos do caixa em questão
+    final sangriasCaixaAtual = dataService.getSangriasDoCaixa(abertura);
+    final suprimentosCaixaAtual = dataService.getSuprimentosDoCaixa(abertura);
     final totalSangrias = sangriasCaixaAtual.fold(0.0, (sum, s) => sum + s.valor);
     final totalSuprimentos = suprimentosCaixaAtual.fold(0.0, (sum, s) => sum + s.valor);
     
@@ -1128,8 +1850,15 @@ class _CaixaPageState extends State<CaixaPage> {
     valorEsperadoController.text = valorEsperadoCalculado.toStringAsFixed(2).replaceAll('.', ',');
     valorRealController.text = valorEsperadoCalculado.toStringAsFixed(2).replaceAll('.', ',');
 
+    bool salvandoFechamento = false;
+
     Future<void> fecharCaixa(BuildContext dialogContext, {required bool imprimir}) async {
       print('>>> [Fechar Caixa] ========== BOTÃO PRESSIONADO ==========');
+      if (salvandoFechamento) {
+        print('>>> [Fechar Caixa] Ignorando clique duplicado...');
+        return;
+      }
+      salvandoFechamento = true;
 
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1186,10 +1915,12 @@ class _CaixaPageState extends State<CaixaPage> {
           valorReal: valorReal,
           observacao: observacaoController.text.trim().isEmpty ? null : observacaoController.text.trim(),
           responsavel: responsavel,
+          abertura: abertura,
         );
 
         if (fechamento == null) {
           print('>>> [Fechar Caixa] ERRO: Fechamento retornou null');
+          salvandoFechamento = false;
           if (context.mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
@@ -1246,22 +1977,23 @@ class _CaixaPageState extends State<CaixaPage> {
                 actions: [
                   Column(
                     children: [
-                      SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton.icon(
-                          onPressed: () async {
-                            await _imprimirFechamento(abertura, fechamento);
-                            if (context.mounted) Navigator.pop(context);
-                          },
-                          icon: const Icon(Icons.print),
-                          label: const Text('IMPRIMIR FECHAMENTO', style: TextStyle(fontWeight: FontWeight.bold)),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.blueAccent,
-                            padding: const EdgeInsets.symmetric(vertical: 16),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      if (podeVerTotais)
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            onPressed: () async {
+                              await _imprimirFechamento(abertura, fechamento);
+                              if (context.mounted) Navigator.pop(context);
+                            },
+                            icon: const Icon(Icons.print),
+                            label: const Text('IMPRIMIR FECHAMENTO', style: TextStyle(fontWeight: FontWeight.bold)),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.blueAccent,
+                              padding: const EdgeInsets.symmetric(vertical: 16),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            ),
                           ),
                         ),
-                      ),
                       const SizedBox(height: 8),
                       SizedBox(
                         width: double.infinity,
@@ -1288,6 +2020,7 @@ class _CaixaPageState extends State<CaixaPage> {
         }
       } catch (e) {
         print('>>> [Fechar Caixa] EXCEÇÃO: $e');
+        salvandoFechamento = false;
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Erro ao fechar caixa: $e'), backgroundColor: Colors.red),
@@ -1396,6 +2129,20 @@ class _CaixaPageState extends State<CaixaPage> {
                           ),
                         ],
                       ),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          const Icon(Icons.event, color: Colors.white54, size: 14),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Aberto em: ${formatoData.format(abertura.dataAbertura.toLocal())}',
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.7),
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
                       const SizedBox(height: 12),
                       Row(
                         children: [
@@ -1407,40 +2154,46 @@ class _CaixaPageState extends State<CaixaPage> {
                               Colors.orangeAccent,
                             ),
                           ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: _buildEstatsCard(
-                              'Total em Itens',
-                              formatoMoeda.format(valorTotalProdutos),
-                              Icons.monetization_on,
-                              Colors.greenAccent,
+                          // Total em R$ dos itens: só para quem pode ver totais
+                          if (podeVerTotais) const SizedBox(width: 12),
+                          if (podeVerTotais)
+                            Expanded(
+                              child: _buildEstatsCard(
+                                'Total em Itens',
+                                formatoMoeda.format(valorTotalProdutos),
+                                Icons.monetization_on,
+                                Colors.greenAccent,
+                              ),
                             ),
-                          ),
                         ],
                       ),
-                      const SizedBox(height: 16),
-                      const Text(
-                        'Resumo por Forma de Pagamento',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      // Lista de formas de pagamento
-                      ...totaisPorForma.entries.where((e) => e.value > 0).map((e) {
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 6),
-                          child: _buildInfoRow(
-                            e.key.nome,
-                            formatoMoeda.format(e.value),
-                            e.key.icone,
-                            e.key.cor,
+                      // Total por forma de pagamento: permissão própria
+                      // (caixa.ver_totais_formas_pagamento)
+                      if (podeVerFormasPagamento) ...[
+                        const SizedBox(height: 16),
+                        const Text(
+                          'Resumo por Forma de Pagamento',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
                           ),
-                        );
-                      }).toList(),
-                      const SizedBox(height: 12),
+                        ),
+                        const SizedBox(height: 8),
+                        // Lista de formas de pagamento
+                        ...totaisPorForma.entries.where((e) => e.value > 0).map((e) {
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 6),
+                            child: _buildInfoRow(
+                              e.key.nome,
+                              formatoMoeda.format(e.value),
+                              e.key.icone,
+                              e.key.cor,
+                            ),
+                          );
+                        }).toList(),
+                        const SizedBox(height: 12),
+                      ],
                       const Divider(color: Colors.white10),
                       const SizedBox(height: 12),
                       _buildInfoRow(
@@ -1456,6 +2209,7 @@ class _CaixaPageState extends State<CaixaPage> {
                         Icons.account_balance_wallet,
                         Colors.grey,
                       ),
+                      if (podeVerTotalVendido) ...[
                       const SizedBox(height: 16),
                       Container(
                         padding: const EdgeInsets.all(8),
@@ -1490,6 +2244,7 @@ class _CaixaPageState extends State<CaixaPage> {
                           ],
                         ),
                       ),
+                      ],
                     ],
                   ),
                 ),
@@ -1519,9 +2274,10 @@ class _CaixaPageState extends State<CaixaPage> {
                           ),
                         ],
                       ),
-                      const SizedBox(height: 16),
-                      TextFormField(
-                        controller: valorEsperadoController,
+                      if (podeVerTotalVendido) ...[
+                        const SizedBox(height: 16),
+                        TextFormField(
+                          controller: valorEsperadoController,
                         style: const TextStyle(color: Colors.white, fontSize: 16),
                         decoration: InputDecoration(
                           labelText: 'Valor Esperado (R\$)',
@@ -1556,10 +2312,11 @@ class _CaixaPageState extends State<CaixaPage> {
                           if (valor == null || valor < 0) {
                             return 'Valor inválido';
                           }
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 16),
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: 16),
+                      ],
                       TextFormField(
                         controller: valorRealController,
                         style: const TextStyle(color: Colors.white, fontSize: 16),

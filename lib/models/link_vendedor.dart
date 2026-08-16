@@ -28,20 +28,20 @@ class LinkVendedor {
 
   factory LinkVendedor.fromMap(Map<String, dynamic> map) {
     return LinkVendedor(
-      id: map['id'] as String,
+      id: map['id']?.toString() ?? '',
       funcionarioId: map['funcionarioId'] as String,
       funcionarioNome: map['funcionarioNome'] as String,
       codigoLink: map['codigoLink'] as String,
       urlCompleta: map['urlCompleta'] as String,
-      percentualComissao: (map['percentualComissao'] ?? 10.0).toDouble(),
+      percentualComissao: double.tryParse(map['percentualComissao']?.toString() ?? '') ?? 10.0,
       ativo: map['ativo'] ?? true,
-      totalVendas: map['totalVendas'] ?? 0,
-      totalComissao: (map['totalComissao'] ?? 0.0).toDouble(),
+      totalVendas: int.tryParse(map['totalVendas']?.toString() ?? '') ?? 0,
+      totalComissao: double.tryParse(map['totalComissao']?.toString() ?? '') ?? 0.0,
       createdAt: map['createdAt'] != null
-          ? DateTime.parse(map['createdAt'] as String)
+          ? (map['createdAt'] is DateTime ? map['createdAt'] as DateTime : DateTime.parse(map['createdAt'].toString()))
           : DateTime.now(),
       updatedAt: map['updatedAt'] != null
-          ? DateTime.parse(map['updatedAt'] as String)
+          ? (map['updatedAt'] is DateTime ? map['updatedAt'] as DateTime : DateTime.parse(map['updatedAt'].toString()))
           : DateTime.now(),
     );
   }

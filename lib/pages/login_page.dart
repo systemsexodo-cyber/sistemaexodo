@@ -7,6 +7,9 @@ import 'package:google_fonts/google_fonts.dart';
 import '../theme.dart';
 import 'home_page.dart';
 import 'selecionar_empresa_page.dart';
+import 'bloqueio_mensalidade_page.dart';
+import '../models/empresa.dart';
+import '../services/data_service.dart';
 import '../services/app_update_service.dart';
 
 /// Página de login do sistema
@@ -40,10 +43,63 @@ class _LoginPageState extends State<LoginPage> {
     if (!mounted) return;
 
     if (sucesso) {
+      final usuario = authService.usuarioAtual;
+      final email = usuario?.email.toLowerCase() ?? '';
+      final isMaster = usuario != null && (email == 'user' || email == 'admin' || email == 'suporte');
+
+      // Se for o usuário Master / Suporte, entra DIRETO na tela do Portal Êxodo (SelecionarEmpresaPage)
+      if (isMaster) {
+        Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const SelecionarEmpresaPage()));
+        return;
+      }
+
+      // Para demais usuários (ex: Silvia):
+      final dataService = Provider.of<DataService>(context, listen: false);
+      final empresaAtual = authService.empresaAtual;
+
+      if (empresaAtual != null) {
+        final motivo = empresaAtual.verificarMotivoBloqueio(
+          ultimaValidacaoOnline: dataService.ultimaValidacaoOnline,
+          ultimaDataExecucao: dataService.ultimaDataExecucao,
+          limiteDiasOffline: 5,
+        );
+        if (motivo != MotivoBloqueioEmpresa.nenhum && !dataService.liberacaoProvisoriaAtiva) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => BloqueioMensalidadePage(
+                configs: empresaAtual.configuracoes ?? {},
+                motivoBloqueio: motivo,
+              ),
+            ),
+          );
+          return;
+        }
+      }
+
       final empresasDoUsuario = authService.getEmpresasDoUsuario();
-      if (empresasDoUsuario.isNotEmpty) {
+      if (empresasDoUsuario.length > 1) {
         Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const SelecionarEmpresaPage()));
       } else {
+        // FIX: usuários não-master com uma única empresa (ex: carlos) iam direto
+        // para a HomePage sem que o DataService carregasse os dados da empresa.
+        // Quem fazia esse carregamento era o AuthWrapper (definirEmpresaAtual),
+        // mas o pushReplacement abaixo substitui o AuthWrapper na pilha de rotas,
+        // então a lógica dele nunca rodava e as listas abriam vazias na primeira
+        // entrada. Aqui garantimos o carregamento ANTES de navegar.
+        final empresaSelecionada = authService.empresaAtual;
+        if (empresaSelecionada != null && dataService.currentEmpresaId != empresaSelecionada.id) {
+          dataService.setEmpresaAtual(empresaSelecionada);
+          if (mounted) setState(() => _isLoading = true);
+          try {
+            await dataService.definirEmpresaAtual(empresaSelecionada.id).timeout(
+              const Duration(seconds: 30),
+            );
+          } catch (e) {
+            debugPrint('>>> [Login] ⚠️ Erro ao carregar dados da empresa: $e');
+          }
+          if (mounted) setState(() => _isLoading = false);
+        }
         Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const HomePage()));
       }
     } else {

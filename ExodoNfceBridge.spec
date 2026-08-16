@@ -23,12 +23,43 @@ hiddenimports = [
 tmp = collect_all('pynfe')
 datas += tmp[0]; binaries += tmp[1]; hiddenimports += tmp[2]
 
+# Coletar cffi e _cffi_backend (obrigatório para cryptography/signxml em PyInstaller)
+tmp = collect_all('_cffi_backend')
+datas += tmp[0]; binaries += tmp[1]; hiddenimports += tmp[2]
+
+tmp = collect_all('cffi')
+datas += tmp[0]; binaries += tmp[1]; hiddenimports += tmp[2]
+
+tmp = collect_all('cryptography')
+datas += tmp[0]; binaries += tmp[1]; hiddenimports += tmp[2]
+
+tmp = collect_all('signxml')
+datas += tmp[0]; binaries += tmp[1]; hiddenimports += tmp[2]
+
 # Coletar lxml
 tmp = collect_all('lxml')
 datas += tmp[0]; binaries += tmp[1]; hiddenimports += tmp[2]
 
 # Coletar uvicorn
 tmp = collect_all('uvicorn')
+datas += tmp[0]; binaries += tmp[1]; hiddenimports += tmp[2]
+
+# Coletar PIL (extensão nativa _imaging obrigatória para a bandeja/pystray)
+tmp = collect_all('PIL')
+datas += tmp[0]; binaries += tmp[1]; hiddenimports += tmp[2]
+
+# Coletar pydantic_core (extensão nativa obrigatória do pydantic v2)
+tmp = collect_all('pydantic_core')
+datas += tmp[0]; binaries += tmp[1]; hiddenimports += tmp[2]
+
+# Coletar pydantic e fastapi (dependências do FastAPI)
+tmp = collect_all('pydantic')
+datas += tmp[0]; binaries += tmp[1]; hiddenimports += tmp[2]
+
+tmp = collect_all('starlette')
+datas += tmp[0]; binaries += tmp[1]; hiddenimports += tmp[2]
+
+tmp = collect_all('fastapi')
 datas += tmp[0]; binaries += tmp[1]; hiddenimports += tmp[2]
 
 # Ícones para a bandeja

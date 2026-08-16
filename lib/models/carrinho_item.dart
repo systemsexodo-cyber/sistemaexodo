@@ -14,6 +14,10 @@ class CarrinhoItem {
 
   // Campos específicos de produto
   final String? unidade;
+  // Forma de venda: 'unidade' ou 'caixa' (para exibição correta no carrinho)
+  final String? unidadeVenda;
+  // Quantidade de unidades baixadas por item vendido (ex.: caixa com 12 un.)
+  final double? quantidadeBaixa;
   final int? estoqueDisponivel;
 
   // Campos específicos de serviço
@@ -36,6 +40,8 @@ class CarrinhoItem {
     this.quantidade = 1,
     DateTime? adicionadoEm,
     this.unidade,
+    this.unidadeVenda,
+    this.quantidadeBaixa,
     this.estoqueDisponivel,
     this.valorAdicional,
     this.descricaoAdicional,
@@ -73,6 +79,8 @@ class CarrinhoItem {
       preco: precoFinal,
       quantidade: quantidade,
       unidade: produto.unidade,
+      unidadeVenda: produto.unidadeVenda,
+      quantidadeBaixa: produto.quantidadeBaixa,
       estoqueDisponivel: estoqueFinal?.toInt(),
       variacoesSelecionadas: variacoesSelecionadas,
       pesoGramas: produto.pesoGramas,
@@ -122,6 +130,8 @@ class CarrinhoItem {
       'quantidade': quantidade,
       'adicionadoEm': adicionadoEm.toIso8601String(),
       'unidade': unidade,
+      'unidadeVenda': unidadeVenda,
+      'quantidadeBaixa': quantidadeBaixa,
       'estoqueDisponivel': estoqueDisponivel,
       'valorAdicional': valorAdicional,
       'descricaoAdicional': descricaoAdicional,
@@ -132,7 +142,7 @@ class CarrinhoItem {
 
   factory CarrinhoItem.fromMap(Map<String, dynamic> map) {
     return CarrinhoItem(
-      id: map['id'] as String,
+      id: map['id']?.toString() ?? '',
       tipo: map['tipo'] as String,
       itemId: map['itemId'] as String,
       nome: map['nome'] as String,
@@ -143,6 +153,10 @@ class CarrinhoItem {
           ? DateTime.parse(map['adicionadoEm'] as String)
           : DateTime.now(),
       unidade: map['unidade'] as String?,
+      unidadeVenda: map['unidadeVenda'] as String?,
+      quantidadeBaixa: map['quantidadeBaixa'] != null
+          ? (map['quantidadeBaixa'] as num).toDouble()
+          : null,
       estoqueDisponivel: map['estoqueDisponivel'] as int?,
       valorAdicional: map['valorAdicional'] != null
           ? (map['valorAdicional'] as num).toDouble()
@@ -167,6 +181,8 @@ class CarrinhoItem {
     int? quantidade,
     DateTime? adicionadoEm,
     String? unidade,
+    String? unidadeVenda,
+    double? quantidadeBaixa,
     int? estoqueDisponivel,
     double? valorAdicional,
     String? descricaoAdicional,
@@ -183,6 +199,8 @@ class CarrinhoItem {
       quantidade: quantidade ?? this.quantidade,
       adicionadoEm: adicionadoEm ?? this.adicionadoEm,
       unidade: unidade ?? this.unidade,
+      unidadeVenda: unidadeVenda ?? this.unidadeVenda,
+      quantidadeBaixa: quantidadeBaixa ?? this.quantidadeBaixa,
       estoqueDisponivel: estoqueDisponivel ?? this.estoqueDisponivel,
       valorAdicional: valorAdicional ?? this.valorAdicional,
       descricaoAdicional: descricaoAdicional ?? this.descricaoAdicional,

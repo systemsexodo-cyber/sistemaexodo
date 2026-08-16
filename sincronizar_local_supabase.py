@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
 Sincronizador Bidirecional Otimizado: PostgreSQL Local <-> Supabase
 
@@ -35,7 +35,7 @@ if sys.stderr is None:
         def flush(self, *args, **kwargs): pass
     sys.stderr = DummyWriter()
 
-VERSION = "1.0.10"
+VERSION = "1.0.11"
 
 
 class Colors:
@@ -49,7 +49,14 @@ class Colors:
 
 def print_log(msg, color=Colors.RESET):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{timestamp}] {color}{msg}{Colors.RESET}")
+    # Nunca deixar print_log quebrar o ciclo por problemas de encoding do console
+    try:
+        print(f"[{timestamp}] {color}{msg}{Colors.RESET}")
+    except Exception:
+        try:
+            print(f"[{timestamp}] {msg}")
+        except Exception:
+            pass
     try:
         if getattr(sys, 'frozen', False):
             base_dir = os.path.dirname(sys.executable)
@@ -129,6 +136,7 @@ def get_http_session():
 
 # Prioridades de Sincronização: 1=Alta, 2=Média, 3=Baixa
 TABELA_PRIORIDADES = {
+    'empresas': 0,  # SEMPRE primeiro: pedidos/vendas referenciam empresa_id (evita falhas de FK)
     'vendas_balcao': 1,
     'pedidos': 1,
     'aberturas_caixa': 1,
@@ -137,6 +145,7 @@ TABELA_PRIORIDADES = {
     'suprimentos_caixa': 1,
     'ordens_servico': 1,
     'nfces': 1,
+    'nfes': 1,
     'estoque_historico': 3,
     'produto_historico': 3,
     'imagens': 3,
@@ -422,7 +431,7 @@ def upload_tabela(conn, table_name, supabase_url, api_key):
                                     cur_conf.execute("SET LOCAL exodo.sync_mode = 'off'")
                                     cur_conf.execute("""
                                         INSERT INTO exodo_sync_conflitos (id, tabela, registro_id, dados_locais, dados_nuvem, resolvido, empresa_id)
-                                        VALUES (%s, %s, %s, %s, %s, FALSE, %s)
+                                        VALUES (%s, %s, %s, %s, %s, TRUE, %s)
                                         ON CONFLICT (id) DO NOTHING
                                     """, (
                                         conflict_id,
@@ -529,6 +538,11 @@ def upload_tabela(conn, table_name, supabase_url, api_key):
 def _serializar_valor_com_tipo(val, col_type):
     """Converte valores para tipos compatíveis com PostgreSQL com base no tipo da coluna."""
     if val is None:
+        return None
+
+    # Strings vazias em colunas nao-textuais quebram o INSERT no PostgreSQL.
+    # Converte para NULL, mantendo vazios em colunas de texto.
+    if isinstance(val, str) and val.strip() == '' and 'TEXT' not in col_type and 'CHAR' not in col_type and 'JSON' not in col_type:
         return None
         
     if 'JSON' in col_type:
@@ -731,6 +745,79 @@ def atualizar_status_no_supabase(conn, supabase_url, api_key):
         requests.post(url, json=payload, headers=headers, timeout=10)
     except Exception as e:
         print_log(f"[SYNC] Erro ao atualizar status no Supabase: {e}", Colors.RED)
+
+def reportar_sync_status_supabase(conn, supabase_url, api_key, enviados=0, recebidos=0, erro=None):
+    """Reporta o status de sync no Supabase (sync_status + sync_logs) para o portal.
+    Atualiza o status de cada empresa local para que o portal mostre o sync real,
+    mesmo quando o app Flutter nao esta aberto."""
+    try:
+        pc_name = platform.node()
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "apikey": api_key,
+            "Content-Type": "application/json",
+            "Prefer": "resolution=merge-duplicates"
+        }
+        agora_iso = datetime.now(timezone.utc).isoformat()
+
+        # Listar empresas locais (o sincronizador baixa dados de todas)
+        empresas = []
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT id, cnpj FROM public.empresas")
+                empresas = cur.fetchall()
+        except Exception as e:
+            print_log(f"[SYNC] Erro ao listar empresas locais: {e}", Colors.RED)
+
+        if not empresas:
+            return
+
+        # 1. Atualizar sync_status (upsert por empresa_id)
+        for emp_id, cnpj in empresas:
+            try:
+                payload = {
+                    "empresa_id": str(emp_id),
+                    "pc_name": pc_name,
+                    "ultima_sincronizacao": agora_iso,
+                    "ultimo_erro": erro if erro else "",
+                    "ultimo_erro_data": agora_iso if erro else None,
+                    "fila_pendente": 0,
+                    "versao_app": VERSION,
+                    "online": True,
+                    "online_data": agora_iso,
+                    "updated_at": agora_iso,
+                }
+                url = f"{supabase_url.rstrip('/')}/rest/v1/sync_status"
+                r = requests.post(url, json=payload, headers=headers, timeout=10)
+                if r.status_code not in (200, 201, 204):
+                    print_log(f"[SYNC] sync_status empresa {str(emp_id)[:8]}: HTTP {r.status_code}", Colors.YELLOW)
+            except Exception as e:
+                print_log(f"[SYNC] Erro ao atualizar sync_status {str(emp_id)[:8]}: {e}", Colors.RED)
+
+        # 2. Registrar evento em sync_logs somente quando houver movimento ou erro
+        if (enviados + recebidos) > 0 or erro:
+            for emp_id, cnpj in empresas:
+                try:
+                    evento = 'erro_sync' if erro else 'sync_ok'
+                    if erro:
+                        detalhes = f"Erro no sincronizador: {erro[:300]}"
+                    else:
+                        detalhes = f"Sincronizador: {recebidos} recebidos, {enviados} enviados"
+                    payload = {
+                        "empresa_id": str(emp_id),
+                        "pc_name": pc_name,
+                        "evento": evento,
+                        "detalhes": detalhes,
+                        "erro": erro if erro else "",
+                        "created_at": agora_iso,
+                    }
+                    url = f"{supabase_url.rstrip('/')}/rest/v1/sync_logs"
+                    requests.post(url, json=payload, headers=headers, timeout=10)
+                except Exception as e:
+                    print_log(f"[SYNC] Erro ao registrar sync_logs {str(emp_id)[:8]}: {e}", Colors.RED)
+    except Exception as e:
+        print_log(f"[SYNC] Erro ao reportar status no Supabase: {e}", Colors.RED)
+
 
 def executar_atualizacao_completa(supabase_url, api_key):
     headers = {
@@ -937,7 +1024,7 @@ def executar_ciclo_sincronizacao(conn, supabase_url, api_key, on_state_change=No
               AND LEFT(table_name, 1) <> '_'
               AND LEFT(table_name, 3) <> 'vw_'
               AND LEFT(table_name, 5) <> 'view_'
-              AND table_name NOT IN ('cache_dados', 'bridge_status', 'bridge_commands', 'exodo_sync_conflitos')
+              AND table_name NOT IN ('cache_dados', 'bridge_status', 'bridge_commands', 'exodo_sync_conflitos', 'exodo_config')
             ORDER BY table_name
         """)
         tabelas = [r[0] for r in cur.fetchall()]
@@ -975,10 +1062,16 @@ def executar_ciclo_sincronizacao(conn, supabase_url, api_key, on_state_change=No
         try:
             tabela, rows, sucesso = f.result()
             if sucesso:
-                salvar_ultima_sync_tabela(conn, tabela, agora_iso)
                 if rows:
                     recebidos = gravar_registros_locais(conn, tabela, rows)
                     total_recebidos += recebidos
+                    # So avanca o timestamp da tabela se a gravacao teve sucesso.
+                    # Se TODOS os registros falharam, o timestamp NAO avanca e a
+                    # proxima rodada tenta de novo (evita perder registros).
+                    if recebidos > 0:
+                        salvar_ultima_sync_tabela(conn, tabela, agora_iso)
+                else:
+                    salvar_ultima_sync_tabela(conn, tabela, agora_iso)
             else:
                 print_log(f"[SYNC] Falha ao baixar dados da tabela {tabela}", Colors.YELLOW)
         except Exception as e:
@@ -999,6 +1092,9 @@ def executar_ciclo_sincronizacao(conn, supabase_url, api_key, on_state_change=No
             on_state_change('conflict')
         else:
             on_state_change('online')
+
+    # Reportar status de sync para o portal (sync_status + sync_logs no Supabase)
+    reportar_sync_status_supabase(conn, supabase_url, api_key, total_enviados, total_recebidos)
 
     return total_enviados, total_recebidos
 
@@ -1062,6 +1158,7 @@ def run_sync_loop(interval_seconds=10, status_callback=None):
     print_log(f"Configuracao: Espera reativa ate {interval_seconds}s (LISTEN/NOTIFY ativo)")
 
     last_sync_time = 0
+    last_full_sync_time = 0
     while True:
         agora = time.time()
         # Cooldown de 5 segundos para evitar CPU loops frenéticos se offline ou falha no socket select.select
@@ -1077,6 +1174,33 @@ def run_sync_loop(interval_seconds=10, status_callback=None):
                 connect_timeout=10
             )
 
+            # Verificar se existem alterações locais pendentes na fila de envio
+            has_pending = False
+            with conn.cursor() as cur:
+                # Verificar se a tabela _exodo_sync_log existe e se tem linhas
+                cur.execute("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables 
+                        WHERE table_schema = 'public' 
+                        AND table_name = '_exodo_sync_log'
+                    );
+                """)
+                tabela_existe = cur.fetchone()[0]
+                if tabela_existe:
+                    cur.execute("SELECT 1 FROM _exodo_sync_log LIMIT 1;")
+                    has_pending = cur.fetchone() is not None
+
+            tempo_desde_ultimo = agora - last_full_sync_time
+            if not has_pending and tempo_desde_ultimo < interval_seconds:
+                # Nenhuma alteração local pendente e ainda dentro do intervalo periódico. Pula o ciclo.
+                conn.close()
+                aguardar_notificacao_ou_timeout(
+                    db_host=db_host, db_port=db_port, db_name=db_name,
+                    db_user=db_user, db_password=db_password, timeout=interval_seconds
+                )
+                continue
+
+            last_full_sync_time = agora
             print_log("--- Inicio do ciclo de sincronizacao ---", Colors.BLUE)
             
             def log_state(state):
@@ -1111,7 +1235,7 @@ def run_sync_loop(interval_seconds=10, status_callback=None):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Sincronizador Bidirecional Local <-> Supabase')
-    parser.add_argument('--interval', type=int, default=10, help='Intervalo em segundos (padrao: 10)')
+    parser.add_argument('--interval', type=int, default=60, help='Intervalo em segundos (padrao: 60)')
     args = parser.parse_args()
     try:
         run_sync_loop(args.interval)

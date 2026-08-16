@@ -9,6 +9,11 @@ class ItemPedido {
   final String? idVariacao; // ID da variação (se for o caso)
   final String? fornecedorNome; // Fornecedor do produto
   final List<AdicionalProduto> adicionais;
+  // Forma de venda escolhida no PDV (unidade/caixa/pacote/saco) e sua baixa
+  final String? unidadeVenda;
+  final double? quantidadeBaixa;
+  // Preço base ANTES das promoções (para exibir o desconto no cupom/recibo)
+  final double? precoSemPromocao;
 
   ItemPedido({
     required this.id,
@@ -19,11 +24,14 @@ class ItemPedido {
     this.idVariacao,
     this.fornecedorNome,
     List<AdicionalProduto>? adicionais,
+    this.unidadeVenda,
+    this.quantidadeBaixa,
+    this.precoSemPromocao,
   }) : adicionais = adicionais ?? [];
 
   factory ItemPedido.fromMap(Map<String, dynamic> map) {
     return ItemPedido(
-      id: map['id'] ?? '',
+      id: map['id']?.toString() ?? '',
       nome: map['nome'] ?? '',
       quantidade: (map['quantidade'] as num?)?.toDouble() ?? 0.0,
       preco: (map['preco'] ?? 0).toDouble(),
@@ -33,6 +41,13 @@ class ItemPedido {
       adicionais: (map['adicionais'] as List<dynamic>?)
           ?.map((a) => AdicionalProduto.fromMap(a as Map<String, dynamic>))
           .toList() ?? [],
+      unidadeVenda: map['unidadeVenda'],
+      quantidadeBaixa: map['quantidadeBaixa'] != null
+          ? (map['quantidadeBaixa'] as num).toDouble()
+          : null,
+      precoSemPromocao: map['precoSemPromocao'] != null
+          ? (map['precoSemPromocao'] as num).toDouble()
+          : null,
     );
   }
 
@@ -46,6 +61,9 @@ class ItemPedido {
       'idVariacao': idVariacao,
       'fornecedorNome': fornecedorNome,
       'adicionais': adicionais.map((a) => a.toMap()).toList(),
+      'unidadeVenda': unidadeVenda,
+      'quantidadeBaixa': quantidadeBaixa,
+      'precoSemPromocao': precoSemPromocao,
     };
   }
 }

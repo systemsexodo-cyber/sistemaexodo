@@ -5,33 +5,81 @@ import 'package:path/path.dart' as p;
 import 'package:sistema_exodo_novo/services/supabase_service.dart';
 
 class AppUpdateService {
-  static const String currentAppVersion = "1.0.10";
+  static const String currentAppVersion = "1.0.35";
 
-  /// Verifica se há uma nova versão do aplicativo no Supabase
-  static Future<Map<String, dynamic>?> verificarAtualizacao() async {
+  /// Verifica se há uma nova versão do aplicativo no Supabase (Direcionada por Empresa ou Global)
+  static Future<Map<String, dynamic>?> verificarAtualizacao({
+    String? empresaId,
+    Map<String, dynamic>? configsEmpresa,
+  }) async {
     if (kIsWeb) return null; // Web não se auto-atualiza via arquivo local
     if (!Platform.isWindows) return null; // Apenas Windows por enquanto
 
     try {
-      final response = await SupabaseService.instance.select(
-        'bridge_config',
-        filters: {'id': 'app_latest'},
-      );
+      // 1. PRIMEIRO: Checar no Supabase se há atualização direcionada para esta empresa
+      if (empresaId != null && empresaId.isNotEmpty) {
+        final respEmpresa = await SupabaseService.instance.select(
+          'bridge_config',
+          filters: {'id': 'app_update_$empresaId'},
+        ).timeout(const Duration(seconds: 3));
 
-      if (response.isEmpty) return null;
+        if (respEmpresa.isNotEmpty) {
+          final config = respEmpresa.first;
+          final String vRemota = config['version'] ?? '';
+          final String downloadUrl = config['download_url'] ?? '';
+          final bool ativa = config['ativo'] ?? true;
 
-      final config = response.first;
-      final String nuverVersion = config['version'] ?? '';
-      final String downloadUrl = config['download_url'] ?? '';
+          if (ativa && vRemota.isNotEmpty && downloadUrl.isNotEmpty) {
+            if (_deveAtualizar(currentAppVersion, vRemota)) {
+              return {
+                'version': _limparVersao(vRemota),
+                'download_url': downloadUrl,
+                'is_direcionada': true,
+              };
+            }
+          }
+        }
+      }
 
-      if (nuverVersion.isEmpty || downloadUrl.isEmpty) return null;
+      // 2. SEGUNDO: Checar nas configurações da empresa local
+      if (configsEmpresa != null && configsEmpresa['atualizacao_ativa'] == true) {
+        final String vRemota = configsEmpresa['versao_alvo'] ?? '';
+        final String downloadUrl = configsEmpresa['update_download_url'] ?? '';
 
-      // Comparar versões de forma semântica simples
-      if (_deveAtualizar(currentAppVersion, nuverVersion)) {
-        return {
-          'version': nuverVersion,
-          'download_url': downloadUrl,
-        };
+        if (vRemota.isNotEmpty && downloadUrl.isNotEmpty) {
+          if (_deveAtualizar(currentAppVersion, vRemota)) {
+            return {
+              'version': _limparVersao(vRemota),
+              'download_url': downloadUrl,
+              'is_direcionada': true,
+            };
+          }
+        }
+      }
+
+      // 3. TERCEIRO: Fallback para versão global no Supabase se a empresa permitir atualização global
+      final bool bloqueiaAtualizacaoGlobal = configsEmpresa?['bloquear_atualizacao_global'] == true;
+      if (!bloqueiaAtualizacaoGlobal) {
+        final response = await SupabaseService.instance.select(
+          'bridge_config',
+          filters: {'id': 'app_latest'},
+        ).timeout(const Duration(seconds: 3));
+
+        if (response.isNotEmpty) {
+          final config = response.first;
+          final String nuverVersion = config['version'] ?? '';
+          final String downloadUrl = config['download_url'] ?? '';
+
+          if (nuverVersion.isNotEmpty && downloadUrl.isNotEmpty) {
+            if (_deveAtualizar(currentAppVersion, nuverVersion)) {
+              return {
+                'version': _limparVersao(nuverVersion),
+                'download_url': downloadUrl,
+                'is_direcionada': false,
+              };
+            }
+          }
+        }
       }
     } catch (e) {
       debugPrint('>>> [AppUpdateService] Erro ao verificar atualização: $e');
@@ -39,9 +87,20 @@ class AppUpdateService {
     return null;
   }
 
+  /// Remove o prefixo de força '!' da versão, se presente
+  static String _limparVersao(String v) => v.startsWith('!') ? v.substring(1) : v;
+
   /// Compara se a versão remota é maior que a versão local
+  /// Se a versão remota começar com '!', força a atualização (suporta downgrade)
   static bool _deveAtualizar(String local, String remota) {
     try {
+      // Verificar se é atualização forçada (downgrade prefixado com '!')
+      final bool isForced = remota.startsWith('!');
+      if (isForced) {
+        remota = remota.substring(1); // Remove o prefixo '!'
+        return true; // Força a atualização independente da versão
+      }
+
       final localParts = local.split('.').map((e) => int.tryParse(e) ?? 0).toList();
       final remotaParts = remota.split('.').map((e) => int.tryParse(e) ?? 0).toList();
 

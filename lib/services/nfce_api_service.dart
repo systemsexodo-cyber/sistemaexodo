@@ -37,6 +37,49 @@ class NFCeApiService {
     String? cpfCnpjConsumidor,
     String? nomeConsumidor,
     String? observacoes,
+    // Novos campos adicionados para manter a assinatura com NFCeServiceBase
+    String? vendaId,
+    String? vendaNumero,
+    bool ambienteHomologacao = true,
+    int? serie,
+    int? modelo,
+    int? numero,
+    String? destLogradouro,
+    String? destNumero,
+    String? destComplemento,
+    String? destBairro,
+    String? destMunicipio,
+    String? destUf,
+    String? destCep,
+    String? destCodMunicipio,
+    String? destTelefone,
+    String? destEmail,
+    String? destIe,
+    int? finalidade,
+    String? naturezaOperacao,
+    String? chaveReferenciada,
+    double? valorFrete,
+    double? valorSeguro,
+    double? outrasDespesas,
+    int? modFrete,
+    String? transpNome,
+    String? transpCnpjCpf,
+    String? transpInscEst,
+    String? transpEndereco,
+    String? transpMunicipio,
+    String? transpUf,
+    String? transpPlaca,
+    String? transpPlacaUf,
+    double? transpQtdVolumes,
+    String? transpEspecie,
+    double? transpPesoBruto,
+    double? transpPesoLiquido,
+    double? icmsReducaoBc,
+    double? icmsBaseCalculo,
+    double? icmsAliquota,
+    double? icmsValor,
+    double? creditoAliquota,
+    double? creditoValor,
   }) async {
     try {
       debugPrint('>>> [NFCeApi] Iniciando emissão via API...');
@@ -109,7 +152,7 @@ class NFCeApiService {
     final itens = <Map<String, dynamic>>[];
     for (final produto in produtos) {
       final quantidade = quantidades[produto.id] ?? 1.0;
-      final valorUnitario = produto.precoAtual;
+      final valorUnitario = produto.aplicarPromocoes(produto.preco, quantidade: quantidade);
       final valorTotalItem = valorUnitario * quantidade;
 
       String cfopFinal = produto.cfop?.replaceAll(RegExp(r'[^0-9]'), '') ?? '5102';
@@ -202,10 +245,15 @@ class NFCeApiService {
         serie: data['serie'] as String? ?? '1',
         protocolo: protocolo,
         status: 'autorizada',
-        xml: xml,
+        xmlEnviado: xml,
         qrCode: qrCode,
         dataEmissao: DateTime.now(),
         empresaId: empresa.id,
+        valorTotal: 0.0,
+        itens: [],
+        pagamentos: [],
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
       );
     } else {
       throw Exception('NFC-e não autorizada: ${data['mensagem'] ?? status}');

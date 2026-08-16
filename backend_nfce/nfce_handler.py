@@ -1,4 +1,4 @@
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 import base64
 import os
 import re
@@ -7,9 +7,17 @@ import uuid
 import hashlib
 import requests
 import urllib3
-from datetime import datetime
+from datetime import datetime, timezone
 from lxml import etree
 from pynfe.processamento.comunicacao import ComunicacaoSefaz as OriginalComunicacaoSefaz
+
+def _get_val(obj, key, default=None):
+    """Obtem um valor de um atributo do objeto de forma segura, com fallback."""
+    if obj is None:
+        return default
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
 
 class ComunicacaoSefaz(OriginalComunicacaoSefaz):
     def _post(self, url, xml, timeout=None):
@@ -93,6 +101,7 @@ from pynfe.entidades.emitente import Emitente
 from pynfe.entidades.cliente import Cliente
 from pynfe.entidades.produto import Produto
 from pynfe.entidades.notafiscal import NotaFiscal, NotaFiscalProduto
+from pynfe.entidades.transportadora import Transportadora
 from pynfe.entidades.fonte_dados import FonteDados
 # Monkeypatch para evitar erros de atributos faltando no pynfe 0.6.5
 NotaFiscalProduto.ind_total = 1
@@ -146,13 +155,70 @@ NotaFiscalProduto.imposto_importacao_valor_despesas_aduaneiras = Decimal('0.00')
 NotaFiscalProduto.imposto_importacao_valor = Decimal('0.00')
 NotaFiscalProduto.imposto_importacao_valor_iof = Decimal('0.00')
 
+def corrigir_blocos_icms_simples(xml_element):
+    """Corrige o bug do pynfe 0.6.5 na serialização dos blocos do Simples Nacional.
+
+    O pynfe gera o bloco <ICMSSN102> para CSOSN 103/300/400 (e <ICMSSN202> para
+    203), mas o schema da NF-e 4.00 exige que o nome do bloco corresponda ao CSOSN
+    (ex: CSOSN 400 deve estar dentro de <ICMSSN400>). Esta função percorre cada
+    <ICMS> e renomeia o bloco filho conforme o valor real do <CSOSN>.
+    """
+    ns = "http://www.portalfiscal.inf.br/nfe"
+    for icms_tag in xml_element.iter():
+        tag_icms = icms_tag.tag.split('}')[-1] if '}' in icms_tag.tag else icms_tag.tag
+        if tag_icms != 'ICMS':
+            continue
+        for bloco in list(icms_tag):
+            tag_name = bloco.tag.split('}')[-1] if '}' in bloco.tag else bloco.tag
+            if not tag_name.startswith('ICMSSN'):
+                continue
+            csosn_el = bloco.find(f"{{{ns}}}CSOSN")
+            if csosn_el is None:
+                csosn_el = bloco.find("CSOSN")
+            if csosn_el is None or csosn_el.text is None:
+                continue
+            csosn_val = str(csosn_el.text).strip()
+            bloco_esperado = f"ICMSSN{csosn_val}"
+            if tag_name != bloco_esperado:
+                print(f"[FIX] Bloco ICMS renomeado: {tag_name} -> {bloco_esperado} (CSOSN {csosn_val})")
+                if '}' in bloco.tag:
+                    bloco.tag = f"{{{ns}}}{bloco_esperado}"
+                else:
+                    bloco.tag = bloco_esperado
+
+
 def fix_xml_namespaces(element, ns):
     """Garante que todos os elementos usem o namespace correto e protege tags obrigatórias."""
     if not element.tag.startswith('{'):
         element.tag = f"{{{ns}}}{element.tag}"
     
+    # Inserir indIntermed se estivermos no elemento ide
+    tag_name_element = element.tag.split('}')[-1] if '}' in element.tag else element.tag
+    if tag_name_element == 'ide':
+        ind_intermed_tag = None
+        proc_emi_tag = None
+        for child in element:
+            t_name = child.tag.split('}')[-1] if '}' in child.tag else child.tag
+            if t_name == 'indIntermed':
+                ind_intermed_tag = child
+            elif t_name == 'procEmi':
+                proc_emi_tag = child
+        
+        if ind_intermed_tag is None:
+            new_tag = etree.Element(f"{{{ns}}}indIntermed" if ns in element.tag else "indIntermed")
+            new_tag.text = "0"
+            if proc_emi_tag is not None:
+                proc_emi_index = element.index(proc_emi_tag)
+                element.insert(proc_emi_index, new_tag)
+            else:
+                element.append(new_tag)
+                
     # Tags que NUNCA devem ser removidas (obrigatórias pelo Schema NFe/NFCe 4.00)
-    protected_tags = ['cMunFG', 'vTroco', 'nItem', 'detPag', 'pag', 'total', 'ICMSTot', 'imposto']
+    protected_tags = [
+        'cMunFG', 'vTroco', 'nItem', 'detPag', 'pag', 'total', 'ICMSTot', 'imposto',
+        'NCM', 'cEAN', 'cEANTrib', 'CFOP', 'uCom', 'uTrib', 'cProd', 'xProd',
+        'qCom', 'vUnCom', 'vProd', 'qTrib', 'vUnTrib', 'indTot'
+    ]
     
     for child in list(element):
         tag_name = child.tag.split('}')[-1] if '}' in child.tag else child.tag
@@ -164,6 +230,15 @@ def fix_xml_namespaces(element, ns):
                 # Se for obrigatória e estiver nula, colocar pelo menos uma string vazia ou valor padrão
                 child.text = ""
                 if tag_name == 'vTroco': child.text = "0.00"
+                elif tag_name == 'NCM': child.text = "00000000"
+                elif tag_name in ['cEAN', 'cEANTrib']: child.text = "SEM GTIN"
+                elif tag_name == 'CFOP': child.text = "5102"
+                elif tag_name in ['uCom', 'uTrib']: child.text = "UN"
+                elif tag_name in ['qCom', 'qTrib']: child.text = "1.0000"
+                elif tag_name in ['vUnCom', 'vUnTrib']: child.text = "0.00"
+                elif tag_name == 'vProd': child.text = "0.00"
+                elif tag_name == 'cProd': child.text = "COD"
+                elif tag_name == 'indTot': child.text = "1"
         else:
             fix_xml_namespaces(child, ns)
 
@@ -313,8 +388,10 @@ def _new_gerar_qrcode(self, token, csc, xml, online=True, return_qr=False):
         vNF_hex = vICMS_hex = dhEmi_hex = digVal_hex = ""
 
     if online:
-        url_to_hash = "{}|{}|{}|{}|{}|{}|{}|{}".format(
-            chave, VERSAO_QRCODE, tpamb, dhEmi_hex, vNF_hex, vICMS_hex, digVal_hex, cIdToken
+        # SP e a maioria dos estados usam o formato de 5 parâmetros no QR Code 2.00 Online
+        # chave|versao|ambiente|cIdToken
+        url_to_hash = "{}|{}|{}|{}".format(
+            chave, VERSAO_QRCODE, tpamb, str(token).strip()
         )
         string_hash = url_to_hash + csc
         hash_qr = hashlib.sha1(string_hash.encode()).hexdigest().upper()
@@ -328,13 +405,15 @@ def _new_gerar_qrcode(self, token, csc, xml, online=True, return_qr=False):
         full_url = "{}?{}".format(url_base, raw_url_params)
         
         supl = etree.SubElement(nfe, "infNFeSupl")
-        etree.SubElement(supl, "qrCode").text = full_url
+        etree.SubElement(supl, "qrCode").text = etree.CDATA(full_url)
         url_chave = NFCE.get(uf, {}).get('consulta', 'https://www.nfce.fazenda.sp.gov.br/consulta')
         if uf == "SP" and tpamb == "2":
             url_chave = "https://www.homologacao.nfce.fazenda.sp.gov.br/consulta"
             
         etree.SubElement(supl, "urlChave").text = url_chave
         
+        if return_qr:
+            return nfe, full_url
         return nfe
 
 SerializacaoQrcode.gerar_qrcode = _new_gerar_qrcode
@@ -450,6 +529,179 @@ class MockFonteDados:
         pass
 
 
+def adicionar_ibscbs_xml(xml_element, ns_nfe):
+    dets = xml_element.findall(f".//{{{ns_nfe}}}det")
+    if not dets:
+        dets = xml_element.findall(".//det")
+        
+    total_bc = Decimal("0.00")
+    total_ibs_uf = Decimal("0.00")
+    total_ibs_mun = Decimal("0.00")
+    total_ibs = Decimal("0.00")
+    total_cbs = Decimal("0.00")
+    
+    for det in dets:
+        prod = det.find(f"{{{ns_nfe}}}prod")
+        if prod is None:
+            prod = det.find("prod")
+        if prod is None:
+            continue
+            
+        v_prod_el = prod.find(f"{{{ns_nfe}}}vProd")
+        if v_prod_el is None:
+            v_prod_el = prod.find("vProd")
+        if v_prod_el is None:
+            continue
+            
+        v_prod = Decimal(v_prod_el.text)
+        
+        v_bc = v_prod
+        v_ibs_uf = (v_bc * Decimal("0.001")).quantize(Decimal("0.01"))
+        v_ibs_mun = Decimal("0.00")
+        v_ibs = v_ibs_uf + v_ibs_mun
+        v_cbs = (v_bc * Decimal("0.009")).quantize(Decimal("0.01"))
+        
+        total_bc += v_bc
+        total_ibs_uf += v_ibs_uf
+        total_ibs_mun += v_ibs_mun
+        total_ibs += v_ibs
+        total_cbs += v_cbs
+        
+        imposto = det.find(f"{{{ns_nfe}}}imposto")
+        if imposto is None:
+            imposto = det.find("imposto")
+        if imposto is None:
+            continue
+            
+        ibscbs = etree.SubElement(imposto, f"{{{ns_nfe}}}IBSCBS")
+        etree.SubElement(ibscbs, f"{{{ns_nfe}}}CST").text = "000"
+        etree.SubElement(ibscbs, f"{{{ns_nfe}}}cClassTrib").text = "000001"
+        
+        g_ibscbs = etree.SubElement(ibscbs, f"{{{ns_nfe}}}gIBSCBS")
+        etree.SubElement(g_ibscbs, f"{{{ns_nfe}}}vBC").text = f"{v_bc:.2f}"
+        
+        g_ibs_uf = etree.SubElement(g_ibscbs, f"{{{ns_nfe}}}gIBSUF")
+        etree.SubElement(g_ibs_uf, f"{{{ns_nfe}}}pIBSUF").text = "0.1000"
+        etree.SubElement(g_ibs_uf, f"{{{ns_nfe}}}vIBSUF").text = f"{v_ibs_uf:.2f}"
+        
+        g_ibs_mun = etree.SubElement(g_ibscbs, f"{{{ns_nfe}}}gIBSMun")
+        etree.SubElement(g_ibs_mun, f"{{{ns_nfe}}}pIBSMun").text = "0.0000"
+        etree.SubElement(g_ibs_mun, f"{{{ns_nfe}}}vIBSMun").text = f"{v_ibs_mun:.2f}"
+        
+        etree.SubElement(g_ibscbs, f"{{{ns_nfe}}}vIBS").text = f"{v_ibs:.2f}"
+        
+        g_cbs = etree.SubElement(g_ibscbs, f"{{{ns_nfe}}}gCBS")
+        etree.SubElement(g_cbs, f"{{{ns_nfe}}}pCBS").text = "0.9000"
+        etree.SubElement(g_cbs, f"{{{ns_nfe}}}vCBS").text = f"{v_cbs:.2f}"
+        
+    total = xml_element.find(f".//{{{ns_nfe}}}total")
+    if total is None:
+        total = xml_element.find("total")
+    if total is not None:
+        ibscbs_tot = etree.SubElement(total, f"{{{ns_nfe}}}IBSCBSTot")
+        etree.SubElement(ibscbs_tot, f"{{{ns_nfe}}}vBCIBSCBS").text = f"{total_bc:.2f}"
+        
+        g_ibs = etree.SubElement(ibscbs_tot, f"{{{ns_nfe}}}gIBS")
+        g_ibs_uf_tot = etree.SubElement(g_ibs, f"{{{ns_nfe}}}gIBSUF")
+        etree.SubElement(g_ibs_uf_tot, f"{{{ns_nfe}}}vDif").text = "0.00"
+        etree.SubElement(g_ibs_uf_tot, f"{{{ns_nfe}}}vDevTrib").text = "0.00"
+        etree.SubElement(g_ibs_uf_tot, f"{{{ns_nfe}}}vIBSUF").text = f"{total_ibs_uf:.2f}"
+        
+        g_ibs_mun_tot = etree.SubElement(g_ibs, f"{{{ns_nfe}}}gIBSMun")
+        etree.SubElement(g_ibs_mun_tot, f"{{{ns_nfe}}}vDif").text = "0.00"
+        etree.SubElement(g_ibs_mun_tot, f"{{{ns_nfe}}}vDevTrib").text = "0.00"
+        etree.SubElement(g_ibs_mun_tot, f"{{{ns_nfe}}}vIBSMun").text = f"{total_ibs_mun:.2f}"
+        
+        etree.SubElement(g_ibs, f"{{{ns_nfe}}}vIBS").text = f"{total_ibs:.2f}"
+        etree.SubElement(g_ibs, f"{{{ns_nfe}}}vCredPres").text = "0.00"
+        etree.SubElement(g_ibs, f"{{{ns_nfe}}}vCredPresCondSus").text = "0.00"
+        
+        g_cbs_tot = etree.SubElement(ibscbs_tot, f"{{{ns_nfe}}}gCBS")
+        etree.SubElement(g_cbs_tot, f"{{{ns_nfe}}}vDif").text = "0.00"
+        etree.SubElement(g_cbs_tot, f"{{{ns_nfe}}}vDevTrib").text = "0.00"
+        etree.SubElement(g_cbs_tot, f"{{{ns_nfe}}}vCBS").text = f"{total_cbs:.2f}"
+        etree.SubElement(g_cbs_tot, f"{{{ns_nfe}}}vCredPres").text = "0.00"
+        etree.SubElement(g_cbs_tot, f"{{{ns_nfe}}}vCredPresCondSus").text = "0.00"
+        
+        etree.SubElement(total, f"{{{ns_nfe}}}vNFTot").text = f"{total_bc:.2f}"
+
+
+def adicionar_produto_com_icms(nota_fiscal, item, emp, descricao=None, cfop_sugerido=None, desconto=None):
+    """
+    Adiciona um produto/serviço à nota fiscal aplicando a tributação de ICMS
+    conforme o regime tributário (CRT) da empresa:
+
+      - CRT 3 (Regime Normal): usa CST (padrão 00, ex: CFOP 5102/CST 00) e monta
+        o bloco ICMS completo (modBC/vBC/pICMS/vICMS — obrigatórios no schema 4.00).
+      - CRT 1/2 (Simples Nacional): usa CSOSN (padrão 102, ex: CFOP 5102/CSOSN 102),
+        sem destaque de ICMS.
+
+    [desconto] é o valor (R$) do desconto deste item (vDesc do XML). Quando
+    informado, o pynfe emite <vDesc> no produto e subtrai do total da nota.
+    Para o Regime Normal, a base de cálculo do ICMS passa a ser líquida
+    (vProd − vDesc), conforme o schema 4.00.
+
+    Retorna o NotaFiscalProduto criado (para testes/inspeção).
+    """
+    regime_normal = str(getattr(emp, 'crt', '1') or '1') == '3'
+    csosn_atual = str(getattr(item, 'icms_csosn', '102') or '102').strip()
+    cst_atual = str(getattr(item, 'icms_cst', '00') or '00').strip()
+    cfop_atual = str(cfop_sugerido or getattr(item, 'cfop', '5102') or '5102').replace('.', '').strip()
+    desconto_item = Decimal(str(desconto or 0)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+    valor_total_bruto = Decimal(str(item.valor_total)).quantize(Decimal('0.01'))
+    # Garantir que o desconto do item nunca seja maior que o valor do item
+    if desconto_item > valor_total_bruto:
+        desconto_item = valor_total_bruto
+
+    # Inteligência Fiscal: Auto-correção de CFOP para ST (Double Check no Backend)
+    if (csosn_atual == '500' or cst_atual == '60') and (cfop_atual in ['5101', '5102']):
+        cfop_final = '5405'
+        print(f">>> [FISCAL] Corrigindo CFOP item {item.codigo}: {cfop_atual} -> {cfop_final} (ST detectada)")
+    else:
+        cfop_final = cfop_atual
+
+    p_nfe = nota_fiscal.adicionar_produto_servico(
+        codigo=item.codigo,
+        descricao=descricao or item.descricao,
+        ncm=item.ncm,
+        cfop=cfop_final,
+        unidade_comercial='UN',
+        quantidade_comercial=Decimal(str(item.quantidade)).quantize(Decimal('0.0001')),
+        valor_unitario_comercial=Decimal(str(item.valor_unitario)).quantize(Decimal('0.0000001')),
+        valor_total_bruto=valor_total_bruto,
+        unidade_tributavel='UN',
+        quantidade_tributavel=Decimal(str(item.quantidade)).quantize(Decimal('0.0001')),
+        valor_unitario_tributavel=Decimal(str(item.valor_unitario)).quantize(Decimal('0.0000001')),
+        ean='SEM GTIN',
+        ean_tributavel='SEM GTIN',
+        icms_origem=getattr(item, 'icms_origem', 0) or 0,
+        icms_modalidade=(cst_atual or '00') if regime_normal else (csosn_atual or '102'),
+        desconto=desconto_item,
+    )
+
+    # Garantir CSOSN ou CST explicitamente (Monkeypatch do pynfe)
+    if regime_normal:
+        p_nfe.icms_csosn = ''  # garante que nada do Simples Nacional vaze
+        p_nfe.icms_cst = cst_atual or '00'
+        p_nfe.icms_modalidade = cst_atual or '00'
+        p_nfe.icms_modalidade_determinacao_bc = '3'  # 3 = Valor da operação
+        try:
+            vbc_item = Decimal(str(getattr(item, 'icms_base_calculo', None) or item.valor_total or 0.0))
+        except Exception:
+            vbc_item = Decimal(str(item.valor_total or 0.0))
+        # Base de cálculo líquida do desconto do item (vBC = vProd − vDesc)
+        vbc_item = (vbc_item - desconto_item).max(Decimal('0.00'))
+        aliq_item = Decimal(str(getattr(item, 'icms_aliquota', 0.0) or 0.0))
+        p_nfe.icms_valor_base_calculo = vbc_item.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        p_nfe.icms_aliquota = aliq_item
+        p_nfe.icms_valor = (vbc_item * aliq_item / Decimal('100')).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+    else:
+        p_nfe.icms_cst = ''
+        p_nfe.icms_csosn = csosn_atual or '102'
+        p_nfe.icms_aliquota = Decimal('0.00')
+    return p_nfe
+
+
 def emitir_nfce_pynfe(req):
     # Decodificar certificado Base64 para um arquivo temporário
     cert_data = base64.b64decode(req.empresa.certificado_base64)
@@ -462,8 +714,44 @@ def emitir_nfce_pynfe(req):
         senha_cert = req.empresa.senha_certificado
         is_homologacao = (req.empresa.ambiente == 2)
 
+        # === VALIDACAO DE VALIDADE DO CERTIFICADO (evita erro 403 da SEFAZ) ===
+        try:
+            from cryptography.hazmat.primitives.serialization import pkcs12
+            with open(caminho_cert, 'rb') as f:
+                _pfx_bytes = f.read()
+            _chave, _cert_obj, _extras = pkcs12.load_key_and_certificates(
+                _pfx_bytes, senha_cert.encode() if senha_cert else None
+            )
+            if _cert_obj is not None:
+                _validade = _cert_obj.not_valid_after
+                # cryptography retorna not_valid_after em UTC (naive) - comparar em UTC
+                if _validade.tzinfo is None:
+                    _validade = _validade.replace(tzinfo=timezone.utc)
+                _agora = datetime.now(timezone.utc)
+                if _validade < _agora:
+                    _msg_cert = (
+                        "CERTIFICADO DIGITAL VENCIDO\n"
+                        "---------------------------------------------\n"
+                        f"O certificado digital da empresa venceu em {_validade.strftime('%d/%m/%Y')}.\n\n"
+                        "Para voltar a emitir NFC-e, e necessario:\n"
+                        "1. Renovar o certificado digital A1 com a contabilidade / autoridade certificadora (ICP-Brasil).\n"
+                        "2. Enviar o novo arquivo (.pfx) e a nova senha para atualizacao no sistema.\n\n"
+                        "Assim que o certificado renovado for cadastrado, a emissao voltara a funcionar normalmente."
+                    )
+                    print(f"[CERTIFICADO] VENCIDO em {_validade.strftime('%d/%m/%Y')}")
+                    return {"status": "erro", "mensagem": _msg_cert}
+        except Exception as _e:
+            print(f"[AVISO] Nao foi possivel verificar validade do certificado: {_e}")
+
         # Emitente
         emp = req.empresa
+        # Override do Regime Tributário (CRT) enviado pelo app (1=Simples Nacional, 2=SN excesso, 3=Regime Normal)
+        crt_override = _get_val(req, 'crt', None)
+        if crt_override is not None and str(crt_override).strip() not in ('', 'None'):
+            try:
+                emp.crt = int(str(crt_override).strip())
+            except (ValueError, TypeError):
+                print(f"[AVISO] crt invalido recebido: {crt_override!r}")
         # Limpar nome do emitente:
         # 1. Remove o CNPJ que pode vir concatenado ao nome (ex: "BMJ PETSHOP LTDA 04829400000165")
         # 2. Remove caracteres especiais como ':'
@@ -489,46 +777,165 @@ def emitir_nfce_pynfe(req):
             endereco_cod_municipio=str(emp.codigo_municipio)
         )
 
-        # 3. DADOS DO DESTINATÁRIO (Opcional na NFC-e se < R$ 10k)
+        # 3. DADOS DO DESTINATÁRIO (Opcional na NFC-e se < R$ 10k; obrigatório na NF-e 55)
         destinatario = None
         if req.cpf_cliente:
-            destinatario = Cliente(
-                numero_documento=req.cpf_cliente,
-                razao_social='Consumidor Final', # Ou nome real se tiver
-                tipo_documento='CPF',
-                indicador_ie=9, # Não contribuinte
-                # Endereço é opcional na NFC-e presencial
-            )
+            # Regra E04-20 / Rejeição 598: em homologação (tpAmb=2), o xNome do
+            # destinatário deve ser EXATAMENTE o texto padrão definido pela SEFAZ
+            if is_homologacao:
+                nome_dest = "NF-E EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL"
+                print("[FISCAL] Homologação: xNome do destinatário = texto padrão SEFAZ (Regra E04-20 / Rejeição 598)")
+            else:
+                nome_dest = (getattr(req, 'nome_cliente', None) or 'Consumidor Final').strip()[:60]
+
+            # Documento do destinatário: CPF (11 dígitos) ou CNPJ (14 dígitos)
+            doc_dest_limpo = re.sub(r'[^0-9]', '', str(req.cpf_cliente or ''))
+            tipo_doc_dest = 'CNPJ' if len(doc_dest_limpo) == 14 else 'CPF'
+
+            # IE do destinatário: se informada, destinatário é contribuinte (indIEDest=1)
+            dest_ie_num = re.sub(r'[^0-9]', '', str(getattr(req, 'dest_ie', None) or ''))
+            indicador_ie_dest = 1 if dest_ie_num else 9
+
+            # Endereço do destinatário (obrigatório na NF-e modelo 55)
+            dest_logradouro = (getattr(req, 'dest_logradouro', None) or '').strip()
+            if dest_logradouro:
+                # Código do município do destinatário: usa o enviado, senão tenta
+                # resolver pelo nome+UF (fallback: código do município da empresa)
+                dest_cod_mun = re.sub(r'[^0-9]', '', str(getattr(req, 'dest_cod_municipio', None) or ''))[:7]
+                dest_municipio_txt = (getattr(req, 'dest_municipio', None) or '').strip()[:60]
+                dest_uf_txt = (getattr(req, 'dest_uf', None) or '').strip()[:2].upper()
+                if not dest_cod_mun:
+                    try:
+                        dest_cod_mun = serializacao_mod.obter_codigo_por_municipio(dest_municipio_txt, dest_uf_txt)
+                    except Exception:
+                        dest_cod_mun = re.sub(r'[^0-9]', '', str(emp.codigo_municipio or ''))[:7]
+                destinatario = Cliente(
+                    numero_documento=doc_dest_limpo,
+                    razao_social=nome_dest,
+                    tipo_documento=tipo_doc_dest,
+                    indicador_ie=indicador_ie_dest,
+                    inscricao_estadual=dest_ie_num,
+                    endereco_logradouro=dest_logradouro[:60],
+                    endereco_numero=(getattr(req, 'dest_numero', None) or 'S/N').strip()[:60],
+                    endereco_complemento=(getattr(req, 'dest_complemento', None) or '').strip()[:60],
+                    endereco_bairro=(getattr(req, 'dest_bairro', None) or '').strip()[:60],
+                    endereco_municipio=dest_municipio_txt,
+                    endereco_uf=dest_uf_txt,
+                    endereco_cep=re.sub(r'[^0-9]', '', str(getattr(req, 'dest_cep', None) or ''))[:8],
+                    endereco_cod_municipio=dest_cod_mun,
+                    endereco_telefone=re.sub(r'[^0-9]', '', str(getattr(req, 'dest_telefone', None) or ''))[:12],
+                    endereco_pais='1058',  # Brasil
+                )
+            else:
+                # NFC-e sem endereço do destinatário (consumidor presencial)
+                destinatario = Cliente(
+                    numero_documento=doc_dest_limpo,
+                    razao_social=nome_dest,
+                    tipo_documento=tipo_doc_dest,
+                    indicador_ie=indicador_ie_dest,
+                    inscricao_estadual=dest_ie_num,
+                )
 
         # Nota Fiscal
-        numero_nf_str = str(req.venda_numero or int(datetime.now().timestamp()))
-        # Limpar qualquer caractere não numérico (como 'None')
-        numero_nf_limpo = re.sub(r'[^0-9]', '', numero_nf_str)
-        if not numero_nf_limpo: numero_nf_limpo = "1"
+        numero_forcado = _get_val(req, 'numero')
+        serie_forcada_raw = str(_get_val(req, 'serie', '1') or '1')
+        modelo_nota = int(_get_val(req, 'modelo', 65) or 65)
+        # Tipo de Emissao (tpEmis): 1=Normal, 2=Contingencia FS, 3=SCAN, 4=DPEC, 5=FS-DA, 6=SVC-AN, 7=SVC-RS, 9=Off-line
+        tp_emis = int(_get_val(req, 'tp_emis', 1) or 1)
+        if tp_emis not in (1, 2, 3, 4, 5, 6, 7, 9):
+            tp_emis = 1
+        
+        # Puxa número forçado ou o número da venda
+        if numero_forcado is not None and str(numero_forcado).strip() != "" and str(numero_forcado) != "None":
+            numero_nf_limpo = re.sub(r'[^0-9]', '', str(numero_forcado))
+        else:
+            numero_nf_str = str(_get_val(req, 'venda_numero') or '')
+            numero_nf_limpo = re.sub(r'[^0-9]', '', numero_nf_str)
+            if not numero_nf_limpo:
+                # Fallback: usar timestamp mas limitar a 9 dígitos
+                numero_nf_limpo = str(int(datetime.now().timestamp()) % 999999999)
+
+        # CRÍTICO: garantir limite estrito de 9 dígitos para nNF (campo da chave de acesso)
+        numero_nf_limpo = re.sub(r'[^0-9]', '', numero_nf_limpo)
+        if len(numero_nf_limpo) > 9:
+            # Usar módulo para manter dentro do range válido (1-999999999)
+            numero_nf_limpo = str(int(numero_nf_limpo) % 999999999)
+        if not numero_nf_limpo or int(numero_nf_limpo) == 0:
+            numero_nf_limpo = "1"
+
+        # Série: máx 3 dígitos (campo zfill(3) no pynfe)
+        serie_limpa = re.sub(r'[^0-9]', '', serie_forcada_raw)
+        if len(serie_limpa) > 3:
+            serie_limpa = serie_limpa[-3:]
+        if not serie_limpa:
+            serie_limpa = "1"
+        serie_forcada = serie_limpa
+
+        print(f"[NFe] modelo={modelo_nota} | numero={numero_nf_limpo} | serie={serie_forcada}")
 
         # 5. MONTAGEM DA NOTA FISCAL
+        finalidade_emissao_final = int(getattr(req, 'finalidade', 1) or 1)
+        natureza_operacao_final = getattr(req, 'natureza_operacao', None)
+        if not natureza_operacao_final or natureza_operacao_final.strip() == "":
+            natureza_operacao_final = 'DEVOLUCAO DE MERCADORIA' if finalidade_emissao_final == 4 else ('VENDA DE MERCADORIA' if modelo_nota == 55 else 'VENDA AO CONSUMIDOR')
+
         nota_fiscal = NotaFiscal(
             emitente=emitente,
             cliente=destinatario,
             produtos=[], # Initialize with an empty list, products will be added later
-            natureza_operacao='VENDA AO CONSUMIDOR',
-            modelo=65, # 65=NFC-e (como int)
-            serie='1',
+            natureza_operacao=natureza_operacao_final[:60],
+            modelo=modelo_nota, # 55=NF-e, 65=NFC-e
+            serie=serie_forcada,
             numero_nf=numero_nf_limpo,
-            indicador_destino=1, # 1=Interna (como int)
-            finalidade_emissao=1, # 1=Normal (como int)
-            cliente_final=1, # 1=Sim (como int)
-            indicador_presencial=1, # 1=Presencial (como int)
+            indicador_destino=1, # 1=Interna
+            finalidade_emissao=finalidade_emissao_final,
+            cliente_final=1, # 1=Sim
+            indicador_presencial=1, # 1=Presencial
             valor_total_nota=Decimal(str(req.valor_total)),
             uf=emp.uf,
             # cMunFG - OBRIGATÓRIO (IBGE)
-            # Tentar pegar do codigo_municipio vindo da empresa, senão buscar pelo nome/UF (limpo)
             municipio=str(emp.codigo_municipio or serializacao_mod.obter_codigo_por_municipio(municipio_limpo, emp.uf) or '').strip() or "3549904",
-            tipo_impressao_danfe=4, # 4=DANFE NFC-e - OBRIGATÓRIO
-            tipo_documento=1, # 1=Saída - OBRIGATÓRIO para NFC-e
-            forma_emissao='1', # 1=Normal (string conforme esperado)
-            transporte_modalidade_frete=9 # 9=Sem Ocorrência de Transporte (OBRIGATÓRIO para NFC-e)
+            tipo_impressao_danfe=1 if modelo_nota == 55 else 4, # 1=DANFE normal A4, 4=DANFE NFC-e
+            tipo_documento=1, # 1=Saída
+            forma_emissao=str(tp_emis), # 1=Normal, 2=FS, 3=SCAN, 4=DPEC, 5=FS-DA, 6=SVC-AN, 7=SVC-RS, 9=Off-line
+            transporte_modalidade_frete=int(getattr(req, 'mod_frete', 9) or 9)
         )
+
+        # Notas Fiscais Referenciadas (Obrigatório para finalidade 4 - Devolução)
+        if finalidade_emissao_final == 4 or getattr(req, 'chave_referenciada', None):
+            chave_ref = re.sub(r'[^0-9]', '', getattr(req, 'chave_referenciada', None) or '')
+            if len(chave_ref) == 44:
+                nota_fiscal.adicionar_nota_fiscal_referenciada(
+                    chave_acesso=chave_ref
+                )
+                print(f"[FISCAL] Nota Fiscal Referenciada adicionada: {chave_ref}")
+
+        # Configuração de Transportadora e Veículo
+        if getattr(req, 'transp_nome', None):
+            transp = Transportadora(
+                razao_social=req.transp_nome.strip()[:60],
+                tipo_documento='CNPJ' if len(re.sub(r'[^0-9]', '', req.transp_cnpj_cpf or '')) > 11 else 'CPF',
+                numero_documento=re.sub(r'[^0-9]', '', req.transp_cnpj_cpf or ''),
+                inscricao_estadual=re.sub(r'[^0-9]', '', req.transp_insc_est or '') or 'ISENTO',
+                endereco_logradouro=(req.transp_endereco or 'Sem Endereco')[:60],
+                endereco_municipio=(req.transp_municipio or 'Sem Municipio')[:60],
+                endereco_uf=(req.transp_uf or emp.uf or 'SP')[:2].upper()
+            )
+            nota_fiscal.transporte_transportadora = transp
+            print(f"[FISCAL] Transportadora configurada: {transp.razao_social}")
+            
+        if getattr(req, 'transp_placa', None):
+            nota_fiscal.transporte_veiculo_placa = req.transp_placa.strip()[:7].upper()
+            nota_fiscal.transporte_veiculo_uf = (req.transp_placa_uf or emp.uf or 'SP')[:2].upper()
+
+        if getattr(req, 'transp_qtd_volumes', None) is not None:
+            nota_fiscal.adicionar_transporte_volume(
+                quantidade=Decimal(str(req.transp_qtd_volumes or 1)),
+                especie=(req.transp_especie or 'VOLUMES')[:60],
+                peso_bruto=Decimal(str(req.transp_peso_bruto or 0.0)),
+                peso_liquido=Decimal(str(req.transp_peso_liquido or 0.0))
+            )
+
         
         # Correção final se o município virar "None" ou "0000000" ou continuar inválido
         if not nota_fiscal.municipio or nota_fiscal.municipio in ["None", "0000000", ""]:
@@ -546,48 +953,40 @@ def emitir_nfce_pynfe(req):
         )
 
         # Itens
+        # Distribui o desconto total da venda (tabela de preços, promoções, desconto
+        # manual) proporcionalmente ao valor de cada item para gerar o <vDesc> por
+        # item e no <ICMSTot> (Σ vProd − Σ vDesc = vNF).
+        valor_desconto_total = Decimal(str(getattr(req, 'valor_desconto', None) or 0.0))
+        descontos_por_item = {}
+        if valor_desconto_total > 0 and req.itens:
+            soma_valores = sum(
+                (Decimal(str(it.valor_total)) for it in req.itens), Decimal('0.00')
+            )
+            if soma_valores > 0:
+                # Desconto nunca pode exceder a soma dos itens (mantém Σ vProd − Σ vDesc = vNF)
+                if valor_desconto_total > soma_valores:
+                    print(f"[FISCAL] Desconto {valor_desconto_total} > soma itens {soma_valores}; ajustado")
+                    valor_desconto_total = soma_valores
+                acumulado = Decimal('0.00')
+                for idx, it in enumerate(req.itens):
+                    if idx == len(req.itens) - 1:
+                        # Último item recebe o resto (evita erro de arredondamento)
+                        desc_item = (valor_desconto_total - acumulado).max(Decimal('0.00'))
+                    else:
+                        desc_item = (valor_desconto_total * Decimal(str(it.valor_total)) / soma_valores).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                        acumulado += desc_item
+                    descontos_por_item[idx] = desc_item
+
         for i, item in enumerate(req.itens):
             descricao = item.descricao
             if is_homologacao and i == 0:
                 descricao = 'NOTA FISCAL EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL'
-            
-            # Inteligência Fiscal: Auto-correção de CFOP para ST (Double Check no Backend)
-            cfop_atual = str(item.cfop or '5102').replace('.', '').strip()
-            csosn_atual = str(item.icms_csosn or '102').strip()
-            cst_atual = str(item.icms_cst or '00').strip()
-            
-            if (csosn_atual == '500' or cst_atual == '60') and (cfop_atual in ['5101', '5102']):
-                cfop_final = '5405'
-                print(f">>> [FISCAL] Corrigindo CFOP item {item.codigo}: {cfop_atual} -> {cfop_final} (ST detectada)")
-            else:
-                cfop_final = cfop_atual
-
-            # No pynfe 0.6.5 use adicionar_produto_servico diretamente da NotaFiscal
-            p_nfe = nota_fiscal.adicionar_produto_servico(
-                codigo=item.codigo,
+            # A tributação de ICMS é aplicada conforme o regime (CRT) da empresa
+            adicionar_produto_com_icms(
+                nota_fiscal, item, emp,
                 descricao=descricao,
-                ncm=item.ncm,
-                cfop=cfop_final,
-                unidade_comercial='UN',
-                quantidade_comercial=Decimal(str(item.quantidade)).quantize(Decimal('0.0001')),
-                valor_unitario_comercial=Decimal(str(item.valor_unitario)).quantize(Decimal('0.0000001')),
-                valor_total_bruto=Decimal(str(item.valor_total)).quantize(Decimal('0.01')),
-                unidade_tributavel='UN',
-                quantidade_tributavel=Decimal(str(item.quantidade)).quantize(Decimal('0.0001')),
-                valor_unitario_tributavel=Decimal(str(item.valor_unitario)).quantize(Decimal('0.0000001')),
-                ean='SEM GTIN',
-                ean_tributavel='SEM GTIN',
-                icms_origem=item.icms_origem or 0,
-                icms_modalidade=item.icms_cst if str(emp.crt) == '3' else item.icms_csosn
+                desconto=descontos_por_item.get(i, Decimal('0.00')),
             )
-            
-            # Garantir CSOSN ou CST explicitamente (Monkeypatch do pynfe)
-            if str(emp.crt) == '3':
-                p_nfe.icms_cst = cst_atual or '00'
-                p_nfe.icms_aliquota = Decimal(str(item.icms_aliquota or 0.0))
-            else:
-                p_nfe.icms_csosn = csosn_atual or '102'
-                p_nfe.icms_aliquota = Decimal('0.00')
 
         # Assinatura
         assinatura = AssinaturaA1(caminho_cert, senha_cert)
@@ -602,6 +1001,63 @@ def emitir_nfce_pynfe(req):
         # Garantir namespace correto em todo o XML (evitar xmlns="")
         ns_nfe = "http://www.portalfiscal.inf.br/nfe"
         fix_xml_namespaces(xml_element, ns_nfe)
+        # Corrigir blocos do Simples Nacional (pynfe gera ICMSSN102 p/ CSOSN 103/300/400)
+        corrigir_blocos_icms_simples(xml_element)
+
+        # Injetar destaque de ICMS900 para Simples Nacional (NT 2025.002 / CSOSN 900)
+        try:
+            det_tags = xml_element.findall(f".//{{{ns_nfe}}}det")
+            for idx, det in enumerate(det_tags):
+                if idx < len(req.itens):
+                    item_req = req.itens[idx]
+                    csosn_atual = str(getattr(item_req, 'csosn', '') or '').strip()
+                    if not csosn_atual:
+                        csosn_atual = str(getattr(item_req, 'icms_csosn', '') or '').strip()
+                    
+                    if csosn_atual == '900':
+                        imposto = det.find(f".//{{{ns_nfe}}}imposto")
+                        if imposto is not None:
+                            icms_tag = imposto.find(f".//{{{ns_nfe}}}ICMS")
+                            if icms_tag is not None:
+                                # Limpar filhos antigos do ICMS (como ICMS102 ou outro vazio)
+                                for child in list(icms_tag):
+                                    icms_tag.remove(child)
+                                
+                                # Criar a estrutura do ICMS900
+                                icms900 = etree.SubElement(icms_tag, f"{{{ns_nfe}}}ICMS900")
+                                etree.SubElement(icms900, f"{{{ns_nfe}}}orig").text = str(getattr(item_req, 'icms_origem', 0) or 0)
+                                etree.SubElement(icms900, f"{{{ns_nfe}}}CSOSN").text = "900"
+                                etree.SubElement(icms900, f"{{{ns_nfe}}}modBC").text = "3" # Valor da operação
+                                
+                                vBC = float(getattr(item_req, 'icms_base_calculo', 0.0) or 0.0)
+                                pRedBC = float(getattr(item_req, 'icms_reducao_bc', 0.0) or 0.0)
+                                pICMS = float(getattr(item_req, 'icms_aliquota', 0.0) or 0.0)
+                                vICMS = float(getattr(item_req, 'icms_valor', 0.0) or 0.0)
+                                pCredSN = float(getattr(item_req, 'credito_aliquota', 0.0) or 0.0)
+                                vCredICMSSN = float(getattr(item_req, 'credito_valor', 0.0) or 0.0)
+                                
+                                # Se não foi preenchido, calcula dinamicamente
+                                if vBC <= 0.0:
+                                    vBC = float(item_req.valor_total)
+                                if vICMS <= 0.0 and pICMS > 0.0:
+                                    vICMS = vBC * (pICMS / 100.0)
+                                if vCredICMSSN <= 0.0 and pCredSN > 0.0:
+                                    vCredICMSSN = vBC * (pCredSN / 100.0)
+                                    
+                                etree.SubElement(icms900, f"{{{ns_nfe}}}vBC").text = f"{vBC:.2f}"
+                                if pRedBC > 0.0:
+                                    etree.SubElement(icms900, f"{{{ns_nfe}}}pRedBC").text = f"{pRedBC:.2f}"
+                                etree.SubElement(icms900, f"{{{ns_nfe}}}pICMS").text = f"{pICMS:.2f}"
+                                etree.SubElement(icms900, f"{{{ns_nfe}}}vICMS").text = f"{vICMS:.2f}"
+                                
+                                if pCredSN > 0.0:
+                                    etree.SubElement(icms900, f"{{{ns_nfe}}}pCredSN").text = f"{pCredSN:.2f}"
+                                    etree.SubElement(icms900, f"{{{ns_nfe}}}vCredICMSSN").text = f"{vCredICMSSN:.2f}"
+        except Exception as e_icms:
+            print(f">>> [FISCAL] ⚠️ Falha ao injetar bloco ICMS900: {e_icms}")
+        
+        # Adicionar o bloco IBS/CBS para a Reforma Tributária NT 2025.002
+        adicionar_ibscbs_xml(xml_element, ns_nfe)
 
         # GARANTIR vTroco e REMOVER indPag de detPag (OBRIGATÓRIO para NFC-e 4.00)
         # ATENÇÃO: lxml elements avaliam como False em contexto bool quando sem filhos!
@@ -610,7 +1066,6 @@ def emitir_nfce_pynfe(req):
         if pag_tag is None:
             pag_tag = xml_element.find(".//pag")
         if pag_tag is not None:
-            # Remover indPag se existir (campo proibido em NFC-e 4.00)
             det_pags = pag_tag.findall(f".//{{{ns_nfe}}}detPag")
             if not det_pags:
                 det_pags = pag_tag.findall(".//detPag")
@@ -619,8 +1074,7 @@ def emitir_nfce_pynfe(req):
                 if ind_p is None:
                     ind_p = det_pag.find("indPag")
                 if ind_p is not None:
-                    det_pag.remove(ind_p)
-                    print("[FIX] indPag removido de detPag")
+                    print(f"[DEBUG] indPag preservado: {ind_p.text}")
 
             v_troco = pag_tag.find(f".//{{{ns_nfe}}}vTroco")
             if v_troco is None:
@@ -637,60 +1091,51 @@ def emitir_nfce_pynfe(req):
         # Assinatura (assinatura deve ser sobre o infNFe já final)
         xml_assinado = assinatura.assinar(xml_element)
         
-        # Gerar QR Code
-        # O CSC e IdToken são FUNDAMENTAIS. Se faltarem, SEFAZ rejeita com erro 394 (Sem QR Code).
-        csc_db = str(emp.csc or '').strip()
-        id_token_db = str(emp.csc_id or '').strip()
-        
-        # DETECÇÃO INTELIGENTE DE INVERSÃO (CSC x IdToken)
-        # CSC (Token) é uma chave longa (geralmente > 20 chars).
-        # IdToken é um identificador curto (geralmente 1 a 6 dígitos).
-        if len(csc_db) > 0 and len(csc_db) <= 6 and len(id_token_db) > 10:
-            print(f">>> [SISTEMA] Atenção: CSC e IdToken parecem invertidos. Corrigindo: CSC={id_token_db}, IdToken={csc_db}")
-            original_csc = csc_db
-            csc_db = id_token_db
-            id_token_db = original_csc
-
-        # Se IdToken estiver vazio mas o CSC tiver cara de ID (curto)
-        if not id_token_db and csc_db and len(csc_db) <= 6:
-            id_token_db = csc_db
-            csc_db = ""
-            
-        if not id_token_db: 
-            id_token_db = "1"
-            
+        # Gerar QR Code (apenas se for NFC-e modelo 65)
         qr_code_url = ""
-        if csc_db and id_token_db:
-            try:
-                # Limpar CSC (remover espaços e quebras de linha) e IdToken
-                # CSC (Token): Manter como no DB, apenas remover espaços. 
-                csc_limpo = csc_db.strip().replace(' ', '').replace('\n', '').replace('\r', '')
+        if modelo_nota == 65:
+            # O CSC e IdToken são FUNDAMENTAIS para NFC-e (Modelo 65).
+            csc_db = str(emp.csc or '').strip()
+            id_token_db = str(emp.csc_id or '').strip()
+            
+            # DETECÇÃO INTELIGENTE DE INVERSÃO (CSC x IdToken)
+            if len(csc_db) > 0 and len(csc_db) <= 6 and len(id_token_db) > 10:
+                print(f">>> [SISTEMA] Atenção: CSC e IdToken parecem invertidos. Corrigindo: CSC={id_token_db}, IdToken={csc_db}")
+                original_csc = csc_db
+                csc_db = id_token_db
+                id_token_db = original_csc
+
+            # Se IdToken estiver vazio mas o CSC tiver cara de ID (curto)
+            if not id_token_db and csc_db and len(csc_db) <= 6:
+                id_token_db = csc_db
+                csc_db = ""
                 
-                # SEFAZ SP Schema requires NO leading zeros in IdToken for QR Code Version 2
-                # e.g., '000001' must be '1' in the URL, otherwise XSD pattern rejects it (cStat 225).
-                id_token_limpo = re.sub(r'[^0-9]', '', id_token_db)
-                if not id_token_limpo: 
-                    id_token_limpo = "1"
-                else:
-                    # Strip leading zeros, but keep at least '0' if it's all zeros
-                    id_token_limpo = str(int(id_token_limpo))
+            if not id_token_db: 
+                id_token_db = "1"
                 
-                qrcode_gen = SerializacaoQrcode()
-                # O nosso monkeypatch já cuida de inserir o infNFeSupl corretamente no XML assinado
-                # Se CSC for inválido, o pynfe/SEFAZ vai reclamar do HASH, mas pelo menos a tag QR Code vai existir
-                xml_assinado, qr_code_url = qrcode_gen.gerar_qrcode(
-                    token=id_token_limpo,
-                    csc=csc_limpo,
-                    xml=xml_assinado,
-                    return_qr=True
-                )
-                print(f"[OK] QR Code gerado com Token ID {id_token_limpo}")
-            except Exception as e:
-                print(f"[AVISO] Falha técnica ao gerar QR Code: {str(e)}")
-        else:
-            msg_erro = f"Faltando dados de CSC (Token) no cadastro da empresa. Verifique se preencheu o CSC e o Identificador CSC (IdToken)."
-            print(f"[ALERTA] {msg_erro}")
-            return {"status": "erro", "mensagem": msg_erro}
+            if csc_db and id_token_db:
+                try:
+                    csc_limpo = csc_db.strip().replace(' ', '').replace('\n', '').replace('\r', '')
+                    id_token_limpo = re.sub(r'[^0-9]', '', id_token_db)
+                    if not id_token_limpo: 
+                        id_token_limpo = "1"
+                    else:
+                        id_token_limpo = str(int(id_token_limpo))
+                    
+                    qrcode_gen = SerializacaoQrcode()
+                    xml_assinado, qr_code_url = qrcode_gen.gerar_qrcode(
+                        token=id_token_limpo,
+                        csc=csc_limpo,
+                        xml=xml_assinado,
+                        return_qr=True
+                    )
+                    print(f"[OK] QR Code gerado com Token ID {id_token_limpo}")
+                except Exception as e:
+                    print(f"[AVISO] Falha técnica ao gerar QR Code: {str(e)}")
+            else:
+                msg_erro = f"Faltando dados de CSC (Token) no cadastro da empresa. Verifique se preencheu o CSC e o Identificador CSC (IdToken)."
+                print(f"[ALERTA] {msg_erro}")
+                return {"status": "erro", "mensagem": msg_erro}
 
         # DEBUG: Salvar XML final para inspeção
         try:
@@ -711,12 +1156,17 @@ def emitir_nfce_pynfe(req):
         )
         
         # Enviar XML Assinado com indSinc=1
-        # O pynfe espera o Element Tree assinado
+        # Se modelo_nota == 55 usa modelo 'nfe', se modelo_nota == 65 usa modelo 'nfce'
+        modelo_pynfe = 'nfe' if modelo_nota == 55 else 'nfce'
+        # Em contingencia (tpEmis != 1) o pyNFe usa o webservice de contingencia (SVC/SVRS)
+        usar_contingencia = (tp_emis != 1)
+        print(f"[NFe] Servico pyNFe={modelo_pynfe} | modelo_nota={modelo_nota} | tpEmis={tp_emis} | contingencia={usar_contingencia}")
         aut_result = con.autorizacao(
-            modelo='nfce',
+            modelo=modelo_pynfe,
             nota_fiscal=xml_assinado,
             id_lote=1,
-            ind_sinc=1 # Síncrono
+            ind_sinc=1, # Síncrono
+            contingencia=usar_contingencia
         )
         sucesso = aut_result[0]
         retorno = aut_result[1]
@@ -827,6 +1277,18 @@ def emitir_nfce_pynfe(req):
                 except Exception as parse_err:
                     print(f"[SEFAZ] Não conseguiu parsear resposta: {parse_err}")
                 
+                if retorno.status_code == 403:
+                    _msg_403 = (
+                        "CERTIFICADO DIGITAL REJEITADO PELA SEFAZ (HTTP 403)\n"
+                        "---------------------------------------------\n"
+                        "A SEFAZ recusou a conexao. Isso normalmente significa que o\n"
+                        "certificado digital esta vencido, revogado ou invalido.\n\n"
+                        "Para voltar a emitir NFC-e:\n"
+                        "1. Renove o certificado digital A1 com a contabilidade / autoridade certificadora (ICP-Brasil).\n"
+                        "2. Envie o novo arquivo (.pfx) e a nova senha para atualizacao no sistema.\n\n"
+                        "Detalhe tecnico: 403 - Forbidden: Access is denied."
+                    )
+                    return {"status": "erro", "mensagem": _msg_403}
                 return {"status": "erro", "mensagem": f"Erro SEFAZ (HTTP {retorno.status_code}): {corpo_erro[:500]}"}
             except AttributeError:
                 return {"status": "erro", "mensagem": f"Rejeição ou erro de rede: {str(retorno)}"}
@@ -845,18 +1307,11 @@ def emitir_nfce_pynfe(req):
 
 def salvar_xml_local(cnpj, chave, xml_content):
     """
-    Salva o XML em uma pasta organizada por CNPJ e Mês.
-    Caminho: ./XML_EMITIDOS/[CNPJ]/[ANO-MES]/[CHAVE]-nfe.xml
+    Salva o XML em C:/ExodoNFCe/[CNPJ]/[ANO-MES]/[CHAVE]-nfe.xml
     """
     try:
-        # Obter diretório base (onde está o executável ou script)
-        if getattr(sys, 'frozen', False):
-            base_dir = os.path.dirname(sys.executable)
-        else:
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-            
-        # Criar estrutura de pastas
-        pasta_base = os.path.join(base_dir, "XML_EMITIDOS")
+        # Pasta principal fixa no C: para fácil localização
+        pasta_base = r"C:\ExodoNFCe"
         mes_ano = datetime.now().strftime("%Y-%m")
         diretorio_destino = os.path.join(pasta_base, str(cnpj), mes_ano)
         
@@ -1185,7 +1640,8 @@ def consultar_nfce_pynfe(req_dict):
             senha_cert = empresa_data.get('senha_certificado', '')
             con = ComunicacaoSefaz(uf=uf, certificado=caminho_cert, certificado_senha=senha_cert, homologacao=is_homologacao)
             
-            resp = con.consulta_nota(modelo='nfce', chave=chave_acesso)
+            modelo_consulta = 'nfe' if len(chave_acesso) == 44 and chave_acesso[20:22] == '55' else 'nfce'
+            resp = con.consulta_nota(modelo=modelo_consulta, chave=chave_acesso)
             if resp.status_code == 200:
                 # O retorno da consulta é um XML que precisa ser parseado para o app entender
                 return {'success': True, 'xml': resp.text, 'status_code': resp.status_code}

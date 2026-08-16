@@ -60,7 +60,7 @@ class XMLBuilderService {
           if (cpfCnpjConsumidor != null || nomeConsumidor != null) {
             _buildDest(builder, cpfCnpjConsumidor, nomeConsumidor);
           }
-          _buildItens(builder, produtos, quantidades);
+          _buildItens(builder, produtos, quantidades, empresa);
           _buildTotal(builder, valorTotal);
           _buildPag(builder, pagamentos);
           if (observacoes != null && observacoes.isNotEmpty) {
@@ -93,7 +93,7 @@ class XMLBuilderService {
       builder.element('mod', nest: '65'); // 65 = NFC-e
       builder.element('serie', nest: serie);
       builder.element('nNF', nest: numero);
-      builder.element('dhEmi', nest: dataEmissao.toUtc().toIso8601String());
+      builder.element('dhEmi', nest: _formatarDataSefaz(dataEmissao));
       builder.element('tpNF', nest: '1'); // 1 = Saída
       builder.element('idDest', nest: '1'); // 1 = Operação interna
       builder.element('cMunFG', nest: _getCodigoMunicipio(empresa));
@@ -156,7 +156,7 @@ class XMLBuilderService {
   }
 
   /// Constrói seção det (Itens)
-  void _buildItens(xml.XmlBuilder builder, List<Produto> produtos, Map<String, double> quantidades) {
+  void _buildItens(xml.XmlBuilder builder, List<Produto> produtos, Map<String, double> quantidades, Empresa empresa) {
     int itemNum = 1;
     for (final produto in produtos) {
       final quantidade = quantidades[produto.id] ?? 1.0;
@@ -165,9 +165,7 @@ class XMLBuilderService {
       builder.element('det', attributes: {'nItem': itemNum.toString()}, nest: () {
         builder.element('prod', nest: () {
           builder.element('cProd', nest: produto.codigo ?? produto.id);
-          if (produto.codigoBarras != null && produto.codigoBarras!.isNotEmpty) {
-            builder.element('cEAN', nest: produto.codigoBarras!);
-          }
+          builder.element('cEAN', nest: (produto.codigoBarras != null && produto.codigoBarras!.isNotEmpty) ? produto.codigoBarras! : 'SEM GTIN');
           builder.element('xProd', nest: produto.nome);
           builder.element('NCM', nest: produto.ncm ?? '00000000');
           
@@ -187,7 +185,7 @@ class XMLBuilderService {
           builder.element('indTot', nest: '1'); // 1 = Valor total
         });
         builder.element('imposto', nest: () {
-          _buildImposto(builder, produto);
+          _buildImposto(builder, produto, empresa);
         });
       });
       itemNum++;
@@ -195,20 +193,37 @@ class XMLBuilderService {
   }
 
   /// Constrói seção de impostos
-  void _buildImposto(xml.XmlBuilder builder, Produto produto) {
+  void _buildImposto(xml.XmlBuilder builder, Produto produto, Empresa empresa) {
+    final bool isSimplesNacional = empresa.crt == 1 || empresa.crt == null;
+
     builder.element('ICMS', nest: () {
-      if (produto.csosn != null) {
-        // Simples Nacional - O nome da tag depende do CSOSN (ex: ICMSSN102, ICMSSN900, etc)
-        final String tagCSOSN = 'ICMSSN${produto.csosn}';
+      if (isSimplesNacional) {
+        // Simples Nacional - Mapeamento estrito de tags válidas do Schema SEFAZ
+        final String csosn = (produto.csosn != null && produto.csosn!.isNotEmpty) ? produto.csosn! : '102';
+        String tagCSOSN = 'ICMSSN102';
+        if (csosn == '101') {
+          tagCSOSN = 'ICMSSN101';
+        } else if (csosn == '102' || csosn == '103' || csosn == '300' || csosn == '400') {
+          tagCSOSN = 'ICMSSN102';
+        } else if (csosn == '201' || csosn == '202' || csosn == '203') {
+          tagCSOSN = 'ICMSSN201';
+        } else if (csosn == '500') {
+          tagCSOSN = 'ICMSSN500';
+        } else if (csosn == '900') {
+          tagCSOSN = 'ICMSSN900';
+        }
+
         builder.element(tagCSOSN, nest: () {
           builder.element('orig', nest: produto.origem ?? '0');
-          builder.element('CSOSN', nest: produto.csosn);
+          builder.element('CSOSN', nest: csosn);
         });
       } else {
         // Regime Normal
-        builder.element('ICMS00', nest: () {
+        final String cst = (produto.icmsCst != null && produto.icmsCst!.isNotEmpty) ? produto.icmsCst! : '00';
+        final String tagCST = 'ICMS$cst';
+        builder.element(tagCST, nest: () {
           builder.element('orig', nest: produto.origem ?? '0');
-          builder.element('CST', nest: produto.icmsCst ?? '00');
+          builder.element('CST', nest: cst);
           builder.element('modBC', nest: '0');
           builder.element('vBC', nest: '0.00');
           builder.element('pICMS', nest: (produto.icmsAliquota ?? 0).toStringAsFixed(2));
@@ -216,21 +231,65 @@ class XMLBuilderService {
         });
       }
     });
+
+    final String pisCst = (produto.pisCst != null && produto.pisCst!.isNotEmpty) ? produto.pisCst! : '01';
     builder.element('PIS', nest: () {
-      builder.element('PISAliq', nest: () {
-        builder.element('CST', nest: produto.pisCst ?? '01');
-        builder.element('vBC', nest: '0.00');
-        builder.element('pPIS', nest: (produto.pisAliquota ?? 0).toStringAsFixed(2));
-        builder.element('vPIS', nest: '0.00');
-      });
+      if (pisCst == '01' || pisCst == '02') {
+        builder.element('PISAliq', nest: () {
+          builder.element('CST', nest: pisCst);
+          builder.element('vBC', nest: '0.00');
+          builder.element('pPIS', nest: (produto.pisAliquota ?? 0).toStringAsFixed(2));
+          builder.element('vPIS', nest: '0.00');
+        });
+      } else if (pisCst == '03') {
+        builder.element('PISQtde', nest: () {
+          builder.element('CST', nest: pisCst);
+          builder.element('qBCProd', nest: '0.0000');
+          builder.element('vAliqProd', nest: '0.0000');
+          builder.element('vPIS', nest: '0.00');
+        });
+      } else if (pisCst == '04' || pisCst == '05' || pisCst == '06' || pisCst == '07' || pisCst == '08' || pisCst == '09') {
+        builder.element('PISNT', nest: () {
+          builder.element('CST', nest: pisCst);
+        });
+      } else {
+        builder.element('PISOutr', nest: () {
+          builder.element('CST', nest: pisCst);
+          builder.element('vBC', nest: '0.00');
+          builder.element('pPIS', nest: (produto.pisAliquota ?? 0).toStringAsFixed(2));
+          builder.element('vPIS', nest: '0.00');
+        });
+      }
     });
+
+    final String cofinsCst = (produto.cofinsCst != null && produto.cofinsCst!.isNotEmpty) ? produto.cofinsCst! : '01';
     builder.element('COFINS', nest: () {
-      builder.element('COFINSAliq', nest: () {
-        builder.element('CST', nest: produto.cofinsCst ?? '01');
-        builder.element('vBC', nest: '0.00');
-        builder.element('pCOFINS', nest: (produto.cofinsAliquota ?? 0).toStringAsFixed(2));
-        builder.element('vCOFINS', nest: '0.00');
-      });
+      if (cofinsCst == '01' || cofinsCst == '02') {
+        builder.element('COFINSAliq', nest: () {
+          builder.element('CST', nest: cofinsCst);
+          builder.element('vBC', nest: '0.00');
+          builder.element('pCOFINS', nest: (produto.cofinsAliquota ?? 0).toStringAsFixed(2));
+          builder.element('vCOFINS', nest: '0.00');
+        });
+      } else if (cofinsCst == '03') {
+        builder.element('COFINSQtde', nest: () {
+          builder.element('CST', nest: cofinsCst);
+          builder.element('qBCProd', nest: '0.0000');
+          builder.element('vAliqProd', nest: '0.0000');
+          builder.element('vCOFINS', nest: '0.00');
+        });
+      } else if (cofinsCst == '04' || cofinsCst == '05' || cofinsCst == '06' || cofinsCst == '07' || cofinsCst == '08' || cofinsCst == '09') {
+        builder.element('COFINSNT', nest: () {
+          builder.element('CST', nest: cofinsCst);
+        });
+      } else {
+        builder.element('COFINSOutr', nest: () {
+          builder.element('CST', nest: cofinsCst);
+          builder.element('vBC', nest: '0.00');
+          builder.element('pCOFINS', nest: (produto.cofinsAliquota ?? 0).toStringAsFixed(2));
+          builder.element('vCOFINS', nest: '0.00');
+        });
+      }
     });
   }
 
@@ -342,6 +401,20 @@ class XMLBuilderService {
     }
     // Fallback: código genérico de São Paulo
     return '3550308'; // São Paulo - SP
+  }
+
+  /// Formata data no formato exigido pela SEFAZ: AAAA-MM-DDThh:mm:ssTZD (Ex: 2026-07-11T11:41:51-03:00)
+  String _formatarDataSefaz(DateTime dt) {
+    final local = dt.toLocal();
+    final offset = local.timeZoneOffset;
+    final offsetSign = offset.isNegative ? '-' : '+';
+    final offsetHours = offset.inHours.abs().toString().padLeft(2, '0');
+    final offsetMinutes = (offset.inMinutes.abs() % 60).toString().padLeft(2, '0');
+    
+    final datePart = "${local.year}-${local.month.toString().padLeft(2, '0')}-${local.day.toString().padLeft(2, '0')}";
+    final timePart = "${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}:${local.second.toString().padLeft(2, '0')}";
+    
+    return "${datePart}T$timePart$offsetSign$offsetHours:$offsetMinutes";
   }
 }
 

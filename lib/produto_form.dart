@@ -5,8 +5,13 @@ import 'package:sistema_exodo_novo/services/data_service.dart';
 import 'package:sistema_exodo_novo/services/codigo_service.dart';
 import 'package:sistema_exodo_novo/services/grupos_manager.dart';
 import 'package:sistema_exodo_novo/models/produto.dart';
+import 'package:sistema_exodo_novo/models/forma_venda.dart';
+import 'package:sistema_exodo_novo/models/regra_promocao.dart';
+import 'package:sistema_exodo_novo/models/perfil_tributario.dart';
 import 'package:sistema_exodo_novo/models/estoque_historico.dart';
+import 'package:sistema_exodo_novo/models/lote_produto.dart';
 import 'package:sistema_exodo_novo/models/produto_historico.dart';
+import 'package:sistema_exodo_novo/utils/units.dart';
 import 'package:sistema_exodo_novo/models/variacao_produto.dart';
 import 'package:sistema_exodo_novo/services/image_storage_service.dart';
 import 'package:sistema_exodo_novo/services/auth_service.dart';
@@ -15,6 +20,10 @@ import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'dart:io';
 import 'package:sistema_exodo_novo/models/adicional_produto.dart';
 import 'package:sistema_exodo_novo/models/item_composicao.dart';
+import 'package:sistema_exodo_novo/models/pergunta_selecao.dart';
+import 'package:sistema_exodo_novo/services/impressao_service.dart';
+import 'package:sistema_exodo_novo/models/permissao.dart';
+import 'package:sistema_exodo_novo/services/permission_service.dart';
 import 'package:uuid/uuid.dart';
 
 class ProdutoServicoForm extends StatefulWidget {
@@ -40,9 +49,21 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
   final _precoCustoController = TextEditingController();
   final _estoqueController = TextEditingController();
   final _precoPromocionalController = TextEditingController();
+
+  // Precificação Inteligente
+  final Map<String, TextEditingController> _precosPerfilControllers = {};
+  final Set<String> _tabelasPrecoSelecionadas = {};
+  List<RegraQuantidade> _regrasQuantidade = [];
+
   final _fornecedorNomeController = TextEditingController();
   final _estoqueMinimoController = TextEditingController();
   final _observacaoPadraoController = TextEditingController();
+
+  // Forma de venda: 'unidade' ou 'caixa' + quantidade de baixa no estoque
+  final _quantidadeBaixaController = TextEditingController();
+  String _unidadeVenda = 'unidade';
+  // Múltiplas formas de venda do produto (cada uma com preço e baixa próprios)
+  List<FormaVenda> _formasVenda = [];
   
   // Controllers para impostos
   final _ncmController = TextEditingController();
@@ -65,10 +86,29 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
   
   late String _codigo;
   late String _codigoBarras;
+  // Códigos de barras adicionais (um produto pode ter vários EANs)
+  final List<TextEditingController> _codigosBarrasAdicionaisControllers = [];
+
+  List<String> _coletarCodigosBarrasAdicionais() {
+    final extras = <String>[];
+    final principalLower = _codigoBarras.trim().toLowerCase();
+    for (final controller in _codigosBarrasAdicionaisControllers) {
+      final valor = controller.text.trim();
+      final valorLower = valor.toLowerCase();
+      if (valor.isNotEmpty &&
+          valorLower != principalLower &&
+          !extras.any((e) => e.toLowerCase() == valorLower)) {
+        extras.add(valor);
+      }
+    }
+    return extras;
+  }
+
   late String _nome;
   late String _descricao;
   late String _unidade;
   late String _grupo;
+  late double _quantidadeBaixa;
   late double _preco;
   late double? _precoCusto;
   late double _estoque;
@@ -81,6 +121,9 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
   double? _precoPromocional;
   DateTime? _promocaoInicio;
   DateTime? _promocaoFim;
+  // Regras avançadas de promoção (empilháveis): por data, dia da semana,
+  // quantidade mínima ou valor mínimo no carrinho.
+  List<RegraPromocao> _promocoes = [];
   
   // Campos de impostos
   String? _ncm;
@@ -96,6 +139,7 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
   String? _origem;
   String? _cfop;
   String? _cest;
+  String? _perfilTributarioId; // ID do Perfil Tributário selecionado
   
   // Campos do Simples Nacional
   String? _csosn;
@@ -125,7 +169,11 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
   // Campos para preparação
   bool _paraCozinha = false;
   bool _paraBar = false;
+  String? _departamentoId; // Departamento/setor de preparação (entidade separada da impressora)
   bool _enviaBalanca = false;
+  String? _impressoraProducao;
+  List<String> _impressoraProducaoExtra = []; // Outras impressoras onde o produto também deve imprimir (multi-seleção)
+  List<String> _impressorasSistema = [];
   List<String> _codigosFornecedor = [];
   
   // Campos para Adicionais
@@ -135,7 +183,12 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
   
   // Campos para Composição
   bool _ehComposto = false;
+  bool _exibirComposicaoPdv = false;
+  // true = vender o composto também baixa o estoque dele mesmo (padrão);
+  // false = baixa apenas nos ingredientes (ex.: Chop controlado pelo Barril).
+  bool _baixarEstoqueProprio = true;
   List<ItemComposicao> _composicao = [];
+  List<PerguntaSelecao> _perguntasSelecao = [];
   
   // Variáveis para a aba de estoque
   DateTime? _estoqueDataInicial;
@@ -179,8 +232,29 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
       _estoque = widget.item?.estoque ?? 0.0;
       _codigoController.text = _codigo;
       _codigoBarrasController.text = _codigoBarras;
+      // Carregar códigos de barras adicionais do produto em edição
+      for (final c in _codigosBarrasAdicionaisControllers) {
+        c.dispose();
+      }
+      _codigosBarrasAdicionaisControllers.clear();
+      for (final extra in widget.item?.codigosBarrasAdicionais ?? <String>[]) {
+        _codigosBarrasAdicionaisControllers.add(TextEditingController(text: extra));
+      }
       _descricaoController.text = _descricao;
       _unidadeController.text = _unidade;
+      // Forma de venda (caixa/unidade) e quantidade de baixa
+      _unidadeVenda = widget.item is Produto
+          ? (widget.item as Produto).unidadeVenda
+          : 'unidade';
+      _quantidadeBaixa = widget.item is Produto
+          ? (widget.item as Produto).quantidadeBaixa
+          : 1.0;
+      _quantidadeBaixaController.text =
+          _quantidadeBaixa > 0 ? _quantidadeBaixa.toString() : '1';
+      // Carregar múltiplas formas de venda (migração: vazio = forma principal)
+      _formasVenda = widget.item is Produto
+          ? List<FormaVenda>.from((widget.item as Produto).formasVendaEfetivas)
+          : [];
       _grupoController.text = _grupo;
       _precoController.text = _preco.toString();
       _precoCustoController.text = _precoCusto?.toString() ?? '';
@@ -198,11 +272,27 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
       if (_precoPromocional != null) {
         _precoPromocionalController.text = _precoPromocional.toString();
       }
+      _promocoes = List<RegraPromocao>.from(widget.item?.promocoes ?? []);
       
       // Carregar campos de preparação
       _paraCozinha = widget.item?.paraCozinha ?? false;
       _paraBar = widget.item?.paraBar ?? false;
+      _departamentoId = widget.item is Produto ? (widget.item as Produto).departamentoId : null;
       _enviaBalanca = widget.item?.enviaBalanca ?? false;
+      _impressoraProducao = widget.item is Produto ? (widget.item as Produto).impressoraProducao : null;
+      _impressoraProducaoExtra = widget.item is Produto
+          ? List<String>.from((widget.item as Produto).impressoraProducaoExtra)
+              .where((e) => e != _impressoraProducao) // dedupe defensivo contra dados antigos
+              .toList()
+          : [];
+      
+      ImpressaoService.listarImpressoras().then((lista) {
+        if (mounted) {
+          setState(() {
+            _impressorasSistema = lista.map((p) => p.name).toList();
+          });
+        }
+      });
       _codigosFornecedor = List<String>.from(widget.item?.codigosFornecedor ?? []);
       _observacaoPadraoController.text = widget.item is Produto ? ((widget.item as Produto).observacaoPadrao ?? '') : '';
       
@@ -217,18 +307,52 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
       _ehComposto = widget.item is Produto 
           ? (widget.item as Produto).ehComposto
           : false;
+      _exibirComposicaoPdv = widget.item is Produto
+          ? (widget.item as Produto).exibirComposicaoPdv
+          : false;
+      _baixarEstoqueProprio = widget.item is Produto
+          ? (widget.item as Produto).baixarEstoqueProprio
+          : true;
       _composicao = widget.item is Produto 
           ? List<ItemComposicao>.from((widget.item as Produto).composicao)
           : [];
+      _perguntasSelecao = widget.item is Produto
+          ? List<PerguntaSelecao>.from((widget.item as Produto).perguntasSelecao)
+          : [];
+
+      // Carregar preços por perfil de cliente
+      if (widget.item is Produto) {
+        final produto = widget.item as Produto;
+        if (produto.precosPorPerfil != null) {
+          produto.precosPorPerfil!.forEach((perfil, preco) {
+            _tabelasPrecoSelecionadas.add(perfil);
+            _precosPerfilControllers[perfil] = TextEditingController(
+              text: preco > 0 ? preco.toStringAsFixed(2) : '',
+            );
+          });
+        }
+        // Carregar regras de quantidade (atacarejo)
+        _regrasQuantidade = List<RegraQuantidade>.from(produto.regrasQuantidade ?? []);
+      }
     } else {
       // Novo produto
       _nome = '';
       _descricao = '';
       _unidade = '';
+      _unidadeVenda = 'unidade';
+      _quantidadeBaixa = 1.0;
+      _quantidadeBaixaController.text = '1';
+      _formasVenda = [
+        const FormaVenda(tipo: 'unidade', quantidadeBaixa: 1.0, preco: 0.0),
+      ];
       _preco = 0.0;
       _precoCusto = null;
       _estoque = 0.0;
       _codigoBarras = '';
+      for (final c in _codigosBarrasAdicionaisControllers) {
+        c.dispose();
+      }
+      _codigosBarrasAdicionaisControllers.clear();
       _grupo = 'Sem Grupo';
       _codigoEditavel = true; // Código é editável para novos produtos
       _temPromocao = false;
@@ -237,9 +361,12 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
       _promocaoFim = null;
       
       // Inicializar campos de impostos
+      // PADRÃO CORRETO: Tributado (CFOP 5102, CSOSN 102 no Simples / CST 00 no
+      // Regime Normal). ANTES o produto novo nascia como Substituição Tributária
+      // (CFOP 5405, CSOSN 500), o que gerava notas erradas.
       _ncm = '22011000';
       _icmsAliquota = null;
-      _icmsCst = '500';
+      _icmsCst = '00';
       _ipiAliquota = null;
       _ipiCst = null;
       _pisAliquota = null;
@@ -248,17 +375,51 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
       _cofinsCst = null;
       _issAliquota = null;
       _origem = null;
-      _cfop = '5405';
+      _cfop = '5102';
       _cest = null;
-      _csosn = '500';
+      _csosn = '102';
       _simplesNacionalAliquota = null;
+      // Aplica automaticamente o perfil tributário PADRÃO do regime atual da
+      // empresa (ex.: Tributado 5102/102 no Simples ou 5102/00 no Regime Normal).
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        try {
+          final service = Provider.of<DataService>(context, listen: false);
+          final perfis = service.perfisTributariosDoRegime;
+          PerfilTributario? padrao;
+          for (final p in perfis) {
+            if (p.isDefault) { padrao = p; break; }
+          }
+          padrao ??= perfis.isNotEmpty ? perfis.first : null;
+          if (padrao != null) {
+            // Variável final local: permite type promotion dentro do closure
+            // do setState (Dart não promove variáveis capturadas por closures).
+            final perfil = padrao;
+            setState(() {
+              _perfilTributarioId = perfil.id;
+              _cfop = perfil.cfop;
+              _cfopController.text = perfil.cfop;
+              _csosn = perfil.csosn;
+              _csosnController.text = perfil.csosn ?? '';
+              _icmsCst = perfil.icmsCst;
+              _icmsCstController.text = perfil.icmsCst ?? '';
+              _ncm = perfil.ncm ?? _ncm;
+              _ncmController.text = _ncm ?? '';
+            });
+          }
+        } catch (_) {}
+      });
       _paraCozinha = false;
       _paraBar = false;
+      _departamentoId = null;
       _enviaBalanca = false;
       _codigosFornecedor = [];
       _observacaoPadraoController.text = '';
       _ehComposto = false;
+      _exibirComposicaoPdv = false;
+      _baixarEstoqueProprio = true;
       _composicao = [];
+      _perguntasSelecao = [];
       
       // Gerar código automaticamente para novo produto
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -282,6 +443,7 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
       _cfop = widget.item?.cfop;
       _cest = widget.item?.cest;
       _csosn = widget.item?.csosn;
+      _perfilTributarioId = widget.item?.perfilTributarioId;
       _simplesNacionalAliquota = widget.item?.simplesNacionalAliquota;
       
 
@@ -343,8 +505,13 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
     _tabController.dispose();
     _codigoController.dispose();
     _codigoBarrasController.dispose();
+    for (final c in _codigosBarrasAdicionaisControllers) {
+      c.dispose();
+    }
+    _codigosBarrasAdicionaisControllers.clear();
     _descricaoController.dispose();
     _unidadeController.dispose();
+    _quantidadeBaixaController.dispose();
     _grupoController.dispose();
     _precoController.dispose();
     _precoCustoController.dispose();
@@ -447,6 +614,18 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
         duration: const Duration(seconds: 2),
       ),
     );
+  }
+
+  bool _podeVerCusto() {
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final usuario = authService.usuarioAtual;
+    if (usuario == null) return false;
+    if (usuario.isAdmin || usuario.isGerente || usuario.isMaster || usuario.email.toLowerCase() == 'user') {
+      return true;
+    }
+    final permissionService = PermissionService();
+    return permissionService.temPermissao(usuario, TipoPermissao.produtosVisualizarCusto) ||
+           permissionService.temPermissao(usuario, TipoPermissao.vendasVerCusto);
   }
 
   /// Calcula e retorna a string da margem de lucro
@@ -713,6 +892,23 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
     debugPrint('>>> [ProdutoForm] Tags: $tagsProcessadas');
     debugPrint('>>> [ProdutoForm] ========================================');
 
+    // Sincronizar campos legados com a forma principal antes de salvar
+    if (_formasVenda.isNotEmpty) {
+      final principal = _formasVenda.first;
+      _unidadeVenda = principal.tipo;
+      _quantidadeBaixa = principal.quantidadeBaixa > 0
+          ? principal.quantidadeBaixa
+          : 1.0;
+      // Se a forma principal não tem preço próprio, usar o preço principal
+      _formasVenda = [
+        if (principal.preco <= 0)
+          FormaVenda(tipo: principal.tipo, quantidadeBaixa: _quantidadeBaixa, preco: _preco)
+        else
+          principal,
+        ..._formasVenda.skip(1),
+      ];
+    }
+
     final produto = Produto(
       id: (widget.item?.id != null && widget.item!.id.isNotEmpty)
           ? widget.item!.id
@@ -721,9 +917,13 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
       codigoBarras: _codigoBarras.isNotEmpty
           ? _codigoBarras
           : null,
+      codigosBarrasAdicionais: _coletarCodigosBarrasAdicionais(),
       nome: _nome,
       descricao: _descricao,
       unidade: (_unidadeController.text.trim().isNotEmpty ? _unidadeController.text.trim() : 'peça'),
+      unidadeVenda: _unidadeVenda,
+      quantidadeBaixa: ((double.tryParse(_quantidadeBaixaController.text.replaceAll(',', '.')) ?? 1.0).clamp(0.001, 9999999)).toDouble(),
+      formasVenda: _formasVenda.isNotEmpty ? _formasVenda : null,
       grupo: (_grupo.isNotEmpty ? _grupo : 'Sem Grupo'),
       preco: _preco,
       precoCusto: _precoCusto,
@@ -736,6 +936,8 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
           : null,
       promocaoInicio: _temPromocao ? _promocaoInicio : null,
       promocaoFim: _temPromocao ? _promocaoFim : null,
+      promocoes: _promocoes.isNotEmpty ? _promocoes : null,
+      perfilTributarioId: _perfilTributarioId,
       ncm: _ncm?.isNotEmpty == true ? _ncm : null,
       icmsAliquota: _icmsAliquota,
       icmsCst: _icmsCst?.isNotEmpty == true ? _icmsCst : null,
@@ -754,7 +956,10 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
       // Campos de Preparação
       paraCozinha: _paraCozinha,
       paraBar: _paraBar,
+      departamentoId: _departamentoId,
       enviaBalanca: _enviaBalanca,
+      impressoraProducao: _impressoraProducao,
+      impressoraProducaoExtra: _impressoraProducaoExtra,
       codigosFornecedor: _codigosFornecedor,
       // Campos de E-commerce
       exibirNaLoja: _exibirNaLoja,
@@ -777,8 +982,22 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
       adicionais: _adicionais,
       temAdicionais: _adicionais.isNotEmpty,
       ehComposto: _ehComposto,
+      baixarEstoqueProprio: _baixarEstoqueProprio,
+      exibirComposicaoPdv: _exibirComposicaoPdv,
       composicao: _composicao,
+      perguntasSelecao: _perguntasSelecao,
       observacaoPadrao: _observacaoPadraoController.text.trim().isNotEmpty ? _observacaoPadraoController.text.trim() : null,
+      // Preços por perfil de cliente (apenas tabelas selecionadas)
+      precosPorPerfil: {
+        for (final nome in _tabelasPrecoSelecionadas)
+          if (_precosPerfilControllers[nome]?.text.trim().isNotEmpty == true)
+            nome: double.tryParse(
+                  _precosPerfilControllers[nome]!.text.replaceAll(',', '.'),
+                ) ??
+                0.0,
+      },
+      // Regras de quantidade (atacarejo)
+      regrasQuantidade: _regrasQuantidade.isNotEmpty ? _regrasQuantidade : null,
     );
     
     // DEBUG CRÍTICO: Verificar produto criado
@@ -861,6 +1080,9 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
     final qtdController = TextEditingController();
     final fornecedorController = TextEditingController(text: _fornecedorNomeController.text);
     final obsController = TextEditingController();
+    // RawAutocomplete exige focusNode + textEditingController SEMPRE juntos
+    // (assert: (focusNode == null) == (textEditingController == null))
+    final fornecedorFocusNode = FocusNode();
     String tipo = 'entrada';
 
     showDialog(
@@ -913,6 +1135,7 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
                 const SizedBox(height: 12),
                 RawAutocomplete<String>(
                   textEditingController: fornecedorController,
+                  focusNode: fornecedorFocusNode,
                   optionsBuilder: (TextEditingValue textEditingValue) {
                     final fornecedores = _obterFornecedoresUnicos();
                     if (textEditingValue.text.isEmpty) {
@@ -1056,7 +1279,13 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
           ),
         );
       },
-    );
+    ).then((_) {
+      // Liberar recursos ao fechar o diálogo
+      qtdController.dispose();
+      fornecedorController.dispose();
+      obsController.dispose();
+      fornecedorFocusNode.dispose();
+    });
   }
 
   Widget _buildSection(String title, List<Widget> children) {
@@ -1086,6 +1315,782 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
         ),
         const SizedBox(height: 16),
       ],
+    );
+  }
+
+  /// Seção de Validade e Lote: lista os lotes do produto (controle de
+  /// vencimento para ração, medicamentos etc.) e permite adicionar/remover.
+  Widget _buildLotesSection() {
+    final produtoId = widget.item!.id;
+    final dataService = Provider.of<DataService>(context);
+    final lotes = dataService.lotesProdutos
+        .where((l) => l.produtoId == produtoId)
+        .toList()
+      ..sort((a, b) {
+        // Ordenar por validade (vencidos primeiro)
+        final da = a.dataValidade ?? DateTime(9999);
+        final db = b.dataValidade ?? DateTime(9999);
+        return da.compareTo(db);
+      });
+
+    return _buildSection('Validade e Lote', [
+      if (lotes.isEmpty)
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Row(
+            children: [
+              Icon(Icons.event_available_outlined, size: 16, color: Colors.white38),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Nenhum lote cadastrado. Produtos com validade (ração, medicamentos, etc.) podem ser controlados por lote — a baixa de estoque acontece primeiro nos lotes que vencem antes (FEFO).',
+                  style: TextStyle(fontSize: 12, color: Colors.white.withOpacity(0.5)),
+                ),
+              ),
+            ],
+          ),
+        )
+      else
+        ...lotes.map((lote) {
+          final dias = lote.diasParaVencer;
+          final vencido = lote.estaVencido;
+          final Color corStatus = vencido
+              ? Colors.redAccent
+              : (dias != null && dias <= 30 ? Colors.orangeAccent : Colors.greenAccent);
+          final IconData iconeStatus = vencido
+              ? Icons.error
+              : (dias != null && dias <= 30 ? Icons.warning_amber : Icons.check_circle);
+          final String textoStatus = vencido
+              ? 'VENCIDO'
+              : (dias == null
+                  ? 'Sem validade'
+                  : (dias == 0
+                      ? 'Vence HOJE'
+                      : (dias <= 30 ? 'Vence em $dias dia(s)' : 'OK ($dias dias)')));
+
+          return Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: vencido
+                  ? Colors.red.withOpacity(0.08)
+                  : Colors.white.withOpacity(0.03),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: vencido ? Colors.red.withOpacity(0.4) : Colors.white.withOpacity(0.08),
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(iconeStatus, size: 18, color: corStatus),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Lote: ${lote.numeroLote.isEmpty ? '(sem nº)' : lote.numeroLote}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      if (lote.fornecedorNome != null && lote.fornecedorNome!.trim().isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 2),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.storefront_outlined, size: 11, color: Colors.white38),
+                              const SizedBox(width: 4),
+                              Expanded(
+                                child: Text(
+                                  lote.fornecedorNome!,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    color: Colors.white54,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      Text(
+                        [
+                          if (lote.dataValidade != null)
+                            'Validade: ${DateFormat('dd/MM/yyyy').format(lote.dataValidade!)}',
+                          'Qtd: ${lote.quantidade.toStringAsFixed(2)}',
+                        ].join('  |  '),
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: corStatus,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.delete_outline, size: 18, color: Colors.redAccent),
+                  tooltip: 'Remover lote',
+                  onPressed: () async {
+                    final confirmar = await showDialog<bool>(
+                      context: context,
+                      builder: (ctx) => AlertDialog(
+                        backgroundColor: const Color(0xFF1E1E2E),
+                        title: const Text('Remover Lote', style: TextStyle(color: Colors.white)),
+                        content: Text(
+                          'Remover o lote "${lote.numeroLote}"? A quantidade restante (${lote.quantidade.toStringAsFixed(2)}) deixará de ser considerada no estoque por lote.',
+                          style: const TextStyle(color: Colors.white70),
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(ctx, false),
+                            child: const Text('CANCELAR', style: TextStyle(color: Colors.grey)),
+                          ),
+                          ElevatedButton(
+                            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+                            onPressed: () => Navigator.pop(ctx, true),
+                            child: const Text('REMOVER'),
+                          ),
+                        ],
+                      ),
+                    );
+                    if (confirmar == true) {
+                      await dataService.removerLoteProduto(lote.id);
+                    }
+                  },
+                ),
+              ],
+            ),
+          );
+        }),
+      const SizedBox(height: 4),
+      SizedBox(
+        width: double.infinity,
+        child: OutlinedButton.icon(
+          onPressed: () => _exibirDialogoNovoLote(dataService, produtoId),
+          icon: const Icon(Icons.add, size: 18),
+          label: const Text('Adicionar Lote'),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: Colors.orangeAccent,
+            side: BorderSide(color: Colors.orangeAccent.withOpacity(0.4)),
+          ),
+        ),
+      ),
+    ]);
+  }
+
+  Future<void> _exibirDialogoNovoLote(DataService dataService, String produtoId) async {
+    final loteController = TextEditingController();
+    final qtdController = TextEditingController();
+    final fornecedorController = TextEditingController(text: _fornecedorNomeController.text);
+    DateTime? dataValidade;
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          return AlertDialog(
+            backgroundColor: const Color(0xFF1E1E2E),
+            title: const Text('Adicionar Lote', style: TextStyle(color: Colors.white)),
+            content: SizedBox(
+              width: 420,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: loteController,
+                    autofocus: true,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(
+                      labelText: 'Nº do Lote',
+                      hintText: 'Ex: LOTE-A1-2026',
+                      labelStyle: TextStyle(color: Colors.white54),
+                      hintStyle: TextStyle(color: Colors.white24),
+                      enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: fornecedorController,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(
+                      labelText: 'Fornecedor do lote',
+                      hintText: 'Ex: Distribuidora XYZ',
+                      labelStyle: TextStyle(color: Colors.white54),
+                      hintStyle: TextStyle(color: Colors.white24),
+                      enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+                      prefixIcon: Icon(Icons.storefront_outlined, color: Colors.white38, size: 18),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: qtdController,
+                    style: const TextStyle(color: Colors.white),
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(
+                      labelText: 'Quantidade',
+                      hintText: 'Ex: 10',
+                      labelStyle: TextStyle(color: Colors.white54),
+                      hintStyle: TextStyle(color: Colors.white24),
+                      enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  InkWell(
+                    onTap: () async {
+                      final data = await showDatePicker(
+                        context: ctx,
+                        initialDate: dataValidade ?? DateTime.now().add(const Duration(days: 90)),
+                        firstDate: DateTime.now().subtract(const Duration(days: 365)),
+                        lastDate: DateTime.now().add(const Duration(days: 3650)),
+                        helpText: 'Data de Validade',
+                      );
+                      if (data != null) setDialogState(() => dataValidade = data);
+                    },
+                    child: InputDecorator(
+                      decoration: InputDecoration(
+                        labelText: 'Validade',
+                        labelStyle: TextStyle(
+                          color: dataValidade != null ? Colors.white : Colors.white54,
+                        ),
+                        enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+                        suffixIcon: const Icon(Icons.calendar_today, color: Colors.white54, size: 18),
+                      ),
+                      child: Text(
+                        dataValidade != null
+                            ? DateFormat('dd/MM/yyyy').format(dataValidade!)
+                            : 'Selecionar data',
+                        style: TextStyle(color: dataValidade != null ? Colors.white : Colors.white38),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('CANCELAR', style: TextStyle(color: Colors.grey)),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.orangeAccent),
+                onPressed: () async {
+                  final numero = loteController.text.trim();
+                  final qtd = double.tryParse(qtdController.text.replaceAll(',', '.')) ?? 0;
+                  final fornecedor = fornecedorController.text.trim();
+                  if (numero.isEmpty && dataValidade == null) {
+                    ScaffoldMessenger.of(ctx).showSnackBar(
+                      const SnackBar(content: Text('Informe ao menos o nº do lote ou a validade')),
+                    );
+                    return;
+                  }
+                  // Produto ainda não salvo (ID vazio): não dá para atrelar o lote
+                  // nem dar entrada no estoque. Bloquear com mensagem clara em vez
+                  // de criar um lote "órfão" que nunca soma no estoque.
+                  if (produtoId.isEmpty) {
+                    ScaffoldMessenger.of(ctx).showSnackBar(
+                      const SnackBar(
+                        content: Text('Salve o produto primeiro para adicionar o lote ao estoque.'),
+                        backgroundColor: Colors.orange,
+                      ),
+                    );
+                    return;
+                  }
+                  Navigator.pop(ctx);
+                  final id = '${DateTime.now().microsecondsSinceEpoch}_lote_$produtoId';
+                  await dataService.salvarLoteProduto(LoteProduto(
+                    id: id,
+                    produtoId: produtoId,
+                    numeroLote: numero.isEmpty ? 'LOTE ${DateTime.now().year}' : numero,
+                    dataValidade: dataValidade,
+                    quantidade: qtd,
+                    fornecedorId: fornecedor.isEmpty ? null : _fornecedorId,
+                    fornecedorNome: fornecedor.isEmpty ? null : fornecedor,
+                  ));
+                  bool estoqueAtualizado = false;
+                  if (qtd > 0) {
+                    // Somar ao estoque geral do produto (e ao histórico)
+                    estoqueAtualizado = await dataService.registrarEntradaEstoque(
+                      produtoId: produtoId,
+                      quantidade: qtd,
+                      observacao: 'Entrada manual de lote ${numero.isEmpty ? '' : numero}',
+                      usuario: 'Sistema',
+                      fornecedorId: fornecedor.isEmpty ? null : _fornecedorId,
+                      fornecedorNome: fornecedor.isEmpty ? null : fornecedor,
+                    );
+                  }
+                  if (mounted) {
+                    // Atualizar a exibição local do estoque no formulário
+                    Produto? prod;
+                    try {
+                      prod = dataService.produtos.firstWhere((p) => p.id == produtoId);
+                    } catch (_) {
+                      prod = null;
+                    }
+                    setState(() {
+                      _estoque = prod?.estoque ?? _estoque;
+                      _estoqueController.text = _estoque.toString();
+                    });
+                    final String msg;
+                    final Color cor;
+                    if (qtd > 0 && estoqueAtualizado) {
+                      msg = 'Lote ${numero.isEmpty ? '' : numero} adicionado! Estoque agora: ${_estoque.toStringAsFixed(2)}';
+                      cor = Colors.green;
+                    } else if (qtd > 0) {
+                      msg = 'Lote adicionado, mas não foi possível dar entrada no estoque.';
+                      cor = Colors.orange;
+                    } else {
+                      msg = 'Lote ${numero.isEmpty ? '' : numero} adicionado (sem quantidade).';
+                      cor = Colors.orange;
+                    }
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text(msg), backgroundColor: cor),
+                    );
+                  }
+                },
+                child: const Text('SALVAR'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    loteController.dispose();
+    qtdController.dispose();
+    fornecedorController.dispose();
+  }
+
+  /// Linha de uma forma de venda no formulário (tipo + preço + baixa + remover).
+  Widget _buildFormaVendaRow(int index, FormaVenda forma) {
+    final tiposUsados = _formasVenda.map((f) => f.tipo).toSet();
+    final tiposDisponiveis = <String>['unidade', 'caixa', 'pacote', 'saco']
+        .where((t) => t == forma.tipo || !tiposUsados.contains(t))
+        .toList();
+
+    String rotuloTipo(String t) {
+      switch (t) {
+        case 'caixa':
+          return 'Caixa';
+        case 'pacote':
+          return 'Pacote';
+        case 'saco':
+          return 'Saco';
+        default:
+          return 'Unidade';
+      }
+    }
+
+    IconData iconeTipo(String t) {
+      switch (t) {
+        case 'caixa':
+          return Icons.inventory_outlined;
+        case 'pacote':
+          return Icons.widgets_outlined;
+        case 'saco':
+          return Icons.shopping_bag_outlined;
+        default:
+          return Icons.inventory_2_outlined;
+      }
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.03),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.white.withOpacity(0.08)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  initialValue: forma.tipo,
+                  dropdownColor: const Color(0xFF1E1E2E),
+                  style: const TextStyle(color: Colors.white, fontSize: 13),
+                  decoration: InputDecoration(
+                    labelText: index == 0 ? 'Forma Principal' : 'Forma',
+                    labelStyle: TextStyle(
+                      color: index == 0 ? Colors.orangeAccent : Colors.white54,
+                    ),
+                    prefixIcon: Icon(
+                      iconeTipo(forma.tipo),
+                      size: 18,
+                      color: index == 0 ? Colors.orangeAccent : Colors.white54,
+                    ),
+                    enabledBorder: const UnderlineInputBorder(
+                      borderSide: BorderSide(color: Colors.white24),
+                    ),
+                    isDense: true,
+                  ),
+                  items: tiposDisponiveis
+                      .map((t) => DropdownMenuItem<String>(
+                            value: t,
+                            child: Text(rotuloTipo(t)),
+                          ))
+                      .toList(),
+                  onChanged: (novo) {
+                    if (novo == null || novo == forma.tipo) return;
+                    setState(() {
+                      _formasVenda[index] = forma.copyWith(tipo: novo);
+                    });
+                  },
+                ),
+              ),
+              if (_formasVenda.length > 1)
+                IconButton(
+                  icon: const Icon(Icons.remove_circle_outline,
+                      color: Colors.redAccent, size: 18),
+                  tooltip: 'Remover forma',
+                  onPressed: () {
+                    setState(() {
+                      _formasVenda.removeAt(index);
+                      _sincronizarFormaPrincipal();
+                    });
+                  },
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: TextFormField(
+                  initialValue: forma.preco > 0
+                      ? forma.preco.toStringAsFixed(2)
+                      : '',
+                  style: const TextStyle(color: Colors.white, fontSize: 14),
+                  decoration: _minimalInput('Ex: 120,00')
+                      .copyWith(prefixText: 'Preço: '),
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  onChanged: (v) {
+                    final p = double.tryParse(v.replaceAll(',', '.')) ?? 0.0;
+                    setState(() {
+                      _formasVenda[index] =
+                          forma.copyWith(preco: p > 0 ? p : 0.0);
+                      // A forma principal mantém o preço principal em sincronia
+                      if (index == 0 && p > 0) {
+                        _preco = p;
+                        _precoController.text = p.toStringAsFixed(2);
+                      }
+                    });
+                  },
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: TextFormField(
+                  initialValue: forma.quantidadeBaixa > 0
+                      ? (forma.quantidadeBaixa ==
+                              forma.quantidadeBaixa.roundToDouble()
+                          ? forma.quantidadeBaixa.toStringAsFixed(0)
+                          : forma.quantidadeBaixa.toString())
+                      : '',
+                  style: const TextStyle(color: Colors.white, fontSize: 14),
+                  decoration:
+                      _minimalInput('Ex: 1').copyWith(prefixText: 'Baixa: '),
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  onChanged: (v) {
+                    final q = double.tryParse(v.replaceAll(',', '.')) ?? 0.0;
+                    setState(() {
+                      _formasVenda[index] =
+                          forma.copyWith(quantidadeBaixa: q > 0 ? q : 1.0);
+                      if (index == 0) {
+                        _quantidadeBaixa = q > 0 ? q : 1.0;
+                        _quantidadeBaixaController.text =
+                            _quantidadeBaixa.toString();
+                      }
+                    });
+                  },
+                ),
+              ),
+            ],
+          ),
+          if (forma.vendePorEmbalagem)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                '💡 1 ${rotuloTipo(forma.tipo).toLowerCase()} contém '
+                '${forma.quantidadeBaixa == forma.quantidadeBaixa.roundToDouble() ? forma.quantidadeBaixa.toStringAsFixed(0) : forma.quantidadeBaixa} '
+                'unidade(s) — vende 1, baixa essa quantidade.',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.4),
+                  fontSize: 10,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Diálogo para adicionar uma nova forma de venda.
+  Future<void> _exibirDialogoNovaFormaVenda() async {
+    final tiposUsados = _formasVenda.map((f) => f.tipo).toSet();
+    final tiposDisponiveis = <String>['unidade', 'caixa', 'pacote', 'saco']
+        .where((t) => !tiposUsados.contains(t))
+        .toList();
+
+    if (tiposDisponiveis.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Todas as formas de venda já estão cadastradas'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    String tipoSelecionado = tiposDisponiveis.first;
+    final precoController = TextEditingController();
+    final baixaController = TextEditingController();
+
+    String rotuloTipo(String t) {
+      switch (t) {
+        case 'caixa':
+          return 'Caixa';
+        case 'pacote':
+          return 'Pacote';
+        case 'saco':
+          return 'Saco';
+        default:
+          return 'Unidade';
+      }
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          return AlertDialog(
+            backgroundColor: const Color(0xFF1E1E2E),
+            title: const Text('Nova Forma de Venda',
+                style: TextStyle(color: Colors.white)),
+            content: SizedBox(
+              width: 380,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  DropdownButtonFormField<String>(
+                    initialValue: tipoSelecionado,
+                    dropdownColor: const Color(0xFF1E1E2E),
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(
+                      labelText: 'Forma',
+                      labelStyle: TextStyle(color: Colors.white54),
+                      enabledBorder: UnderlineInputBorder(
+                        borderSide: BorderSide(color: Colors.white24),
+                      ),
+                    ),
+                    items: tiposDisponiveis
+                        .map((t) => DropdownMenuItem<String>(
+                              value: t,
+                              child: Text(rotuloTipo(t)),
+                            ))
+                        .toList(),
+                    onChanged: (novo) {
+                      if (novo != null) {
+                        setDialogState(() => tipoSelecionado = novo);
+                      }
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: precoController,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(
+                      labelText: 'Preço',
+                      labelStyle: TextStyle(color: Colors.white54),
+                      enabledBorder: UnderlineInputBorder(
+                        borderSide: BorderSide(color: Colors.white24),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: baixaController,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(
+                      labelText: 'Baixa no estoque',
+                      hintText: 'Quantas unidades baixa por item vendido',
+                      hintStyle: TextStyle(color: Colors.white24),
+                      labelStyle: TextStyle(color: Colors.white54),
+                      enabledBorder: UnderlineInputBorder(
+                        borderSide: BorderSide(color: Colors.white24),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('CANCELAR', style: TextStyle(color: Colors.grey)),
+              ),
+              ElevatedButton(
+                style:
+                    ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
+                onPressed: () {
+                  final preco =
+                      double.tryParse(precoController.text.replaceAll(',', '.')) ??
+                          0.0;
+                  final baixa =
+                      double.tryParse(baixaController.text.replaceAll(',', '.')) ??
+                          1.0;
+                  Navigator.pop(ctx);
+                  setState(() {
+                    _formasVenda.add(FormaVenda(
+                      tipo: tipoSelecionado,
+                      preco: preco > 0 ? preco : 0.0,
+                      quantidadeBaixa: baixa > 0 ? baixa : 1.0,
+                    ));
+                  });
+                },
+                child: const Text('ADICIONAR'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    precoController.dispose();
+    baixaController.dispose();
+  }
+
+  /// Sincroniza os campos legados (unidadeVenda/quantidadeBaixa) com a
+  /// primeira forma da lista (forma principal), para compatibilidade com
+  /// telas/relatórios que ainda usam os campos antigos.
+  void _sincronizarFormaPrincipal() {
+    if (_formasVenda.isEmpty) return;
+    final principal = _formasVenda.first;
+    _unidadeVenda = principal.tipo;
+    _quantidadeBaixa = principal.quantidadeBaixa > 0
+        ? principal.quantidadeBaixa
+        : 1.0;
+    _quantidadeBaixaController.text = _quantidadeBaixa.toString();
+  }
+
+  Widget _buildOptionCard({
+    required String title,
+    required String subtitle,
+    required IconData icon,
+    required Color activeColor,
+    required bool value,
+    required ValueChanged<bool> onChanged,
+  }) {
+    return InkWell(
+      onTap: () => onChanged(!value),
+      borderRadius: BorderRadius.circular(10),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        margin: const EdgeInsets.symmetric(vertical: 4),
+        decoration: BoxDecoration(
+          color: value ? activeColor.withOpacity(0.12) : Colors.white.withOpacity(0.03),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: value ? activeColor : Colors.white12,
+            width: value ? 1.5 : 1.0,
+          ),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: value ? activeColor.withOpacity(0.2) : Colors.white.withOpacity(0.06),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, color: value ? activeColor : Colors.white60, size: 20),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(
+                      color: value ? Colors.white : Colors.white70,
+                      fontWeight: value ? FontWeight.bold : FontWeight.w500,
+                      fontSize: 13,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.5),
+                      fontSize: 10,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Switch(
+              value: value,
+              activeColor: activeColor,
+              onChanged: onChanged,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Chip de seleção múltipla de destino de impressão (setor ou impressora).
+  Widget _buildDestinoChip(String nome, IconData icon, Color cor) {
+    final selecionado = _impressoraProducaoExtra.contains(nome);
+    final ehPrincipal = _impressoraProducao == nome;
+    return FilterChip(
+      label: Text(nome),
+      selected: selecionado,
+      // O destino principal já está coberto pelo dropdown — o chip fica desabilitado
+      onSelected: ehPrincipal
+          ? null
+          : (sel) => setState(() {
+              if (sel) {
+                if (!_impressoraProducaoExtra.contains(nome)) {
+                  _impressoraProducaoExtra.add(nome);
+                }
+              } else {
+                _impressoraProducaoExtra.remove(nome);
+              }
+            }),
+      selectedColor: cor.withOpacity(0.25),
+      checkmarkColor: cor,
+      backgroundColor: Colors.white.withOpacity(0.05),
+      side: BorderSide(
+        color: selecionado ? cor : Colors.white24,
+      ),
+      labelStyle: TextStyle(
+        color: selecionado ? Colors.white : Colors.white70,
+        fontWeight: selecionado ? FontWeight.bold : FontWeight.normal,
+        fontSize: 12,
+      ),
+      avatar: Icon(
+        icon,
+        size: 16,
+        color: ehPrincipal ? Colors.amberAccent : (selecionado ? cor : Colors.white54),
+      ),
     );
   }
 
@@ -1181,7 +2186,196 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
       onChanged: onChanged,
     );
   }
-  
+  List<Map<String, dynamic>> _obterConfigTabelasPreco() {
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final empresa = dataService.empresaAtual ?? authService.empresaAtual;
+    if (empresa == null) return [];
+
+    final cfg = empresa.configuracoes?['perfis_preco'];
+    if (cfg is List && cfg.isNotEmpty) {
+      return cfg
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .where((c) => (c['nome']?.toString() ?? '').isNotEmpty)
+          .toList();
+    }
+
+    return empresa.perfisDePreco
+        .map((nome) => {'nome': nome, 'tipo': 'fixo', 'valor': 0.0})
+        .toList();
+  }
+
+  String _descricaoTipoTabela(Map<String, dynamic> config) {
+    final tipo = config['tipo'] as String? ?? 'fixo';
+    final valor = (config['valor'] as num?)?.toDouble() ?? 0.0;
+    switch (tipo) {
+      case 'desconto':
+        return 'Desconto global: ${valor.toStringAsFixed(1)}%';
+      case 'acrescimo':
+        return 'Acréscimo global: ${valor.toStringAsFixed(1)}%';
+      default:
+        return 'Preço fixo por produto';
+    }
+  }
+
+  void _alternarTabelaPreco(String nome, bool selecionada) {
+    setState(() {
+      if (selecionada) {
+        _tabelasPrecoSelecionadas.add(nome);
+        _precosPerfilControllers.putIfAbsent(nome, () => TextEditingController());
+      } else {
+        _tabelasPrecoSelecionadas.remove(nome);
+      }
+    });
+  }
+
+  Widget _buildPrecosInteligentes() {
+    final tabelas = _obterConfigTabelasPreco();
+
+    if (tabelas.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.05),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.white12),
+        ),
+        child: const Row(
+          children: [
+            Icon(Icons.info_outline, color: Colors.white38, size: 18),
+            SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Nenhuma tabela de preço cadastrada. Crie tabelas em Configurações → Empresa para habilitar preços diferenciados.',
+                style: TextStyle(color: Colors.white38, fontSize: 13),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final tabelasSelecionadasOrdenadas = tabelas
+        .map((c) => c['nome'] as String)
+        .where(_tabelasPrecoSelecionadas.contains)
+        .toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text(
+          'Selecione as Tabelas de Preço',
+          style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'Escolha uma ou mais tabelas cadastradas na empresa (as mesmas usadas no cliente) e defina o preço deste produto em cada uma.',
+          style: TextStyle(color: Colors.white70, fontSize: 13),
+        ),
+        const SizedBox(height: 16),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: tabelas.map((config) {
+            final nome = config['nome'] as String;
+            final selecionada = _tabelasPrecoSelecionadas.contains(nome);
+            final tipo = config['tipo'] as String? ?? 'fixo';
+            final corTipo = tipo == 'desconto'
+                ? Colors.greenAccent
+                : (tipo == 'acrescimo' ? Colors.redAccent : Colors.orangeAccent);
+
+            return FilterChip(
+              label: Text(nome),
+              selected: selecionada,
+              onSelected: (s) => _alternarTabelaPreco(nome, s),
+              selectedColor: Colors.blueAccent.withOpacity(0.25),
+              checkmarkColor: Colors.blueAccent,
+              backgroundColor: Colors.white.withOpacity(0.05),
+              side: BorderSide(
+                color: selecionada ? Colors.blueAccent : Colors.white24,
+              ),
+              labelStyle: TextStyle(
+                color: selecionada ? Colors.white : Colors.white70,
+                fontWeight: selecionada ? FontWeight.bold : FontWeight.normal,
+              ),
+              avatar: Icon(Icons.price_change, size: 16, color: corTipo),
+            );
+          }).toList(),
+        ),
+        if (tabelasSelecionadasOrdenadas.isEmpty) ...[
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.03),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.white12),
+            ),
+            child: const Row(
+              children: [
+                Icon(Icons.touch_app, color: Colors.white38, size: 18),
+                SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Toque nas tabelas acima para selecionar e definir os preços.',
+                    style: TextStyle(color: Colors.white38, fontSize: 13),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ] else ...[
+          const SizedBox(height: 20),
+          const Text(
+            'Valores por Tabela Selecionada',
+            style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 12),
+          ...tabelasSelecionadasOrdenadas.map((nome) {
+            final config = tabelas.firstWhere(
+              (t) => t['nome'] == nome,
+              orElse: () => {'nome': nome, 'tipo': 'fixo', 'valor': 0.0},
+            );
+            final tipo = config['tipo'] as String? ?? 'fixo';
+            final isFixo = tipo == 'fixo';
+            _precosPerfilControllers.putIfAbsent(nome, () => TextEditingController());
+
+            return _buildField(
+              label: nome,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _descricaoTipoTabela(config),
+                    style: TextStyle(
+                      color: tipo == 'desconto'
+                          ? Colors.greenAccent
+                          : (tipo == 'acrescimo' ? Colors.redAccent : Colors.orangeAccent),
+                      fontSize: 12,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextFormField(
+                    controller: _precosPerfilControllers[nome],
+                    style: const TextStyle(color: Colors.white),
+                    decoration: _minimalInput(
+                      isFixo
+                          ? 'Preço fixo para esta tabela (ex: 15.00)'
+                          : 'Deixe vazio para usar o % global da tabela',
+                    ).copyWith(prefixText: 'R\$ '),
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ],
+      ],
+    );
+  }
+
+
+
   Widget _buildAbaInformacoes() {
     return Column(
       children: [
@@ -1221,11 +2415,58 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
           ),
           _buildField(
             label: 'Código de Barras (EAN)',
-            child: TextFormField(
-              controller: _codigoBarrasController,
-              style: TextStyle(color: Colors.white.withOpacity(0.8), fontSize: 15),
-              decoration: _minimalInput('Ex: 789000...'),
-              onChanged: (v) => _codigoBarras = v,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextFormField(
+                  controller: _codigoBarrasController,
+                  style: TextStyle(color: Colors.white.withOpacity(0.8), fontSize: 15),
+                  decoration: _minimalInput('Ex: 789000...'),
+                  onChanged: (v) => _codigoBarras = v,
+                ),
+                // Códigos de barras adicionais
+                for (var i = 0; i < _codigosBarrasAdicionaisControllers.length; i++) ...[
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextFormField(
+                          controller: _codigosBarrasAdicionaisControllers[i],
+                          style: TextStyle(color: Colors.white.withOpacity(0.8), fontSize: 15),
+                          decoration: _minimalInput('Código de barras ${i + 2}'),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.remove_circle_outline, color: Colors.redAccent, size: 20),
+                        tooltip: 'Remover código',
+                        onPressed: () {
+                          final controller = _codigosBarrasAdicionaisControllers[i];
+                          setState(() {
+                            _codigosBarrasAdicionaisControllers.removeAt(i);
+                          });
+                          // Descartar o controller após a reconstrução da tela
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            controller.dispose();
+                          });
+                        },
+                      ),
+                    ],
+                  ),
+                ],
+                const SizedBox(height: 4),
+                TextButton.icon(
+                  onPressed: () {
+                    setState(() {
+                      _codigosBarrasAdicionaisControllers.add(TextEditingController());
+                    });
+                  },
+                  icon: const Icon(Icons.add, size: 18, color: Colors.orange),
+                  label: const Text(
+                    'Adicionar outro código de barras',
+                    style: TextStyle(color: Colors.orange),
+                  ),
+                ),
+              ],
             ),
           ),
           _buildField(
@@ -1239,43 +2480,197 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
           ),
         ]),
 
-        _buildSection('Configurações de Preparação e Balança', [
-          Row(
-            children: [
-              Expanded(
-                child: CheckboxListTile(
-                  title: const Text('Preparar na Cozinha', style: TextStyle(color: Colors.white, fontSize: 12)),
-                  value: _paraCozinha,
-                  activeColor: Colors.orangeAccent,
-                  checkColor: Colors.black,
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  onChanged: (v) => setState(() => _paraCozinha = v ?? false),
+        _buildSection('Departamento e Impressora', [
+          // ── DEPARTAMENTO (separado da impressora) ──────────────────────────
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.orangeAccent.withOpacity(0.06),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.orangeAccent.withOpacity(0.3)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Row(
+                  children: [
+                    Icon(Icons.food_bank_outlined, color: Colors.orangeAccent, size: 18),
+                    SizedBox(width: 8),
+                    Text(
+                      'Departamento de Preparação',
+                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                    ),
+                  ],
                 ),
-              ),
-              Expanded(
-                child: CheckboxListTile(
-                  title: const Text('Preparar no Bar', style: TextStyle(color: Colors.white, fontSize: 12)),
-                  value: _paraBar,
-                  activeColor: Colors.blueAccent,
-                  checkColor: Colors.black,
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  onChanged: (v) => setState(() => _paraBar = v ?? false),
+                const SizedBox(height: 4),
+                Text(
+                  'Onde este item é preparado (ex.: Cozinha, Bar, Sobremesas). Cadastre os departamentos no menu → Departamentos.',
+                  style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 11),
                 ),
-              ),
-              Expanded(
-                child: CheckboxListTile(
-                  title: const Text('Enviar para Balança', style: TextStyle(color: Colors.white, fontSize: 12)),
-                  value: _enviaBalanca,
-                  activeColor: Colors.tealAccent,
-                  checkColor: Colors.black,
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  onChanged: (v) => setState(() => _enviaBalanca = v ?? false),
+                const SizedBox(height: 10),
+                Builder(builder: (context) {
+                  final ds = Provider.of<DataService>(context, listen: false);
+                  final deps = ds.departamentos;
+                  // Fallback de compatibilidade: produtos antigos com paraCozinha/paraBar
+                  // mas sem departamentoId selecionado.
+                  if (_departamentoId == null && deps.isNotEmpty) {
+                    if (_paraCozinha) {
+                      final dep = deps.firstWhere((d) => d.nome.toLowerCase() == 'cozinha', orElse: () => deps.first);
+                      _departamentoId = dep.id;
+                    } else if (_paraBar) {
+                      final dep = deps.firstWhere((d) => d.nome.toLowerCase() == 'bar', orElse: () => deps.first);
+                      _departamentoId = dep.id;
+                    }
+                  }
+                  return DropdownButtonFormField<String?>(
+                    value: _departamentoId,
+                    dropdownColor: const Color(0xFF2A2D3E),
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    decoration: InputDecoration(
+                      hintText: 'Nenhum departamento',
+                      hintStyle: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 12),
+                      filled: true,
+                      fillColor: Colors.black12,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Colors.white24)),
+                    ),
+                    items: [
+                      const DropdownMenuItem<String?>(
+                        value: null,
+                        child: Text('Nenhum departamento', style: TextStyle(color: Colors.white70)),
+                      ),
+                      ...deps.map((dep) => DropdownMenuItem<String?>(
+                            value: dep.id,
+                            child: Text(dep.nome, style: const TextStyle(color: Colors.white)),
+                          )),
+                    ],
+                    onChanged: (val) => setState(() {
+                      _departamentoId = val;
+                      // Compatibilidade: deriva os flags antigos de cozinha/bar
+                      // a partir do departamento escolhido, para as telas de
+                      // mesas/comandas que ainda leem paraCozinha/paraBar.
+                      final nome = ds.nomeDepartamento(val).toLowerCase();
+                      _paraCozinha = nome == 'cozinha';
+                      _paraBar = nome == 'bar';
+                    }),
+                  );
+                }),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 14),
+
+          // ── IMPRESSORA (separada do departamento) ──────────────────────────
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.blueAccent.withOpacity(0.05),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.blueAccent.withOpacity(0.3)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Row(
+                  children: [
+                    Icon(Icons.print, color: Colors.blueAccent, size: 18),
+                    SizedBox(width: 8),
+                    Text(
+                      'Impressora de Produção',
+                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                    ),
+                  ],
                 ),
-              ),
-            ],
+                const SizedBox(height: 4),
+                Text(
+                  'Escolha APENAS a impressora física. O departamento é definido acima — são coisas separadas.',
+                  style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 11),
+                ),
+                const SizedBox(height: 10),
+                DropdownButtonFormField<String?>(
+                  value: (_impressoraProducao != null && _impressoraProducao!.isNotEmpty)
+                      ? _impressoraProducao
+                      : null,
+                  dropdownColor: const Color(0xFF2A2D3E),
+                  style: const TextStyle(color: Colors.white, fontSize: 13),
+                  decoration: InputDecoration(
+                    hintText: 'Padrão do terminal',
+                    hintStyle: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 12),
+                    filled: true,
+                    fillColor: Colors.black12,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Colors.white24)),
+                  ),
+                  items: [
+                    const DropdownMenuItem<String?>(
+                      value: null,
+                      child: Text('Padrão do terminal', style: TextStyle(color: Colors.white70)),
+                    ),
+                    ..._impressorasSistema.map((printerName) => DropdownMenuItem<String?>(
+                          value: printerName,
+                          child: Text(printerName, style: const TextStyle(color: Colors.white)),
+                        )),
+                  ],
+                  onChanged: (val) => setState(() {
+                    _impressoraProducao = val;
+                    // Evita duplicar a impressora principal na lista de extras
+                    if (val != null && val.isNotEmpty) {
+                      _impressoraProducaoExtra.remove(val);
+                    }
+                  }),
+                ),
+
+                const SizedBox(height: 14),
+                const Divider(color: Colors.white12, height: 1),
+                const SizedBox(height: 12),
+
+                // Multi-seleção: imprimir também em outras impressoras
+                const Row(
+                  children: [
+                    Icon(Icons.library_add_check, color: Colors.tealAccent, size: 18),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Imprimir também em outras impressoras',
+                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Marque outras impressoras físicas onde este produto também deve imprimir (pode marcar várias).',
+                  style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 11),
+                ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: _impressorasSistema.map(
+                    (nome) => _buildDestinoChip(nome, Icons.print, Colors.tealAccent),
+                  ).toList(),
+                ),
+                if (_impressoraProducaoExtra.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.tealAccent.withOpacity(0.08),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.tealAccent.withOpacity(0.3)),
+                    ),
+                    child: Text(
+                      'Vai imprimir em: ${<String>[
+                        if (_impressoraProducao != null && _impressoraProducao!.isNotEmpty) _impressoraProducao!,
+                        ..._impressoraProducaoExtra,
+                      ].join(' • ')}',
+                      style: const TextStyle(color: Colors.tealAccent, fontSize: 11, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ],
+              ],
+            ),
           ),
         ]),
 
@@ -1297,32 +2692,34 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
                   ),
                 ),
               ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: _buildField(
-                  label: 'Preço de Custo',
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      TextFormField(
-                        controller: _precoCustoController,
-                        style: TextStyle(color: Colors.white.withOpacity(0.8), fontSize: 16),
-                        decoration: _minimalInput('0.00'),
-                        keyboardType: TextInputType.number,
-                        onChanged: (v) {
-                          _precoCusto = double.tryParse(v.replaceAll(',', '.'));
-                          setState(() {});
-                        },
-                      ),
-                      if (_precoCusto != null && _precoCusto! > 0 && _preco > 0)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 4),
-                          child: Text(_calcularMargemLucro(), style: const TextStyle(color: Colors.blueAccent, fontSize: 10)),
+              if (_podeVerCusto()) ...[
+                const SizedBox(width: 16),
+                Expanded(
+                  child: _buildField(
+                    label: 'Preço de Custo',
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        TextFormField(
+                          controller: _precoCustoController,
+                          style: TextStyle(color: Colors.white.withOpacity(0.8), fontSize: 16),
+                          decoration: _minimalInput('0.00'),
+                          keyboardType: TextInputType.number,
+                          onChanged: (v) {
+                            _precoCusto = double.tryParse(v.replaceAll(',', '.'));
+                            setState(() {});
+                          },
                         ),
-                    ],
+                        if (_precoCusto != null && _precoCusto! > 0 && _preco > 0)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Text(_calcularMargemLucro(), style: const TextStyle(color: Colors.blueAccent, fontSize: 10)),
+                          ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
+              ],
             ],
           ),
           const SizedBox(height: 16),
@@ -1543,6 +2940,14 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
           ),
         ]),
 
+        // Só exibir a seção de lotes para produto JÁ SALVO (ID preenchido) —
+        // nunca para Serviços nem para clones/novos produtos ainda não salvos.
+        if (widget.item is Produto && (widget.item!.id ?? '').toString().isNotEmpty) _buildLotesSection(),
+
+        _buildSection('Tabelas de Preço', [
+          _buildPrecosInteligentes(),
+        ]),
+
         _buildSection('Agrupamento e Fornecedor', [
           _buildField(
             label: 'Fornecedor Principal',
@@ -1579,13 +2984,58 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
           ),
           _buildField(
             label: 'Unidade de Medida',
-            last: true,
             child: _buildAutocomplete(
               controller: _unidadeController,
               hint: 'Ex: UN, KG, LT',
               sugestoes: _obterUnidadesUnicas(),
               onChanged: (v) => setState(() => _unidade = v),
             ),
+          ),
+          _buildField(
+            label: 'Formas de Venda',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Venda o mesmo produto de várias formas sem cadastrar itens duplicados. No PDV você escolhe qual forma usar.',
+                  style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 11, height: 1.4),
+                ),
+                const SizedBox(height: 10),
+                ..._formasVenda.asMap().entries.map((entry) {
+                  final index = entry.key;
+                  final forma = entry.value;
+                  return _buildFormaVendaRow(index, forma);
+                }),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: _exibirDialogoNovaFormaVenda,
+                    icon: const Icon(Icons.add, size: 18),
+                    label: const Text('Adicionar Forma de Venda'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.blueAccent,
+                      side: BorderSide(color: Colors.blueAccent.withOpacity(0.4)),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.blueAccent.withOpacity(0.06),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.blueAccent.withOpacity(0.2)),
+                  ),
+                  child: Text(
+                    '💡 Ex.: ração vendida por unidade (R\$ 120,00) e por pacote de 3 kg (R\$ 35,00). Cada forma tem seu preço e sua baixa no estoque.',
+                    style: const TextStyle(color: Colors.white54, fontSize: 11, height: 1.4),
+                  ),
+                ),
+              ],
+            ),
+            last: true,
           ),
         ]),
 
@@ -1594,8 +3044,9 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
             children: [
               const Icon(Icons.local_offer_outlined, size: 16, color: Colors.orangeAccent),
               const SizedBox(width: 8),
-              const Text('Habilitar Promoção', style: TextStyle(color: Colors.white70, fontSize: 13)),
-              const Spacer(),
+              const Expanded(
+                child: Text('Preço promocional (data a data)', style: TextStyle(color: Colors.white70, fontSize: 13)),
+              ),
               Switch(
                 value: _temPromocao,
                 activeColor: Colors.orangeAccent,
@@ -1606,7 +3057,7 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
           if (_temPromocao) ...[
             const SizedBox(height: 12),
             _buildField(
-              label: 'Preço Promocional',
+              label: 'Preço Promocional (R\$)',
               last: true,
               child: TextFormField(
                 controller: _precoPromocionalController,
@@ -1615,9 +3066,548 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
                 onChanged: (v) => _precoPromocional = double.tryParse(v.replaceAll(',', '.')),
               ),
             ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildDataPromoField(
+                    label: 'Início',
+                    data: _promocaoInicio,
+                    onTap: () => _selecionarDataPromocao(inicio: true),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildDataPromoField(
+                    label: 'Fim',
+                    data: _promocaoFim,
+                    onTap: () => _selecionarDataPromocao(inicio: false),
+                  ),
+                ),
+              ],
+            ),
           ],
+          const SizedBox(height: 16),
+          const Divider(color: Colors.white12),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              const Icon(Icons.sell_outlined, size: 16, color: Colors.deepPurpleAccent),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text('Regras de promoção (empilháveis)', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Crie várias regras: por dia da semana, por quantidade levada ou por valor mínimo do produto no carrinho. Os descontos somam-se entre si e com o preço promocional acima.',
+            style: TextStyle(color: Colors.white54, fontSize: 11),
+          ),
+          const SizedBox(height: 8),
+          if (_promocoes.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 8),
+              child: Text('Nenhuma regra criada.', style: TextStyle(color: Colors.white38, fontStyle: FontStyle.italic, fontSize: 12)),
+            )
+          else
+            ..._promocoes.asMap().entries.map((entry) {
+              final regra = entry.value;
+              return Card(
+                color: regra.ativo ? Colors.white.withOpacity(0.05) : Colors.white.withOpacity(0.02),
+                margin: const EdgeInsets.only(bottom: 8),
+                child: ListTile(
+                  leading: Icon(Icons.percent, color: regra.ativo ? Colors.deepPurpleAccent : Colors.white24),
+                  title: Text(
+                    regra.nome ?? regra.tipo.rotulo,
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                  ),
+                  subtitle: Text(
+                    '${regra.tipo.rotulo} · ${regra.descricaoCondicao}\n${regra.descricaoDesconto}${regra.ativo ? '' : ' · DESATIVADA'}',
+                    style: const TextStyle(color: Colors.white54, fontSize: 11),
+                  ),
+                  isThreeLine: true,
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.edit_outlined, size: 18, color: Colors.blueAccent),
+                        onPressed: () => _exibirDialogoRegraPromocao(regra: regra, index: entry.key),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline, size: 18, color: Colors.redAccent),
+                        onPressed: () => setState(() => _promocoes.removeAt(entry.key)),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: () => _exibirDialogoRegraPromocao(),
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('Adicionar Regra'),
+              style: OutlinedButton.styleFrom(foregroundColor: Colors.deepPurpleAccent),
+            ),
+          ),
         ]),
       ],
+    );
+  }
+
+  /// Campo compacto para seleção de data da promoção simples.
+  Widget _buildDataPromoField({
+    required String label,
+    required DateTime? data,
+    required VoidCallback onTap,
+    VoidCallback? onClear,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.05),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.white12),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.calendar_today, size: 14, color: data == null ? Colors.white38 : Colors.orangeAccent),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(label, style: const TextStyle(color: Colors.white38, fontSize: 10)),
+                  const SizedBox(height: 2),
+                  Text(
+                    data == null ? '—' : DateFormat('dd/MM/yyyy').format(data!),
+                    style: TextStyle(
+                      color: data == null ? Colors.white54 : Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (data != null)
+              InkWell(
+                onTap: onClear ??
+                    () => setState(() {
+                      if (label == 'Início') {
+                        _promocaoInicio = null;
+                      } else {
+                        _promocaoFim = null;
+                      }
+                    }),
+                child: const Icon(Icons.close, size: 14, color: Colors.white38),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Abre o seletor de data para a promoção simples (início ou fim).
+  Future<void> _selecionarDataPromocao({required bool inicio}) async {
+    final agora = DateTime.now();
+    final selecionada = await showDatePicker(
+      context: context,
+      initialDate: inicio ? (_promocaoInicio ?? agora) : (_promocaoFim ?? agora),
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+      helpText: inicio ? 'Início da promoção' : 'Fim da promoção',
+    );
+    if (selecionada == null) return;
+    setState(() {
+      if (inicio) {
+        _promocaoInicio = selecionada;
+      } else {
+        _promocaoFim = selecionada;
+      }
+    });
+  }
+
+  /// Diálogo para adicionar/editar uma regra de promoção.
+  Future<void> _exibirDialogoRegraPromocao({RegraPromocao? regra, int? index}) async {
+    final nomeController = TextEditingController(text: regra?.nome ?? '');
+    final valorController = TextEditingController();
+    TipoRegraPromocao tipoSelecionado = regra?.tipo ?? TipoRegraPromocao.diaSemana;
+    bool usaFixo = regra?.usaPrecoFixo ?? false;
+    if (regra?.descontoPercentual != null && regra!.descontoPercentual! > 0) {
+      valorController.text = regra.descontoPercentual!.toString().replaceAll('.', ',');
+    } else if (regra?.precoFixo != null && regra!.precoFixo! > 0) {
+      valorController.text = regra.precoFixo!.toString().replaceAll('.', ',');
+    }
+    DateTime? dataInicio = regra?.dataInicio;
+    DateTime? dataFim = regra?.dataFim;
+    final Set<int> diasSelecionados = Set<int>.from(regra?.diasSemana ?? []);
+    int? horaInicioMin = regra?.horaInicioMin;
+    int? horaFimMin = regra?.horaFimMin;
+    final qtdMinimaController = TextEditingController(
+      text: (regra?.quantidadeMinima ?? 0) > 0 ? regra!.quantidadeMinima.toString().replaceAll('.', ',') : '',
+    );
+    final valorMinimoController = TextEditingController(
+      text: (regra?.valorMinimo ?? 0) > 0 ? regra!.valorMinimo.toString().replaceAll('.', ',') : '',
+    );
+    bool ativo = regra?.ativo ?? true;
+
+    const nomesDias = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
+
+    Future<void> pickDate({required bool inicio}) async {
+      final agora = DateTime.now();
+      final sel = await showDatePicker(
+        context: context,
+        initialDate: inicio ? (dataInicio ?? agora) : (dataFim ?? agora),
+        firstDate: DateTime(2020),
+        lastDate: DateTime(2100),
+      );
+      if (sel == null) return;
+      if (inicio) {
+        dataInicio = sel;
+      } else {
+        dataFim = sel;
+      }
+    }
+
+    Future<void> pickTime({required bool inicio}) async {
+      final atual = inicio ? horaInicioMin : horaFimMin;
+      final sel = await showTimePicker(
+        context: context,
+        initialTime: atual != null
+            ? TimeOfDay(hour: atual ~/ 60, minute: atual % 60)
+            : const TimeOfDay(hour: 8, minute: 0),
+      );
+      if (sel == null) return;
+      final min = sel.hour * 60 + sel.minute;
+      if (inicio) {
+        horaInicioMin = min;
+      } else {
+        horaFimMin = min;
+      }
+    }
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setStateModal) {
+          return AlertDialog(
+            backgroundColor: const Color(0xFF1E1E2E),
+            title: Text(regra == null ? 'Nova Regra de Promoção' : 'Editar Regra de Promoção',
+                style: const TextStyle(color: Colors.white, fontSize: 16)),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TextField(
+                    controller: nomeController,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(
+                      labelText: 'Nome (opcional, ex: Terça da Ração)',
+                      labelStyle: TextStyle(color: Colors.white70, fontSize: 12),
+                      enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text('Tipo de condição', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: TipoRegraPromocao.values.map((t) {
+                      final selecionado = tipoSelecionado == t;
+                      return ChoiceChip(
+                        label: Text(t.rotulo, style: TextStyle(color: selecionado ? Colors.white : Colors.white70, fontSize: 11)),
+                        selected: selecionado,
+                        selectedColor: Colors.deepPurpleAccent.withOpacity(0.5),
+                        backgroundColor: Colors.white.withOpacity(0.05),
+                        onSelected: (_) => setStateModal(() => tipoSelecionado = t),
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text('Tipo de desconto', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildDescontoChip(
+                          rotulo: 'Percentual (%)',
+                          selecionado: !usaFixo,
+                          cor: Colors.orangeAccent,
+                          onTap: () => setStateModal(() => usaFixo = false),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _buildDescontoChip(
+                          rotulo: 'Preço fixo (R\$)',
+                          selecionado: usaFixo,
+                          cor: Colors.greenAccent,
+                          onTap: () => setStateModal(() => usaFixo = true),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: valorController,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    style: TextStyle(color: usaFixo ? Colors.greenAccent : Colors.orangeAccent),
+                    decoration: InputDecoration(
+                      labelText: usaFixo ? 'Preço fixo (R\$)' : 'Desconto (%)',
+                      labelStyle: const TextStyle(color: Colors.white70, fontSize: 12),
+                      enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+                    ),
+                  ),
+                  if (tipoSelecionado == TipoRegraPromocao.data) ...[...[
+                    const SizedBox(height: 14),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _buildDataPromoField(
+                            label: 'Início',
+                            data: dataInicio,
+                            onTap: () async {
+                              await pickDate(inicio: true);
+                              setStateModal(() {});
+                            },
+                            onClear: () => setStateModal(() => dataInicio = null),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: _buildDataPromoField(
+                            label: 'Fim',
+                            data: dataFim,
+                            onTap: () async {
+                              await pickDate(inicio: false);
+                              setStateModal(() {});
+                            },
+                            onClear: () => setStateModal(() => dataFim = null),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ]],
+                  if (tipoSelecionado == TipoRegraPromocao.diaSemana) ...[...[
+                    const SizedBox(height: 14),
+                    const Text('Dias da semana (toque para marcar)', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: List.generate(7, (i) {
+                        final dia = i + 1; // 1=Seg .. 7=Dom
+                        final selecionado = diasSelecionados.contains(dia);
+                        return FilterChip(
+                          label: Text(nomesDias[i], style: TextStyle(color: selecionado ? Colors.white : Colors.white70, fontSize: 11)),
+                          selected: selecionado,
+                          selectedColor: Colors.orangeAccent.withOpacity(0.4),
+                          backgroundColor: Colors.white.withOpacity(0.05),
+                          onSelected: (v) => setStateModal(() {
+                            if (v) {
+                              diasSelecionados.add(dia);
+                            } else {
+                              diasSelecionados.remove(dia);
+                            }
+                          }),
+                        );
+                      }),
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: InkWell(
+                            onTap: () async {
+                              await pickTime(inicio: true);
+                              setStateModal(() {});
+                            },
+                            borderRadius: BorderRadius.circular(10),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.05),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(color: Colors.white12),
+                              ),
+                              child: Text(
+                                'De: ${horaInicioMin == null ? '—' : RegraPromocao.fmtHora(horaInicioMin!)}',
+                                style: const TextStyle(color: Colors.white70, fontSize: 12),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: InkWell(
+                            onTap: () async {
+                              await pickTime(inicio: false);
+                              setStateModal(() {});
+                            },
+                            borderRadius: BorderRadius.circular(10),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.05),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(color: Colors.white12),
+                              ),
+                              child: Text(
+                                'Até: ${horaFimMin == null ? '—' : RegraPromocao.fmtHora(horaFimMin!)}',
+                                style: const TextStyle(color: Colors.white70, fontSize: 12),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ]],
+                  if (tipoSelecionado == TipoRegraPromocao.quantidade) ...[...[
+                    const SizedBox(height: 14),
+                    TextField(
+                      controller: qtdMinimaController,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      style: const TextStyle(color: Colors.white),
+                      decoration: const InputDecoration(
+                        labelText: 'Quantidade mínima levada',
+                        labelStyle: TextStyle(color: Colors.white70, fontSize: 12),
+                        enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+                      ),
+                    ),
+                  ]],
+                  if (tipoSelecionado == TipoRegraPromocao.valorMinimo) ...[...[
+                    const SizedBox(height: 14),
+                    TextField(
+                      controller: valorMinimoController,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      style: const TextStyle(color: Colors.white),
+                      decoration: const InputDecoration(
+                        labelText: 'Valor mínimo do produto no carrinho (R\$)',
+                        labelStyle: TextStyle(color: Colors.white70, fontSize: 12),
+                        enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+                      ),
+                    ),
+                  ]],
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      const Icon(Icons.toggle_on_outlined, size: 16, color: Colors.white54),
+                      const SizedBox(width: 6),
+                      const Text('Regra ativa', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                      const Spacer(),
+                      Switch(
+                        value: ativo,
+                        activeColor: Colors.greenAccent,
+                        onChanged: (v) => setStateModal(() => ativo = v),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Cancelar', style: TextStyle(color: Colors.white70)),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  final descontoPerc = double.tryParse(valorController.text.replaceAll(',', '.')) ?? 0.0;
+                  final qtdMinima = double.tryParse(qtdMinimaController.text.replaceAll(',', '.')) ?? 0.0;
+                  final vMinimo = double.tryParse(valorMinimoController.text.replaceAll(',', '.')) ?? 0.0;
+                  final novaRegra = RegraPromocao(
+                    tipo: tipoSelecionado,
+                    nome: nomeController.text.trim().isEmpty ? null : nomeController.text.trim(),
+                    ativo: ativo,
+                    descontoPercentual: !usaFixo && descontoPerc > 0 ? descontoPerc : null,
+                    precoFixo: usaFixo && descontoPerc > 0 ? descontoPerc : null,
+                    dataInicio: tipoSelecionado == TipoRegraPromocao.data ? dataInicio : null,
+                    dataFim: tipoSelecionado == TipoRegraPromocao.data ? dataFim : null,
+                    diasSemana: tipoSelecionado == TipoRegraPromocao.diaSemana ? diasSelecionados.toList() : const [],
+                    horaInicioMin: tipoSelecionado == TipoRegraPromocao.diaSemana ? horaInicioMin : null,
+                    horaFimMin: tipoSelecionado == TipoRegraPromocao.diaSemana ? horaFimMin : null,
+                    quantidadeMinima: tipoSelecionado == TipoRegraPromocao.quantidade && qtdMinima > 0 ? qtdMinima : null,
+                    valorMinimo: tipoSelecionado == TipoRegraPromocao.valorMinimo && vMinimo > 0 ? vMinimo : null,
+                  );
+                  if (!novaRegra.temDesconto) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Informe o desconto percentual ou o preço fixo.')),
+                    );
+                    return;
+                  }
+                  if (!novaRegra.temConfiguracoesRelevantes) {
+                    final String msg;
+                    switch (novaRegra.tipo) {
+                      case TipoRegraPromocao.data:
+                        msg = 'Informe a data de início e/ou de fim da promoção.';
+                        break;
+                      case TipoRegraPromocao.diaSemana:
+                        msg = 'Selecione pelo menos um dia da semana (ou defina o horário).';
+                        break;
+                      case TipoRegraPromocao.quantidade:
+                        msg = 'Informe a quantidade mínima de itens.';
+                        break;
+                      case TipoRegraPromocao.valorMinimo:
+                        msg = 'Informe o valor mínimo do produto no carrinho.';
+                        break;
+                    }
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text(msg)),
+                    );
+                    return;
+                  }
+                  setState(() {
+                    if (index != null && index >= 0 && index < _promocoes.length) {
+                      _promocoes[index] = novaRegra;
+                    } else {
+                      _promocoes.add(novaRegra);
+                    }
+                  });
+                  Navigator.pop(ctx);
+                },
+                child: const Text('Salvar'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildDescontoChip({
+    required String rotulo,
+    required bool selecionado,
+    required Color cor,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        decoration: BoxDecoration(
+          color: selecionado ? cor.withOpacity(0.18) : Colors.white.withOpacity(0.05),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: selecionado ? cor.withOpacity(0.6) : Colors.white12),
+        ),
+        child: Text(
+          rotulo,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: selecionado ? cor : Colors.white70,
+            fontSize: 12,
+            fontWeight: selecionado ? FontWeight.bold : FontWeight.normal,
+          ),
+        ),
+      ),
     );
   }
   
@@ -2000,6 +3990,71 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
   Widget _buildAbaImpostos() {
     return Column(
       children: [
+        _buildSection('Perfil Tributário', [
+          _buildField(
+            label: 'Perfil de Impostos do Produto',
+            last: true,
+            child: Consumer<DataService>(
+              builder: (context, service, _) {
+              // Mostra apenas os perfis do regime tributário atual da empresa
+              final perfis = service.perfisTributariosDoRegime;
+              return DropdownButtonFormField<String?>(
+              // Guard: se o perfil salvo foi excluído da lista, cai em "Sem Perfil"
+              value: perfis.any((p) => p.id == _perfilTributarioId)
+                  ? _perfilTributarioId
+                  : null,
+              dropdownColor: const Color(0xFF1E1E2E),
+              style: const TextStyle(color: Colors.white, fontSize: 14),
+              decoration: InputDecoration(
+                filled: true,
+                fillColor: const Color(0xFF161621),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              ),
+              items: [
+                const DropdownMenuItem<String?>(
+                  value: null,
+                  child: Text('Sem Perfil / Manual', style: TextStyle(color: Colors.white54)),
+                ),
+                ...perfis.map((p) => DropdownMenuItem<String?>(
+                  value: p.id,
+                  child: Text(p.nome, style: const TextStyle(color: Colors.white)),
+                )),
+              ],
+              onChanged: (v) {
+                setState(() {
+                  _perfilTributarioId = v;
+                  if (v != null) {
+                    PerfilTributario? perfil;
+                    for (final p in perfis) {
+                      if (p.id == v) { perfil = p; break; }
+                    }
+                    if (perfil != null) {
+                      // Preenche automaticamente os campos fiscais a partir do perfil
+                      _cfop = perfil.cfop;
+                      _cfopController.text = perfil.cfop;
+                      _csosn = perfil.csosn;
+                      _csosnController.text = perfil.csosn ?? '';
+                      _icmsCst = perfil.icmsCst;
+                      _icmsCstController.text = perfil.icmsCst ?? '';
+                      _ncm = perfil.ncm;
+                      _ncmController.text = perfil.ncm ?? '';
+                      _pisCst = perfil.pisCst;
+                      _pisCstController.text = perfil.pisCst ?? '';
+                      _cofinsCst = perfil.cofinsCst;
+                      _cofinsCstController.text = perfil.cofinsCst ?? '';
+                      _icmsAliquota = perfil.aliquotaIcms;
+                      _icmsAliquotaController.text = perfil.aliquotaIcms?.toString() ?? '';
+                    }
+                  }
+                });
+              },
+              );
+              },
+            ),
+          ),
+        ]),
+
         _buildSection('Documentação Fiscal', [
           _buildField(
             label: 'NCM',
@@ -2712,14 +4767,27 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
 
   Widget _buildItemHistoricoMelhorado(EstoqueHistorico h, Produto? p) {
     final isEntrada = h.tipo == 'entrada';
-    final cor = isEntrada ? Colors.greenAccent : Colors.redAccent;
+    final ehQuebra = (h.observacao?.toLowerCase().contains('quebra') ?? false) ||
+        (h.observacao?.toLowerCase().contains('motivo: quebra') ?? false);
+    final cor = isEntrada
+        ? Colors.greenAccent
+        : (ehQuebra ? Colors.orangeAccent : Colors.redAccent);
+    final temCusto = h.valorCusto != null && h.valorCusto! > 0;
 
     return Container(
       padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(color: Colors.white.withOpacity(0.03), borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.white.withOpacity(0.03))),
+      decoration: BoxDecoration(
+        color: ehQuebra ? Colors.orange.withOpacity(0.06) : Colors.white.withOpacity(0.03),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: ehQuebra ? Colors.orange.withOpacity(0.25) : Colors.white.withOpacity(0.03)),
+      ),
       child: Row(
         children: [
-          Icon(isEntrada ? Icons.arrow_downward : Icons.arrow_upward, color: cor.withOpacity(0.5), size: 16),
+          Icon(
+            ehQuebra ? Icons.broken_image_rounded : (isEntrada ? Icons.arrow_downward : Icons.arrow_upward),
+            color: cor.withOpacity(0.7),
+            size: 16,
+          ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -2741,8 +4809,22 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
                     ),
                   ],
                 ),
+                if (ehQuebra)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      'QUEBRA',
+                      style: TextStyle(color: Colors.orangeAccent, fontSize: 9, fontWeight: FontWeight.bold, letterSpacing: 0.8),
+                    ),
+                  ),
                 if (h.observacao != null && h.observacao!.isNotEmpty)
                   Text(h.observacao!, style: TextStyle(color: Colors.white24, fontSize: 9, fontStyle: FontStyle.italic), maxLines: 2),
+                if (temCusto)
+                  Text(
+                    'Custo da mercadoria: R\$ ${h.valorCusto!.toStringAsFixed(2)}'
+                    '${(h.custoUnitario != null && h.custoUnitario! > 0 ? ' (R\$ ${h.custoUnitario!.toStringAsFixed(2)}/un)' : '')}',
+                    style: TextStyle(color: Colors.orangeAccent.withOpacity(0.9), fontSize: 10, fontWeight: FontWeight.bold),
+                  ),
               ],
             ),
           ),
@@ -3048,6 +5130,36 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
     }
   }
 
+  /// Chip de informação reutilizável na seção de combos
+  Widget _chipBadge(IconData icon, String texto, Color cor) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: cor.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: cor.withOpacity(0.35)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 11, color: cor),
+          const SizedBox(width: 4),
+          Text(texto, style: TextStyle(color: cor, fontSize: 10, fontWeight: FontWeight.w600)),
+        ],
+      ),
+    );
+  }
+
+  /// Texto de prévia da baixa da opção (usado no diálogo de opção)
+  String _previewTextoBaixa(TextEditingController nome, TextEditingController qtd, TextEditingController preco, String produtoNome) {
+    final nomeOpcao = nome.text.trim().isEmpty ? produtoNome : nome.text.trim();
+    final q = double.tryParse(qtd.text.replaceAll(',', '.')) ?? 1.0;
+    final p = double.tryParse(preco.text.replaceAll(',', '.')) ?? 0.0;
+    final qTxt = q == q.roundToDouble() ? q.toStringAsFixed(0) : q.toStringAsFixed(2);
+    final pTxt = p > 0 ? ' · +R\$ ${p.toStringAsFixed(2)}' : '';
+    return 'No PDV: escolher "$nomeOpcao" → baixa $qTxt × $produtoNome$pTxt';
+  }
+
   Widget _buildAbaComposicao() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -3062,7 +5174,10 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
               Switch(
                 value: _ehComposto,
                 activeColor: Colors.blueAccent,
-                onChanged: (v) => setState(() => _ehComposto = v),
+                onChanged: (v) => setState(() {
+                  _ehComposto = v;
+                  if (v) _exibirComposicaoPdv = true;
+                }),
               ),
             ],
           ),
@@ -3089,6 +5204,58 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
               ],
             ),
             const SizedBox(height: 12),
+            const Text(
+              '💡 Cada ingrediente tem 2 modos de baixa: (1) Fluxo comum — vende 15 e baixa 15 unidades; (2) Conversão — vende fracionado (ex.: kg) e a baixa é proporcional: completou 15 kg = 1 saco. No PDV o operador alterna entre os dois por venda.',
+              style: TextStyle(color: Colors.white38, fontSize: 11),
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                const Icon(Icons.visibility_outlined, size: 15, color: Colors.tealAccent),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Mostrar itens do kit no carrinho do PDV (ex.: Batata (1 UN))',
+                    style: const TextStyle(color: Colors.white70, fontSize: 12.5),
+                  ),
+                ),
+                Switch(
+                  value: _exibirComposicaoPdv,
+                  activeColor: Colors.tealAccent,
+                  onChanged: (v) => setState(() => _exibirComposicaoPdv = v),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Icon(
+                  _baixarEstoqueProprio
+                      ? Icons.inventory_2_outlined
+                      : Icons.local_drink_outlined,
+                  size: 15,
+                  color: _baixarEstoqueProprio ? Colors.blueAccent : Colors.orangeAccent,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _baixarEstoqueProprio
+                        ? 'Baixar também o estoque DESTE produto ao vender'
+                        : 'NÃO baixar o estoque deste produto — baixa só nos ingredientes (ex.: Chop controlado pelo Barril em ml)',
+                    style: TextStyle(
+                      color: _baixarEstoqueProprio ? Colors.white70 : Colors.orangeAccent,
+                      fontSize: 12.5,
+                    ),
+                  ),
+                ),
+                Switch(
+                  value: _baixarEstoqueProprio,
+                  activeColor: Colors.orangeAccent,
+                  onChanged: (v) => setState(() => _baixarEstoqueProprio = v),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
             if (_composicao.isEmpty)
               Container(
                 padding: const EdgeInsets.all(16),
@@ -3119,7 +5286,15 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
                   return ListTile(
                     contentPadding: EdgeInsets.zero,
                     title: Text(nomeProduto, style: const TextStyle(color: Colors.white)),
-                    subtitle: Text('${item.quantidade} $unidade', style: const TextStyle(color: Colors.blueAccent)),
+                    subtitle: Text(
+                      item.pesoTotalSaco != null && item.fracaoBase != null
+                          ? '⚖️ Vende fracionado: ${textoConversao(item.fracaoBase!, item.pesoTotalSaco!, unidadeBaixa: item.unidadeBaixa ?? unidade, unidadeVenda: item.unidadeVenda ?? widget.item?.unidade)}\n   Baixa proporcional por venda'
+                          : 'Fluxo comum: baixa ${item.quantidade} $unidade por unidade vendida',
+                      style: TextStyle(
+                        color: item.pesoTotalSaco != null ? Colors.amber : Colors.blueAccent,
+                        fontSize: 11,
+                      ),
+                    ),
                     onTap: () => _exibirDialogoAdicionarComposicao(itemEdicao: item),
                     trailing: IconButton(
                       icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20),
@@ -3134,7 +5309,701 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
               ),
           ],
         ]),
+        const SizedBox(height: 24),
+
+        // ================= COMBO / OPÇÕES DE SELEÇÃO =================
+        _buildSection('Combo / Opções de Seleção', [
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.teal.withOpacity(0.08),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.teal.withOpacity(0.35)),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.teal.withOpacity(0.15),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.fastfood_rounded, color: Colors.tealAccent, size: 20),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Combo sem perguntas — kit fixo',
+                        style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        _composicao.isNotEmpty && _ehComposto
+                            ? '✔ Kit com ${_composicao.length} ${_composicao.length == 1 ? 'item' : 'itens'}: vende 1 no carrinho e a baixa acontece em todos.'
+                            : 'Selecione os itens do kit (ex.: batata + coca + lanche). Na venda entra 1 item no carrinho e a baixa acontece em todos.',
+                        style: const TextStyle(color: Colors.white38, fontSize: 10.5, height: 1.4),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 10),
+                ElevatedButton.icon(
+                  onPressed: _exibirDialogoCriarCombo,
+                  icon: const Icon(Icons.add_rounded, size: 16),
+                  label: Text(
+                    _composicao.isNotEmpty && _ehComposto ? 'EDITAR COMBO' : 'CRIAR COMBO',
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.teal.withOpacity(0.25),
+                    foregroundColor: Colors.tealAccent,
+                    elevation: 0,
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          const Row(
+            children: [
+              Expanded(child: Divider(color: Colors.white12)),
+              Padding(
+                padding: EdgeInsets.symmetric(horizontal: 10),
+                child: Text('ou use perguntas', style: TextStyle(color: Colors.white30, fontSize: 10)),
+              ),
+              Expanded(child: Divider(color: Colors.white12)),
+            ],
+          ),
+          const SizedBox(height: 14),
+          const Text(
+            'Crie perguntas que aparecem no PDV ao vender este produto. Ex.: "Escolha o sabor", '
+            'onde cada opção (ex.: Morango) dá baixa no estoque de um produto específico.',
+            style: TextStyle(color: Colors.white38, fontSize: 12, height: 1.4),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Perguntas do Combo',
+                style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
+              ),
+              ElevatedButton.icon(
+                onPressed: _exibirDialogoAdicionarPergunta,
+                icon: const Icon(Icons.add, size: 16),
+                label: const Text('Adicionar Pergunta'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blueAccent.withOpacity(0.2),
+                  foregroundColor: Colors.blueAccent,
+                  elevation: 0,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            '${_perguntasSelecao.length} pergunta(s) · ${_perguntasSelecao.fold<int>(0, (s, p) => s + p.opcoes.length)} opção(ões) · ${_perguntasSelecao.expand((p) => p.opcoes).where((o) => o.produtoId.isNotEmpty).map((o) => o.produtoId).toSet().length} produto(s) vinculado(s)',
+            style: const TextStyle(color: Colors.white38, fontSize: 11),
+          ),
+          const SizedBox(height: 12),
+          if (_perguntasSelecao.isEmpty)
+            Container(
+              padding: const EdgeInsets.all(16),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.02),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.white.withOpacity(0.05)),
+              ),
+              child: const Text('Nenhuma pergunta cadastrada', style: TextStyle(color: Colors.white38)),
+            )
+          else
+            ..._perguntasSelecao.asMap().entries.map((entry) {
+              final idx = entry.key;
+              final pergunta = entry.value;
+              final dataService = Provider.of<DataService>(context, listen: false);
+              return Container(
+                margin: const EdgeInsets.only(bottom: 12),
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.03),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.blueAccent.withOpacity(0.15)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.help_outline, size: 18, color: Colors.blueAccent),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            pergunta.titulo,
+                            style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.copy_all_outlined, color: Colors.white38, size: 18),
+                          onPressed: () {
+                            setState(() {
+                              _perguntasSelecao.insert(
+                                idx + 1,
+                                PerguntaSelecao(
+                                  id: _uuid.v4(),
+                                  titulo: pergunta.titulo,
+                                  obrigatorio: pergunta.obrigatorio,
+                                  minimo: pergunta.minimo,
+                                  maximo: pergunta.maximo,
+                                  opcoes: pergunta.opcoes
+                                      .map((o) => OpcaoPerguntaSelecao(
+                                            id: _uuid.v4(),
+                                            produtoId: o.produtoId,
+                                            nome: o.nome,
+                                            precoAdicional: o.precoAdicional,
+                                            quantidadeBaixa: o.quantidadeBaixa,
+                                          ))
+                                      .toList(),
+                                ),
+                              );
+                            });
+                          },
+                          tooltip: 'Duplicar pergunta (com opções)',
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.edit_outlined, color: Colors.blueAccent, size: 18),
+                          onPressed: () => _exibirDialogoAdicionarPergunta(perguntaEdicao: pergunta),
+                          tooltip: 'Editar pergunta',
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 18),
+                          onPressed: () {
+                            setState(() {
+                              _perguntasSelecao.removeAt(idx);
+                            });
+                          },
+                          tooltip: 'Excluir pergunta',
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        _chipBadge(
+                          pergunta.obrigatorio ? Icons.verified_user_outlined : Icons.visibility_off_outlined,
+                          pergunta.obrigatorio ? 'Obrigatória' : 'Opcional',
+                          pergunta.obrigatorio ? const Color(0xFFFFB74D) : Colors.white54,
+                        ),
+                        _chipBadge(Icons.filter_alt_outlined, 'min ${pergunta.minimo} · máx ${pergunta.maximo}', Colors.blueAccent),
+                        _chipBadge(Icons.list_alt_outlined, '${pergunta.opcoes.length} opção(ões)', Colors.greenAccent),
+                      ],
+                    ),
+                    if (pergunta.opcoes.isEmpty ||
+                        pergunta.opcoes.any((o) => o.produtoId.isEmpty) ||
+                        pergunta.opcoes.length < pergunta.minimo) ...[
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: Colors.redAccent.withOpacity(0.08),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.redAccent.withOpacity(0.3)),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.warning_amber_rounded, size: 14, color: Colors.redAccent),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                pergunta.opcoes.isEmpty
+                                    ? 'Sem opções — adicione ao menos uma opção com produto para a baixa.'
+                                    : (pergunta.opcoes.length < pergunta.minimo
+                                        ? 'Mín. ${pergunta.minimo} opção(ões) mas só ${pergunta.opcoes.length} cadastrada(s) — impossível finalizar no PDV.'
+                                        : 'Alguma(s) opção(ões) sem produto vinculado — a baixa não vai acontecer no PDV.'),
+                                style: const TextStyle(color: Colors.redAccent, fontSize: 11),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 8),
+                    if (pergunta.opcoes.isEmpty)
+                      const Text('Sem opções', style: TextStyle(color: Colors.white38, fontSize: 12))
+                    else
+                      ...pergunta.opcoes.map((opcao) {
+                        final produtoOpcao = dataService.produtos.cast<Produto?>().firstWhere(
+                          (p) => p?.id == opcao.produtoId,
+                          orElse: () => null,
+                        );
+                        final nomeProduto = produtoOpcao?.nome ?? (opcao.nome.isEmpty ? 'Produto' : opcao.nome);
+                        final semProdutoVinculado = produtoOpcao == null;
+                        return ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          dense: true,
+                          leading: Icon(
+                            semProdutoVinculado ? Icons.error_outline : Icons.check_circle_outline,
+                            color: semProdutoVinculado ? Colors.redAccent : Colors.greenAccent,
+                            size: 18,
+                          ),
+                          title: Text(opcao.nome.isEmpty ? nomeProduto : opcao.nome, style: const TextStyle(color: Colors.white, fontSize: 13)),
+                          subtitle: semProdutoVinculado
+                              ? const Text('Produto da baixa não encontrado', style: TextStyle(color: Colors.redAccent, fontSize: 11))
+                              : Text(
+                                  'Baixa: ${opcao.quantidadeBaixa.toStringAsFixed(opcao.quantidadeBaixa == opcao.quantidadeBaixa.roundToDouble() ? 0 : 2)} × $nomeProduto'
+                                  '${opcao.precoAdicional > 0 ? ' · +R\$ ${opcao.precoAdicional.toStringAsFixed(2)}' : ''}',
+                                  style: const TextStyle(color: Colors.greenAccent, fontSize: 11),
+                                ),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                icon: const Icon(Icons.edit_outlined, color: Colors.blueAccent, size: 16),
+                                onPressed: () => _exibirDialogoAdicionarOpcao(perguntaIdx: idx, opcaoEdicao: opcao),
+                                tooltip: 'Editar opção',
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 16),
+                                onPressed: () {
+                                  setState(() {
+                                    _perguntasSelecao[idx] = PerguntaSelecao(
+                                      id: pergunta.id,
+                                      titulo: pergunta.titulo,
+                                      obrigatorio: pergunta.obrigatorio,
+                                      minimo: pergunta.minimo,
+                                      maximo: pergunta.maximo,
+                                      opcoes: pergunta.opcoes.where((o) => o.id != opcao.id).toList(),
+                                    );
+                                  });
+                                },
+                                tooltip: 'Excluir opção',
+                              ),
+                            ],
+                          ),
+                        );
+                      }),
+                      const SizedBox(height: 4),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton.icon(
+                          onPressed: () => _exibirDialogoAdicionarOpcao(perguntaIdx: idx),
+                          icon: const Icon(Icons.add, size: 16),
+                          label: const Text('Adicionar opção', style: TextStyle(fontSize: 12)),
+                          style: TextButton.styleFrom(foregroundColor: Colors.blueAccent),
+                        ),
+                      ),
+                  ],
+                ),
+              );
+            }),
+            const SizedBox(height: 8),
+            _PreviewPopupCombo(
+              perguntas: _perguntasSelecao,
+              nomeProduto: widget.item is Produto ? (widget.item as Produto).nome : '',
+            ),
+        ]),
       ],
+    );
+  }
+
+  /// Diálogo para adicionar/editar uma pergunta do combo
+  void _exibirDialogoAdicionarPergunta({PerguntaSelecao? perguntaEdicao}) {
+    final tituloController = TextEditingController(text: perguntaEdicao?.titulo ?? '');
+    bool obrigatoria = perguntaEdicao?.obrigatorio ?? true;
+    final minimoController = TextEditingController(text: (perguntaEdicao?.minimo ?? 1).toString());
+    final maximoController = TextEditingController(text: (perguntaEdicao?.maximo ?? 1).toString());
+    String erro = '';
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF1E1E2E),
+              title: Text(perguntaEdicao != null ? 'Editar Pergunta' : 'Adicionar Pergunta', style: const TextStyle(color: Colors.white)),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Título da pergunta', style: TextStyle(color: Colors.white54, fontSize: 12)),
+                    const SizedBox(height: 6),
+                    TextField(
+                      controller: tituloController,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: InputDecoration(
+                        hintText: 'Ex.: Escolha o sabor',
+                        hintStyle: const TextStyle(color: Colors.white24),
+                        filled: true,
+                        fillColor: Colors.white.withOpacity(0.05),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    const Text(
+                      'Este título aparece no PDV como pergunta para o operador/cliente.',
+                      style: TextStyle(color: Colors.white24, fontSize: 10),
+                    ),
+                    if (perguntaEdicao != null) ...[
+                      const SizedBox(height: 10),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: Colors.blueAccent.withOpacity(0.08),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          'Esta pergunta já tem ${perguntaEdicao.opcoes.length} opção(ões) vinculada(s).',
+                          style: const TextStyle(color: Colors.blueAccent, fontSize: 11),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 14),
+                    Row(
+                      children: [
+                        const Text('Obrigatória?', style: TextStyle(color: Colors.white70, fontSize: 13)),
+                        const Spacer(),
+                        Switch(
+                          value: obrigatoria,
+                          activeColor: Colors.blueAccent,
+                          onChanged: (v) => setDialogState(() => obrigatoria = v),
+                        ),
+                      ],
+                    ),
+                    const Text(
+                      'Obrigatória: o PDV só finaliza se o cliente escolher. Opcional: pode deixar em branco.',
+                      style: TextStyle(color: Colors.white24, fontSize: 10),
+                    ),
+                    const SizedBox(height: 14),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: minimoController,
+                            style: const TextStyle(color: Colors.white),
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                              labelText: 'Mínimo',
+                              labelStyle: TextStyle(color: Colors.white38, fontSize: 12),
+                              hintStyle: TextStyle(color: Colors.white24),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: TextField(
+                            controller: maximoController,
+                            style: const TextStyle(color: Colors.white),
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                              labelText: 'Máximo',
+                              labelStyle: TextStyle(color: Colors.white38, fontSize: 12),
+                              hintStyle: TextStyle(color: Colors.white24),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    const Text(
+                      'Quantas opções podem ser escolhidas no PDV. Ex.: mínimo 1 e máximo 1 = escolha única; mínimo 1 e máximo 3 = escolha múltipla.',
+                      style: TextStyle(color: Colors.white24, fontSize: 10),
+                    ),
+                    if (erro.isNotEmpty) ...[
+                      const SizedBox(height: 10),
+                      Text(erro, style: const TextStyle(color: Colors.redAccent, fontSize: 11)),
+                    ],
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    final titulo = tituloController.text.trim();
+                    if (titulo.isEmpty) {
+                      setDialogState(() => erro = 'Informe um título para a pergunta.');
+                      return;
+                    }
+                    var minimo = int.tryParse(minimoController.text) ?? 1;
+                    var maximo = int.tryParse(maximoController.text) ?? 1;
+                    if (minimo < 1) minimo = 1;
+                    if (maximo < minimo) maximo = minimo; // ajuste inteligente
+                    setState(() {
+                      final index = _perguntasSelecao.indexWhere((p) => p.id == perguntaEdicao?.id);
+                      final novaPergunta = PerguntaSelecao(
+                        id: perguntaEdicao?.id ?? _uuid.v4(),
+                        titulo: titulo,
+                        obrigatorio: obrigatoria,
+                        minimo: minimo,
+                        maximo: maximo,
+                        opcoes: perguntaEdicao?.opcoes ?? [],
+                      );
+                      if (index >= 0) {
+                        _perguntasSelecao[index] = novaPergunta;
+                      } else {
+                        _perguntasSelecao.add(novaPergunta);
+                      }
+                    });
+                    Navigator.pop(context);
+                  },
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
+                  child: const Text('SALVAR'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  /// Diálogo para adicionar/editar uma opção dentro de uma pergunta
+  void _exibirDialogoAdicionarOpcao({required int perguntaIdx, OpcaoPerguntaSelecao? opcaoEdicao}) {
+    final nomeController = TextEditingController(text: opcaoEdicao?.nome ?? '');
+    final qtdController = TextEditingController(text: (opcaoEdicao?.quantidadeBaixa ?? 1.0).toString());
+    final precoController = TextEditingController(
+        text: opcaoEdicao?.precoAdicional != null && opcaoEdicao!.precoAdicional > 0
+            ? opcaoEdicao.precoAdicional.toStringAsFixed(2)
+            : '');
+    String? produtoSelecionadoId = opcaoEdicao?.produtoId;
+    String? produtoSelecionadoNome;
+    String erro = '';
+    final dataService = Provider.of<DataService>(context, listen: false);
+    if (produtoSelecionadoId != null && produtoSelecionadoId.isNotEmpty) {
+      final p = dataService.produtos.cast<Produto?>().firstWhere(
+            (prod) => prod?.id == produtoSelecionadoId,
+            orElse: () => null,
+          );
+      produtoSelecionadoNome = p?.nome;
+    }
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF1E1E2E),
+              title: Text(opcaoEdicao != null ? 'Editar Opção' : 'Adicionar Opção', style: const TextStyle(color: Colors.white)),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Nome da opção (ex.: Morango)', style: TextStyle(color: Colors.white54, fontSize: 12)),
+                    const SizedBox(height: 6),
+                    TextField(
+                      controller: nomeController,
+                      style: const TextStyle(color: Colors.white),
+                      onChanged: (_) => setDialogState(() {}),
+                      decoration: InputDecoration(
+                        hintText: 'Se vazio, usa o nome do produto',
+                        hintStyle: const TextStyle(color: Colors.white24),
+                        filled: true,
+                        fillColor: Colors.white.withOpacity(0.05),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    const Text('Produto que sofre a baixa no estoque', style: TextStyle(color: Colors.white54, fontSize: 12)),
+                    const SizedBox(height: 6),
+                    InkWell(
+                      onTap: () async {
+                        final selecionado = await showDialog<Produto>(
+                          context: context,
+                          builder: (ctx) => _DialogoBuscarProduto(dataService: dataService),
+                        );
+                        if (selecionado != null) {
+                          setDialogState(() {
+                            produtoSelecionadoId = selecionado.id;
+                            produtoSelecionadoNome = selecionado.nome;
+                            // Inteligente: preenche o nome com o do produto se o campo estiver vazio
+                            if (nomeController.text.trim().isEmpty) {
+                              nomeController.text = selecionado.nome;
+                            }
+                          });
+                        }
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.05),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: produtoSelecionadoNome != null ? Colors.blueAccent.withOpacity(0.4) : Colors.white12,
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.inventory_2_outlined, size: 18, color: Colors.blueAccent),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                produtoSelecionadoNome ?? 'Toque para buscar produto...',
+                                style: TextStyle(
+                                  color: produtoSelecionadoNome != null ? Colors.white : Colors.white38,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
+                            if (produtoSelecionadoNome != null) ...[
+                              const SizedBox(width: 6),
+                              IconButton(
+                                icon: const Icon(Icons.close, size: 16, color: Colors.white38),
+                                onPressed: () => setDialogState(() {
+                                  produtoSelecionadoId = null;
+                                  produtoSelecionadoNome = null;
+                                }),
+                                tooltip: 'Remover produto',
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: qtdController,
+                            style: const TextStyle(color: Colors.white),
+                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                            onChanged: (_) => setDialogState(() {}),
+                            decoration: const InputDecoration(
+                              labelText: 'Qtd. de baixa',
+                              labelStyle: TextStyle(color: Colors.white38, fontSize: 12),
+                              hintText: '1.0',
+                              hintStyle: TextStyle(color: Colors.white24),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: TextField(
+                            controller: precoController,
+                            style: const TextStyle(color: Colors.white),
+                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                            onChanged: (_) => setDialogState(() {}),
+                            decoration: const InputDecoration(
+                              labelText: 'Preço adicional (R\$)',
+                              labelStyle: TextStyle(color: Colors.white38, fontSize: 12),
+                              hintText: '0.00',
+                              hintStyle: TextStyle(color: Colors.white24),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    const Text(
+                      'Qtd. de baixa: quantas unidades do produto saem do estoque quando esta opção é escolhida.',
+                      style: TextStyle(color: Colors.white24, fontSize: 10),
+                    ),
+                    if (produtoSelecionadoNome != null) ...[
+                      const SizedBox(height: 12),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.greenAccent.withOpacity(0.06),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.greenAccent.withOpacity(0.2)),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.visibility_outlined, size: 14, color: Colors.greenAccent),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                _previewTextoBaixa(nomeController, qtdController, precoController, produtoSelecionadoNome!),
+                                style: const TextStyle(color: Colors.greenAccent, fontSize: 11),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                    if (erro.isNotEmpty) ...[
+                      const SizedBox(height: 10),
+                      Text(erro, style: const TextStyle(color: Colors.redAccent, fontSize: 11)),
+                    ],
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    if (produtoSelecionadoId == null || produtoSelecionadoId!.isEmpty) {
+                      setDialogState(() => erro = 'Selecione o produto que sofre a baixa no estoque.');
+                      return;
+                    }
+                    final qtd = double.tryParse(qtdController.text.replaceAll(',', '.')) ?? 1.0;
+                    if (qtd <= 0) {
+                      setDialogState(() => erro = 'A quantidade de baixa deve ser maior que zero.');
+                      return;
+                    }
+                    final preco = double.tryParse(precoController.text.replaceAll(',', '.')) ?? 0.0;
+                    final nomeFinal = nomeController.text.trim().isEmpty
+                        ? (produtoSelecionadoNome ?? 'Opção')
+                        : nomeController.text.trim();
+                    setState(() {
+                      final pergunta = _perguntasSelecao[perguntaIdx];
+                      final opcoes = List<OpcaoPerguntaSelecao>.from(pergunta.opcoes);
+                      if (opcaoEdicao != null) {
+                        final oIdx = opcoes.indexWhere((o) => o.id == opcaoEdicao.id);
+                        if (oIdx >= 0) {
+                          opcoes[oIdx] = OpcaoPerguntaSelecao(
+                            id: opcaoEdicao.id,
+                            produtoId: produtoSelecionadoId!,
+                            nome: nomeFinal,
+                            precoAdicional: preco,
+                            quantidadeBaixa: qtd,
+                          );
+                        }
+                      } else {
+                        opcoes.add(OpcaoPerguntaSelecao(
+                          id: _uuid.v4(),
+                          produtoId: produtoSelecionadoId!,
+                          nome: nomeFinal,
+                          precoAdicional: preco,
+                          quantidadeBaixa: qtd,
+                        ));
+                      }
+                      _perguntasSelecao[perguntaIdx] = PerguntaSelecao(
+                        id: pergunta.id,
+                        titulo: pergunta.titulo,
+                        obrigatorio: pergunta.obrigatorio,
+                        minimo: pergunta.minimo,
+                        maximo: pergunta.maximo,
+                        opcoes: opcoes,
+                      );
+                    });
+                    Navigator.pop(context);
+                  },
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
+                  child: const Text('SALVAR'),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 
@@ -3143,7 +6012,7 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
     final dataService = Provider.of<DataService>(pageContext, listen: false);
     String? produtoSelecionadoId = itemEdicao?.produtoId;
     String? produtoSelecionadoNome;
-    
+
     if (itemEdicao != null) {
       final pOrigem = dataService.produtos.cast<Produto?>().firstWhere(
         (p) => p?.id == itemEdicao.produtoId,
@@ -3154,28 +6023,333 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
       }
     }
 
-    final searchController = TextEditingController();
     final qtdController = TextEditingController(
-      text: itemEdicao != null ? itemEdicao.quantidade.toString() : '',
+      text: itemEdicao != null ? itemEdicao.quantidade.toString() : '1',
     );
-    final totalSacoController = TextEditingController();
-    final usoController = TextEditingController(text: '1');
-    bool mostrarCalculadora = false;
+    final totalSacoController = TextEditingController(
+      text: itemEdicao?.pesoTotalSaco != null ? itemEdicao!.pesoTotalSaco!.toString() : '',
+    );
+    final usoController = TextEditingController(
+      text: itemEdicao?.fracaoBase != null ? itemEdicao!.fracaoBase!.toString() : '1',
+    );
+    // Unidades digitáveis livremente (autonomia total na baixa).
+    // Padrão sensato: unidade do produto VENDIDO = unidade do próprio produto;
+    // unidade BAIXADA = unidade do ingrediente selecionado (atualizada ao selecionar).
+    String? unidadeVendaPadrao = (widget.item?.unidade ?? '').trim().isNotEmpty
+        ? widget.item!.unidade
+        : 'UN';
+    String? unidadeBaixaPadrao = 'UN';
+    if (produtoSelecionadoId != null) {
+      final pSel = dataService.produtos.cast<Produto?>().firstWhere(
+        (p) => p?.id == produtoSelecionadoId,
+        orElse: () => null,
+      );
+      if (pSel != null) {
+        unidadeBaixaPadrao = pSel.unidade.trim().isNotEmpty ? pSel.unidade : 'UN';
+      }
+    }
+    final unidadeVendaCtrl = TextEditingController(
+      text: (itemEdicao?.unidadeVenda ?? '').trim().isNotEmpty
+          ? itemEdicao!.unidadeVenda!
+          : unidadeVendaPadrao!,
+    );
+    final unidadeBaixaCtrl = TextEditingController(
+      text: (itemEdicao?.unidadeBaixa ?? '').trim().isNotEmpty
+          ? itemEdicao!.unidadeBaixa!
+          : unidadeBaixaPadrao!,
+    );
+    // true  = vender fracionado com conversão (ex.: 1000 ml → baixa 1 litro)
+    // false = fluxo comum (vende 15 unidades → baixa 15 unidades)
+    bool modoConversao = itemEdicao?.pesoTotalSaco != null;
+    String erro = '';
+
+    // Valor do modo direto para restaurar ao alternar de volta (nao apaga baixa fracionaria legitima)
+    String? valorDiretoSalvo;
+    if (itemEdicao == null || itemEdicao.pesoTotalSaco == null) {
+      valorDiretoSalvo = qtdController.text;
+    }
+
+    void recalcularQtd() {
+      final total = double.tryParse(totalSacoController.text.trim().replaceAll(',', '.')) ?? 0.0;
+      final uso = double.tryParse(usoController.text.trim().replaceAll(',', '.')) ?? 0.0;
+      if (total > 0 && uso > 0) {
+        qtdController.text = (uso / total).toStringAsFixed(6);
+      }
+    }
+
+    String exemploConversao() {
+      final total = double.tryParse(totalSacoController.text.trim().replaceAll(',', '.')) ?? 0.0;
+      final usoVal = double.tryParse(usoController.text.trim().replaceAll(',', '.'));
+      if (total <= 0) return 'Informe "Ao vender quantos?" para ver o exemplo.';
+      final u = (usoVal == null || usoVal <= 0) ? 1.0 : usoVal;
+      String fmt(double v) =>
+          v == v.roundToDouble() ? v.round().toString() : v.toStringAsFixed(2);
+      final p1 = total / 2;
+      final p2 = total;
+      final p3 = total * 2;
+      final unV = rotuloUnidade(unidadeVendaCtrl.text.isEmpty ? 'UN' : unidadeVendaCtrl.text);
+      final unB = rotuloUnidade(unidadeBaixaCtrl.text.isEmpty ? 'UN' : unidadeBaixaCtrl.text);
+      final v1 = (u / total * p1);
+      final v2 = (u / total * p2);
+      final v3 = (u / total * p3);
+      return 'Exemplo: vender ${fmt(p1)} $unV → baixa ${fmt(v1)} $unB  ·  '
+          'vender ${fmt(p2)} $unV → baixa ${fmt(v2)} $unB  ·  '
+          'vender ${fmt(p3)} $unV → baixa ${fmt(v3)} $unB';
+    }
 
     showDialog(
       context: pageContext,
       builder: (dialogContext) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
+            Widget modoCard({
+              required bool selecionado,
+              required IconData icone,
+              required Color cor,
+              required String titulo,
+              required String descricao,
+              required VoidCallback onTap,
+              Widget? extra,
+            }) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  InkWell(
+                    onTap: onTap,
+                    borderRadius: BorderRadius.circular(10),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: selecionado ? cor.withOpacity(0.08) : Colors.white.withOpacity(0.02),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: selecionado ? cor.withOpacity(0.6) : Colors.white12,
+                          width: selecionado ? 1.5 : 1,
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            selecionado ? Icons.radio_button_checked : Icons.radio_button_off,
+                            size: 18,
+                            color: selecionado ? cor : Colors.white30,
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  titulo,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  descricao,
+                                  style: const TextStyle(color: Colors.white38, fontSize: 10.5, height: 1.3),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Icon(icone, size: 16, color: cor.withOpacity(0.7)),
+                        ],
+                      ),
+                    ),
+                  ),
+                  if (selecionado && extra != null) ...[
+                    const SizedBox(height: 8),
+                    extra,
+                  ],
+                ],
+              );
+            }
+
+            final campoDireto = TextField(
+              controller: qtdController,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              style: const TextStyle(color: Colors.white),
+              onChanged: (_) => setDialogState(() => erro = ''),
+              decoration: InputDecoration(
+                labelText: 'Qtd. de baixa por unidade vendida',
+                labelStyle: const TextStyle(color: Colors.white54, fontSize: 12),
+                hintText: '1.0',
+                hintStyle: const TextStyle(color: Colors.white24),
+                filled: true,
+                fillColor: Colors.white.withOpacity(0.05),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+              ),
+            );
+
+            // Campo de unidade digitável livremente (autonomia total na baixa).
+            // O operador escreve qualquer unidade (ml, litro, cm, metro, saco, caixa...)
+            // ou toca num preset abaixo.
+            Widget campoUnidade(TextEditingController ctrl, String label, String hint) {
+              return TextField(
+                controller: ctrl,
+                style: const TextStyle(color: Colors.white, fontSize: 13),
+                decoration: InputDecoration(
+                  labelText: label,
+                  labelStyle: const TextStyle(color: Colors.white54, fontSize: 11),
+                  hintText: hint,
+                  hintStyle: const TextStyle(color: Colors.white24),
+                  isDense: true,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+                onChanged: (_) => setDialogState(() {
+                  recalcularQtd();
+                  erro = '';
+                }),
+              );
+            }
+
+            // Presets de um toque: preenchem os campos e o exemplo
+            void aplicarPreset(String vendaQtd, String vendaUn, String baixaQtd, String baixaUn) {
+              totalSacoController.text = vendaQtd;
+              unidadeVendaCtrl.text = vendaUn;
+              usoController.text = baixaQtd;
+              unidadeBaixaCtrl.text = baixaUn;
+              setDialogState(() {
+                recalcularQtd();
+                erro = '';
+              });
+            }
+
+            final presets = [
+              (label: '1000 ml → 1 litro', v: '1000', vu: 'ml', b: '1', bu: 'litro'),
+              (label: '100 cm → 1 metro', v: '100', vu: 'cm', b: '1', bu: 'metro'),
+              (label: '1000 g → 1 kg', v: '1000', vu: 'g', b: '1', bu: 'kg'),
+              (label: '15 kg → 1 saco', v: '15', vu: 'kg', b: '1', bu: 'saco'),
+              (label: '1 un → 1 un', v: '1', vu: 'un', b: '1', bu: 'un'),
+            ];
+
+            final campoConversao = Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  'Quando vender...',
+                  style: TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Expanded(
+                      flex: 3,
+                      child: TextField(
+                        controller: totalSacoController,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        style: const TextStyle(color: Colors.white, fontSize: 13),
+                        decoration: InputDecoration(
+                          labelText: 'Ao vender quantos?',
+                          labelStyle: const TextStyle(color: Colors.white54, fontSize: 11),
+                          hintText: 'Ex.: 1000',
+                          hintStyle: const TextStyle(color: Colors.white24),
+                          isDense: true,
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                        onChanged: (_) => setDialogState(() {
+                          recalcularQtd();
+                          erro = '';
+                        }),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      flex: 2,
+                      child: campoUnidade(unidadeVendaCtrl, 'Unidade', 'ml, cm, kg...'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  '...baixar do estoque:',
+                  style: TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Expanded(
+                      flex: 3,
+                      child: TextField(
+                        controller: usoController,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        style: const TextStyle(color: Colors.white, fontSize: 13),
+                        decoration: InputDecoration(
+                          labelText: 'Baixa de quanto?',
+                          labelStyle: const TextStyle(color: Colors.white54, fontSize: 11),
+                          hintText: 'Ex.: 1',
+                          hintStyle: const TextStyle(color: Colors.white24),
+                          isDense: true,
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                        onChanged: (_) => setDialogState(() {
+                          recalcularQtd();
+                          erro = '';
+                        }),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      flex: 2,
+                      child: campoUnidade(unidadeBaixaCtrl, 'Unidade', 'litro, saco, m...'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  '⚡ Toque num exemplo para preencher:',
+                  style: TextStyle(color: Colors.white38, fontSize: 10),
+                ),
+                const SizedBox(height: 4),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: presets
+                      .map((p) => ActionChip(
+                            label: Text(p.label, style: const TextStyle(color: Colors.white, fontSize: 10.5)),
+                            backgroundColor: Colors.amber.withOpacity(0.12),
+                            side: BorderSide(color: Colors.amber.withOpacity(0.35)),
+                            onPressed: () => aplicarPreset(p.v, p.vu, p.b, p.bu),
+                          ))
+                      .toList(),
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.amber.withOpacity(0.06),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.amber.withOpacity(0.25)),
+                  ),
+                  child: Text(
+                    exemploConversao(),
+                    style: const TextStyle(color: Colors.amber, fontSize: 10.5, height: 1.4),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  '💡 A baixa é proporcional: vende 500 ml → baixa 0,5 litro (metade). '
+                  'No PDV o operador pode alternar para "baixa direta" em cada venda, sem mudar este cadastro.',
+                  style: TextStyle(color: Colors.white30, fontSize: 9.5, height: 1.35),
+                ),
+              ],
+            );
+
             return AlertDialog(
               backgroundColor: const Color(0xFF1E1E2E),
-              title: Text(itemEdicao != null ? 'Editar Ingrediente' : 'Adicionar Ingrediente', style: const TextStyle(color: Colors.white)),
+              title: Text(
+                itemEdicao != null ? 'Editar Ingrediente' : 'Adicionar Ingrediente',
+                style: const TextStyle(color: Colors.white),
+              ),
               content: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                     SearchAnchor(
+                    SearchAnchor(
                       builder: (BuildContext context, SearchController controller) {
                         return SearchBar(
                           controller: controller,
@@ -3208,7 +6382,7 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
                             )
                           ];
                         }
-                        
+
                         final filtrados = dataService.produtos.where((p) {
                           if (p.id == widget.item?.id) return false;
                           return p.nome.toLowerCase().contains(query) ||
@@ -3237,6 +6411,17 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
                                 : null,
                             onTap: () {
                               setDialogState(() {
+                                // Ao selecionar o ingrediente, se a unidade baixada ainda não
+                                // foi editada pelo usuário (vazio ou ainda no default 'UN'),
+                                // preenche com a unidade do ingrediente.
+                                final unBx = unidadeBaixaCtrl.text.trim().toLowerCase();
+                                if ((itemEdicao == null || (itemEdicao.unidadeBaixa ?? '').trim().isEmpty) &&
+                                    (unBx.isEmpty || unBx == 'un')) {
+                                  final pIng = p.unidade.trim();
+                                  if (pIng.isNotEmpty) {
+                                    unidadeBaixaCtrl.text = pIng;
+                                  }
+                                }
                                 produtoSelecionadoId = p.id;
                                 produtoSelecionadoNome = p.nome;
                               });
@@ -3245,7 +6430,7 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
                           );
                         }).toList();
                       },
-                     ),
+                    ),
                     if (produtoSelecionadoNome != null) ...[
                       const SizedBox(height: 12),
                       Container(
@@ -3270,108 +6455,60 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
                       ),
                     ],
                     const SizedBox(height: 16),
-                    TextField(
-                      controller: qtdController,
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      style: const TextStyle(color: Colors.white),
-                      decoration: InputDecoration(
-                        labelText: 'Quantidade/Fração',
-                        labelStyle: const TextStyle(color: Colors.white70),
-                        filled: true,
-                        fillColor: Colors.white.withOpacity(0.05),
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                      ),
+                    const Text(
+                      '⚖️ Como deve ser a baixa no estoque?',
+                      style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
                     ),
-                    const SizedBox(height: 12),
-                    TextButton.icon(
-                      onPressed: () {
-                        setDialogState(() {
-                          mostrarCalculadora = !mostrarCalculadora;
-                        });
-                      },
-                      icon: Icon(
-                        mostrarCalculadora ? Icons.keyboard_arrow_up : Icons.calculate_outlined,
-                        color: Colors.blueAccent,
-                        size: 16,
-                      ),
-                      label: Text(
-                        mostrarCalculadora ? 'Ocultar Calculadora' : 'Calcular Proporção (Saco, Ração, etc.)',
-                        style: const TextStyle(color: Colors.blueAccent, fontSize: 12),
-                      ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Escolha como este ingrediente sai do estoque quando o produto é vendido.',
+                      style: TextStyle(color: Colors.white38, fontSize: 11),
                     ),
-                    if (mostrarCalculadora) ...[
-                      const SizedBox(height: 8),
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.02),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.white.withOpacity(0.05)),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            const Text(
-                              'Defina o peso total do saco fechado para baixa automática:',
-                              style: TextStyle(color: Colors.white70, fontSize: 11, fontStyle: FontStyle.italic),
-                            ),
-                            const SizedBox(height: 10),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: TextField(
-                                    controller: totalSacoController,
-                                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                                    style: const TextStyle(color: Colors.white, fontSize: 13),
-                                    decoration: InputDecoration(
-                                      labelText: 'Peso do Saco Inteiro (Ex: 15)',
-                                      labelStyle: const TextStyle(color: Colors.white54, fontSize: 10),
-                                      isDense: true,
-                                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                                    ),
-                                    onChanged: (v) {
-                                      final total = double.tryParse(totalSacoController.text.replaceAll(',', '.')) ?? 0.0;
-                                      final uso = double.tryParse(usoController.text.isEmpty ? '1' : usoController.text.replaceAll(',', '.')) ?? 1.0;
-                                      if (total > 0) {
-                                        final resultado = uso / total;
-                                        qtdController.text = resultado.toStringAsFixed(6);
-                                      }
-                                    },
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: TextField(
-                                    controller: usoController,
-                                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                                    style: const TextStyle(color: Colors.white, fontSize: 13),
-                                    decoration: InputDecoration(
-                                      labelText: 'Fração Base (Ex: 1 Kg)',
-                                      labelStyle: const TextStyle(color: Colors.white54, fontSize: 10),
-                                      isDense: true,
-                                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                                    ),
-                                    onChanged: (v) {
-                                      final total = double.tryParse(totalSacoController.text.replaceAll(',', '.')) ?? 0.0;
-                                      final uso = double.tryParse(usoController.text.replaceAll(',', '.')) ?? 1.0;
-                                      if (total > 0) {
-                                        final resultado = uso / total;
-                                        qtdController.text = resultado.toStringAsFixed(6);
-                                      }
-                                    },
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-                            const Text(
-                              '💡 Dica: Deixe a Fração Base como "1". O sistema fará a conta para 1 Kg. \n'
-                              'No PDV você poderá vender qualquer quantidade fracionada livre (ex: 0.5 Kg, 2.3 Kg, 15 Kg) e a baixa no saco de ração ocorrerá perfeitamente na proporção correta.',
-                              style: TextStyle(color: Colors.white30, fontSize: 9, height: 1.3),
-                            ),
-                          ],
-                        ),
-                      ),
+                    const SizedBox(height: 10),
+                    modoCard(
+                      selecionado: !modoConversao,
+                      icone: Icons.speed,
+                      cor: Colors.blueAccent,
+                      titulo: 'Fluxo comum — baixa direta',
+                      descricao: 'Vende 15 unidades → baixa 15 unidades. Simples, sem conversão.',
+                      onTap: () => setDialogState(() {
+                        modoConversao = false;
+                        if (valorDiretoSalvo != null) {
+                          qtdController.text = valorDiretoSalvo!;
+                        } else {
+                          final q = double.tryParse(qtdController.text.trim().replaceAll(',', '.'));
+                          if (q == null || q <= 0) {
+                            qtdController.text = '1';
+                          }
+                        }
+                        erro = '';
+                      }),
+                      extra: campoDireto,
+                    ),
+                    const SizedBox(height: 10),
+                    modoCard(
+                      selecionado: modoConversao,
+                      icone: Icons.scale_outlined,
+                      cor: Colors.amber,
+                      titulo: 'Vender fracionado — conversão (ml, kg, metro...)',
+                      descricao: 'Ex.: vende 1000 ml de chopp → baixa 1 litro no barril. Funciona com kg, ml, metro, unidade e mais.',
+                      onTap: () => setDialogState(() {
+                        modoConversao = true;
+                        valorDiretoSalvo = qtdController.text.trim().isEmpty ? '1' : qtdController.text;
+                        if (totalSacoController.text.trim().isEmpty) {
+                          totalSacoController.text = '1000';
+                          if (usoController.text.trim().isEmpty) {
+                            usoController.text = '1';
+                          }
+                        }
+                        recalcularQtd();
+                        erro = '';
+                      }),
+                      extra: campoConversao,
+                    ),
+                    if (erro.isNotEmpty) ...[
+                      const SizedBox(height: 10),
+                      Text(erro, style: const TextStyle(color: Colors.redAccent, fontSize: 11)),
                     ],
                   ],
                 ),
@@ -3383,10 +6520,34 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
                 ),
                 ElevatedButton(
                   onPressed: () {
-                    if (produtoSelecionadoId == null) return;
-                    final qtdStr = qtdController.text.trim().replaceAll(',', '.');
-                    final qtd = double.tryParse(qtdStr) ?? 0.0;
-                    if (qtd <= 0) return;
+                    if (produtoSelecionadoId == null || produtoSelecionadoId!.isEmpty) {
+                      setDialogState(() => erro = 'Selecione o produto/matéria-prima que sofre a baixa no estoque.');
+                      return;
+                    }
+                    double qtd;
+                    double? pesoTotalSaco;
+                    double? fracaoBase;
+                    if (modoConversao) {
+                      final total = double.tryParse(totalSacoController.text.trim().replaceAll(',', '.'));
+                      if (total == null || total <= 0) {
+                        setDialogState(() => erro = 'Informe "A cada quantos vendidos?" (ex.: 15) para a conversão.');
+                        return;
+                      }
+                      final usoVal = double.tryParse(usoController.text.trim().replaceAll(',', '.'));
+                      final u = (usoVal == null || usoVal <= 0) ? 1.0 : usoVal;
+                      pesoTotalSaco = total;
+                      fracaoBase = u;
+                      qtd = u / total;
+                    } else {
+                      final qtdParsed = double.tryParse(qtdController.text.trim().replaceAll(',', '.'));
+                      if (qtdParsed == null || qtdParsed <= 0) {
+                        setDialogState(() => erro = 'A quantidade de baixa deve ser maior que zero.');
+                        return;
+                      }
+                      qtd = qtdParsed;
+                      pesoTotalSaco = null;
+                      fracaoBase = null;
+                    }
 
                     setState(() {
                       if (itemEdicao != null) {
@@ -3395,17 +6556,30 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
                           _composicao.removeWhere((c) => c.produtoId == itemEdicao.produtoId);
                         }
                       }
-                      
+
                       // Verifica se já existe o novo produto selecionado na lista, se sim atualiza, senao adiciona
                       final idx = _composicao.indexWhere((c) => c.produtoId == produtoSelecionadoId);
+                      final novoItem = ItemComposicao(
+                        produtoId: produtoSelecionadoId!,
+                        quantidade: qtd,
+                        pesoTotalSaco: pesoTotalSaco,
+                        fracaoBase: fracaoBase,
+                        unidadeVenda: modoConversao
+                            ? (unidadeVendaCtrl.text.trim().isEmpty ? null : unidadeVendaCtrl.text.trim())
+                            : null,
+                        unidadeBaixa: modoConversao
+                            ? (unidadeBaixaCtrl.text.trim().isEmpty ? null : unidadeBaixaCtrl.text.trim())
+                            : null,
+                      );
                       if (idx >= 0) {
-                        _composicao[idx] = ItemComposicao(produtoId: produtoSelecionadoId!, quantidade: qtd);
+                        _composicao[idx] = novoItem;
                       } else {
-                        _composicao.add(ItemComposicao(produtoId: produtoSelecionadoId!, quantidade: qtd));
+                        _composicao.add(novoItem);
                       }
                     });
                     Navigator.pop(context);
                   },
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
                   child: Text(itemEdicao != null ? 'SALVAR' : 'ADICIONAR'),
                 ),
               ],
@@ -3415,6 +6589,270 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
       },
     );
   }
+  /// Diálogo para montar um combo SEM perguntas: seleciona vários produtos
+  /// (com quantidade) e monta o kit na hora. O produto vira composto com
+  /// baixa automática em todos os itens e 1 item só no carrinho do PDV.
+  void _exibirDialogoCriarCombo() {
+    final pageContext = context;
+    final dataService = Provider.of<DataService>(pageContext, listen: false);
+    final buscaController = TextEditingController();
+    final qtdControllers = <String, TextEditingController>{};
+    final selecionados = <String, double>{};
+    // Itens já no kit (modo simples, sem conversão) vêm pré-marcados
+    final idsKitInicial = <String>{};
+    for (final c in _composicao) {
+      if (c.pesoTotalSaco == null) {
+        selecionados[c.produtoId] = c.quantidade;
+        idsKitInicial.add(c.produtoId);
+      }
+    }
+    String busca = '';
+
+    showDialog(
+      context: pageContext,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final lista = dataService.produtos.where((p) {
+              if (p.id == widget.item?.id) return false;
+              if (p.ehComposto) return false;
+              final q = busca.trim().toLowerCase();
+              if (q.isEmpty) return true;
+              return p.nome.toLowerCase().contains(q) ||
+                  (p.codigo ?? '').toLowerCase().contains(q);
+            }).toList();
+
+            double somaItens = 0;
+            for (final p in lista) {
+              final q = selecionados[p.id];
+              if (q != null && q > 0) {
+                somaItens += p.precoAtual * q;
+              }
+            }
+
+            Widget stepper(Produto p) {
+              final ctrl = qtdControllers.putIfAbsent(p.id, () {
+                final q = selecionados[p.id] ?? 1.0;
+                final txt = q == q.roundToDouble() ? q.toStringAsFixed(0) : q.toStringAsFixed(2);
+                return TextEditingController(text: txt);
+              });
+              void definirQtd(double v) {
+                setDialogState(() {
+                  if (v <= 0) {
+                    selecionados.remove(p.id);
+                    ctrl.text = '';
+                  } else {
+                    selecionados[p.id] = v;
+                    ctrl.text = v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toStringAsFixed(2);
+                  }
+                });
+              }
+
+              return Container(
+                padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.teal.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.teal.withOpacity(0.3)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.remove, size: 16, color: Colors.white70),
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () => definirQtd((selecionados[p.id] ?? 1.0) - 1),
+                    ),
+                    SizedBox(
+                      width: 42,
+                      child: TextField(
+                        controller: ctrl,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: Colors.white, fontSize: 12),
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        onChanged: (v) {
+                          final parsed = double.tryParse(v.trim().replaceAll(',', '.'));
+                          setDialogState(() {
+                            if (parsed != null && parsed > 0) {
+                              selecionados[p.id] = parsed;
+                            } else if (v.trim().isEmpty) {
+                              selecionados.remove(p.id);
+                            }
+                          });
+                        },
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.add, size: 16, color: Colors.white70),
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () => definirQtd((selecionados[p.id] ?? 1.0) + 1),
+                    ),
+                  ],
+                ),
+              );
+            }
+
+            return AlertDialog(
+              backgroundColor: const Color(0xFF1E1E2E),
+              title: const Row(
+                children: [
+                  Icon(Icons.fastfood_rounded, color: Colors.tealAccent, size: 22),
+                  SizedBox(width: 8),
+                  Text('Criar Combo', style: TextStyle(color: Colors.white, fontSize: 16)),
+                ],
+              ),
+              content: SizedBox(
+                width: 460,
+                height: 430,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text(
+                      'Selecione os itens do kit e a quantidade de cada um. Na venda entra 1 item '
+                      'no carrinho e a baixa acontece em todos os itens.',
+                      style: TextStyle(color: Colors.white38, fontSize: 11, height: 1.4),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: buscaController,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: InputDecoration(
+                        hintText: 'Buscar produto...',
+                        hintStyle: const TextStyle(color: Colors.white24),
+                        prefixIcon: const Icon(Icons.search, color: Colors.tealAccent, size: 20),
+                        filled: true,
+                        fillColor: Colors.white.withOpacity(0.05),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                        isDense: true,
+                      ),
+                      onChanged: (v) => setDialogState(() => busca = v),
+                    ),
+                    const SizedBox(height: 10),
+                    Expanded(
+                      child: lista.isEmpty
+                          ? const Center(
+                              child: Text('Nenhum produto encontrado.', style: TextStyle(color: Colors.white38)),
+                            )
+                          : ListView.separated(
+                              itemCount: lista.length,
+                              separatorBuilder: (_, __) => const Divider(color: Colors.white10, height: 1),
+                              itemBuilder: (context, index) {
+                                final p = lista[index];
+                                final selecionado = selecionados.containsKey(p.id);
+                                return ListTile(
+                                  dense: true,
+                                  contentPadding: EdgeInsets.zero,
+                                  leading: Checkbox(
+                                    value: selecionado,
+                                    activeColor: Colors.tealAccent,
+                                    onChanged: (v) => setDialogState(() {
+                                      if (v == true) {
+                                        selecionados[p.id] = 1.0;
+                                        qtdControllers.remove(p.id);
+                                      } else {
+                                        selecionados.remove(p.id);
+                                        qtdControllers.remove(p.id);
+                                      }
+                                    }),
+                                  ),
+                                  title: Text(p.nome, style: const TextStyle(color: Colors.white, fontSize: 12.5)),
+                                  subtitle: Text(
+                                    'R\$ ${p.precoAtual.toStringAsFixed(2)}${p.codigo != null ? ' · ${p.codigo}' : ''}',
+                                    style: const TextStyle(color: Colors.white30, fontSize: 10),
+                                  ),
+                                  trailing: selecionado ? stepper(p) : null,
+                                );
+                              },
+                            ),
+                    ),
+                    const SizedBox(height: 10),
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: Colors.teal.withOpacity(0.06),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.teal.withOpacity(0.2)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '🧮 Soma dos itens (referência): R\$ ${somaItens.toStringAsFixed(2)}',
+                            style: const TextStyle(color: Colors.tealAccent, fontSize: 12, fontWeight: FontWeight.w600),
+                          ),
+                          const SizedBox(height: 4),
+                          const Text(
+                            'O preço de venda do combo é o preço deste produto (definido nos dados do produto). '
+                            'Dica: coloque um valor abaixo da soma dos itens.',
+                            style: TextStyle(color: Colors.white30, fontSize: 9.5, height: 1.35),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('CANCELAR', style: TextStyle(color: Colors.grey)),
+                ),
+                ElevatedButton(
+                  onPressed: (selecionados.isEmpty && idsKitInicial.isEmpty)
+                      ? null
+                      : () {
+                          setState(() {
+                            _ehComposto = true;
+                            _exibirComposicaoPdv = true;
+                            final idsKitFinal = <String>{};
+                            for (final e in selecionados.entries) {
+                              if (e.value > 0) {
+                                idsKitFinal.add(e.key);
+                                final idx = _composicao.indexWhere((c) => c.produtoId == e.key);
+                                // Ingrediente com conversao configurada nao e sobrescrito
+                                if (idx >= 0 && _composicao[idx].pesoTotalSaco != null) continue;
+                                final novoItem = ItemComposicao(produtoId: e.key, quantidade: e.value);
+                                if (idx >= 0) {
+                                  _composicao[idx] = novoItem;
+                                } else {
+                                  _composicao.add(novoItem);
+                                }
+                              }
+                            }
+                            // Remove só itens do kit simples que foram desmarcados
+                            // (itens com conversão configurada não são tocados)
+                            _composicao.removeWhere(
+                              (c) => idsKitInicial.contains(c.produtoId) && !idsKitFinal.contains(c.produtoId),
+                            );
+                          });
+                          final nItens = selecionados.length;
+                          Navigator.pop(context);
+                          ScaffoldMessenger.of(pageContext).showSnackBar(
+                            SnackBar(
+                              backgroundColor: Colors.tealAccent,
+                              content: Text(
+                                nItens > 0
+                                    ? 'Kit montado com $nItens ${nItens == 1 ? 'item' : 'itens'} — salve o produto para aplicar.'
+                                    : 'Kit limpo.',
+                                style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.w600),
+                              ),
+                              duration: const Duration(seconds: 2),
+                            ),
+                          );
+                        },
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.tealAccent, foregroundColor: Colors.black87),
+                  child: Text(
+                    selecionados.isEmpty ? 'LIMPAR KIT' : 'MONTAR COMBO (${selecionados.length})',
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
 
   Widget _buildAbaAdicionais() {
     return Column(
@@ -4039,3 +7477,290 @@ class _CustomAutocompleteFieldState extends State<_CustomAutocompleteField> {
   }
 }
 
+
+/// Diálogo de busca de produto para vincular a uma opção de combo
+/// Prévia interativa do popup de combo que aparece no PDV — permite testar a configuração
+class _PreviewPopupCombo extends StatefulWidget {
+  final List<PerguntaSelecao> perguntas;
+  final String nomeProduto;
+
+  const _PreviewPopupCombo({required this.perguntas, required this.nomeProduto});
+
+  @override
+  State<_PreviewPopupCombo> createState() => _PreviewPopupComboState();
+}
+
+class _PreviewPopupComboState extends State<_PreviewPopupCombo> {
+  final Map<String, List<OpcaoPerguntaSelecao>> _selecoes = {};
+
+  /// Seleções atuais da pergunta, filtrando opções que não existem mais (comparação por id)
+  List<OpcaoPerguntaSelecao> _selDa(PerguntaSelecao pergunta) =>
+      (_selecoes[pergunta.id] ?? const [])
+          .where((o) => pergunta.opcoes.any((p) => p.id == o.id))
+          .toList();
+
+  bool _estaSelecionada(PerguntaSelecao pergunta, OpcaoPerguntaSelecao opcao) =>
+      _selDa(pergunta).any((o) => o.id == opcao.id);
+
+  void _toggle(PerguntaSelecao pergunta, OpcaoPerguntaSelecao opcao) {
+    setState(() {
+      final atuais = _selDa(pergunta);
+      final jaSelecionada = atuais.any((o) => o.id == opcao.id);
+      final selecionados = atuais.where((o) => o.id != opcao.id).toList();
+      if (!jaSelecionada) {
+        if (pergunta.maximo == 1) {
+          selecionados.clear();
+          selecionados.add(opcao);
+        } else if (selecionados.length < pergunta.maximo) {
+          selecionados.add(opcao);
+        }
+      }
+      _selecoes[pergunta.id] = selecionados;
+    });
+  }
+
+  bool _podeConfirmar() {
+    for (final p in widget.perguntas) {
+      final n = _selDa(p).length;
+      if (p.obrigatorio && n < p.minimo) return false;
+      if (n > p.maximo) return false;
+    }
+    return true;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final dataService = Provider.of<DataService>(context, listen: false);
+    // Remove seleções de perguntas que foram excluídas do formulário
+    _selecoes.removeWhere((k, _) => !widget.perguntas.any((p) => p.id == k));
+    for (final p in widget.perguntas) {
+      _selecoes.putIfAbsent(p.id, () => []);
+    }
+    final todasSelecionadas = widget.perguntas.expand((p) => _selDa(p)).toList();
+    final totalAdicional = todasSelecionadas.fold<double>(0, (s, o) => s + o.precoAdicional);
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.blueAccent.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.blueAccent.withOpacity(0.25)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.visibility_outlined, size: 16, color: Colors.blueAccent),
+              const SizedBox(width: 8),
+              const Text('Prévia no PDV', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+              const Spacer(),
+              IconButton(
+                icon: const Icon(Icons.refresh, size: 16, color: Colors.white38),
+                onPressed: () => setState(() => _selecoes.clear()),
+                tooltip: 'Limpar seleção',
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Teste aqui como o popup vai aparecer na hora da venda.',
+            style: TextStyle(color: Colors.white38, fontSize: 10),
+          ),
+          const SizedBox(height: 10),
+          if (widget.perguntas.isEmpty)
+            const Text('Adicione perguntas para ver a prévia.', style: TextStyle(color: Colors.white24, fontSize: 11))
+          else ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.03),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                widget.nomeProduto.isEmpty ? 'Nome do Produto' : widget.nomeProduto,
+                style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+              ),
+            ),
+            const SizedBox(height: 8),
+            ...widget.perguntas.map((pergunta) {
+              final selecionados = _selDa(pergunta);
+              return Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.03),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.white10),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      pergunta.titulo,
+                      style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${pergunta.obrigatorio ? 'Obrigatório' : 'Opcional'} · de ${pergunta.minimo} a ${pergunta.maximo} (${selecionados.length} selecionada(s))',
+                      style: const TextStyle(color: Colors.white38, fontSize: 9),
+                    ),
+                    const SizedBox(height: 6),
+                    ...pergunta.opcoes.map((opcao) {
+                      final sel = _estaSelecionada(pergunta, opcao);
+                      return InkWell(
+                        onTap: () => _toggle(pergunta, opcao),
+                        borderRadius: BorderRadius.circular(8),
+                        child: Container(
+                          margin: const EdgeInsets.symmetric(vertical: 2),
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: sel ? Colors.blueAccent.withOpacity(0.15) : Colors.transparent,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: sel ? Colors.blueAccent : Colors.transparent),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                pergunta.maximo == 1
+                                    ? (sel ? Icons.radio_button_checked : Icons.radio_button_off)
+                                    : (sel ? Icons.check_box : Icons.check_box_outline_blank),
+                                size: 16,
+                                color: sel ? Colors.blueAccent : Colors.white30,
+                              ),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  opcao.nome.isEmpty
+                                      ? (dataService.produtos.cast<Produto?>().firstWhere((p) => p?.id == opcao.produtoId, orElse: () => null)?.nome ?? 'Opção')
+                                      : opcao.nome,
+                                  style: const TextStyle(color: Colors.white, fontSize: 11),
+                                ),
+                              ),
+                              if (opcao.precoAdicional > 0)
+                                Text(
+                                  '+R\$ ${opcao.precoAdicional.toStringAsFixed(2)}',
+                                  style: const TextStyle(color: Colors.amber, fontSize: 10, fontWeight: FontWeight.bold),
+                                ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }),
+                  ],
+                ),
+              );
+            }),
+            const SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.greenAccent.withOpacity(0.06),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.greenAccent.withOpacity(0.2)),
+              ),
+              child: Text(
+                todasSelecionadas.isEmpty
+                    ? 'Nada selecionado ainda.'
+                    : '${todasSelecionadas.length} item(ns) selecionado(s) · +R\$ ${totalAdicional.toStringAsFixed(2)} em adicionais',
+                style: const TextStyle(color: Colors.greenAccent, fontSize: 11),
+              ),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _podeConfirmar() ? () {} : null,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blueAccent,
+                  disabledBackgroundColor: Colors.white10,
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                ),
+                child: Text(
+                  _podeConfirmar() ? 'Confirmar (prévia válida)' : 'Complete as seleções obrigatórias',
+                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _DialogoBuscarProduto extends StatefulWidget {
+  final DataService dataService;
+  const _DialogoBuscarProduto({required this.dataService});
+
+  @override
+  State<_DialogoBuscarProduto> createState() => _DialogoBuscarProdutoState();
+}
+
+class _DialogoBuscarProdutoState extends State<_DialogoBuscarProduto> {
+  final TextEditingController _busca = TextEditingController();
+  String _query = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final filtrados = _query.trim().isEmpty
+        ? widget.dataService.produtos.take(20).toList()
+        : widget.dataService.produtos.where((p) {
+            return p.nome.toLowerCase().contains(_query.toLowerCase()) ||
+                (p.codigo ?? '').toLowerCase().contains(_query.toLowerCase());
+          }).take(20).toList();
+
+    return AlertDialog(
+      backgroundColor: const Color(0xFF1E1E2E),
+      title: const Text('Buscar Produto', style: TextStyle(color: Colors.white)),
+      content: SizedBox(
+        width: 360,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _busca,
+              autofocus: true,
+              style: const TextStyle(color: Colors.white),
+              onChanged: (v) => setState(() => _query = v),
+              decoration: InputDecoration(
+                hintText: 'Digite o nome ou código...',
+                hintStyle: const TextStyle(color: Colors.white24),
+                filled: true,
+                fillColor: Colors.white.withOpacity(0.05),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                prefixIcon: const Icon(Icons.search, color: Colors.blueAccent, size: 20),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Flexible(
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: filtrados.length,
+                itemBuilder: (context, index) {
+                  final p = filtrados[index];
+                  return ListTile(
+                    dense: true,
+                    title: Text(p.nome, style: const TextStyle(color: Colors.white, fontSize: 14)),
+                    subtitle: p.codigo != null
+                        ? Text('Código: ${p.codigo} · Estoque: ${p.estoque}', style: const TextStyle(color: Colors.white38, fontSize: 11))
+                        : Text('Estoque: ${p.estoque}', style: const TextStyle(color: Colors.white38, fontSize: 11)),
+                    onTap: () => Navigator.pop(context, p),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+        ),
+      ],
+    );
+  }
+}

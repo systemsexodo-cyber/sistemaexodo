@@ -19,6 +19,7 @@ class CaixaPDFService {
     required FechamentoCaixa fechamento,
     required Empresa empresa,
     required List<VendaBalcao> vendas,
+    List<String>? itensDeletadosExtra,
   }) async {
     final pdf = pw.Document();
 
@@ -35,18 +36,36 @@ class CaixaPDFService {
     // Cálculo de largura útil (mm -> pt)
     final double pageWidth = (larguraBobina - 2) * 2.83465;
 
-    // Calcular resumo por forma de pagamento
+    // Calcular resumo por forma de pagamento e detalhe de itens
     final resumoPagamentos = <TipoPagamento, double>{};
     double totalItensVendidos = 0.0;
     double valorTotalItens = 0.0;
 
+    final itemQuantities = <String, double>{};
+    final itemTotals = <String, double>{};
+    final itensDeletadosMesa = <String>[];
+    if (itensDeletadosExtra != null) {
+      itensDeletadosMesa.addAll(itensDeletadosExtra);
+    }
+
     for (final venda in vendas) {
+      // Coleta de itens deletados das observações de todas as vendas (ativas ou não)
+      if (venda.observacoes != null && venda.observacoes!.contains('CANCELADOS:')) {
+        final parts = venda.observacoes!.split('CANCELADOS:');
+        if (parts.length > 1) {
+          final orig = venda.observacoes!.split('|').first.replaceAll('[VIP-MC] originado de ', '').trim();
+          itensDeletadosMesa.add('$orig: ${parts[1].trim()}');
+        }
+      }
+
       if (venda.cancelado) continue;
       
       // Somar itens
       for (final item in venda.itens) {
         totalItensVendidos += item.quantidade;
         valorTotalItens += item.precoUnitario * item.quantidade;
+        itemQuantities[item.nome] = (itemQuantities[item.nome] ?? 0.0) + item.quantidade;
+        itemTotals[item.nome] = (itemTotals[item.nome] ?? 0.0) + (item.precoUnitario * item.quantidade);
       }
 
       // Somar pagamentos (VendaBalcao possui apenas um tipo principal)
@@ -120,17 +139,89 @@ class CaixaPDFService {
               _buildValorLinha('TOTAL VENDAS:', resumoPagamentos.values.fold(0.0, (a, b) => a + b), fontSizeCorpo, bold: true),
               pw.SizedBox(height: 10),
 
-              // Resumo de Itens
+              // Resumo de Itens Vendidos Detalhado
               pw.Divider(thickness: 0.5),
               pw.SizedBox(height: 5),
               pw.Text(
-                'RESUMO DE ITENS',
+                'ITENS VENDIDOS',
                 style: pw.TextStyle(fontSize: fontSizeCorpo, fontWeight: pw.FontWeight.bold),
               ),
               pw.SizedBox(height: 5),
-              _buildInfoLinha('Total de Itens:', totalItensVendidos.toString(), fontSizeCorpo),
-              _buildValorLinha('Valor dos Itens:', valorTotalItens, fontSizeCorpo),
+              ...itemQuantities.entries.map((e) {
+                final nome = e.key;
+                final qtd = e.value;
+                final totalVal = itemTotals[nome] ?? 0.0;
+                return pw.Padding(
+                  padding: const pw.EdgeInsets.symmetric(vertical: 1),
+                  child: pw.Row(
+                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                    children: [
+                      pw.Expanded(
+                        child: pw.Text(
+                          '${qtd.toStringAsFixed(0)}x $nome',
+                          style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
+                        ),
+                      ),
+                      pw.Text(
+                        _formatoMoeda.format(totalVal),
+                        style: pw.TextStyle(fontSize: fontSizeCorpo - 1, fontWeight: pw.FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                );
+              }),
               pw.SizedBox(height: 10),
+
+              // Vendas Canceladas (Auditoria)
+              if (vendas.any((v) => v.cancelado)) ...[
+                pw.Divider(thickness: 0.5),
+                pw.SizedBox(height: 5),
+                pw.Text(
+                  'VENDAS CANCELADAS',
+                  style: pw.TextStyle(fontSize: fontSizeCorpo, fontWeight: pw.FontWeight.bold, color: PdfColors.red),
+                ),
+                pw.SizedBox(height: 5),
+                ...vendas.where((v) => v.cancelado).map((v) {
+                  return pw.Padding(
+                    padding: const pw.EdgeInsets.symmetric(vertical: 1),
+                    child: pw.Row(
+                      mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                      children: [
+                        pw.Text(
+                          '${v.numero} - ${v.clienteNome ?? "Consumidor"}',
+                          style: pw.TextStyle(fontSize: fontSizeCorpo - 1, color: PdfColors.red),
+                        ),
+                        pw.Text(
+                          _formatoMoeda.format(v.valorTotal),
+                          style: pw.TextStyle(fontSize: fontSizeCorpo - 1, fontWeight: pw.FontWeight.bold, color: PdfColors.red),
+                        ),
+                      ],
+                    ),
+                  );
+                }),
+                pw.SizedBox(height: 10),
+              ],
+
+              // Itens Deletados/Cancelados de Mesas/Comandas
+              if (itensDeletadosMesa.isNotEmpty) ...[
+                pw.Divider(thickness: 0.5),
+                pw.SizedBox(height: 5),
+                pw.Text(
+                  'ITENS DELETADOS (CARRINHO/MESAS)',
+                  style: pw.TextStyle(fontSize: fontSizeCorpo, fontWeight: pw.FontWeight.bold, color: PdfColors.orange),
+                ),
+                pw.SizedBox(height: 5),
+                ...itensDeletadosMesa.map((text) {
+                  return pw.Align(
+                    alignment: pw.Alignment.centerLeft,
+                    child: pw.Text(
+                      text,
+                      style: pw.TextStyle(fontSize: fontSizeCorpo - 1, color: PdfColors.orange),
+                    ),
+                  );
+                }),
+                pw.SizedBox(height: 10),
+              ],
 
               // Movimentações Operacionais (Sangrias/Suprimentos)
               pw.Divider(thickness: 0.5),
@@ -241,6 +332,7 @@ class CaixaPDFService {
       case TipoPagamento.fiado: return 'Fiado';
       case TipoPagamento.outro: return 'Outro';
       case TipoPagamento.alimentacao: return 'Ticket/Aliment.';
+      case TipoPagamento.transferencia: return 'Transferência';
     }
   }
 }

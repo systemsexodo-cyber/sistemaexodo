@@ -2019,6 +2019,28 @@ class _PedidosPageState extends State<PedidosPage> {
                 _imprimirPDFPedido(context, pedido, termico: false);
               },
             ),
+            const Divider(),
+            ListTile(
+              leading: const Icon(Icons.visibility, color: Colors.teal, size: 32),
+              title: const Text('Pré-visualizar PDF'),
+              subtitle: const Text('Ver o pedido em PDF (A4) antes de imprimir'),
+              contentPadding: const EdgeInsets.symmetric(vertical: 8),
+              onTap: () {
+                Navigator.pop(context);
+                _imprimirPDFPedido(context, pedido, termico: false, forcarPreview: true);
+              },
+            ),
+            const Divider(),
+            ListTile(
+              leading: const Icon(Icons.visibility, color: Colors.deepOrange, size: 32),
+              title: const Text('Pré-visualizar Térmico (80mm)'),
+              subtitle: const Text('Ver a via térmica antes de imprimir'),
+              contentPadding: const EdgeInsets.symmetric(vertical: 8),
+              onTap: () {
+                Navigator.pop(context);
+                _imprimirPDFPedido(context, pedido, termico: true, forcarPreview: true);
+              },
+            ),
           ],
         ),
         actions: [
@@ -2036,6 +2058,7 @@ class _PedidosPageState extends State<PedidosPage> {
     BuildContext context,
     Pedido pedido, {
     required bool termico,
+    bool forcarPreview = false,
   }) async {
     // Obter empresa atual
     final authService = Provider.of<AuthService>(context, listen: false);
@@ -2087,12 +2110,14 @@ class _PedidosPageState extends State<PedidosPage> {
           pedido: pedido,
           empresa: empresa,
           context: context,
+          forcarPreview: forcarPreview,
         );
       } else {
         await PedidoPDFService.imprimirPDF(
           pedido: pedido,
           empresa: empresa,
           context: context,
+          forcarPreview: forcarPreview,
         );
       }
     } catch (e) {

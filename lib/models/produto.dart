@@ -2,14 +2,28 @@ import 'package:sistema_exodo_novo/utils/date_parser.dart';
 import 'package:sistema_exodo_novo/models/variacao_produto.dart';
 import 'package:sistema_exodo_novo/models/adicional_produto.dart';
 import 'package:sistema_exodo_novo/models/item_composicao.dart';
+import 'package:sistema_exodo_novo/models/pergunta_selecao.dart';
+import 'package:sistema_exodo_novo/models/forma_venda.dart';
+import 'package:sistema_exodo_novo/models/regra_promocao.dart';
 
 class Produto {
   final String id;
   final String? codigo; // Pode ser null para produtos antigos
-  final String? codigoBarras; // Código de barras (EAN, UPC, etc)
+  final String? codigoBarras; // Código de barras principal (EAN, UPC, etc)
+  final List<String> codigosBarrasAdicionais; // Códigos de barras extras (mesmo produto pode ter vários EANs)
   final String nome;
   final String? descricao;
   final String unidade;
+  // Forma de venda do produto: 'unidade', 'caixa', 'pacote' ou 'saco'.
+  // Embalagens (caixa/pacote/saco) contêm N unidades internas (quantidadeBaixa).
+  final String unidadeVenda;
+  // Quantidade de unidades baixadas do estoque a cada 1 item vendido.
+  // Ex.: 1 caixa contém 12 unidades -> vende 1 caixa, baixa 12 do estoque.
+  final double quantidadeBaixa;
+  // Múltiplas formas de venda do mesmo produto (cada uma com preço e baixa
+  // próprios). Ex.: vender por unidade E por caixa sem cadastrar itens duplicados.
+  // Quando vazio, o PDV usa a forma principal (unidadeVenda/quantidadeBaixa/preco).
+  final List<FormaVenda> formasVenda;
   final String grupo; // Novo: Grupo/Categoria do produto
   final double preco;
   final double? precoCusto; // Preço de custo do produto
@@ -21,6 +35,10 @@ class Produto {
   final double? precoPromocional;
   final DateTime? promocaoInicio;
   final DateTime? promocaoFim;
+  // Regras avançadas de promoção (empilháveis): por data, dia da semana,
+  // quantidade mínima ou valor mínimo no carrinho. Os descontos somam-se ao
+  // desconto da promoção simples (precoPromocional) quando aplicáveis.
+  final List<RegraPromocao> promocoes;
   
   // Códigos do fornecedor - mapeamento entre código do fornecedor e código interno
   final List<String> codigosFornecedor; // Lista de códigos que o fornecedor usa para este produto
@@ -47,6 +65,9 @@ class Produto {
   // Campos para controle de mesas/comandas
   final bool? paraCozinha; // Se true, item é preparado na cozinha
   final bool? paraBar; // Se true, item é preparado no bar
+  final String? departamentoId; // Departamento/setor de preparação (ex: "Cozinha", "Bar", "Sobremesas") — entidade separada da impressora
+  final String? impressoraProducao; // Nome/Setor da impressora de produção (ex: "Cozinha", "Bar", ou nome da impressora Windows)
+  final List<String> impressoraProducaoExtra; // Outros setores/impressoras onde o produto também deve imprimir (multi-seleção)
   
   // Campos para E-commerce
   final bool exibirNaLoja; // Se true, produto aparece na loja pública
@@ -77,6 +98,10 @@ class Produto {
   // Produto Composto
   final bool ehComposto;
   final List<ItemComposicao> composicao;
+  // Quando true (padrão), a venda deste produto composto também baixa o estoque
+  // dele mesmo. Quando false, a baixa acontece APENAS nos ingredientes (ideal
+  // para produtos tipo Chop/Chopp: o controle é no barril, o chop é "ilimitado").
+  final bool baixarEstoqueProprio;
   
   // Tracking de Pedidos de Compra
   final bool pedidoCompraGerado;
@@ -84,15 +109,26 @@ class Produto {
 
   // Mapeamento de estoque por fornecedor (Ex: {"Ambev": 10.0, "Coca": 10.0})
   final Map<String, double> estoquePorFornecedor; 
-  final bool enviaBalanca; // Se true, produto é enviado para a balança 
+  final bool enviaBalanca;
+  final bool cobrarGarcom; // Se true, cobra os 10% de taxa de garçom no PDV/Comandas
+  final String? perfilTributarioId; // ID do Perfil Tributário (impostos)
+  final List<PerguntaSelecao> perguntasSelecao;
+  final bool exibirComposicaoPdv;
+  final Map<String, double>? precosPorPerfil;
+  final List<RegraQuantidade>? regrasQuantidade;
+ // Se true, produto é enviado para a balança 
 
   Produto({
     required this.id,
     this.codigo,
     this.codigoBarras,
+    List<String>? codigosBarrasAdicionais,
     required this.nome,
     this.descricao,
     required this.unidade,
+    this.unidadeVenda = 'unidade',
+    this.quantidadeBaixa = 1.0,
+    List<FormaVenda>? formasVenda,
     required this.grupo,
     required this.preco,
     this.precoCusto,
@@ -102,6 +138,7 @@ class Produto {
     this.precoPromocional,
     this.promocaoInicio,
     this.promocaoFim,
+    List<RegraPromocao>? promocoes,
     List<String>? codigosFornecedor,
     this.ncm,
     this.icmsAliquota,
@@ -120,9 +157,17 @@ class Produto {
     this.simplesNacionalAliquota,
     this.paraCozinha,
     this.paraBar,
+    this.departamentoId,
+    this.impressoraProducao,
+    this.impressoraProducaoExtra = const [],
     this.exibirNaLoja = false,
     this.emDestaque = false,
     this.enviaBalanca = false,
+    this.cobrarGarcom = true,
+    this.perfilTributarioId,
+    this.perguntasSelecao = const [],
+    this.exibirComposicaoPdv = false,
+
     List<String>? fotosUrls,
     this.fotoPrincipalUrl,
     this.descricaoEcommerce,
@@ -130,6 +175,8 @@ class Produto {
     this.alturaCm,
     this.larguraCm,
     this.profundidadeCm,
+    this.precosPorPerfil,
+    this.regrasQuantidade,
     List<String>? tags,
     List<VariacaoProduto>? variacoes,
     bool? temVariacoes,
@@ -140,11 +187,13 @@ class Produto {
     this.fornecedorNome,
     this.estoqueMinimo = 0.0,
     this.ehComposto = false,
+    this.baixarEstoqueProprio = true,
     List<ItemComposicao>? composicao,
     this.pedidoCompraGerado = false,
     this.dataUltimoPedido,
     Map<String, double>? estoquePorFornecedor,
   }) : codigosFornecedor = codigosFornecedor ?? [],
+       codigosBarrasAdicionais = codigosBarrasAdicionais ?? [],
        fotosUrls = fotosUrls ?? [],
        tags = tags ?? [],
        variacoes = variacoes ?? [],
@@ -152,22 +201,212 @@ class Produto {
        adicionais = adicionais ?? [],
        temAdicionais = temAdicionais ?? false,
        composicao = composicao ?? [],
-       estoquePorFornecedor = estoquePorFornecedor ?? {};
+       estoquePorFornecedor = estoquePorFornecedor ?? {},
+       formasVenda = formasVenda ?? [],
+       promocoes = promocoes ?? [];
 
-  // Verifica se a promoção está ativa agora
-  bool get promocaoAtiva {
-    if (precoPromocional == null ||
-        promocaoInicio == null ||
-        promocaoFim == null) {
-      return false;
+  /// Todos os códigos de barras do produto (principal + adicionais),
+  /// sem duplicatas e sem valores vazios. Usado na busca por código de barras.
+  List<String> get todosCodigosBarras {
+    final todos = <String>[];
+    if (codigoBarras != null && codigoBarras!.trim().isNotEmpty) {
+      todos.add(codigoBarras!.trim());
     }
-    final agora = DateTime.now();
-    return agora.isAfter(promocaoInicio!) && agora.isBefore(promocaoFim!);
+    for (final codigo in codigosBarrasAdicionais) {
+      final valor = codigo.trim();
+      if (valor.isNotEmpty &&
+          !todos.any((t) => t.toLowerCase() == valor.toLowerCase())) {
+        todos.add(valor);
+      }
+    }
+    return todos;
   }
 
-  // Retorna o preço atual (promocional se ativo, normal caso contrário)
-  double get precoAtual => promocaoAtiva ? precoPromocional! : preco;
+  /// Fator de baixa no estoque: quantas unidades saem a cada 1 item vendido.
+  /// Se não configurado (<= 0), assume 1 (venda unitária padrão).
+  double get fatorBaixaEstoque => quantidadeBaixa > 0 ? quantidadeBaixa : 1.0;
+
+  /// Lista de formas de venda efetiva do produto.
+  ///
+  /// Se [formasVenda] estiver vazia (produtos antigos), devolve uma lista com
+  /// uma única forma derivada dos campos legados (unidadeVenda/quantidadeBaixa/preco)
+  /// para que o PDV continue funcionando normalmente.
+  List<FormaVenda> get formasVendaEfetivas {
+    if (formasVenda.isNotEmpty) return formasVenda;
+    return [
+      FormaVenda(
+        tipo: unidadeVenda.isEmpty ? 'unidade' : unidadeVenda,
+        quantidadeBaixa: quantidadeBaixa > 0 ? quantidadeBaixa : 1.0,
+        preco: preco,
+      ),
+    ];
+  }
+
+  /// True se o produto tem mais de uma forma de venda configurada
+  /// (o PDV pergunta qual forma usar ao vender).
+  bool get temMultiplasFormasVenda => formasVendaEfetivas.length > 1;
+
+  /// Busca uma forma de venda pelo tipo. Retorna null se não existir.
+  FormaVenda? formaVendaPorTipo(String tipo) {
+    for (final f in formasVendaEfetivas) {
+      if (f.tipo == tipo) return f;
+    }
+    return null;
+  }
+
+  /// Preço da forma de venda. Se a forma não estiver configurada
+  /// (produtos antigos), retorna o preço principal do produto.
+  double precoDaFormaVenda(String tipo) {
+    final forma = formaVendaPorTipo(tipo);
+    return forma?.preco ?? preco;
+  }
+
+  /// Quantidade de baixa da forma de venda. Se a forma não estiver
+  /// configurada, retorna a baixa principal (fatorBaixaEstoque).
+  double quantidadeBaixaDaForma(String tipo) {
+    final forma = formaVendaPorTipo(tipo);
+    return forma?.quantidadeBaixa ?? fatorBaixaEstoque;
+  }
+
+  /// True se o produto é vendido por embalagem (caixa, pacote ou saco).
+  /// Nesses casos o PDV informa a quantidade em embalagens e o estoque
+  /// baixa em unidades (quantidadeBaixa por embalagem).
+  bool get vendePorEmbalagem =>
+      unidadeVenda == 'caixa' ||
+      unidadeVenda == 'pacote' ||
+      unidadeVenda == 'saco';
+
+  /// Rótulo amigável da forma de venda (para exibição no PDV e formulário).
+  /// Para valores desconhecidos (dados legados), devolve o valor em maiúsculas.
+  String get unidadeVendaLabel {
+    switch (unidadeVenda) {
+      case 'caixa':
+        return 'CAIXA';
+      case 'pacote':
+        return 'PACOTE';
+      case 'saco':
+        return 'SACO';
+      case 'unidade':
+        return 'UNIDADE';
+      default:
+        return unidadeVenda.isEmpty ? 'UNIDADE' : unidadeVenda.toUpperCase();
+    }
+  }
+
+  /// Percentual de desconto da promoção simples (precoPromocional) no momento.
+  /// Aceita datas nulas: se a data de início/fim não foi definida, a condição
+  /// correspondente é ignorada (promoção sempre ativa).
+  double _descontoPromocaoSimples([DateTime? agora]) {
+    if (precoPromocional == null || precoPromocional! <= 0 || preco <= 0) return 0;
+    final a = agora ?? DateTime.now();
+    if (promocaoInicio != null && a.isBefore(promocaoInicio!)) return 0;
+    if (promocaoFim != null && a.isAfter(promocaoFim!)) return 0;
+    final pct = (preco - precoPromocional!) / preco * 100;
+    return pct > 0 ? pct : 0;
+  }
+
+  /// Percentual de desconto total (empilhado) aplicável no momento.
+  ///
+  /// [quantidade] = quantidade do produto no carrinho;
+  /// [subtotalItem] = subtotal do produto no carrinho (qtd × preço) para as
+  /// regras de valor mínimo; se nulo, usa quantidade × preço.
+  double descontoPromocionalAtual({
+    double quantidade = 1.0,
+    double? subtotalItem,
+    DateTime? agora,
+  }) {
+    final subtotal = subtotalItem ?? quantidade * preco;
+    double total = _descontoPromocaoSimples(agora);
+    for (final r in promocoes) {
+      if (r.aplicaPara(quantidade: quantidade, subtotalItem: subtotal, agora: agora)) {
+        total += r.contribuicaoPercentual(preco);
+      }
+    }
+    return total.clamp(0.0, 99.0);
+  }
+
+  /// Aplica os descontos promocionais (empilhados) sobre um preço base.
+  double aplicarPromocoes(
+    double precoBase, {
+    double quantidade = 1.0,
+    double? subtotalItem,
+    DateTime? agora,
+  }) {
+    final desconto = descontoPromocionalAtual(
+      quantidade: quantidade,
+      subtotalItem: subtotalItem,
+      agora: agora,
+    );
+    if (desconto <= 0) return precoBase;
+    return precoBase * (1 - desconto / 100);
+  }
+
+  /// Verifica se há alguma promoção ativa neste momento (para exibir selos).
+  /// Regras de quantidade/valor mínimo contam como ativas quando dentro da
+  /// janela de tempo (a condição de carrinho é avaliada no fechamento).
+  bool get promocaoAtiva {
+    if (_descontoPromocaoSimples() > 0) return true;
+    return promocoes.any((r) => r.ativo && r.janelaValidaNoMomento());
+  }
+
+  /// Retorna o preço atual considerando as promoções ativas no momento,
+  /// sem contexto de carrinho (quantidade 1). No PDV, o preço real é calculado
+  /// com [aplicarPromocoes] usando a quantidade/subtotal do item.
+  double get precoAtual {
+    final desconto = descontoPromocionalAtual(quantidade: 1.0, subtotalItem: preco);
+    return desconto > 0 ? preco * (1 - desconto / 100) : preco;
+  }
   
+  // Retorna o preço do produto aplicando as regras de perfil e quantidade
+  double getPrecoInteligente({
+    String? perfilCliente, 
+    double modificadorPerfil = 0.0, 
+    String tipoModificador = 'desconto', // 'desconto' ou 'acrescimo'
+    double quantidade = 1.0,
+  }) {
+    double precoAtual = preco; // Inicia com o preço de venda padrão
+
+    bool precoFoiFixo = false;
+
+    // 1. Aplica o preço do perfil (Preço Fixo no Produto), se existir e for maior que 0
+    // O preço fixo tem prioridade sobre o desconto/acréscimo global.
+    if (perfilCliente != null && precosPorPerfil != null && precosPorPerfil!.containsKey(perfilCliente)) {
+      final precoPerfil = precosPorPerfil![perfilCliente];
+      if (precoPerfil != null && precoPerfil > 0) {
+        precoAtual = precoPerfil;
+        precoFoiFixo = true;
+      }
+    }
+
+    // 2. Aplica o Modificador Global do Perfil (se não houver preço fixo)
+    if (!precoFoiFixo && modificadorPerfil > 0) {
+      if (tipoModificador == 'desconto') {
+        precoAtual = precoAtual * (1 - (modificadorPerfil / 100));
+      } else if (tipoModificador == 'acrescimo') {
+        precoAtual = precoAtual * (1 + (modificadorPerfil / 100));
+      }
+    }
+
+    // 3. Aplica regras de quantidade (Atacarejo) - pega a maior quantidade atingida
+    if (regrasQuantidade != null && regrasQuantidade!.isNotEmpty) {
+      // Ordenar decrescente para pegar a regra mais vantajosa (maior quantidade) primeiro
+      final regrasOrdenadas = List<RegraQuantidade>.from(regrasQuantidade!)
+        ..sort((a, b) => b.quantidadeMinima.compareTo(a.quantidadeMinima));
+        
+      for (var regra in regrasOrdenadas) {
+        if (quantidade >= regra.quantidadeMinima && regra.preco > 0) {
+          // Só aplica se o preço de atacarejo for menor que o preço atual (para beneficiar o cliente)
+          if (regra.preco < precoAtual) {
+            precoAtual = regra.preco;
+          }
+          break; // Achou a maior regra que atende
+        }
+      }
+    }
+
+    return precoAtual;
+  }
+
   // Retorna o preço com variação (se houver variação selecionada)
   double precoComVariacao(List<VariacaoProduto>? variacoesSelecionadas) {
     double precoBase = precoAtual;
@@ -203,10 +442,9 @@ class Produto {
     return estoque;
   }
 
-  // Calcula o percentual de desconto
+  // Calcula o percentual de desconto total (empilhado) no momento
   double get percentualDesconto {
-    if (!promocaoAtiva || precoPromocional == null) return 0;
-    return ((preco - precoPromocional!) / preco * 100);
+    return descontoPromocionalAtual(quantidade: 1.0, subtotalItem: preco);
   }
 
   // Calcula a margem de lucro em percentual
@@ -233,9 +471,13 @@ class Produto {
       'id': id,
       'codigo': codigo,
       'codigo_barras': codigoBarras,
+      'codigos_barras_adicionais': codigosBarrasAdicionais,
       'nome': nome,
       'descricao': descricao,
       'unidade': unidade,
+      'unidade_venda': unidadeVenda,
+      'quantidade_baixa': quantidadeBaixa,
+      'formas_venda': formasVenda.map((f) => f.toMap()).toList(),
       'grupo': grupo,
       'preco': preco,
       'preco_custo': precoCusto,
@@ -246,6 +488,7 @@ class Produto {
       'preco_promocional': precoPromocional,
       'promocao_inicio': promocaoInicio?.toIso8601String(),
       'promocao_fim': promocaoFim?.toIso8601String(),
+      'promocoes': promocoes.map((r) => r.toMap()).toList(),
       'codigos_fornecedor': codigosFornecedor,
       'ncm': ncm,
       'icms_aliquota': icmsAliquota,
@@ -254,6 +497,8 @@ class Produto {
       'ipi_cst': ipiCst,
       'pis_aliquota': pisAliquota,
       'pis_cst': pisCst,
+      'precos_por_perfil': precosPorPerfil,
+      'regras_quantidade': regrasQuantidade?.map((r) => r.toMap()).toList(),
       'cofins_aliquota': cofinsAliquota,
       'cofins_cst': cofinsCst,
       'iss_aliquota': issAliquota,
@@ -264,9 +509,17 @@ class Produto {
       'simples_nacional_aliquota': simplesNacionalAliquota,
       'para_cozinha': paraCozinha,
       'para_bar': paraBar,
+      'departamento_id': departamentoId,
+      'impressora_producao': impressoraProducao,
+      'impressora_producao_extra': impressoraProducaoExtra,
       'exibir_na_loja': exibirNaLoja,
       'em_destaque': emDestaque,
       'envia_balanca': enviaBalanca,
+      'cobrar_garcom': cobrarGarcom,
+      'perfil_tributario_id': perfilTributarioId,
+      'perguntas_selecao': perguntasSelecao.map((p) => p.toMap()).toList(),
+      'exibir_composicao_pdv': exibirComposicaoPdv,
+
       'fotos_urls': fotosUrls,
       'foto_principal_url': fotoPrincipalUrl,
       'descricao_ecommerce': descricaoEcommerce,
@@ -280,6 +533,7 @@ class Produto {
       'adicionais': adicionais.map((a) => a.toMap()).toList(),
       'tem_adicionais': temAdicionais,
       'eh_composto': ehComposto,
+      'baixar_estoque_proprio': baixarEstoqueProprio,
       'composicao': composicao.map((c) => c.toMap()).toList(),
       'observacao_padrao': observacaoPadrao,
       'fornecedor_id': fornecedorId,
@@ -288,6 +542,22 @@ class Produto {
       'pedido_compra_gerado': pedidoCompraGerado,
       'data_ultimo_pedido': dataUltimoPedido?.toIso8601String(),
     };
+  }
+
+  /// Converte o valor de códigos de barras adicionais vindo do banco/JSON
+  /// (pode ser List, ou String separada por ';'/'|' em bancos antigos).
+  static List<String> _parseListaCodigosBarras(dynamic value) {
+    if (value is List) {
+      return value.map((e) => e?.toString() ?? '').toList();
+    }
+    if (value is String && value.trim().isNotEmpty) {
+      return value
+          .split(RegExp(r'[;|]'))
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+    }
+    return [];
   }
 
   factory Produto.fromMap(Map<String, dynamic> map) {
@@ -320,9 +590,15 @@ class Produto {
       id: map['id'] as String,
       codigo: map['codigo'] as String?,
       codigoBarras: getStr('codigoBarras', 'codigo_barras'),
+      codigosBarrasAdicionais: _parseListaCodigosBarras(get<dynamic>('codigosBarrasAdicionais', 'codigos_barras_adicionais')),
       nome: map['nome'] as String,
       descricao: map['descricao'] as String?,
       unidade: map['unidade'] as String? ?? '',
+      unidadeVenda: getStr('unidadeVenda', 'unidade_venda') ?? 'unidade',
+      quantidadeBaixa: getNum('quantidadeBaixa', 'quantidade_baixa')?.toDouble() ?? 1.0,
+      formasVenda: (getList('formasVenda', 'formas_venda') ?? [])
+          .map((f) => FormaVenda.fromMap(Map<String, dynamic>.from(f is Map ? f : {})))
+          .toList(),
       grupo: map['grupo'] as String? ?? 'Sem Grupo',
       preco: (getNum('preco', 'preco') ?? 0.0).toDouble(),
       precoCusto: getNum('precoCusto', 'preco_custo')?.toDouble(),
@@ -333,6 +609,9 @@ class Produto {
       precoPromocional: getNum('precoPromocional', 'preco_promocional')?.toDouble(),
       promocaoInicio: getDate('promocaoInicio', 'promocao_inicio'),
       promocaoFim: getDate('promocaoFim', 'promocao_fim'),
+      promocoes: (getList('promocoes', 'promocoes') ?? [])
+          .map((r) => RegraPromocao.fromMap(Map<String, dynamic>.from(r is Map ? r : {})))
+          .toList(),
       codigosFornecedor: getList('codigosFornecedor', 'codigos_fornecedor')?.cast<String>() ?? [],
       ncm: map['ncm'] as String?,
       icmsAliquota: getNum('icmsAliquota', 'icms_aliquota')?.toDouble(),
@@ -351,9 +630,19 @@ class Produto {
       simplesNacionalAliquota: getNum('simplesNacionalAliquota', 'simples_nacional_aliquota')?.toDouble(),
       paraCozinha: getBool('paraCozinha', 'para_cozinha'),
       paraBar: getBool('paraBar', 'para_bar'),
+      departamentoId: getStr('departamentoId', 'departamento_id'),
+      impressoraProducao: (map['impressoraProducao'] ?? map['impressora_producao']) as String?,
+      impressoraProducaoExtra: (getList('impressoraProducaoExtra', 'impressora_producao_extra') ?? [])
+          .map((e) => e.toString())
+          .toList(),
       exibirNaLoja: getBool('exibirNaLoja', 'exibir_na_loja') ?? false,
       emDestaque: getBool('emDestaque', 'em_destaque') ?? false,
       enviaBalanca: getBool('enviaBalanca', 'envia_balanca') ?? false,
+      cobrarGarcom: getBool('cobrarGarcom', 'cobrar_garcom') ?? true,
+      perfilTributarioId: getStr('perfilTributarioId', 'perfil_tributario_id'),
+      perguntasSelecao: getList('perguntasSelecao', 'perguntas_selecao')?.map((p) => PerguntaSelecao.fromMap(Map<String, dynamic>.from(p is Map ? p : {}))).toList() ?? [],
+      exibirComposicaoPdv: getBool('exibirComposicaoPdv', 'exibir_composicao_pdv') ?? false,
+
       fotosUrls: getList('fotosUrls', 'fotos_urls')?.cast<String>() ?? [],
       fotoPrincipalUrl: getStr('fotoPrincipalUrl', 'foto_principal_url'),
       descricaoEcommerce: getStr('descricaoEcommerce', 'descricao_ecommerce'),
@@ -367,6 +656,7 @@ class Produto {
       adicionais: getList('adicionais', 'adicionais')?.map((a) => AdicionalProduto.fromMap(a as Map<String, dynamic>)).toList() ?? [],
       temAdicionais: getBool('temAdicionais', 'tem_adicionais') ?? false,
       ehComposto: getBool('ehComposto', 'eh_composto') ?? false,
+      baixarEstoqueProprio: getBool('baixarEstoqueProprio', 'baixar_estoque_proprio') ?? true,
       composicao: getList('composicao', 'composicao')?.map((c) => ItemComposicao.fromMap(c as Map<String, dynamic>)).toList() ?? [],
       observacaoPadrao: getStr('observacaoPadrao', 'observacao_padrao'),
       fornecedorId: getStr('fornecedorId', 'fornecedor_id'),
@@ -374,6 +664,8 @@ class Produto {
       estoquePorFornecedor: getMap('estoquePorFornecedor', 'estoque_por_fornecedor')?.map((k, v) => MapEntry(k as String, (v is num) ? v.toDouble() : (double.tryParse(v.toString()) ?? 0.0))) ?? {},
       pedidoCompraGerado: getBool('pedidoCompraGerado', 'pedido_compra_gerado') ?? false,
       dataUltimoPedido: getDate('dataUltimoPedido', 'data_ultimo_pedido'),
+      precosPorPerfil: getMap('precosPorPerfil', 'precos_por_perfil')?.map((k, v) => MapEntry(k as String, (v is num) ? v.toDouble() : (double.tryParse(v.toString()) ?? 0.0))),
+      regrasQuantidade: getList('regrasQuantidade', 'regras_quantidade')?.map((r) => RegraQuantidade.fromMap(Map<String, dynamic>.from(r is Map ? r : {}))).toList(),
     );
   }
 
@@ -382,9 +674,13 @@ class Produto {
     String? id,
     String? codigo,
     String? codigoBarras,
+    List<String>? codigosBarrasAdicionais,
     String? nome,
     String? descricao,
     String? unidade,
+    String? unidadeVenda,
+    double? quantidadeBaixa,
+    List<FormaVenda>? formasVenda,
     String? grupo,
     double? preco,
     double? precoCusto,
@@ -395,6 +691,7 @@ class Produto {
     double? precoPromocional,
     DateTime? promocaoInicio,
     DateTime? promocaoFim,
+    List<RegraPromocao>? promocoes,
     List<String>? codigosFornecedor,
     String? ncm,
     double? icmsAliquota,
@@ -413,6 +710,9 @@ class Produto {
     double? simplesNacionalAliquota,
     bool? paraCozinha,
     bool? paraBar,
+    String? departamentoId,
+    String? impressoraProducao,
+    List<String>? impressoraProducaoExtra,
     bool? exibirNaLoja,
     bool? emDestaque,
     List<String>? fotosUrls,
@@ -428,6 +728,7 @@ class Produto {
     List<AdicionalProduto>? adicionais,
     bool? temAdicionais,
     bool? ehComposto,
+    bool? baixarEstoqueProprio,
     List<ItemComposicao>? composicao,
     String? observacaoPadrao,
     String? fornecedorId,
@@ -436,14 +737,23 @@ class Produto {
     bool? pedidoCompraGerado,
     DateTime? dataUltimoPedido,
     bool? enviaBalanca,
+    bool? cobrarGarcom,
+    String? perfilTributarioId,
+    List<PerguntaSelecao>? perguntasSelecao,
+    bool? exibirComposicaoPdv,
+
   }) {
     return Produto(
       id: id ?? this.id,
       codigo: codigo ?? this.codigo,
       codigoBarras: codigoBarras ?? this.codigoBarras,
+      codigosBarrasAdicionais: codigosBarrasAdicionais ?? this.codigosBarrasAdicionais,
       nome: nome ?? this.nome,
       descricao: descricao ?? this.descricao,
       unidade: unidade ?? this.unidade,
+      unidadeVenda: unidadeVenda ?? this.unidadeVenda,
+      quantidadeBaixa: quantidadeBaixa ?? this.quantidadeBaixa,
+      formasVenda: formasVenda ?? this.formasVenda,
       grupo: grupo ?? this.grupo,
       preco: preco ?? this.preco,
       precoCusto: precoCusto ?? this.precoCusto,
@@ -454,6 +764,7 @@ class Produto {
       precoPromocional: precoPromocional ?? this.precoPromocional,
       promocaoInicio: promocaoInicio ?? this.promocaoInicio,
       promocaoFim: promocaoFim ?? this.promocaoFim,
+      promocoes: promocoes ?? this.promocoes,
       codigosFornecedor: codigosFornecedor ?? this.codigosFornecedor,
       ncm: ncm ?? this.ncm,
       icmsAliquota: icmsAliquota ?? this.icmsAliquota,
@@ -472,6 +783,9 @@ class Produto {
       simplesNacionalAliquota: simplesNacionalAliquota ?? this.simplesNacionalAliquota,
       paraCozinha: paraCozinha ?? this.paraCozinha,
       paraBar: paraBar ?? this.paraBar,
+      departamentoId: departamentoId ?? this.departamentoId,
+      impressoraProducao: impressoraProducao ?? this.impressoraProducao,
+      impressoraProducaoExtra: impressoraProducaoExtra ?? this.impressoraProducaoExtra,
       exibirNaLoja: exibirNaLoja ?? this.exibirNaLoja,
       emDestaque: emDestaque ?? this.emDestaque,
       fotosUrls: fotosUrls ?? this.fotosUrls,
@@ -487,6 +801,7 @@ class Produto {
       adicionais: adicionais ?? this.adicionais,
       temAdicionais: temAdicionais ?? this.temAdicionais,
       ehComposto: ehComposto ?? this.ehComposto,
+      baixarEstoqueProprio: baixarEstoqueProprio ?? this.baixarEstoqueProprio,
       composicao: composicao ?? this.composicao,
       observacaoPadrao: observacaoPadrao ?? this.observacaoPadrao,
       fornecedorId: fornecedorId ?? this.fornecedorId,
@@ -495,6 +810,11 @@ class Produto {
       pedidoCompraGerado: pedidoCompraGerado ?? this.pedidoCompraGerado,
       dataUltimoPedido: dataUltimoPedido ?? this.dataUltimoPedido,
       enviaBalanca: enviaBalanca ?? this.enviaBalanca,
+      cobrarGarcom: cobrarGarcom ?? this.cobrarGarcom,
+      perfilTributarioId: perfilTributarioId ?? this.perfilTributarioId,
+      perguntasSelecao: perguntasSelecao ?? this.perguntasSelecao,
+      exibirComposicaoPdv: exibirComposicaoPdv ?? this.exibirComposicaoPdv,
+
     );
   }
   
@@ -519,4 +839,22 @@ class Produto {
       updatedAt: DateTime.now(),
     );
   }
+}
+
+
+class RegraQuantidade {
+  final double quantidadeMinima;
+  final double preco;
+
+  RegraQuantidade({required this.quantidadeMinima, required this.preco});
+
+  Map<String, dynamic> toMap() => {
+    'quantidadeMinima': quantidadeMinima,
+    'preco': preco,
+  };
+
+  factory RegraQuantidade.fromMap(Map<String, dynamic> map) => RegraQuantidade(
+    quantidadeMinima: map['quantidadeMinima'] != null ? (map['quantidadeMinima'] as num).toDouble() : 0.0,
+    preco: map['preco'] != null ? (map['preco'] as num).toDouble() : 0.0,
+  );
 }

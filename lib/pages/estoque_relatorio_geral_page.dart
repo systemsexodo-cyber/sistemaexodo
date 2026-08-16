@@ -61,7 +61,11 @@ class _EstoqueRelatorioGeralPageState extends State<EstoqueRelatorioGeralPage> w
     List<EstoqueHistorico> filtrado = historico.where((h) {
       if (_dataInicial != null && h.data.isBefore(_dataInicial!)) return false;
       if (_dataFinal != null && h.data.isAfter(_dataFinal!)) return false;
-      if (_tipoFiltro != null && h.tipo != _tipoFiltro) return false;
+      if (_tipoFiltro == 'quebra') {
+        if (!h.ehQuebra) return false;
+      } else if (_tipoFiltro != null && h.tipo != _tipoFiltro) {
+        return false;
+      }
       if (_fornecedorFiltro != null && h.fornecedorNome != _fornecedorFiltro) return false;
       if (_buscaProduto.isNotEmpty) {
         final prod = produtos.firstWhere((p) => p.id == h.produtoId, orElse: () => _produtoExcluido());
@@ -449,6 +453,7 @@ class _EstoqueRelatorioGeralPageState extends State<EstoqueRelatorioGeralPage> w
             DropdownMenuItem(value: null, child: Text('Todos')),
             DropdownMenuItem(value: 'entrada', child: Text('Entradas')),
             DropdownMenuItem(value: 'saida', child: Text('Saídas')),
+            DropdownMenuItem(value: 'quebra', child: Text('Quebras')),
           ],
           onChanged: (v) => setState(() => _tipoFiltro = v),
         ),
@@ -487,11 +492,18 @@ class _EstoqueRelatorioGeralPageState extends State<EstoqueRelatorioGeralPage> w
   Widget _buildItemRelatorio(EstoqueHistorico h, List<Produto> produtos) {
     final p = produtos.firstWhere((prod) => prod.id == h.produtoId, orElse: () => _produtoExcluido());
     final isEntrada = h.tipo == 'entrada';
-    final cor = isEntrada ? Colors.greenAccent : Colors.redAccent;
+    final ehQuebra = h.ehQuebra;
+    final cor = ehQuebra ? Colors.orangeAccent : (isEntrada ? Colors.greenAccent : Colors.redAccent);
     return ListTile(
-      leading: Icon(isEntrada ? Icons.add_circle_outline : Icons.remove_circle_outline, color: cor),
+      leading: Icon(
+        ehQuebra ? Icons.broken_image_outlined : (isEntrada ? Icons.add_circle_outline : Icons.remove_circle_outline),
+        color: cor,
+      ),
       title: Text(p.nome, style: const TextStyle(color: Colors.white, fontSize: 14)),
-      subtitle: Text(DateFormat('dd/MM/yy HH:mm').format(h.data), style: const TextStyle(color: Colors.white30, fontSize: 11)),
+      subtitle: Text(
+        '${DateFormat('dd/MM/yy HH:mm').format(h.data)}${ehQuebra ? ' • QUEBRA' : ''}',
+        style: TextStyle(color: ehQuebra ? Colors.orange.withOpacity(0.6) : Colors.white30, fontSize: 11),
+      ),
       trailing: Text('${isEntrada ? "+" : "-"}${h.quantidade}', style: TextStyle(color: cor, fontWeight: FontWeight.bold)),
     );
   }

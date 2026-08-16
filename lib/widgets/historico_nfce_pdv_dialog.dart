@@ -8,12 +8,19 @@ import '../models/nfce.dart';
 import '../services/data_service.dart';
 import '../services/nfce_service_factory.dart';
 import '../services/nfce_backend_service.dart';
+import '../services/auth_service.dart';
 import '../services/danfe_service.dart';
 import '../services/supabase_service.dart';
 import 'package:intl/intl.dart';
 import '../models/produto.dart';
+import '../models/venda_balcao.dart';
+import '../models/forma_pagamento.dart';
 import 'exodo_cancel_success_dialog.dart';
 import '../services/fiscal_pdf_service.dart';
+import 'dart:io';
+import '../services/nfce_xml_local_service.dart';
+import '../services/nfce_contingencia_service.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:excel/excel.dart' hide Border, Font;
 import '../pages/html_helper_stub.dart' if (dart.library.html) '../pages/html_helper_web.dart' as html_helper;
 
@@ -50,22 +57,58 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
   Future<void> _loadData() async {
     setState(() => _isLoading = true);
     try {
-      final results = await SupabaseService.instance.select(
-        SupabaseService.tableNFCes,
-        filters: {'empresaId': widget.empresa.id},
-        orderBy: 'createdAt',
-        descending: true,
-        limit: 200,
-      );
-          
+      final dataService = Provider.of<DataService>(context, listen: false);
+      
+      // 1. Carrega instantaneamente as NFC-es locais da memória/PostgreSQL
+      final localNfces = List<NFCe>.from(dataService.nfces);
+      localNfces.sort((a, b) => (b.createdAt ?? DateTime.now()).compareTo(a.createdAt ?? DateTime.now()));
+      
       setState(() {
-         _todasNfces = results.map((map) => NFCe.fromMap(map)).toList();
-         _isLoading = false;
-         _filtrar();
+        _todasNfces = localNfces;
+        _isLoading = false;
+        _filtrar();
       });
+
+      // 2. Busca em background as notas do Supabase para atualizar e sincronizar
+      try {
+        final results = await SupabaseService.instance.select(
+          SupabaseService.tableNFCes,
+          filters: {'empresaId': widget.empresa.id},
+          orderBy: 'createdAt',
+          descending: true,
+          limit: 200,
+        );
+            
+        final serverNfces = results.map((map) => NFCe.fromMap(map)).toList();
+        
+        // Merge das notas locais com as do servidor
+        final Map<String, NFCe> mergeMap = {};
+        for (final n in localNfces) {
+          if (n.id != null) mergeMap[n.id!] = n;
+        }
+        for (final n in serverNfces) {
+          if (n.id != null) {
+            mergeMap[n.id!] = n;
+          }
+        }
+        
+        final mergedList = mergeMap.values.toList();
+        mergedList.sort((a, b) => (b.createdAt ?? DateTime.now()).compareTo(a.createdAt ?? DateTime.now()));
+        
+        if (mounted) {
+          setState(() {
+            _todasNfces = mergedList;
+            _filtrar();
+          });
+        }
+      } catch (e) {
+        debugPrint('Erro ao buscar NFCes do Supabase (offline?): $e');
+      }
     } catch (e) {
       debugPrint('Erro ao carregar NFCes: $e');
-      setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
@@ -253,6 +296,8 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
     await Future.delayed(const Duration(milliseconds: 100));
 
     try {
+      final dataService = Provider.of<DataService>(context, listen: false);
+
       final nfcesNoPeriodo = _todasNfces.where((n) {
         final d = n.createdAt ?? n.dataEmissao;
         final inicio = DateTime(periodo!.start.year, periodo.start.month, periodo.start.day);
@@ -261,24 +306,71 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                d.isBefore(fim.add(const Duration(seconds: 1)));
       }).toList();
 
-      if (nfcesNoPeriodo.isEmpty) {
-        setState(() => _isLoading = false);
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Nenhuma NFC-e encontrada no período ${DateFormat('dd/MM').format(periodo.start)} a ${DateFormat('dd/MM').format(periodo.end)}.',
-            ),
-          ),
-        );
-        return;
+      final todasVendasNoPeriodo = dataService.vendasBalcao.where((v) {
+        final d = v.dataVenda;
+        final inicio = DateTime(periodo!.start.year, periodo.start.month, periodo.start.day);
+        final fim = DateTime(periodo.end.year, periodo.end.month, periodo.end.day, 23, 59, 59);
+        return d.isAfter(inicio.subtract(const Duration(seconds: 1))) && 
+               d.isBefore(fim.add(const Duration(seconds: 1))) &&
+               !v.cancelado;
+      }).toList();
+
+      // --- CÁLCULO DE FATURAMENTO FISCAL vs NÃO FISCAL ---
+      final Set<String> idsVendasFiscais = {};
+      for (final n in nfcesNoPeriodo) {
+        if (n.status == 'autorizada' || n.status == 'sucesso') {
+          if (n.vendaId != null) idsVendasFiscais.add(n.vendaId!);
+        }
+      }
+
+      final Map<String, double> pgtoFiscal = {};
+      final Map<String, double> pgtoNaoFiscal = {};
+      double totalFiscal = 0.0;
+      double totalNaoFiscal = 0.0;
+      int totalVendasComNota = 0;
+      int totalVendasSemNota = 0;
+
+      for (final v in todasVendasNoPeriodo) {
+        final isFiscal = idsVendasFiscais.contains(v.id) ||
+            nfcesNoPeriodo.any((n) => (n.status == 'autorizada' || n.status == 'sucesso') && n.vendaNumero == v.numero);
+
+        // Se a venda tem múltiplas formas de pagamento (split), somar cada forma individualmente
+        final pagsVenda = v.pagamentos;
+        final Map<String, double> valoresPorForma = {};
+        if (pagsVenda.isNotEmpty) {
+          for (final p in pagsVenda.where((p) => p.recebido)) {
+            valoresPorForma[p.tipo.nome] =
+                (valoresPorForma[p.tipo.nome] ?? 0.0) + p.valor;
+          }
+        } else {
+          valoresPorForma[v.tipoPagamento.nome] = v.valorTotal;
+        }
+
+        for (final entry in valoresPorForma.entries) {
+          final nomePgto = entry.key;
+          final valor = entry.value;
+
+          if (isFiscal) {
+            pgtoFiscal[nomePgto] = (pgtoFiscal[nomePgto] ?? 0.0) + valor;
+            totalFiscal += valor;
+          } else {
+            pgtoNaoFiscal[nomePgto] = (pgtoNaoFiscal[nomePgto] ?? 0.0) + valor;
+            totalNaoFiscal += valor;
+          }
+        }
+        // Contador de vendas: incrementa UMA vez por venda (não por forma de pagamento)
+        if (isFiscal) {
+          totalVendasComNota++;
+        } else {
+          totalVendasSemNota++;
+        }
       }
 
       final archive = Archive();
       int xmlCount = 0;
 
       final excelDetalhado = Excel.createExcel();
-      // Usamos a primeira aba que já vem criada por padrão para evitar erros de lista imutável
+      
       final String sheetName = excelDetalhado.sheets.keys.first;
 
       final List<String> headers = [
@@ -297,9 +389,64 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
         final dataEmissao = DateFormat('dd/MM/yyyy HH:mm').format(n.dataEmissao);
         final pagamentos = n.pagamentos.map((p) => p.tipoDescricao).join(' + ');
         final chave = n.chaveAcesso ?? '';
-        final venda = n.vendaNumero ?? n.vendaId ?? n.id;
+        String venda = n.vendaNumero ?? n.vendaId ?? n.id;
+        if (n.vendaId != null && (venda == n.vendaId || venda.isEmpty)) {
+          try {
+            final vObj = dataService.vendasBalcao.firstWhere((v) => v.id == n.vendaId);
+            venda = vObj.numero;
+          } catch (_) {}
+        }
 
-        for (final item in n.itens) {
+        // Se n.itens estiver vazio, tentar reconstruir a partir da venda correspondente
+        List<NFCeItem> itensParaProcessar = n.itens;
+        if (itensParaProcessar.isEmpty) {
+          VendaBalcao? vendaObj;
+          try {
+            vendaObj = dataService.vendasBalcao.firstWhere(
+              (v) => v.id == n.vendaId || v.numero == n.vendaNumero,
+            );
+          } catch (_) {}
+
+          if (vendaObj != null) {
+            itensParaProcessar = vendaObj.itens.map((vItem) {
+              Produto? prod;
+              try {
+                prod = dataService.produtos.firstWhere((p) => p.id == vItem.id);
+              } catch (_) {}
+              
+              return NFCeItem(
+                produtoId: vItem.id,
+                codigo: prod?.codigo ?? vItem.id,
+                descricao: vItem.nome,
+                ncm: prod?.ncm ?? '00000000',
+                cfop: '5102',
+                unidade: prod?.unidade ?? 'UN',
+                quantidade: vItem.quantidade,
+                valorUnitario: vItem.precoUnitario,
+                valorTotal: vItem.precoUnitario * vItem.quantidade,
+              );
+            }).toList();
+          }
+        }
+
+        // Se ainda assim vazio (nota sem venda de origem), criar item genérico
+        if (itensParaProcessar.isEmpty) {
+          itensParaProcessar = [
+            NFCeItem(
+              produtoId: 'GENERICO',
+              codigo: '0',
+              descricao: 'VENDA FISCAL NFC-E',
+              ncm: '00000000',
+              cfop: '5102',
+              unidade: 'UN',
+              quantidade: 1.0,
+              valorUnitario: n.valorTotal,
+              valorTotal: n.valorTotal,
+            )
+          ];
+        }
+
+        for (final item in itensParaProcessar) {
           excelDetalhado.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: rowIdx), dataEmissao);
           excelDetalhado.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: rowIdx), n.numero ?? '');
           excelDetalhado.updateCell(sheetName, CellIndex.indexByColumnRow(columnIndex: 2, rowIndex: rowIdx), n.serie ?? '');
@@ -322,7 +469,23 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
           rowIdx++;
         }
 
-        final xml = (n.xmlEnviado ?? '').trim();
+        var xml = (n.xmlEnviado ?? '').trim();
+        final dt = n.createdAt ?? n.dataEmissao;
+        final mesDir = '${dt.year}-${dt.month.toString().padLeft(2, '0')}';
+        final cnpj = (widget.empresa.cnpj ?? '').replaceAll(RegExp(r'[^0-9]'), '');
+
+        // Fallback: tentar carregar XML do arquivo local se estiver vazio no banco
+        if (xml.isEmpty && chave.isNotEmpty) {
+          final pastaNota = 'NFCe_${n.numero}_${n.serie}';
+          var localFile = File('C:\\ExodoNFCe\\$cnpj\\$mesDir\\$pastaNota\\$chave-nfe.xml');
+          if (!localFile.existsSync()) {
+            localFile = File('C:\\ExodoNFCe\\$cnpj\\$mesDir\\$chave-nfe.xml');
+          }
+          if (localFile.existsSync()) {
+            xml = localFile.readAsStringSync();
+          }
+        }
+
         if (xml.isNotEmpty) {
           final nomeArquivo = (chave.isNotEmpty ? chave : 'nfce_${n.numero}_${n.id}').replaceAll(RegExp(r'[^a-zA-Z0-9_\-]'), '_');
           final bytes = utf8.encode(xml);
@@ -331,12 +494,56 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
         }
       }
 
+      // ABA 2: Resumo Faturamento (Contabilidade)
+      final String summarySheetName = 'Resumo Faturamento';
+      excelDetalhado.updateCell(summarySheetName, CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: 0), 'RESUMO DE FATURAMENTO MENSAL');
+      excelDetalhado.updateCell(summarySheetName, CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: 1), 'Período: ${DateFormat('dd/MM/yyyy').format(periodo.start)} a ${DateFormat('dd/MM/yyyy').format(periodo.end)}');
+      
+      excelDetalhado.updateCell(summarySheetName, CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: 3), 'CATEGORIA');
+      excelDetalhado.updateCell(summarySheetName, CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: 3), 'QUANTIDADE DE VENDAS');
+      excelDetalhado.updateCell(summarySheetName, CellIndex.indexByColumnRow(columnIndex: 2, rowIndex: 3), 'VALOR TOTAL FATURADO');
+      
+      excelDetalhado.updateCell(summarySheetName, CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: 4), 'Faturamento Fiscal (Com NFC-e)');
+      excelDetalhado.updateCell(summarySheetName, CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: 4), totalVendasComNota);
+      excelDetalhado.updateCell(summarySheetName, CellIndex.indexByColumnRow(columnIndex: 2, rowIndex: 4), totalFiscal);
+      
+      excelDetalhado.updateCell(summarySheetName, CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: 5), 'Vendas Sem Emissão');
+      excelDetalhado.updateCell(summarySheetName, CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: 5), totalVendasSemNota);
+      excelDetalhado.updateCell(summarySheetName, CellIndex.indexByColumnRow(columnIndex: 2, rowIndex: 5), totalNaoFiscal);
+      
+      excelDetalhado.updateCell(summarySheetName, CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: 6), 'FATURAMENTO TOTAL GERAL');
+      excelDetalhado.updateCell(summarySheetName, CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: 6), totalVendasComNota + totalVendasSemNota);
+      excelDetalhado.updateCell(summarySheetName, CellIndex.indexByColumnRow(columnIndex: 2, rowIndex: 6), totalFiscal + totalNaoFiscal);
+      
+      // Totais por pagamento - Fiscal
+      excelDetalhado.updateCell(summarySheetName, CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: 8), 'FORMA DE PAGAMENTO (FISCAL)');
+      excelDetalhado.updateCell(summarySheetName, CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: 8), 'VALOR');
+      int sRow = 9;
+      for (final e in pgtoFiscal.entries) {
+        excelDetalhado.updateCell(summarySheetName, CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: sRow), e.key);
+        excelDetalhado.updateCell(summarySheetName, CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: sRow), e.value);
+        sRow++;
+      }
+      
+      // Totais por pagamento - Sem Emissão
+      sRow++;
+      excelDetalhado.updateCell(summarySheetName, CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: sRow), 'FORMA DE PAGAMENTO (SEM EMISSÃO)');
+      excelDetalhado.updateCell(summarySheetName, CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: sRow), 'VALOR');
+      sRow++;
+      for (final e in pgtoNaoFiscal.entries) {
+        excelDetalhado.updateCell(summarySheetName, CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: sRow), e.key);
+        excelDetalhado.updateCell(summarySheetName, CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: sRow), e.value);
+        sRow++;
+      }
+
       final periodoTag = '${DateFormat('yyyyMMdd').format(periodo.start)}_${DateFormat('yyyyMMdd').format(periodo.end)}';
 
       final pdfFiscalBytes = await FiscalPDFService.gerarRelatorioMensal(
         empresa: widget.empresa,
         mesRef: periodo.start,
         nfces: nfcesNoPeriodo,
+        vendas: todasVendasNoPeriodo,
+        produtos: dataService.produtos,
       );
       archive.addFile(ArchiveFile('relatorio_fiscal_agrupado_$periodoTag.pdf', pdfFiscalBytes.length, pdfFiscalBytes));
 
@@ -350,7 +557,10 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
         ..writeln('Período: ${DateFormat('dd/MM/yyyy').format(periodo.start)} a ${DateFormat('dd/MM/yyyy').format(periodo.end)}')
         ..writeln('Total de NFC-e no período: ${nfcesNoPeriodo.length}')
         ..writeln('Total de XML incluídos: $xmlCount')
-        ..writeln('Arquivos gerados: XMLs individuais, PDF Agrupado (CFOP/CSOSN) e Excel Detalhado.')
+        ..writeln('Faturamento Fiscal (Com NFC-e): ${NumberFormat.currency(locale: "pt_BR", symbol: "R\$").format(totalFiscal)} ($totalVendasComNota notas)')
+        ..writeln('Vendas Sem Emissão: ${NumberFormat.currency(locale: "pt_BR", symbol: "R\$").format(totalNaoFiscal)} ($totalVendasSemNota vendas)')
+        ..writeln('Faturamento Total Geral: ${NumberFormat.currency(locale: "pt_BR", symbol: "R\$").format(totalFiscal + totalNaoFiscal)}')
+        ..writeln('\nArquivos gerados: XMLs individuais, PDF Agrupado (CFOP/CSOSN) e Excel Detalhado.')
         ..writeln('Gerado em: ${DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now())}');
       final resumoBytes = utf8.encode(resumo.toString());
       archive.addFile(ArchiveFile('LEIA-ME.txt', resumoBytes.length, resumoBytes));
@@ -362,33 +572,128 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
 
       if (kIsWeb) {
         html_helper.downloadBytes(zipBytes, fileName, 'application/zip');
-        
+      } else {
+        // ── Desktop: Criar pasta descompactada e salvar arquivos nela
+        final pastaDestino = Directory('C:\\ExodoNFCe\\Pacotes\\pacote_contabil_nfce_$periodoTag');
+        if (!pastaDestino.existsSync()) pastaDestino.createSync(recursive: true);
+
+        // Salvar Relatório PDF na pasta descompactada
+        File('${pastaDestino.path}\\relatorio_fiscal_agrupado_$periodoTag.pdf').writeAsBytesSync(pdfFiscalBytes);
+
+        // Salvar Excel na pasta descompactada
+        if (excelBytes != null) {
+          File('${pastaDestino.path}\\detalhado_dados_nfce_$periodoTag.xlsx').writeAsBytesSync(excelBytes);
+        }
+
+        // Salvar LEIA-ME na pasta descompactada
+        File('${pastaDestino.path}\\LEIA-ME.txt').writeAsBytesSync(resumoBytes);
+
+        // Criar pasta de XMLs descompactada
+        final pastaXmls = Directory('${pastaDestino.path}\\xml');
+        if (!pastaXmls.existsSync()) pastaXmls.createSync(recursive: true);
+
+        // Salvar ZIP no diretório de Pacotes principal
+        final arquivoZip = File('C:\\ExodoNFCe\\Pacotes\\$fileName');
+        arquivoZip.writeAsBytesSync(zipBytes);
+
+        // Salvar XMLs na pasta descompactada e no arquivo local principal
+        for (final n in nfcesNoPeriodo) {
+          var xml = (n.xmlEnviado ?? '').trim();
+          final dt = n.createdAt ?? n.dataEmissao;
+          final mesDir = '${dt.year}-${dt.month.toString().padLeft(2, '0')}';
+          final cnpj = (widget.empresa.cnpj ?? '').replaceAll(RegExp(r'[^0-9]'), '');
+          final chave = n.chaveAcesso ?? '';
+
+          if (xml.isEmpty && chave.isNotEmpty) {
+            final pastaNota = 'NFCe_${n.numero}_${n.serie}';
+            var localFile = File('C:\\ExodoNFCe\\$cnpj\\$mesDir\\$pastaNota\\$chave-nfe.xml');
+            if (!localFile.existsSync()) {
+              localFile = File('C:\\ExodoNFCe\\$cnpj\\$mesDir\\$chave-nfe.xml');
+            }
+            if (localFile.existsSync()) {
+              xml = localFile.readAsStringSync();
+            }
+          }
+
+          if (xml.isNotEmpty && chave.isNotEmpty) {
+            // Salva na pasta do contador
+            File('${pastaXmls.path}\\$chave-nfe.xml').writeAsStringSync(xml);
+
+            // Garante que está no repositório de XMLs local principal do C:\
+            final xmlDir = Directory('C:\\ExodoNFCe\\$cnpj\\$mesDir');
+            if (!xmlDir.existsSync()) xmlDir.createSync(recursive: true);
+            final xmlFile = File('${xmlDir.path}\\$chave-nfe.xml');
+            if (!xmlFile.existsSync()) xmlFile.writeAsStringSync(xml);
+          }
+        }
+
+        if (!mounted) return;
+
+        // Abrir diálogo de confirmação com opção de abrir pasta e enviar e-mail
         final emailContador = widget.empresa.emailContabilidade;
-        if (emailContador != null && emailContador.isNotEmpty) {
-          if (!mounted) return;
-          showDialog(
-            context: context,
-            builder: (context) => AlertDialog(
-              backgroundColor: const Color(0xFF1E1E2E),
-              title: const Text('Enviar p/ Contabilidade', style: TextStyle(color: Colors.white)),
-              content: Text('O pacote fiscal para o período ${DateFormat('dd/MM').format(periodo!.start)} a ${DateFormat('dd/MM').format(periodo.end)} foi baixado.\n\nDeseja abrir o e-mail para enviar agora para:\n$emailContador?', style: const TextStyle(color: Colors.white70)),
-              actions: [
-                TextButton(onPressed: () => Navigator.pop(context), child: const Text('BAIXAR APENAS')),
-                ElevatedButton.icon(
-                  onPressed: () {
-                    Navigator.pop(context);
-                    final subject = 'ARQUIVOS FISCAIS - ${widget.empresa.razaoSocial} - $periodoTag';
-                    final body = 'Olá,\n\nSegue em anexo o pacote fiscal das NFC-e emitidas entre ${DateFormat('dd/MM/yyyy').format(periodo!.start)} e ${DateFormat('dd/MM/yyyy').format(periodo.end)}.\n\nEmpresa: ${widget.empresa.razaoSocial}\nCNPJ: ${widget.empresa.cnpj ?? "N/D"}\n\nGerado pelo Sistema Êxodo.';
-                    html_helper.openUrl('mailto:$emailContador?subject=${Uri.encodeComponent(subject)}&body=${Uri.encodeComponent(body)}');
-                  },
-                  icon: const Icon(Icons.email),
-                  label: const Text('ABRIR E-MAIL'),
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
-                )
+        showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            backgroundColor: const Color(0xFF1E1E2E),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: const Row(
+              children: [
+                Icon(Icons.check_circle, color: Colors.greenAccent),
+                SizedBox(width: 10),
+                Text('Pacote Salvo!', style: TextStyle(color: Colors.white)),
               ],
             ),
-          );
-        }
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Arquivos salvos em:', style: TextStyle(color: Colors.white54, fontSize: 12)),
+                const SizedBox(height: 4),
+                SelectableText(
+                  r'C:\ExodoNFCe',
+                  style: const TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Notas: ${nfcesNoPeriodo.length}   |   XMLs incluídos: $xmlCount',
+                  style: const TextStyle(color: Colors.white70, fontSize: 13),
+                ),
+                if (emailContador != null && emailContador.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text('Contador: $emailContador', style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                ],
+              ],
+            ),
+            actions: [
+              TextButton.icon(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  // Abrir pasta no Explorer
+                  Process.run('explorer.exe', [r'C:\ExodoNFCe']);
+                },
+                icon: const Icon(Icons.folder_open, color: Colors.amber),
+                label: const Text('ABRIR PASTA', style: TextStyle(color: Colors.amber)),
+              ),
+              if (emailContador != null && emailContador.isNotEmpty)
+                ElevatedButton.icon(
+                  onPressed: () async {
+                    Navigator.pop(ctx);
+                    final subject = Uri.encodeComponent('ARQUIVOS FISCAIS - ${widget.empresa.razaoSocial} - $periodoTag');
+                    final body = Uri.encodeComponent('Olá,\n\nSegue em anexo o pacote fiscal das NFC-e emitidas entre ${DateFormat('dd/MM/yyyy').format(periodo!.start)} e ${DateFormat('dd/MM/yyyy').format(periodo.end)}.\n\nEmpresa: ${widget.empresa.razaoSocial}\nCNPJ: ${widget.empresa.cnpj ?? "N/D"}\n\nArquivo salvo em: C:\\ExodoNFCe\\Pacotes\\$fileName\n\nGerado pelo Sistema Êxodo.');
+                    final url = Uri.parse('mailto:$emailContador?subject=$subject&body=$body');
+                    if (await canLaunchUrl(url)) {
+                      await launchUrl(url);
+                    } else {
+                      debugPrint('Não foi possível abrir o cliente de email');
+                    }
+                  },
+                  icon: const Icon(Icons.email),
+                  label: const Text('ENVIAR E-MAIL'),
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+                ),
+            ],
+          ),
+        );
       }
     } catch (e) {
       debugPrint('Erro na exportação: $e');
@@ -558,11 +863,15 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                           ),
                           child: Row(
                             children: [
-                              Icon(
-                                isAutorizada ? Icons.check_circle : (isErro ? Icons.error : Icons.hourglass_empty),
-                                color: isAutorizada ? Colors.green : (isErro ? Colors.redAccent : Colors.orange),
-                                size: 36,
-                              ),
+                               Icon(
+                                 nfce.status == 'contingencia'
+                                     ? Icons.warning_amber_rounded
+                                     : (isAutorizada ? Icons.check_circle : (isErro ? Icons.error : Icons.hourglass_empty)),
+                                 color: nfce.status == 'contingencia'
+                                     ? Colors.amber
+                                     : (isAutorizada ? Colors.green : (isErro ? Colors.redAccent : Colors.orange)),
+                                 size: 36,
+                               ),
                               const SizedBox(width: 16),
                               Expanded(
                                 child: Column(
@@ -570,47 +879,118 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                                   children: [
                                     Text('Data: $dt  |  Série ${nfce.serie ?? "-"} / Nº ${nfce.numero ?? "-"}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                                     const SizedBox(height: 4),
-                                    Text('Venda: ${nfce.vendaNumero ?? nfce.vendaId ?? nfce.id}', style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                                    () {
+                                      final dataService = Provider.of<DataService>(context, listen: false);
+                                      VendaBalcao? venda;
+                                      try {
+                                        venda = dataService.vendasBalcao.firstWhere(
+                                          (v) => v.id == nfce.vendaId || v.numero == nfce.vendaNumero,
+                                        );
+                                      } catch (_) {}
+                                      final vendaLabel = venda != null ? venda.numero : (nfce.vendaNumero ?? nfce.vendaId ?? nfce.id);
+                                      
+                                      return InkWell(
+                                        onTap: () => _mostrarDetalhesVenda(context, nfce, dataService),
+                                        borderRadius: BorderRadius.circular(4),
+                                        child: Padding(
+                                          padding: const EdgeInsets.symmetric(vertical: 2.0),
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              const Icon(Icons.receipt_long, color: Colors.cyanAccent, size: 14),
+                                              const SizedBox(width: 6),
+                                              Text(
+                                                'Venda: $vendaLabel',
+                                                style: const TextStyle(
+                                                  color: Colors.cyanAccent,
+                                                  fontSize: 12,
+                                                  fontWeight: FontWeight.bold,
+                                                  decoration: TextDecoration.underline,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      );
+                                    }(),
                                     if (nfce.chaveAcesso != null && nfce.chaveAcesso!.isNotEmpty)
                                       SelectableText('Chave: ${nfce.chaveAcesso}', style: const TextStyle(color: Colors.white54, fontSize: 10, fontStyle: FontStyle.italic)),
                                     if (nfce.nomeConsumidor != null && nfce.nomeConsumidor!.isNotEmpty)
                                       Text('Cliente: ${nfce.nomeConsumidor}', style: const TextStyle(color: Colors.white70)),
                                     if (nfce.pagamentos.isNotEmpty)
                                       Text('Pagamento: ${nfce.pagamentos.map((p) => p.tipoDescricao).join(", ")}', style: const TextStyle(color: Colors.white70, fontSize: 12)),
-                                    Text('Status: ${nfce.status?.toUpperCase()}', style: TextStyle(color: isAutorizada ? Colors.green : (isErro ? Colors.redAccent : Colors.orange), fontWeight: FontWeight.bold)),
-                                    if (nfce.status?.toUpperCase() == 'ERRO' && nfce.xmlRetorno != null)
-                                      Text('${nfce.xmlRetorno}', style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
-                                    
-                                    if (isAutorizada || nfce.status == 'cancelada' || nfce.status == 'sucesso' || isErro)
-                                      Padding(
-                                        padding: const EdgeInsets.only(top: 8),
-                                        child: Row(
-                                          children: [
-                                            if (isAutorizada)
-                                              TextButton.icon(
-                                                onPressed: () => _confirmarCancelamento(context, nfce),
-                                                icon: const Icon(Icons.cancel, color: Colors.redAccent, size: 18),
-                                                label: const Text('CANCELAR', style: TextStyle(color: Colors.redAccent, fontSize: 11)),
-                                                style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 0)),
-                                              ),
-                                            const SizedBox(width: 8),
-                                            if (isAutorizada || nfce.status == 'sucesso')
-                                              TextButton.icon(
-                                                onPressed: () => _reimprimir(context, nfce),
-                                                icon: const Icon(Icons.print, color: Colors.blueAccent, size: 18),
-                                                label: const Text('REIMPRIMIR', style: TextStyle(color: Colors.blueAccent, fontSize: 11)),
-                                                style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 0)),
-                                              ),
-                                            if (isErro)
-                                              TextButton.icon(
-                                                onPressed: () => _reemitirNFCe(context, nfce),
-                                                icon: const Icon(Icons.refresh, color: Colors.orange, size: 18),
-                                                label: const Text('REEMITIR AGORA', style: TextStyle(color: Colors.orange, fontSize: 11)),
-                                                style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 0)),
-                                              ),
-                                          ],
-                                        ),
-                                      ),
+                                    Text(
+                                       'Status: ${nfce.status?.toUpperCase()}',
+                                       style: TextStyle(
+                                         color: nfce.status == 'contingencia'
+                                             ? Colors.amber
+                                             : (isAutorizada ? Colors.green : (isErro ? Colors.redAccent : Colors.orange)),
+                                         fontWeight: FontWeight.bold,
+                                       ),
+                                     ),
+                                     if (nfce.status?.toUpperCase() == 'ERRO' && nfce.xmlRetorno != null)
+                                       Text('${nfce.xmlRetorno}', style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
+                                     
+                                     if (isAutorizada || nfce.status == 'cancelada' || nfce.status == 'sucesso' || isErro || nfce.status == 'contingencia')
+                                       Padding(
+                                         padding: const EdgeInsets.only(top: 8),
+                                         child: Row(
+                                           children: [
+                                             if (isAutorizada)
+                                               TextButton.icon(
+                                                 onPressed: () => _confirmarCancelamento(context, nfce),
+                                                 icon: const Icon(Icons.cancel, color: Colors.redAccent, size: 18),
+                                                 label: const Text('CANCELAR', style: TextStyle(color: Colors.redAccent, fontSize: 11)),
+                                                 style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 0)),
+                                               ),
+                                             if (nfce.status == 'contingencia') ...[
+                                               TextButton.icon(
+                                                 onPressed: () => _transmitirContingenciaIndividual(context, nfce),
+                                                 icon: const Icon(Icons.send_rounded, color: Colors.amber, size: 18),
+                                                 label: const Text('TRANSMITIR AGORA', style: TextStyle(color: Colors.amber, fontSize: 11)),
+                                                 style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 0)),
+                                               ),
+                                               const SizedBox(width: 8),
+                                               TextButton.icon(
+                                                 onPressed: () async {
+                                                   final dataService = Provider.of<DataService>(context, listen: false);
+                                                   // Remove da contingência
+                                                   await NfceContingenciaService.instance.removerDaFila(nfce.id);
+                                                   // Remove do local
+                                                   dataService.vendasBalcao.removeWhere((v) => v.id == nfce.vendaId);
+                                                   _loadData();
+                                                 },
+                                                 icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 18),
+                                                 label: const Text('DESCARTE', style: TextStyle(color: Colors.redAccent, fontSize: 11)),
+                                                 style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 0)),
+                                               ),
+                                             ],
+                                             const SizedBox(width: 8),
+                                             if (isAutorizada || nfce.status == 'sucesso')
+                                               TextButton.icon(
+                                                 onPressed: () => _reimprimir(context, nfce),
+                                                 icon: const Icon(Icons.print, color: Colors.blueAccent, size: 18),
+                                                 label: const Text('REIMPRIMIR', style: TextStyle(color: Colors.blueAccent, fontSize: 11)),
+                                                 style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 0)),
+                                               ),
+                                             if (isErro)
+                                               TextButton.icon(
+                                                 onPressed: () => _reemitirNFCe(context, nfce),
+                                                 icon: const Icon(Icons.refresh, color: Colors.orange, size: 18),
+                                                 label: const Text('REEMITIR AGORA', style: TextStyle(color: Colors.orange, fontSize: 11)),
+                                                 style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 0)),
+                                               ),
+                                             const SizedBox(width: 8),
+                                             if (isAutorizada || nfce.status == 'sucesso')
+                                               TextButton.icon(
+                                                 onPressed: () => _baixarNFCeIndividual(context, nfce),
+                                                 icon: const Icon(Icons.download_rounded, color: Colors.greenAccent, size: 18),
+                                                 label: const Text('BAIXAR', style: TextStyle(color: Colors.greenAccent, fontSize: 11)),
+                                                 style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 0)),
+                                               ),
+                                           ],
+                                         ),
+                                       ),
                                   ],
                                 ),
                               ),
@@ -797,9 +1177,297 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
     }
   }
 
+  Future<void> _transmitirContingenciaIndividual(BuildContext context, NFCe nfce) async {
+    setState(() => _isLoading = true);
+    try {
+      final sucessos = await NfceContingenciaService.instance.tentarRetransmitirTudo(
+        onSucesso: (novaNfce) async {
+          final dataService = Provider.of<DataService>(context, listen: false);
+          await dataService.adicionarNFCe(novaNfce);
+        },
+        onErro: (num, err) {
+          _mostrarErro('Erro ao transmitir nota $num: $err');
+        },
+      );
+      if (sucessos > 0) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Nota em contingência transmitida com sucesso!')));
+        _loadData();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Não foi possível transmitir a nota. Verifique se o Bridge está online.'), backgroundColor: Colors.orange));
+      }
+    } catch (e) {
+      _mostrarErro('Erro ao retransmitir: $e');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _baixarNFCeIndividual(BuildContext context, NFCe nfce) async {
+    try {
+      final dt = nfce.createdAt ?? nfce.dataEmissao;
+      final mesDir = '${dt.year}-${dt.month.toString().padLeft(2, '0')}';
+      final cnpj = (widget.empresa.cnpj ?? '').replaceAll(RegExp(r'[^0-9]'), '');
+      final nomePasta = 'NFCe_${nfce.numero}_${nfce.serie}';
+      final dir = Directory('C:\\ExodoNFCe\\$cnpj\\$mesDir\\$nomePasta');
+      if (!dir.existsSync()) dir.createSync(recursive: true);
+
+      // Salvar XML
+      final xml = (nfce.xmlEnviado ?? '').trim();
+      if (xml.isNotEmpty) {
+        final nomeXml = nfce.chaveAcesso != null ? '${nfce.chaveAcesso}-nfe.xml' : 'NFCe_${nfce.numero}-nfe.xml';
+        File('${dir.path}\\$nomeXml').writeAsStringSync(xml);
+      }
+
+      // Gerar e salvar PDF
+      try {
+        final pdfBytes = await DANFEService.gerarPDF(nfce: nfce, empresa: widget.empresa);
+        final nomePdf = 'NFCe_${nfce.numero}_${nfce.serie}_${DateFormat('yyyyMMdd').format(dt)}.pdf';
+        File('${dir.path}\\$nomePdf').writeAsBytesSync(pdfBytes);
+      } catch (pdfErr) {
+        debugPrint('[PDF] Erro ao gerar PDF: $pdfErr');
+      }
+
+      if (!mounted) return;
+
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: const Color(0xFF1E1E2E),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Row(children: [
+            Icon(Icons.check_circle, color: Colors.greenAccent),
+            SizedBox(width: 10),
+            Text('Nota Baixada!', style: TextStyle(color: Colors.white)),
+          ]),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('XML e PDF salvos em:', style: TextStyle(color: Colors.white54, fontSize: 12)),
+              const SizedBox(height: 6),
+              SelectableText(
+                dir.path,
+                style: const TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold, fontSize: 12),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton.icon(
+              onPressed: () {
+                Navigator.pop(ctx);
+                Process.run('explorer.exe', [dir.path]);
+              },
+              icon: const Icon(Icons.folder_open, color: Colors.amber),
+              label: const Text('ABRIR PASTA', style: TextStyle(color: Colors.amber)),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('FECHAR', style: TextStyle(color: Colors.white54)),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erro ao baixar: $e'), backgroundColor: Colors.redAccent),
+      );
+    }
+  }
+
+  void _mostrarDetalhesVenda(BuildContext context, NFCe nfce, DataService dataService) {
+    VendaBalcao? venda;
+    try {
+      venda = dataService.vendasBalcao.firstWhere(
+        (v) => v.id == nfce.vendaId || v.numero == nfce.vendaNumero,
+      );
+    } catch (_) {}
+
+    if (venda == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Venda correspondente não encontrada no banco de dados local.'),
+          backgroundColor: Colors.redAccent,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+    final dt = DateFormat('dd/MM/yyyy HH:mm').format(venda.dataVenda);
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1E1E2E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      isScrollControlled: true,
+      builder: (context) {
+        return Container(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Detalhes da Venda ${venda!.numero}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Data: $dt',
+                        style: const TextStyle(color: Colors.white38, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, color: Colors.white70),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+              const Divider(color: Colors.white10, height: 20),
+              Flexible(
+                child: ListView(
+                  shrinkWrap: true,
+                  children: [
+                    const Text(
+                      'ITENS DA VENDA',
+                      style: TextStyle(
+                        color: Colors.cyanAccent,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 1.1,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    ...venda.itens.map((item) {
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 6.0),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    item.nome,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                  if (item.fornecedorNome != null)
+                                    Text(
+                                      'Fornecedor: ${item.fornecedorNome}',
+                                      style: const TextStyle(
+                                        color: Colors.white38,
+                                        fontSize: 10,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                            Text(
+                              '${item.quantidade.toStringAsFixed(0)}x ${formatoMoeda.format(item.precoUnitario)}',
+                              style: const TextStyle(color: Colors.white70, fontSize: 13),
+                            ),
+                          ],
+                        ),
+                      );
+                    }).toList(),
+                    const Divider(color: Colors.white10, height: 24),
+                    const Text(
+                      'RESUMO DO PAGAMENTO',
+                      style: TextStyle(
+                        color: Colors.cyanAccent,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 1.1,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    _buildRowResumo(
+                      'Forma de Pagamento',
+                      venda.pagamentos.isNotEmpty
+                          ? venda.pagamentos
+                              .map((p) =>
+                                  '${p.tipo.nome} (${formatoMoeda.format(p.valor)})')
+                              .join(' + ')
+                          : venda.tipoPagamento.nome,
+                    ),
+                    if (venda.clienteNome != null)
+                      _buildRowResumo('Cliente', venda.clienteNome!),
+                    if (venda.operador != null)
+                      _buildRowResumo('Operador', venda.operador!),
+                    if (venda.vendedorNome != null)
+                      _buildRowResumo('Vendedor', venda.vendedorNome!),
+                    const Divider(color: Colors.white10, height: 24),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'TOTAL DA VENDA',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                          ),
+                        ),
+                        Text(
+                          formatoMoeda.format(venda.valorTotal),
+                          style: const TextStyle(
+                            color: Colors.greenAccent,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildRowResumo(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4.0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: const TextStyle(color: Colors.white54, fontSize: 12)),
+          Text(value, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+        ],
+      ),
+    );
+  }
+
   void _reemitirNFCe(BuildContext context, NFCe nfce) async {
     final dataService = Provider.of<DataService>(context, listen: false);
-    final proximoNum = dataService.getProximoNumeroNfce().toString();
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final usuarioAtual = authService.usuarioAtual;
+    final proximoNum = dataService.getProximoNumeroNfce(
+      serie: usuarioAtual?.serieNfce.toString() ?? '1',
+      numeroInicial: usuarioAtual?.numeroInicialNfce ?? 1,
+    ).toString();
     final controller = TextEditingController(text: proximoNum);
 
     final bool? confirmar = await showDialog<bool>(
@@ -880,6 +1548,9 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
         );
 
         await dataService.adicionarNFCe(novaNfce);
+
+        // Salvar XML automaticamente em C:\ExodoNFCe\
+        NfceXmlLocalService.salvarXmlAposEmissao(nfce: novaNfce, empresa: widget.empresa);
         
         if (novaNfce.status == 'autorizada') {
           if (!mounted) return;

@@ -59,7 +59,7 @@ class VariacaoProduto {
 
   factory VariacaoProduto.fromMap(Map<String, dynamic> map) {
     return VariacaoProduto(
-      id: map['id'] as String,
+      id: map['id']?.toString() ?? '',
       nomeAtributo: map['nomeAtributo'] as String,
       valor: map['valor'] as String,
       precoAdicional: map['precoAdicional'] != null

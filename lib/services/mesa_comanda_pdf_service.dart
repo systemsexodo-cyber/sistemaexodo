@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'package:flutter/material.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
@@ -6,6 +7,7 @@ import 'package:intl/intl.dart';
 import '../models/mesa_comanda.dart';
 import '../models/empresa.dart';
 import '../models/conta_pagar.dart';
+import '../services/impressao_service.dart';
 
 /// Serviço para geração de PDF térmico (80mm) de Mesa/Comanda
 class MesaComandaPdfService {
@@ -225,6 +227,14 @@ class MesaComandaPdfService {
     );
   }
 
+  /// Formata a quantidade para exibição amigável
+  static String _formatarQtdItem(double qty) {
+    if (qty == qty.roundToDouble()) {
+      return qty.toInt().toString();
+    }
+    return qty.toStringAsFixed(3).replaceAll(RegExp(r'0+$'), '').replaceAll(RegExp(r'\.$'), '');
+  }
+
   /// Constrói lista de itens
   static pw.Widget _buildItensTermico(
     MesaComanda mesaComanda,
@@ -240,57 +250,139 @@ class MesaComandaPdfService {
       );
     }
 
+    int itemIndex = 1;
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
-        pw.Text(
-          'ITENS',
-          style: pw.TextStyle(
-            fontSize: fontSizeCorpo + 2,
-            fontWeight: pw.FontWeight.bold,
+        pw.Container(
+          padding: const pw.EdgeInsets.symmetric(vertical: 2),
+          decoration: const pw.BoxDecoration(
+            border: pw.Border(
+              bottom: pw.BorderSide(color: PdfColors.black, width: 1),
+            ),
+          ),
+          child: pw.Row(
+            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+            children: [
+              pw.Text(
+                'ITEM  DESCRIÇÃO',
+                style: pw.TextStyle(
+                  fontSize: fontSizeCorpo + 0.5,
+                  fontWeight: pw.FontWeight.bold,
+                ),
+              ),
+              pw.Text(
+                'TOTAL (R\$)',
+                style: pw.TextStyle(
+                  fontSize: fontSizeCorpo + 0.5,
+                  fontWeight: pw.FontWeight.bold,
+                ),
+              ),
+            ],
           ),
         ),
         pw.SizedBox(height: 4),
-        pw.Divider(),
         ...mesaComanda.itens.map((item) {
-          final itemTotal = item.subtotal; // Usar subtotal que inclui adicionais
-          final statusTexto = _getStatusTexto(item.status);
-          
-          return pw.Padding(
-            padding: const pw.EdgeInsets.only(bottom: 4),
+          final indexStr = (itemIndex++).toString().padLeft(2, '0');
+          final itemTotal = item.subtotal; // Subtotal inclui adicionais
+          final qtdFormatted = _formatarQtdItem(item.quantidade);
+
+          return pw.Container(
+            margin: const pw.EdgeInsets.only(bottom: 4),
+            padding: const pw.EdgeInsets.only(bottom: 3),
+            decoration: const pw.BoxDecoration(
+              border: pw.Border(
+                bottom: pw.BorderSide(color: PdfColors.grey400, width: 0.5),
+              ),
+            ),
             child: pw.Column(
               crossAxisAlignment: pw.CrossAxisAlignment.start,
               children: [
+                // Nome do item em destaque
+                pw.Row(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Text(
+                      '$indexStr. ',
+                      style: pw.TextStyle(
+                        fontSize: fontSizeCorpo + 0.5,
+                        fontWeight: pw.FontWeight.bold,
+                      ),
+                    ),
+                    pw.Expanded(
+                      child: pw.Text(
+                        item.nome,
+                        style: pw.TextStyle(
+                          fontSize: fontSizeCorpo + 0.5,
+                          fontWeight: pw.FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                pw.SizedBox(height: 2),
+
+                // Qtd x Preço Unitário | Subtotal Alinhado
                 pw.Row(
                   mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                   children: [
-                    pw.Expanded(
+                    pw.Padding(
+                      padding: const pw.EdgeInsets.only(left: 14),
                       child: pw.Text(
-                        '${item.quantidade}x ${item.nome}',
+                        '$qtdFormatted UN  x  ${formatoMoeda.format(item.preco)}',
                         style: pw.TextStyle(
-                          fontSize: fontSizeCorpo + 2,
-                          fontWeight: usarNegrito ? pw.FontWeight.bold : pw.FontWeight.normal,
+                          fontSize: fontSizeCorpo,
+                          fontWeight: pw.FontWeight.bold,
                         ),
                       ),
                     ),
                     pw.Text(
                       formatoMoeda.format(itemTotal),
                       style: pw.TextStyle(
-                        fontSize: fontSizeCorpo + 2,
-                        fontWeight: usarNegrito ? pw.FontWeight.bold : pw.FontWeight.normal,
+                        fontSize: fontSizeCorpo + 0.5,
+                        fontWeight: pw.FontWeight.bold,
                       ),
                     ),
                   ],
                 ),
-                if (item.observacao != null && item.observacao!.isNotEmpty)
-                  pw.Text(
-                    'Obs: ${item.observacao}',
-                    style: pw.TextStyle(fontSize: fontSizeCorpo),
+
+                // Adicionais
+                if (item.adicionais.isNotEmpty) ...[
+                  pw.SizedBox(height: 2),
+                  ...item.adicionais.map(
+                    (adicional) => pw.Padding(
+                      padding: const pw.EdgeInsets.only(left: 14, top: 1),
+                      child: pw.Text(
+                        '+ ${adicional.nome} (${formatoMoeda.format(adicional.preco)})',
+                        style: pw.TextStyle(
+                          fontSize: fontSizeCorpo - 0.5,
+                          fontWeight: pw.FontWeight.bold,
+                        ),
+                      ),
+                    ),
                   ),
+                ],
+
+                // Observação do item
+                if (item.observacao != null && item.observacao!.trim().isNotEmpty) ...[
+                  pw.SizedBox(height: 2),
+                  pw.Padding(
+                    padding: const pw.EdgeInsets.only(left: 14, top: 1),
+                    child: pw.Text(
+                      '* OBS: ${item.observacao}',
+                      style: pw.TextStyle(
+                        fontSize: fontSizeCorpo - 0.5,
+                        fontWeight: pw.FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
           );
         }),
+        pw.SizedBox(height: 3),
+        pw.Divider(thickness: 1),
       ],
     );
   }

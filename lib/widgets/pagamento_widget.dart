@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../models/forma_pagamento.dart';
-
+import 'package:provider/provider.dart';
+import 'package:sistema_exodo_novo/services/data_service.dart';
 /// Widget para seleção e exibição de formas de pagamento
 class PagamentoWidget extends StatefulWidget {
   final double totalPedido;
@@ -41,8 +42,26 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
       return;
     }
 
-    final valorSugerido = _valorRestante > 0 ? _valorRestante : 0.0;
-    _mostrarDialogPagamento(tipo, valorSugerido);
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final pagamentosConfig = dataService.empresaAtual?.configuracoes?['pagamentos'] as Map?;
+    final config = pagamentosConfig?[tipo.name] as Map?;
+    final descontoPerc = (config?['descontoPerc'] as num?)?.toDouble() ?? 0.0;
+    final acrescimoPerc = (config?['acrescimoPerc'] as num?)?.toDouble() ?? 0.0;
+
+    double valorSugerido = _valorRestante > 0 ? _valorRestante : 0.0;
+
+    double descontoAplicado = 0.0;
+    double acrescimoAplicado = 0.0;
+
+    if (descontoPerc > 0 && valorSugerido > 0) {
+      descontoAplicado = valorSugerido * (descontoPerc / 100);
+      valorSugerido -= descontoAplicado;
+    } else if (acrescimoPerc > 0 && valorSugerido > 0) {
+      acrescimoAplicado = valorSugerido * (acrescimoPerc / 100);
+      valorSugerido += acrescimoAplicado;
+    }
+
+    _mostrarDialogPagamento(tipo, valorSugerido, descontoCalc: descontoAplicado, acrescimoCalc: acrescimoAplicado);
   }
 
   // Mostra mensagem de erro quando tenta usar crediário/fiado sem cliente
@@ -188,6 +207,8 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
     TipoPagamento tipo,
     double valorSugerido, {
     PagamentoPedido? pagamentoExistente,
+    double descontoCalc = 0.0,
+    double acrescimoCalc = 0.0,
   }) {
     // Se não há pagamento existente e o valor sugerido é maior que 0, usar o valor sugerido
     // Caso contrário, usar o valor do pagamento existente ou 0
@@ -2070,6 +2091,8 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
         return Colors.grey;
       case TipoPagamento.alimentacao:
         return Colors.teal;
+      case TipoPagamento.transferencia:
+        return Colors.blueAccent;
     }
   }
 
@@ -2093,6 +2116,8 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
         return Icons.more_horiz;
       case TipoPagamento.alimentacao:
         return Icons.restaurant;
+      case TipoPagamento.transferencia:
+        return Icons.swap_horiz;
     }
   }
 }

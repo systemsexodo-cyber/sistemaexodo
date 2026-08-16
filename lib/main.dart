@@ -2,37 +2,112 @@ import 'package:flutter/material.dart';
 
 import 'package:sistema_exodo_novo/theme.dart';
 import 'package:sistema_exodo_novo/pages/home_page.dart';
+import 'package:sistema_exodo_novo/pages/bloqueio_mensalidade_page.dart';
 import 'package:sistema_exodo_novo/pages/login_page.dart';
 import 'package:sistema_exodo_novo/pages/selecionar_empresa_page.dart';
+import 'package:sistema_exodo_novo/pages/nfe_page.dart';
 import 'package:sistema_exodo_novo/services/data_service.dart';
 import 'package:sistema_exodo_novo/services/auth_service.dart';
+import 'package:sistema_exodo_novo/models/empresa.dart';
 import 'package:sistema_exodo_novo/services/cliente_auth_service.dart';
 import 'package:sistema_exodo_novo/services/carrinho_service.dart';
 import 'package:sistema_exodo_novo/services/theme_service.dart';
 import 'package:sistema_exodo_novo/services/supabase_service.dart';
 import 'package:sistema_exodo_novo/services/app_update_service.dart';
+import 'package:sistema_exodo_novo/services/nfce_contingencia_service.dart';
+import 'package:sistema_exodo_novo/services/clock_check_service.dart';
 
 import 'dart:async';
 import 'dart:io';
+import 'dart:convert';
+import 'dart:ui' show AppExitResponse;
 import 'package:provider/provider.dart';
 import 'package:sistema_exodo_novo/widgets/exodo_loading.dart';
 import 'package:sistema_exodo_novo/widgets/exodo_logo.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-import 'package:sistema_exodo_novo/services/native_db_init_stub.dart'
-    if (dart.library.io) 'package:sistema_exodo_novo/services/native_db_init.dart';
+
 import 'package:sistema_exodo_novo/pages/loja_publica_wrapper.dart';
 import 'package:sistema_exodo_novo/pages/html_helper_stub.dart'
     if (dart.library.html) 'package:sistema_exodo_novo/pages/html_helper_web.dart' as html_helper;
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as p;
+
+Future<void> _corrigirSharedPreferencesCorrompido() async {
+  if (kIsWeb) return;
+  try {
+    final supportDir = await getApplicationSupportDirectory();
+    final file = File(p.join(supportDir.path, 'shared_preferences.json'));
+    if (await file.exists()) {
+      final size = await file.length();
+      if (size == 0) {
+        debugPrint('>>> [AutoRepair] 🛠️ Corrigindo shared_preferences.json vazio (0 bytes)...');
+        await file.writeAsString('{}');
+        return;
+      }
+      try {
+        final content = await file.readAsString();
+        jsonDecode(content);
+      } catch (_) {
+        debugPrint('>>> [AutoRepair] 🛠️ Corrigindo shared_preferences.json corrompido...');
+        await file.writeAsString('{}');
+      }
+    }
+  } catch (e) {
+    debugPrint('>>> [AutoRepair] ⚠️ Erro ao verificar/corrigir SharedPreferences: $e');
+  }
+}
+
+/// Grava um log de inicialização em boot.log para diagnosticar problemas
+/// de abertura do app em máquinas novas (C:\Users\...\AppData\Roaming\...\boot.log).
+Future<void> _logBoot(String msg) async {
+  debugPrint('>>> [BOOT] $msg');
+  if (kIsWeb) return;
+  try {
+    final supportDir = await getApplicationSupportDirectory();
+    final logFile = File(p.join(supportDir.path, 'boot.log'));
+    await logFile.writeAsString(
+        '${DateTime.now().toIso8601String()} - $msg\n',
+        mode: FileMode.append);
+  } catch (_) {}
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  await _logBoot('BOOT iniciando (versao ${AppUpdateService.currentAppVersion})');
   
-  // Inicialização do Banco Local Nativo se for Desktop
-  NativeDbInit.initialize();
+  // CAPTURAR ERROS GLOBAIS PARA DEBUG
+  FlutterError.onError = (FlutterErrorDetails details) {
+    FlutterError.presentError(details);
+    debugPrint('>>>>> [ERRO GLOBAL] ${details.exception.runtimeType}: ${details.exception}');
+    debugPrint('>>>>> Stack trace completo:');
+    debugPrint(details.stack.toString());
+    debugPrint('>>>>> FIM DO STACK TRACE');
+  };
+  PlatformDispatcher.instance.onError = (Object error, StackTrace stack) {
+    debugPrint('>>>>> [ERRO PLATFORM] $error');
+    debugPrint('>>>>> Stack: $stack');
+    return true;
+  };
   
-  // Inicialização do Supabase
-  await SupabaseService.initialize();
+  // Corrigir arquivo corrompido de shared_preferences se houver
+  await _corrigirSharedPreferencesCorrompido();
+  await _logBoot('SharedPreferences verificado');
+
+  // Inicialização do Supabase - COM TIMEOUT para nunca travar a abertura do app.
+  // A inicializacao do Supabase faz uma chamada HTTP (busca OIDC). Em maquina
+  // nova SEM acesso a nuvem, isso podia travar PARA SEMPRE antes do runApp(),
+  // fazendo o app 'nao abrir / nao carregar'. Agora: se nao responder em 8s,
+  // o app abre mesmo assim (offline) e a sincronizacao tenta depois.
+  await _logBoot('Inicializando Supabase (timeout 8s)...');
+  try {
+    await SupabaseService.initialize().timeout(const Duration(seconds: 12));
+    await _logBoot('Supabase inicializado');
+  } catch (e) {
+    debugPrint('>>> [SISTEMA] ⚠️ Supabase timeout/erro (app abrindo offline): $e');
+    await _logBoot('Supabase timeout/erro (offline): $e');
+  }
   
   if (kIsWeb) {
     try {
@@ -43,7 +118,13 @@ void main() async {
       print('>>> [SISTEMA] Erro no Boot / Hive: $e');
     }
   } else {
-     await Hive.initFlutter();
+    try {
+      await Hive.initFlutter();
+      await _logBoot('Hive inicializado');
+    } catch (e) {
+      debugPrint('>>> [SISTEMA] ⚠️ Erro ao inicializar Hive: $e');
+      await _logBoot('ERRO Hive: $e');
+    }
   }
 
   print('>>> [APLICATIVO] Iniciando Versão ${AppUpdateService.currentAppVersion} (Fix: Cache & Sync)...');
@@ -63,9 +144,21 @@ void main() async {
   final clienteAuthService = ClienteAuthService();
   final carrinhoService = CarrinhoService();
 
-  
+  // Inicializa o serviço de contingência (nunca deve impedir o app de abrir)
+  try {
+    await NfceContingenciaService.instance.inicializar();
+    await _logBoot('Contingência inicializada');
+  } catch (e) {
+    debugPrint('>>> [SISTEMA] ⚠️ Erro ao inicializar contingência: $e');
+    await _logBoot('ERRO contingência: $e');
+  }
 
+  // Inicia verificação do relógio em background (não bloqueia a inicialização)
+  Future.delayed(const Duration(seconds: 5), () {
+    ClockCheckService().verificar();
+  });
 
+  await _logBoot('Executando runApp');
   runApp(
     MultiProvider(
       providers: [
@@ -73,7 +166,9 @@ void main() async {
         ChangeNotifierProvider.value(value: authService),
         ChangeNotifierProvider.value(value: clienteAuthService),
         ChangeNotifierProvider.value(value: carrinhoService),
+        ChangeNotifierProvider.value(value: NfceContingenciaService.instance),
         ChangeNotifierProvider(create: (_) => ThemeService()),
+        ChangeNotifierProvider.value(value: ClockCheckService()),
       ],
       child: const MyApp(),
     ),
@@ -91,7 +186,7 @@ class AppRouter {
     'personalizar-loja', 'agenda-pet', 'gerenciar-imagens', 'caixa',
     'comissoes', 'entregas', 'historico-vendas', 'historico-operacoes',
     'gerenciar-usuarios', 'trocas-devolucoes', 'configuracoes-agenda',
-    'taxas-entrega', 'empresas', 'gerenciar-permissoes'
+    'taxas-entrega', 'empresas', 'gerenciar-permissoes', 'nfe'
   };
 
   static Map<String, dynamic> analisarUrl() {
@@ -180,6 +275,7 @@ class MyApp extends StatefulWidget {
 class _MyAppState extends State<MyApp> {
   StreamSubscription? _hashChangeSubscription;
   StreamSubscription? _popStateSubscription;
+  AppLifecycleListener? _lifecycleListener;
 
   // CACHE da análise de rota inicial - evita recalcular a cada rebuild do Consumer
   Map<String, dynamic>? _rotaInicialCache;
@@ -188,6 +284,25 @@ class _MyAppState extends State<MyApp> {
   void initState() {
     super.initState();
     
+    // PERSISTÊNCIA GARANTIDA: ao fechar o app, força o salvamento de todas as
+    // coleções pendentes no PostgreSQL local (nada fica só em memória).
+    // O DataService é acessado via Provider no momento do evento (context ainda válido).
+    if (!kIsWeb) {
+      _lifecycleListener = AppLifecycleListener(
+        onExitRequested: () async {
+          debugPrint('>>> [Lifecycle] App fechando — forçando persistência final...');
+          try {
+            if (!mounted) return AppExitResponse.exit;
+            final dataService = Provider.of<DataService>(context, listen: false);
+            await dataService.salvarDadosAgora();
+          } catch (e) {
+            debugPrint('>>> [Lifecycle] ⚠️ Erro ao salvar dados no fechamento: $e');
+          }
+          return AppExitResponse.exit;
+        },
+      );
+    }
+
     // Analisar a rota APENAS UMA VEZ no início
     _rotaInicialCache = AppRouter.analisarUrl();
     debugPrint('>>> [MyApp] Rota inicial cacheada: $_rotaInicialCache');
@@ -215,6 +330,7 @@ class _MyAppState extends State<MyApp> {
   void dispose() {
     _hashChangeSubscription?.cancel();
     _popStateSubscription?.cancel();
+    _lifecycleListener?.dispose();
     super.dispose();
   }
 
@@ -303,18 +419,24 @@ class _AuthWrapperState extends State<AuthWrapper> {
     if (!Platform.isWindows) return;
 
     setState(() {
-      _verificandoAtualizacao = true;
+      _verificandoAtualizacao = false; // Mudar para false: inicia o sistema local na hora
       _erroAtualizacao = '';
     });
 
     try {
-      final config = await AppUpdateService.verificarAtualizacao();
+      final auth = Provider.of<AuthService>(context, listen: false);
+      final data = Provider.of<DataService>(context, listen: false);
+      final emp = data.empresaAtual ?? auth.empresaAtual;
+
+      final config = await AppUpdateService.verificarAtualizacao(
+        empresaId: emp?.id,
+        configsEmpresa: emp?.configuracoes,
+      ).timeout(const Duration(seconds: 4));
       if (config != null) {
         final String downloadUrl = config['download_url'] ?? '';
         final String version = config['version'] ?? '';
         if (downloadUrl.isNotEmpty && version.isNotEmpty) {
           setState(() {
-            _verificandoAtualizacao = false;
             _baixandoAtualizacao = true;
             _versaoRemota = version;
             _progressoAtualizacao = 0.0;
@@ -334,32 +456,12 @@ class _AuthWrapperState extends State<AuthWrapper> {
           if (!success && mounted) {
             setState(() {
               _baixandoAtualizacao = false;
-              _erroAtualizacao = 'Falha ao baixar ou aplicar a atualização.';
             });
           }
-        } else {
-          if (mounted) {
-            setState(() {
-              _verificandoAtualizacao = false;
-            });
-          }
-        }
-      } else {
-        if (mounted) {
-          setState(() {
-            _verificandoAtualizacao = false;
-          });
         }
       }
     } catch (e) {
       debugPrint('>>> [AuthWrapper] Erro no fluxo de atualizacao: $e');
-      if (mounted) {
-        setState(() {
-          _verificandoAtualizacao = false;
-          _baixandoAtualizacao = false;
-          _erroAtualizacao = 'Erro de conexão ao buscar atualizações.';
-        });
-      }
     }
   }
 
@@ -614,6 +716,33 @@ class _AuthWrapperState extends State<AuthWrapper> {
 
             
             
+            // VALIDAR SE É O USUÁRIO MASTER / SUPORTE DO SISTEMA
+            final usuario = authService.usuarioAtual;
+            final email = usuario?.email.toLowerCase() ?? '';
+            final isMaster = usuario != null && (email == 'user' || email == 'admin' || email == 'suporte');
+
+            // Usuário Master entra DIRETO no Portal Êxodo (SelecionarEmpresaPage)
+            if (isMaster) {
+              return const SelecionarEmpresaPage();
+            }
+
+            // Para os demais usuários (ex: Silvia):
+            final empresaLocal = dataService.empresaAtual ?? empresaAtual;
+
+            if (empresaLocal != null) {
+              final motivo = empresaLocal.verificarMotivoBloqueio(
+                ultimaValidacaoOnline: dataService.ultimaValidacaoOnline,
+                ultimaDataExecucao: dataService.ultimaDataExecucao,
+                limiteDiasOffline: 5,
+              );
+              if (motivo != MotivoBloqueioEmpresa.nenhum && !dataService.liberacaoProvisoriaAtiva) {
+                return BloqueioMensalidadePage(
+                  configs: empresaLocal.configuracoes ?? {},
+                  motivoBloqueio: motivo,
+                );
+              }
+            }
+
             // SE ESTÁ TUDO OK, MOSTRA A HOME PAGE
             return HomePage(initialPage: rotaInicial);
           } catch (e, stackTrace) {

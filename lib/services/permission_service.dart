@@ -27,6 +27,7 @@ class PermissionService extends ChangeNotifier {
       TipoPermissao.vendasCancelar.codigo,
       TipoPermissao.vendasAplicarDesconto.codigo,
       TipoPermissao.vendasVerCusto.codigo,
+      TipoPermissao.vendasAlterarPrecoItem.codigo,
       
       // Produtos
       TipoPermissao.produtosVisualizar.codigo,
@@ -34,6 +35,7 @@ class PermissionService extends ChangeNotifier {
       TipoPermissao.produtosEditar.codigo,
       TipoPermissao.produtosAlterarPreco.codigo,
       TipoPermissao.produtosGerenciarEstoque.codigo,
+      TipoPermissao.produtosVisualizarCusto.codigo,
       
       // Clientes
       TipoPermissao.clientesVisualizar.codigo,
@@ -51,6 +53,7 @@ class PermissionService extends ChangeNotifier {
       // Dashboard e Informações Financeiras
       TipoPermissao.dashboardVisualizar.codigo,
       TipoPermissao.dashboardFinanceiro.codigo,
+      TipoPermissao.dashboardVerTotais.codigo,
       
       // NFC-e
       TipoPermissao.nfceEmitir.codigo,
@@ -63,6 +66,9 @@ class PermissionService extends ChangeNotifier {
       TipoPermissao.caixaFechar.codigo,
       TipoPermissao.caixaVisualizar.codigo,
       TipoPermissao.caixaMovimentar.codigo,
+      TipoPermissao.caixaVerTotaisFormasPagamento.codigo,
+      TipoPermissao.caixaVerTotalVendidoFechamento.codigo,
+      TipoPermissao.caixaVerFluxoCaixa.codigo,
       
       // Cozinha/Bar
       TipoPermissao.cozinhaVisualizar.codigo,
@@ -89,9 +95,9 @@ class PermissionService extends ChangeNotifier {
       // configuracoesEmpresa removida - apenas "user" (administrador) tem acesso
     };
 
-    // Operador tem permissões básicas
+    // Operador tem permissões básicas (PDV, Vendas, Produtos, Pedidos, Caixa) sem acesso ao Preço de Custo
     _permissoesPadrao[TipoUsuario.operador] = {
-      // Vendas
+      // Vendas & Pedidos
       TipoPermissao.vendasVisualizar.codigo,
       TipoPermissao.vendasCriar.codigo,
       TipoPermissao.vendasEditar.codigo,
@@ -110,6 +116,9 @@ class PermissionService extends ChangeNotifier {
       
       // Caixa
       TipoPermissao.caixaVisualizar.codigo,
+      TipoPermissao.caixaAbrir.codigo,
+      TipoPermissao.caixaFechar.codigo,
+      TipoPermissao.caixaMovimentar.codigo,
       
       // Cozinha/Bar
       TipoPermissao.cozinhaVisualizar.codigo,
@@ -221,6 +230,66 @@ class PermissionService extends ChangeNotifier {
     
     final permissoesUsuario = obterPermissoes(usuario);
     return permissoes.every((p) => permissoesUsuario.contains(p.codigo));
+  }
+
+  /// Verifica se o usuário pode ver os TOTAIS de vendas/faturamento do período.
+  ///
+  /// Sem esta permissão, os valores financeiros (faturamento, entradas, totais do
+  /// histórico de vendas) ficam ocultos para o operador/funcionário — eles podem
+  /// operar o caixa e fazer vendas, mas não saber quanto a empresa vende.
+  /// Administrador, Master e Gerente sempre têm acesso aos totais.
+  bool podeVerTotais(Usuario? usuario) {
+    if (usuario == null || !usuario.ativo) {
+      return false;
+    }
+    if (usuario.isAdmin || usuario.isMaster || usuario.isGerente) {
+      return true;
+    }
+    return temPermissao(usuario, TipoPermissao.dashboardVerTotais);
+  }
+
+  /// Verifica se o usuário pode ver o total de CADA forma de pagamento
+  /// (Dinheiro, PIX, Cartão etc.) no fechamento do caixa.
+  ///
+  /// Permissão separada de [podeVerTotais]: mesmo quem não vê o faturamento
+  /// geral pode (ou não) ver o detalhamento por forma de pagamento, conforme
+  /// configurado em Gerenciar Permissões. Admin/Master/Gerente sempre veem.
+  bool podeVerTotaisFormasPagamento(Usuario? usuario) {
+    if (usuario == null || !usuario.ativo) {
+      return false;
+    }
+    if (usuario.isAdmin || usuario.isMaster || usuario.isGerente) {
+      return true;
+    }
+    return temPermissao(usuario, TipoPermissao.caixaVerTotaisFormasPagamento);
+  }
+
+  /// Verifica se o usuário pode ver o valor total vendido (valor esperado)
+  /// ao fechar o caixa. Sem esta permissão, o operador fecha o caixa sem
+  /// saber quanto vendeu. Admin/Master/Gerente sempre veem.
+  bool podeVerTotalVendidoFechamento(Usuario? usuario) {
+    if (usuario == null || !usuario.ativo) {
+      return false;
+    }
+    if (usuario.isAdmin || usuario.isMaster || usuario.isGerente) {
+      return true;
+    }
+    return temPermissao(usuario, TipoPermissao.caixaVerTotalVendidoFechamento);
+  }
+
+  /// Verifica se o usuário pode visualizar a tela de Fluxo de Caixa.
+  ///
+  /// Sem esta permissão, o operador/funcionário não vê a tela de Fluxo de
+  /// Caixa (entradas, saídas e histórico de encerramentos). Admin/Master/Gerente
+  /// sempre podem.
+  bool podeVerFluxoCaixa(Usuario? usuario) {
+    if (usuario == null || !usuario.ativo) {
+      return false;
+    }
+    if (usuario.isAdmin || usuario.isMaster || usuario.isGerente) {
+      return true;
+    }
+    return temPermissao(usuario, TipoPermissao.caixaVerFluxoCaixa);
   }
 
   /// Obtém todas as permissões disponíveis no sistema

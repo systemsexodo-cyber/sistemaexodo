@@ -198,13 +198,63 @@ class ItemVenda(BaseModel):
     origem: Optional[str] = "0"
     icms_origem: Optional[int | str] = 0
     icms_aliquota: Optional[float] = 0.0
+    # Destaque de ICMS / Crédito Simples Nacional (NT 2025.002) — enviados pelo app
+    icms_base_calculo: Optional[float] = None
+    icms_valor: Optional[float] = None
+    icms_reducao_bc: Optional[float] = None
+    credito_aliquota: Optional[float] = None
+    credito_valor: Optional[float] = None
 
 class RequisicaoEmissao(BaseModel):
     empresa: ConfigEmpresa
     itens: List[ItemVenda]
     valor_total: float
+    valor_desconto: Optional[float] = None
     venda_numero: Optional[str | int] = None
     cpf_cliente: Optional[str] = None
+    nome_cliente: Optional[str] = None
+    modelo: Optional[int] = 65
+    numero: Optional[int] = None
+    serie: Optional[int] = None
+    # Endereço do destinatário (obrigatório na NF-e modelo 55)
+    dest_logradouro: Optional[str] = None
+    dest_numero: Optional[str] = None
+    dest_complemento: Optional[str] = None
+    dest_bairro: Optional[str] = None
+    dest_municipio: Optional[str] = None
+    dest_uf: Optional[str] = None
+    dest_cep: Optional[str] = None
+    dest_cod_municipio: Optional[str] = None
+    dest_telefone: Optional[str] = None
+    dest_email: Optional[str] = None
+    dest_ie: Optional[str] = None
+
+    # Finalidade e Devolução
+    finalidade: Optional[int] = 1
+    natureza_operacao: Optional[str] = None
+    chave_referenciada: Optional[str] = None
+
+    # Despesas adicionais
+    valor_frete: Optional[float] = None
+    valor_seguro: Optional[float] = None
+    outras_despesas: Optional[float] = None
+
+    # Transportadora
+    mod_frete: Optional[int] = 9
+    transp_nome: Optional[str] = None
+    transp_cnpj_cpf: Optional[str] = None
+    transp_insc_est: Optional[str] = None
+    transp_endereco: Optional[str] = None
+    transp_municipio: Optional[str] = None
+    transp_uf: Optional[str] = None
+    transp_placa: Optional[str] = None
+    transp_placa_uf: Optional[str] = None
+    transp_qtd_volumes: Optional[float] = None
+    transp_especie: Optional[str] = None
+    transp_peso_bruto: Optional[float] = None
+    transp_peso_liquido: Optional[float] = None
+
+
 
 def get_base_path():
     if getattr(sys, 'frozen', False): return os.path.dirname(sys.executable)
@@ -237,7 +287,7 @@ def load_identity():
     except: pass
 
 # --- GLOBAIS ---
-BRIDGE_VERSION = "3.5.1"
+BRIDGE_VERSION = "3.5.4"
 
 # Custom encoder for Firestore objects
 def json_serial(obj):

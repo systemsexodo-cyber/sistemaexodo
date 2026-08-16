@@ -52,6 +52,8 @@ def main():
     cursor.execute("""
         CREATE OR REPLACE FUNCTION log_sync_event()
         RETURNS TRIGGER AS $$
+        DECLARE
+            rec_id text;
         BEGIN
             -- Se o sincronizador estiver fazendo o insert/update, ignoramos (evita loop infinito)
             IF current_setting('exodo.sync_mode', true) = 'on' THEN
@@ -64,20 +66,26 @@ def main():
             END IF;
 
             IF TG_OP = 'DELETE' THEN
-                INSERT INTO _exodo_sync_log (table_name, record_id, operation)
-                VALUES (TG_TABLE_NAME, OLD.id::text, TG_OP)
-                ON CONFLICT (table_name, record_id) 
-                DO UPDATE SET operation = EXCLUDED.operation, created_at = NOW();
-                
-                PERFORM pg_notify('exodo_sync_event', TG_TABLE_NAME);
+                rec_id := COALESCE(to_jsonb(OLD)->>'id', to_jsonb(OLD)->>'chave', to_jsonb(OLD)->>'key', to_jsonb(OLD)->>'empresa_id');
+                IF rec_id IS NOT NULL THEN
+                    INSERT INTO _exodo_sync_log (table_name, record_id, operation)
+                    VALUES (TG_TABLE_NAME, rec_id, TG_OP)
+                    ON CONFLICT (table_name, record_id) 
+                    DO UPDATE SET operation = EXCLUDED.operation, created_at = NOW();
+                    
+                    PERFORM pg_notify('exodo_sync_event', TG_TABLE_NAME);
+                END IF;
                 RETURN OLD;
             ELSE
-                INSERT INTO _exodo_sync_log (table_name, record_id, operation)
-                VALUES (TG_TABLE_NAME, NEW.id::text, TG_OP)
-                ON CONFLICT (table_name, record_id) 
-                DO UPDATE SET operation = EXCLUDED.operation, created_at = NOW();
-                
-                PERFORM pg_notify('exodo_sync_event', TG_TABLE_NAME);
+                rec_id := COALESCE(to_jsonb(NEW)->>'id', to_jsonb(NEW)->>'chave', to_jsonb(NEW)->>'key', to_jsonb(NEW)->>'empresa_id');
+                IF rec_id IS NOT NULL THEN
+                    INSERT INTO _exodo_sync_log (table_name, record_id, operation)
+                    VALUES (TG_TABLE_NAME, rec_id, TG_OP)
+                    ON CONFLICT (table_name, record_id) 
+                    DO UPDATE SET operation = EXCLUDED.operation, created_at = NOW();
+                    
+                    PERFORM pg_notify('exodo_sync_event', TG_TABLE_NAME);
+                END IF;
                 RETURN NEW;
             END IF;
         END;
@@ -92,14 +100,14 @@ def main():
         AND LEFT(table_name, 1) <> '_'
         AND LEFT(table_name, 3) <> 'vw_'
         AND LEFT(table_name, 5) <> 'view_'
-        AND table_name NOT IN ('cache_dados', 'bridge_status', 'bridge_commands', 'exodo_sync_conflitos')
+        AND table_name NOT IN ('cache_dados', 'bridge_status', 'bridge_commands', 'exodo_sync_conflitos', 'exodo_config', 'sync_status', 'configuracoes_locais', 'sync_logs')
     """)
     tabelas = [row[0] for row in cursor.fetchall()]
 
     print(f"[*] Encontradas {len(tabelas)} tabelas. Configurando triggers isolados...")
 
     # Remover explicitamente triggers obsoletos em tabelas e views que foram excluidas
-    tabelas_excluidas = ['cache_dados', 'bridge_status', 'bridge_commands', 'exodo_sync_conflitos', 'vw_historico_recente']
+    tabelas_excluidas = ['cache_dados', 'bridge_status', 'bridge_commands', 'exodo_sync_conflitos', 'vw_historico_recente', 'exodo_config', 'sync_status', 'configuracoes_locais', 'sync_logs']
     for tabela_excl in tabelas_excluidas:
         cursor.execute(f'DROP TRIGGER IF EXISTS "trg_exodo_sync_log_{tabela_excl}" ON "{tabela_excl}";')
 

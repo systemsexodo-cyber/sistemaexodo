@@ -40,6 +40,7 @@ class ItemMesaComanda {
   final String? usuarioModificou; // Nome do usuário que modificou o item pela última vez
   final DateTime? dataModificacao; // Data da última modificação
   final String? acaoRealizada; // Ação realizada (ex: "Criado", "Cancelado", "Status alterado")
+  final bool cobrarGarcom; // Se true, cobra os 10% de garçom no PDV/Comandas
 
   ItemMesaComanda({
     required this.id,
@@ -59,6 +60,7 @@ class ItemMesaComanda {
     this.usuarioModificou,
     this.dataModificacao,
     this.acaoRealizada,
+    this.cobrarGarcom = true,
     List<AdicionalProduto>? adicionais,
   }) : dataHora = dataHora ?? DateTime.now(),
        adicionais = adicionais ?? [];
@@ -81,6 +83,7 @@ class ItemMesaComanda {
     String? usuarioModificou,
     DateTime? dataModificacao,
     String? acaoRealizada,
+    bool? cobrarGarcom,
   }) {
     return ItemMesaComanda(
       id: id ?? this.id,
@@ -100,6 +103,7 @@ class ItemMesaComanda {
       usuarioModificou: usuarioModificou ?? this.usuarioModificou,
       dataModificacao: dataModificacao ?? this.dataModificacao,
       acaoRealizada: acaoRealizada ?? this.acaoRealizada,
+      cobrarGarcom: cobrarGarcom ?? this.cobrarGarcom,
       adicionais: adicionais ?? this.adicionais,
     );
   }
@@ -123,6 +127,7 @@ class ItemMesaComanda {
       'usuario_modificou': usuarioModificou,
       'data_modificacao': dataModificacao?.toIso8601String(),
       'acao_realizada': acaoRealizada,
+      'cobrar_garcom': cobrarGarcom,
       'adicionais': adicionais.map((a) => a.toMap()).toList(),
     };
   }
@@ -136,7 +141,7 @@ class ItemMesaComanda {
     }
 
     return ItemMesaComanda(
-      id: map['id'] as String,
+      id: map['id']?.toString() ?? '',
       itemId: (map['item_id'] ?? map['itemId']) as String,
       nome: map['nome'] as String,
       quantidade: parseDouble(map['quantidade']) ?? 0.0,
@@ -160,6 +165,7 @@ class ItemMesaComanda {
           ? DateParser.parse(map['data_modificacao'] ?? map['dataModificacao'])
           : null,
       acaoRealizada: (map['acao_realizada'] ?? map['acaoRealizada']) as String?,
+      cobrarGarcom: (map['cobrar_garcom'] ?? map['cobrarGarcom']) as bool? ?? true,
       adicionais: (map['adicionais'] as List<dynamic>?)
           ?.map((a) => AdicionalProduto.fromMap(a as Map<String, dynamic>))
           .toList() ?? [],
@@ -277,10 +283,10 @@ class MesaComanda {
     return totalComCouvert;
   }
   
-  // Calcula o valor do garçom (10% apenas dos itens, SEM couvert)
+  // Calcula o valor do garçom (10% apenas dos itens, SEM couvert e considerando produtos com garçom habilitado)
   double get valorGarcomCalculado {
     final totalItens = itens
-        .where((item) => item.status != StatusItem.cancelado)
+        .where((item) => item.status != StatusItem.cancelado && item.cobrarGarcom != false)
         .fold(0.0, (sum, item) => sum + item.subtotal);
     return totalItens * 0.10; // 10% apenas dos itens (sem couvert)
   }
@@ -485,7 +491,7 @@ class MesaComanda {
     }
 
     return MesaComanda(
-      id: map['id'] as String,
+      id: map['id']?.toString() ?? '',
       tipo: TipoControle.values.firstWhere(
         (e) => e.toString().split('.').last == map['tipo'],
         orElse: () => TipoControle.mesa,

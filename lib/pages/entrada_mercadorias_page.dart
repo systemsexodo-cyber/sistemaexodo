@@ -685,7 +685,7 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
       return service.produtos.firstWhere(
         (p) => 
           p.codigo == codigo || 
-          p.codigoBarras == codigo ||
+          p.todosCodigosBarras.contains(codigo) ||
           p.temCodigoFornecedor(codigo),
       );
     } catch (_) {
@@ -781,6 +781,9 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
         precoVenda: item.precoVenda,
         unidade: item.unidade,
         produtoId: item.produtoExistente?.id,
+        numeroLote: item.numeroLote,
+        dataValidade: item.dataValidade,
+        dataFabricacao: item.dataFabricacao,
       );
     }).toList();
 
@@ -864,12 +867,25 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
           unidade: itemNota.unidade,
           grupo: produto?.grupo ?? 'Sem Grupo',
           produtoExistente: produto,
+          numeroLote: itemNota.numeroLote,
+          dataValidade: itemNota.dataValidade,
+          dataFabricacao: itemNota.dataFabricacao,
         ));
       }
 
       _notaRascunhoId = nota.id;
       _modo = nota.tipo;
       _numeroNotaReal = nota.numeroNotaReal;
+      // Restaurar o fornecedor da nota para que o lote fique atrelado a ele
+      // ao processar o rascunho (antes se perdia e o lote era criado sem fornecedor)
+      _fornecedorNome = nota.fornecedorNome;
+      _fornecedorCNPJ = nota.fornecedorCNPJ;
+      _chaveNFe = nota.chaveNFe;
+      _dataEmissao = nota.dataEmissao;
+      _valorTotal = nota.valorTotal;
+      _serie = nota.serie;
+      _modelo = nota.modelo;
+      _xmlRawContent = nota.xmlOriginal;
       _abaAtiva = 0; // Voltar para aba de itens
     });
   }
@@ -1299,13 +1315,28 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
               ? item.fornecedorNome 
               : _fornecedorNome;
 
-          await service.registrarEntradaEstoque(
-            produtoId: produtoAtual.id,
-            quantidade: item.quantidade,
-            observacao: 'Entrada por ${_modo == 'xml' ? 'XML' : 'Manual'}',
-            fornecedorId: _fornecedorCNPJ,
-            fornecedorNome: fornecedorFinal,
-          );
+          // Registrar entrada no histórico e gerenciar estoque (com lote/validade se informados)
+          final temLote = (item.numeroLote != null && item.numeroLote!.trim().isNotEmpty) || item.dataValidade != null;
+          if (temLote) {
+            await service.registrarEntradaEstoqueComLote(
+              produtoId: produtoAtual.id,
+              quantidade: item.quantidade,
+              numeroLote: item.numeroLote,
+              dataValidade: item.dataValidade,
+              dataFabricacao: item.dataFabricacao,
+              observacao: 'Entrada por ${_modo == 'xml' ? 'XML' : 'Manual'}',
+              fornecedorId: _fornecedorCNPJ,
+              fornecedorNome: fornecedorFinal,
+            );
+          } else {
+            await service.registrarEntradaEstoque(
+              produtoId: produtoAtual.id,
+              quantidade: item.quantidade,
+              observacao: 'Entrada por ${_modo == 'xml' ? 'XML' : 'Manual'}',
+              fornecedorId: _fornecedorCNPJ,
+              fornecedorNome: fornecedorFinal,
+            );
+          }
 
           // Adicionar item com valores anteriores
           itensComValoresAnteriores.add(ItemNotaEntrada(
@@ -1324,6 +1355,9 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
             precoVendaAnterior: precoVendaAnterior,
             estoqueAnterior: estoqueAnterior?.toInt(),
             produtoNovo: false,
+            numeroLote: item.numeroLote,
+            dataValidade: item.dataValidade,
+            dataFabricacao: item.dataFabricacao,
           ));
 
           atualizados++;
@@ -1381,14 +1415,28 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
           service.addProduto(novoProduto);
           print('>>> Produto novo criado com estoque 0: ${novoProduto.nome}');
           
-          // Registrar entrada no histórico e gerenciar estoque
-          await service.registrarEntradaEstoque(
-            produtoId: novoProduto.id,
-            quantidade: item.quantidade,
-            observacao: 'Entrada por ${_modo == 'xml' ? 'XML' : 'Manual'} - Produto novo',
-            fornecedorId: _fornecedorCNPJ,
-            fornecedorNome: fornecedorFinal,
-          );
+          // Registrar entrada no histórico e gerenciar estoque (com lote/validade se informados)
+          final temLoteNovo = (item.numeroLote != null && item.numeroLote!.trim().isNotEmpty) || item.dataValidade != null;
+          if (temLoteNovo) {
+            await service.registrarEntradaEstoqueComLote(
+              produtoId: novoProduto.id,
+              quantidade: item.quantidade,
+              numeroLote: item.numeroLote,
+              dataValidade: item.dataValidade,
+              dataFabricacao: item.dataFabricacao,
+              observacao: 'Entrada por ${_modo == 'xml' ? 'XML' : 'Manual'} - Produto novo',
+              fornecedorId: _fornecedorCNPJ,
+              fornecedorNome: fornecedorFinal,
+            );
+          } else {
+            await service.registrarEntradaEstoque(
+              produtoId: novoProduto.id,
+              quantidade: item.quantidade,
+              observacao: 'Entrada por ${_modo == 'xml' ? 'XML' : 'Manual'} - Produto novo',
+              fornecedorId: _fornecedorCNPJ,
+              fornecedorNome: fornecedorFinal,
+            );
+          }
 
           // Adicionar item marcando como produto novo
           itensComValoresAnteriores.add(ItemNotaEntrada(
@@ -1404,6 +1452,9 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
             produtoId: novoProduto.id,
             estoqueMinimo: item.estoqueMinimo,
             produtoNovo: true,
+            numeroLote: item.numeroLote,
+            dataValidade: item.dataValidade,
+            dataFabricacao: item.dataFabricacao,
           ));
 
           criados++;
@@ -3030,6 +3081,46 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
               ),
             ],
           ),
+          if (item.numeroLote != null || item.dataValidade != null)
+            Container(
+              margin: const EdgeInsets.only(top: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.orange.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: Colors.orange.withOpacity(0.3)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    item.dataValidade != null && item.dataValidade!.isBefore(DateTime.now())
+                        ? Icons.error
+                        : Icons.event_available,
+                    color: item.dataValidade != null && item.dataValidade!.isBefore(DateTime.now())
+                        ? Colors.redAccent
+                        : Colors.orangeAccent,
+                    size: 16,
+                  ),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      [
+                        if (item.numeroLote != null && item.numeroLote!.isNotEmpty) 'Lote: ${item.numeroLote}',
+                        if (item.dataValidade != null) 'Validade: ${DateFormat('dd/MM/yyyy').format(item.dataValidade!)}',
+                      ].join(' | '),
+                      style: TextStyle(
+                        color: item.dataValidade != null && item.dataValidade!.isBefore(DateTime.now())
+                            ? Colors.redAccent
+                            : Colors.orangeAccent,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           if (item.produtoNovo)
             Container(
               margin: const EdgeInsets.only(top: 8),
@@ -3477,7 +3568,12 @@ class _ItemEntrada {
   Produto? produtoExistente;
   double? margemAtual;
   String? fornecedorNome; // Fornecedor específico do item
+  // Controle de validade/lote (pet shop: ração, medicamentos, etc.)
+  String? numeroLote;
+  DateTime? dataValidade;
+  DateTime? dataFabricacao;
 
+  final TextEditingController _loteController = TextEditingController();
   final TextEditingController _nomeController = TextEditingController();
   final TextEditingController _codigoController = TextEditingController();
   final TextEditingController _quantidadeEmbalagensController = TextEditingController();
@@ -3504,6 +3600,9 @@ class _ItemEntrada {
     this.produtoExistente,
     double? margemAtual,
     this.fornecedorNome,
+    this.numeroLote,
+    this.dataValidade,
+    this.dataFabricacao,
   }) : precoVenda = precoVenda ?? 0,
        estoqueMinimo = (produtoExistente?.estoqueMinimo ?? 0).toInt(),
        margemAtual = margemAtual,
@@ -3511,6 +3610,7 @@ class _ItemEntrada {
        quantidadePorEmbalagem = quantidadePorEmbalagem ?? 1,
        grupo = grupo ?? 'Sem Grupo' {
     _nomeController.text = nome;
+    _loteController.text = numeroLote ?? '';
     _codigoController.text = codigo;
     _quantidadeEmbalagensController.text = (quantidadeEmbalagens ?? 0).toString();
     _quantidadePorEmbalagemController.text = (quantidadePorEmbalagem ?? 1).toString();
@@ -3535,6 +3635,7 @@ class _ItemEntrada {
   }
 
   void dispose() {
+    _loteController.dispose();
     _nomeController.dispose();
     _codigoController.dispose();
     _quantidadeEmbalagensController.dispose();
@@ -3701,7 +3802,7 @@ class _ItemEntradaWidgetState extends State<_ItemEntradaWidget> {
                       if (value.isNotEmpty) {
                         try {
                           final produto = service.produtos.firstWhere(
-                            (p) => p.codigo == value || p.codigoBarras == value,
+                            (p) => p.codigo == value || p.todosCodigosBarras.contains(value),
                           );
                           if (produto.id != item.produtoExistente?.id) {
                             setState(() {
@@ -3751,7 +3852,7 @@ class _ItemEntradaWidgetState extends State<_ItemEntradaWidget> {
                     Produto? produtoEncontrado;
                     try {
                       produtoEncontrado = service.produtos.firstWhere(
-                        (p) => p.codigo == novoCodigo || p.codigoBarras == novoCodigo,
+                        (p) => p.codigo == novoCodigo || p.todosCodigosBarras.contains(novoCodigo),
                       );
                     } catch (_) {
                       produtoEncontrado = null;
@@ -4072,6 +4173,109 @@ class _ItemEntradaWidgetState extends State<_ItemEntradaWidget> {
                 setState(() {});
               },
             ),
+            const SizedBox(height: 8),
+            // Validade e Lote (pet shop: ração, medicamentos, etc.)
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.orange.withOpacity(0.06),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.orange.withOpacity(0.3)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.event_available, color: Colors.orange.shade700, size: 18),
+                      const SizedBox(width: 8),
+                      const Text(
+                        'Validade e Lote (Opcional)',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: item._loteController,
+                          decoration: const InputDecoration(
+                            labelText: 'Nº do Lote',
+                            prefixIcon: Icon(Icons.confirmation_number),
+                            helperText: 'Ex: LOTE-A1',
+                          ),
+                          onChanged: (value) => item.numeroLote = value,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: InkWell(
+                          onTap: () async {
+                            final hoje = DateTime.now();
+                            final data = await showDatePicker(
+                              context: context,
+                              initialDate: item.dataValidade ?? hoje.add(const Duration(days: 30)),
+                              firstDate: hoje.subtract(const Duration(days: 365)),
+                              lastDate: hoje.add(const Duration(days: 3650)),
+                              helpText: 'Data de Validade',
+                            );
+                            if (data != null) {
+                              setState(() {
+                                item.dataValidade = data;
+                              });
+                            }
+                          },
+                          child: InputDecorator(
+                            decoration: const InputDecoration(
+                              labelText: 'Validade',
+                              prefixIcon: Icon(Icons.calendar_today),
+                            ),
+                            child: Text(
+                              item.dataValidade != null
+                                  ? DateFormat('dd/MM/yyyy').format(item.dataValidade!)
+                                  : 'Selecionar',
+                              style: TextStyle(
+                                color: item.dataValidade != null ? Colors.black87 : Colors.grey[600],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (item.dataValidade != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.clean_hands,
+                            size: 14,
+                            color: item.dataValidade!.isBefore(DateTime.now())
+                                ? Colors.red
+                                : Colors.green,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            item.dataValidade!.isBefore(DateTime.now())
+                                ? 'ATENÇÃO: data de validade já passou!'
+                                : 'Vence em ${item.dataValidade!.difference(DateTime.now()).inDays} dia(s)',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: item.dataValidade!.isBefore(DateTime.now())
+                                  ? Colors.red
+                                  : Colors.green,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
           ],
         ),
       ),
@@ -4116,8 +4320,7 @@ class _DialogBuscarProdutoState extends State<_DialogBuscarProduto> {
         _produtosFiltrados = service.produtos.where((p) {
           return p.nome.toLowerCase().contains(busca) ||
               (p.codigo != null && p.codigo!.toLowerCase().contains(busca)) ||
-              (p.codigoBarras != null &&
-                  p.codigoBarras!.toLowerCase().contains(busca));
+              p.todosCodigosBarras.any((b) => b.toLowerCase().contains(busca));
         }).toList();
       });
     }

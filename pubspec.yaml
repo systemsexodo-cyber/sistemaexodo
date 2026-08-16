@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.0+1
+version: 1.0.16+16
 
 environment:
   sdk: ^3.10.0
@@ -55,6 +55,8 @@ dependencies:
   url_launcher: ^6.3.2
   web: ^1.1.1
   
+  fl_chart: ^0.70.2          # Gráficos interativos (dashboard)
+  
   # Bibliotecas para NFC-e SOAP
   http: ^1.6.0              # Comunicação SOAP com SEFAZ
   pointycastle: ^4.0.0      # Criptografia e assinatura digital
@@ -74,9 +76,8 @@ dependencies:
   hive_flutter: ^1.1.0
 
   # Banco de Dados Local Nativo (Windows/Mobile)
-  sqflite: ^2.3.3
-  sqflite_common_ffi: ^2.3.3
-  sqlite3_flutter_libs: ^0.5.24
+
+
   supabase_flutter: ^2.12.2
   postgres: ^3.1.2
 

@@ -55,7 +55,7 @@ class ProdutoHistorico {
 
   factory ProdutoHistorico.fromMap(Map<String, dynamic> map) {
     return ProdutoHistorico(
-      id: map['id'] ?? '',
+      id: map['id']?.toString() ?? '',
       produtoId: map['produto_id'] ?? map['produtoId'] ?? '',
       produtoNome: map['produto_nome'] ?? map['produtoNome'] ?? '',
       produtoCodigo: map['produto_codigo'] ?? map['produtoCodigo'],
@@ -125,15 +125,20 @@ class ProdutoHistorico {
 
   static DateTime? _parseDateTime(dynamic value) {
     if (value == null) return null;
-    if (value is DateTime) return value;
-    if (value is String) {
+    DateTime? d;
+    if (value is DateTime) {
+      d = value;
+    } else if (value is String) {
       try {
-        return DateTime.parse(value);
+        d = DateTime.parse(value);
       } catch (e) {
         return null;
       }
     }
-    return null;
+    // Datas vindas do banco/nuvem chegam em UTC — converter para hora local
+    // para não exibir horário adiantado no histórico de alterações.
+    if (d != null && d.isUtc) return d.toLocal();
+    return d;
   }
 
   /// Compara dois produtos e retorna a lista de campos alterados

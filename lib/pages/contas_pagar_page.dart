@@ -48,7 +48,7 @@ class _ContasPagarPageState extends State<ContasPagarPage> {
   }
 
   List<ContaPagar> _filtrarContas(List<ContaPagar> contas) {
-    var resultado = contas.where((c) => c.ativo).toList();
+    var resultado = contas.where((c) => c.ativo && c.categoria != 'Recebível').toList();
 
     // Filtro por status
     if (_filtroStatus != 'Todos') {

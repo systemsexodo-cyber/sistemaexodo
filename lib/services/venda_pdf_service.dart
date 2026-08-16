@@ -7,7 +7,7 @@ import 'package:intl/intl.dart';
 import '../models/venda_balcao.dart';
 import '../models/empresa.dart';
 import '../models/forma_pagamento.dart';
-import '../models/delivery_info.dart';
+import 'impressao_service.dart';
 
 /// Serviço para geração de PDF de venda
 class VendaPDFService {
@@ -20,6 +20,7 @@ class VendaPDFService {
       final pdf = pw.Document();
       final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
       final formatoData = DateFormat('dd/MM/yyyy HH:mm');
+      final mostrarEnderecoCupom = empresa.configuracoes?['mostrarEnderecoCupom'] != false;
 
       pdf.addPage(
         pw.Page(
@@ -48,7 +49,7 @@ class VendaPDFService {
                 ],
                 if (venda.deliveryInfo != null) ...[
                   pw.SizedBox(height: 20),
-                  _buildDelivery(venda),
+                  _buildDelivery(venda, mostrarEndereco: mostrarEnderecoCupom),
                 ],
                 pw.Spacer(),
                 _buildRodape(empresa, formatoData),
@@ -150,6 +151,13 @@ class VendaPDFService {
                 'Nº: ${venda.numero}',
                 style: const pw.TextStyle(fontSize: 12),
               ),
+              if (venda.senha != null && venda.senha!.isNotEmpty) ...[
+                pw.SizedBox(height: 5),
+                pw.Text(
+                  'Senha: ${venda.senha}',
+                  style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold),
+                ),
+              ],
             ],
           ),
           pw.Column(
@@ -250,6 +258,14 @@ class VendaPDFService {
     );
   }
 
+  /// Formata a quantidade para exibição amigável
+  static String _formatarQtdItem(double qty) {
+    if (qty == qty.roundToDouble()) {
+      return qty.toInt().toString();
+    }
+    return qty.toStringAsFixed(3).replaceAll(RegExp(r'0+$'), '').replaceAll(RegExp(r'\.$'), '');
+  }
+
   /// Constrói itens da venda
   static pw.Widget _buildItens(VendaBalcao venda, NumberFormat formatoMoeda) {
     return pw.Column(
@@ -265,11 +281,11 @@ class VendaPDFService {
         pw.SizedBox(height: 10),
         pw.Table(
           border: pw.TableBorder.all(color: PdfColors.grey400),
-          columnWidths: {
-            0: const pw.FlexColumnWidth(1),
-            1: const pw.FlexColumnWidth(1),
-            2: const pw.FlexColumnWidth(1),
-            3: const pw.FlexColumnWidth(1),
+          columnWidths: const {
+            0: pw.FlexColumnWidth(3.5),
+            1: pw.FlexColumnWidth(1.0),
+            2: pw.FlexColumnWidth(1.5),
+            3: pw.FlexColumnWidth(1.5),
           },
           children: [
             // Cabeçalho
@@ -328,15 +344,48 @@ class VendaPDFService {
                 children: [
                   pw.Padding(
                     padding: const pw.EdgeInsets.all(5),
-                    child: pw.Text(
-                      item.nome,
-                      style: const pw.TextStyle(fontSize: 9),
+                    child: pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Text(
+                          item.nome,
+                          style: pw.TextStyle(
+                            fontSize: 9,
+                            fontWeight: pw.FontWeight.bold,
+                          ),
+                        ),
+                        if (item.adicionais.isNotEmpty)
+                          ...item.adicionais.map((a) => pw.Text(
+                            '+ ${a.nome} (${formatoMoeda.format(a.preco)})',
+                            style: const pw.TextStyle(fontSize: 8, color: PdfColors.black),
+                          )),
+                        if (item.opcoesCombo.isNotEmpty)
+                          ...item.opcoesCombo.map((c) => pw.Text(
+                            '• ${c.nome}',
+                            style: const pw.TextStyle(fontSize: 8, color: PdfColors.black),
+                          )),
+                        if (item.observacao != null && item.observacao!.trim().isNotEmpty)
+                          pw.Text(
+                            '* Obs: ${item.observacao}',
+                            style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold),
+                          ),
+                        if (item.descontoPromocionalPercent != null)
+                          pw.Text(
+                            '${item.descontoPromocionalPercent!.toStringAsFixed(0)}% promocional · -${formatoMoeda.format(item.descontoPromocionalValor!)}',
+                            style: pw.TextStyle(fontSize: 8, color: PdfColors.orange),
+                          ),
+                        if (item.descontoTabelaUnitario > 0)
+                          pw.Text(
+                            'Desconto tabela: -${formatoMoeda.format(item.descontoTabelaUnitario * item.quantidade)}',
+                            style: pw.TextStyle(fontSize: 8, color: PdfColors.green700),
+                          ),
+                      ],
                     ),
                   ),
                   pw.Padding(
                     padding: const pw.EdgeInsets.all(5),
                     child: pw.Text(
-                      item.quantidade.toString(),
+                      _formatarQtdItem(item.quantidade),
                       style: const pw.TextStyle(fontSize: 9),
                       textAlign: pw.TextAlign.center,
                     ),
@@ -371,10 +420,12 @@ class VendaPDFService {
 
   /// Constrói seção de descontos
   static pw.Widget _buildDescontos(VendaBalcao venda, NumberFormat formatoMoeda) {
-    // Calcular subtotal sem desconto
+    // Calcular subtotal sem desconto (usa o preço de tabela quando houver
+    // desconto do perfil de preços aplicado no PDV)
     final subtotalSemDesconto = venda.itens.fold(
       0.0,
-      (sum, item) => sum + (item.precoUnitario * item.quantidade),
+      (sum, item) =>
+          sum + ((item.precoTabela ?? item.precoUnitario) * item.quantidade),
     );
     
     // Calcular desconto total
@@ -440,25 +491,25 @@ class VendaPDFService {
     return pw.Container(
       padding: const pw.EdgeInsets.all(15),
       decoration: pw.BoxDecoration(
-        color: PdfColors.grey100,
-        border: pw.Border.all(color: PdfColors.grey700, width: 2),
+        color: PdfColors.grey200,
         borderRadius: pw.BorderRadius.circular(5),
       ),
       child: pw.Row(
         mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
         children: [
           pw.Text(
-            'TOTAL',
+            'TOTAL DA VENDA:',
             style: pw.TextStyle(
-              fontSize: 16,
+              fontSize: 14,
               fontWeight: pw.FontWeight.bold,
             ),
           ),
           pw.Text(
             formatoMoeda.format(venda.valorTotal),
             style: pw.TextStyle(
-              fontSize: 18,
+              fontSize: 16,
               fontWeight: pw.FontWeight.bold,
+              color: PdfColors.blue900,
             ),
           ),
         ],
@@ -575,72 +626,154 @@ class VendaPDFService {
     );
   }
 
-  /// Constrói seção de entrega
-  static pw.Widget _buildDelivery(VendaBalcao venda) {
+  /// Constrói bloco de entrega (A4) com endereço destacado para o entregador
+  static pw.Widget _buildDelivery(VendaBalcao venda, {bool mostrarEndereco = true}) {
     if (venda.deliveryInfo == null) return pw.SizedBox.shrink();
     final info = venda.deliveryInfo!;
+    final String? previsao =
+        info.previsaoEntrega?.trim().isNotEmpty == true ? info.previsaoEntrega!.trim() : null;
+
     return pw.Container(
-      padding: const pw.EdgeInsets.all(10),
+      padding: const pw.EdgeInsets.all(14),
       decoration: pw.BoxDecoration(
-        border: pw.Border.all(color: PdfColors.orange, width: 1.5),
-        borderRadius: pw.BorderRadius.circular(5),
+        color: PdfColors.black,
+        borderRadius: pw.BorderRadius.circular(8),
       ),
       child: pw.Column(
         crossAxisAlignment: pw.CrossAxisAlignment.start,
         children: [
-          pw.Row(
-            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-            children: [
-              pw.Text(
-                'INFORMAÇÕES DE ENTREGA',
-                style: pw.TextStyle(
-                  fontSize: 11,
-                  fontWeight: pw.FontWeight.bold,
-                  color: PdfColors.orange,
-                ),
-              ),
-              pw.Text(
-                info.status.toUpperCase(),
-                style: pw.TextStyle(
-                  fontSize: 10,
-                  fontWeight: pw.FontWeight.bold,
-                  color: PdfColors.orange,
-                ),
-              ),
-            ],
+          pw.Text(
+            'ENTREGA / DELIVERY',
+            style: pw.TextStyle(
+              fontSize: 14,
+              fontWeight: pw.FontWeight.bold,
+              color: PdfColors.white,
+            ),
           ),
           pw.SizedBox(height: 8),
-          pw.Text(
-            'Endereço: ${info.logradouro}, ${info.numero}',
-            style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold),
-          ),
-          pw.Text(
-            'Bairro: ${info.bairro}',
-            style: const pw.TextStyle(fontSize: 10),
-          ),
-          pw.Text(
-            'Cidade/UF: ${info.cidade} - ${info.uf}',
-            style: const pw.TextStyle(fontSize: 10),
-          ),
-          if (info.cep != null && info.cep!.isNotEmpty)
-            pw.Text(
-              'CEP: ${info.cep}',
-              style: const pw.TextStyle(fontSize: 10),
+          pw.Container(
+            width: double.infinity,
+            padding: const pw.EdgeInsets.all(12),
+            decoration: pw.BoxDecoration(
+              color: PdfColors.white,
+              borderRadius: pw.BorderRadius.circular(6),
             ),
-          if (info.taxaEntrega > 0) ...[
-            pw.SizedBox(height: 5),
-            pw.Text(
-              'Taxa de Entrega: R\$ ${info.taxaEntrega.toStringAsFixed(2)}',
-              style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold, color: PdfColors.green700),
+            child: pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                // Cliente + telefone bem visíveis para o motoboy
+                pw.Text(
+                  'CLIENTE: ${venda.clienteNome ?? "CONSUMIDOR FINAL"}',
+                  style: pw.TextStyle(
+                    fontSize: 13,
+                    fontWeight: pw.FontWeight.bold,
+                    color: PdfColors.black,
+                  ),
+                ),
+                if (venda.clienteTelefone != null && venda.clienteTelefone!.isNotEmpty) ...[
+                  pw.SizedBox(height: 2),
+                  pw.Text(
+                    'TEL: ${venda.clienteTelefone!}',
+                    style: pw.TextStyle(
+                      fontSize: 12,
+                      fontWeight: pw.FontWeight.bold,
+                      color: PdfColors.black,
+                    ),
+                  ),
+                ],
+                if (mostrarEndereco) ...[
+                  pw.SizedBox(height: 6),
+                  pw.Text(
+                    'ENDEREÇO DE ENTREGA',
+                    style: pw.TextStyle(
+                      fontSize: 11,
+                      fontWeight: pw.FontWeight.bold,
+                      color: PdfColors.black,
+                    ),
+                  ),
+                  pw.SizedBox(height: 4),
+                  pw.Text(
+                    '${info.logradouro}, ${info.numero}',
+                    style: pw.TextStyle(
+                      fontSize: 15,
+                      fontWeight: pw.FontWeight.bold,
+                      color: PdfColors.black,
+                    ),
+                  ),
+                  pw.Text(
+                    '${info.bairro} - ${info.cidade}/${info.uf}',
+                    style: pw.TextStyle(
+                      fontSize: 11,
+                      fontWeight: pw.FontWeight.bold,
+                      color: PdfColors.black,
+                    ),
+                  ),
+                  if (info.cep != null && info.cep!.isNotEmpty)
+                    pw.Text(
+                      'CEP: ${info.cep}',
+                      style: pw.TextStyle(
+                        fontSize: 11,
+                        fontWeight: pw.FontWeight.bold,
+                        color: PdfColors.black,
+                      ),
+                    ),
+                  if (info.observacoes != null && info.observacoes!.isNotEmpty) ...[
+                    pw.SizedBox(height: 4),
+                    pw.Text(
+                      'Obs.: ${info.observacoes}',
+                      style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold, color: PdfColors.black),
+                    ),
+                  ],
+                ],
+                pw.SizedBox(height: 6),
+                pw.Divider(color: PdfColors.grey500),
+                pw.SizedBox(height: 6),
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Text(
+                      'HORA DO PEDIDO:',
+                      style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold, color: PdfColors.black),
+                    ),
+                    pw.Text(
+                      DateFormat('HH:mm').format(venda.dataVenda),
+                      style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold, color: PdfColors.black),
+                    ),
+                  ],
+                ),
+                if (previsao != null) ...[
+                  pw.SizedBox(height: 4),
+                  pw.Row(
+                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                    children: [
+                      pw.Text(
+                        'PREVISÃO DE ENTREGA:',
+                        style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold, color: PdfColors.black),
+                      ),
+                      pw.Text(
+                        previsao,
+                        style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold, color: PdfColors.black),
+                      ),
+                    ],
+                  ),
+                ],
+                if (info.taxaEntrega > 0) ...[
+                  pw.SizedBox(height: 4),
+                  pw.Text(
+                    'Taxa de Entrega: R\$ ${info.taxaEntrega.toStringAsFixed(2)}',
+                    style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold, color: PdfColors.black),
+                  ),
+                ],
+                if (info.motoristaNome != null && info.motoristaNome!.isNotEmpty) ...[
+                  pw.SizedBox(height: 4),
+                  pw.Text(
+                    'Motorista: ${info.motoristaNome}',
+                    style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold, color: PdfColors.black),
+                  ),
+                ],
+              ],
             ),
-          ],
-          if (info.motoristaNome != null && info.motoristaNome!.isNotEmpty) ...[
-            pw.SizedBox(height: 5),
-            pw.Text(
-              'Motorista: ${info.motoristaNome}',
-              style: const pw.TextStyle(fontSize: 10),
-            ),
-          ],
+          ),
         ],
       ),
     );
@@ -703,6 +836,8 @@ class VendaPDFService {
         return 'Outro';
       case TipoPagamento.alimentacao:
         return 'Ticket/Alimentação';
+      case TipoPagamento.transferencia:
+        return 'Transferência';
     }
   }
 
@@ -725,6 +860,7 @@ class VendaPDFService {
       final double fontSizeTitulo = config['comandaFonteTitulo']?.toDouble() ?? 10.5;
       final double fontSizeCorpo = config['comandaFonteCorpo']?.toDouble() ?? 7.8;
       final bool usarNegrito = config['comandaNegrito'] ?? true;
+      final bool mostrarEnderecoCupom = config['mostrarEnderecoCupom'] != false;
 
       // Cálculo de largura útil (mm -> pt) com compensação de segurança
       final double pageWidth = (larguraBobina - 2) * 2.83465;
@@ -751,6 +887,10 @@ class VendaPDFService {
           if (item.adicionais != null && item.adicionais.isNotEmpty) {
             alturaEstimada += item.adicionais.length * 15.0;
           }
+          if (item.descontoPromocionalPercent != null ||
+              item.descontoTabelaUnitario > 0) {
+            alturaEstimada += 15.0; // Linha extra de desconto
+          }
         }
       }
       
@@ -760,6 +900,19 @@ class VendaPDFService {
       // Observações e rodapé
       if (venda.observacoes?.isNotEmpty == true) {
         alturaEstimada += 40.0;
+      }
+      // Bloco de entrega destacado (faixa + caixa com cliente/telefone/endereço + hora/previsão)
+      if (venda.deliveryInfo != null) {
+        alturaEstimada += 220.0;
+        if (venda.deliveryInfo!.observacoes?.isNotEmpty == true) {
+          alturaEstimada += 25.0;
+        }
+        if (venda.deliveryInfo!.previsaoEntrega?.trim().isNotEmpty == true) {
+          alturaEstimada += 25.0;
+        }
+        if (venda.deliveryInfo!.valorParaTroco > 0) {
+          alturaEstimada += 35.0;
+        }
       }
       alturaEstimada += 60.0; // Rodapé final
       
@@ -783,7 +936,7 @@ class VendaPDFService {
                 pw.SizedBox(height: 2),
                 _buildDadosVendaTermico(venda, formatoData, fontSizeCorpo, usarNegrito),
                 pw.SizedBox(height: 2),
-                _buildClienteTermico(venda, fontSizeCorpo),
+                _buildClienteTermico(venda, fontSizeCorpo, mostrarEndereco: mostrarEnderecoCupom),
                 pw.SizedBox(height: 3),
                 _buildItensTermico(venda, formatoMoeda, fontSizeCorpo, usarNegrito),
                 pw.SizedBox(height: 2),
@@ -910,6 +1063,27 @@ class VendaPDFService {
           style: pw.TextStyle(fontSize: fontSizeCorpo + 1),
           textAlign: pw.TextAlign.center,
         ),
+        if (venda.senha != null && venda.senha!.isNotEmpty) ...[
+          pw.SizedBox(height: 4),
+          pw.Container(
+            padding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: const pw.BoxDecoration(
+              border: pw.Border(
+                top: pw.BorderSide(width: 1),
+                bottom: pw.BorderSide(width: 1),
+                left: pw.BorderSide(width: 1),
+                right: pw.BorderSide(width: 1),
+              ),
+              borderRadius: pw.BorderRadius.all(pw.Radius.circular(4)),
+            ),
+            child: pw.Text(
+              'SENHA: ${venda.senha}',
+              style: pw.TextStyle(fontSize: fontSizeCorpo + 6, fontWeight: pw.FontWeight.bold),
+              textAlign: pw.TextAlign.center,
+            ),
+          ),
+          pw.SizedBox(height: 4),
+        ],
         pw.SizedBox(height: 3),
         pw.Text(
           formatoData.format(venda.dataVenda),
@@ -922,8 +1096,185 @@ class VendaPDFService {
     );
   }
 
-  /// Constrói informações do cliente térmico
-  static pw.Widget _buildClienteTermico(VendaBalcao venda, double fontSizeCorpo) {
+  /// Constrói informações do cliente térmico (com endereço de delivery destacado para o entregador)
+  static pw.Widget _buildClienteTermico(VendaBalcao venda, double fontSizeCorpo, {bool mostrarEndereco = true}) {
+    final info = venda.deliveryInfo;
+    final String? previsao = info?.previsaoEntrega?.trim();
+    final bool temPrevisao = previsao != null && previsao.isNotEmpty;
+    final DateTime dataPedido = venda.dataVenda;
+
+    if (info != null) {
+      return pw.Column(
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        children: [
+          // Faixa destacada para o entregador (preto, alto contraste)
+          pw.Container(
+            width: double.infinity,
+            padding: const pw.EdgeInsets.symmetric(vertical: 3),
+            decoration: const pw.BoxDecoration(color: PdfColors.black),
+            child: pw.Text(
+              ' *** ENTREGA / DELIVERY ***',
+              style: pw.TextStyle(
+                fontSize: fontSizeCorpo + 2,
+                fontWeight: pw.FontWeight.bold,
+                color: PdfColors.white,
+              ),
+              textAlign: pw.TextAlign.center,
+            ),
+          ),
+          pw.SizedBox(height: 4),
+          pw.Container(
+            padding: const pw.EdgeInsets.all(8),
+            decoration: pw.BoxDecoration(
+              border: pw.Border.all(color: PdfColors.black, width: 2),
+              borderRadius: pw.BorderRadius.circular(4),
+            ),
+            child: pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                // Cliente + telefone bem visíveis para o motoboy
+                pw.Text(
+                  'CLIENTE: ${venda.clienteNome ?? "CONSUMIDOR FINAL"}',
+                  style: pw.TextStyle(
+                    fontSize: fontSizeCorpo + 2,
+                    fontWeight: pw.FontWeight.bold,
+                  ),
+                ),
+                if (venda.clienteTelefone != null && venda.clienteTelefone!.isNotEmpty) ...[
+                  pw.SizedBox(height: 2),
+                  pw.Text(
+                    'TEL: ${venda.clienteTelefone!}',
+                    style: pw.TextStyle(
+                      fontSize: fontSizeCorpo + 2,
+                      fontWeight: pw.FontWeight.bold,
+                    ),
+                  ),
+                ],
+                if (mostrarEndereco) ...[
+                  pw.SizedBox(height: 4),
+                  pw.Text(
+                    'ENDEREÇO DE ENTREGA',
+                    style: pw.TextStyle(
+                      fontSize: fontSizeCorpo + 3,
+                      fontWeight: pw.FontWeight.bold,
+                    ),
+                  ),
+                  pw.SizedBox(height: 4),
+                  pw.Text(
+                    '${info.logradouro}, ${info.numero}',
+                    style: pw.TextStyle(
+                      fontSize: fontSizeCorpo + 3,
+                      fontWeight: pw.FontWeight.bold,
+                    ),
+                  ),
+                  if (info.bairro.isNotEmpty)
+                    pw.Text(
+                      'Bairro: ${info.bairro}',
+                      style: pw.TextStyle(
+                        fontSize: fontSizeCorpo + 1,
+                        fontWeight: pw.FontWeight.bold,
+                      ),
+                    ),
+                  if (info.cidade.isNotEmpty)
+                    pw.Text(
+                      info.uf.isNotEmpty ? '${info.cidade} - ${info.uf}' : info.cidade,
+                      style: pw.TextStyle(
+                        fontSize: fontSizeCorpo + 1,
+                        fontWeight: pw.FontWeight.bold,
+                      ),
+                    ),
+                  if (info.cep != null && info.cep!.isNotEmpty)
+                    pw.Text(
+                      'CEP: ${info.cep}',
+                      style: pw.TextStyle(
+                        fontSize: fontSizeCorpo + 1,
+                        fontWeight: pw.FontWeight.bold,
+                      ),
+                    ),
+                  if (info.observacoes != null && info.observacoes!.isNotEmpty) ...[
+                    pw.SizedBox(height: 2),
+                    pw.Text(
+                      'Obs.: ${info.observacoes}',
+                      style: pw.TextStyle(
+                        fontSize: fontSizeCorpo + 1,
+                        fontWeight: pw.FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                  if (info.taxaEntrega > 0) ...[
+                    pw.SizedBox(height: 2),
+                    pw.Text(
+                      'Taxa entrega: R\$ ${info.taxaEntrega.toStringAsFixed(2)}',
+                      style: pw.TextStyle(
+                        fontSize: fontSizeCorpo + 1,
+                        fontWeight: pw.FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                  if (info.motoristaNome != null && info.motoristaNome!.isNotEmpty)
+                    pw.Text(
+                      'Motorista: ${info.motoristaNome}',
+                      style: pw.TextStyle(
+                        fontSize: fontSizeCorpo + 1,
+                        fontWeight: pw.FontWeight.bold,
+                      ),
+                    ),
+                ],
+                pw.SizedBox(height: 4),
+                pw.Divider(thickness: 1),
+                pw.SizedBox(height: 3),
+                // Horário do pedido e previsão de entrega para o entregador (sempre visíveis)
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Text(
+                      'HORA DO PEDIDO:',
+                      style: pw.TextStyle(
+                        fontSize: fontSizeCorpo + 1,
+                        fontWeight: pw.FontWeight.bold,
+                      ),
+                    ),
+                    pw.Text(
+                      DateFormat('HH:mm').format(dataPedido),
+                      style: pw.TextStyle(
+                        fontSize: fontSizeCorpo + 2,
+                        fontWeight: pw.FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+                if (temPrevisao) ...[
+                    pw.SizedBox(height: 2),
+                    pw.Row(
+                      mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                      children: [
+                        pw.Text(
+                          'PREVISÃO ENTREGA:',
+                          style: pw.TextStyle(
+                            fontSize: fontSizeCorpo + 1,
+                            fontWeight: pw.FontWeight.bold,
+                          ),
+                        ),
+                        pw.Text(
+                          previsao,
+                          style: pw.TextStyle(
+                            fontSize: fontSizeCorpo + 2,
+                            fontWeight: pw.FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+              ],
+            ),
+          ),
+          pw.SizedBox(height: 4),
+          pw.Divider(thickness: 1),
+        ],
+      );
+    }
+
+    // Sem entrega: cliente simples (como antes)
     if (venda.clienteNome == null || venda.clienteNome!.isEmpty) {
       return pw.Column(
         crossAxisAlignment: pw.CrossAxisAlignment.start,
@@ -999,6 +1350,16 @@ class VendaPDFService {
                     ),
                   ],
                 ),
+                if (item.descontoPromocionalPercent != null)
+                  pw.Text(
+                    '${item.descontoPromocionalPercent!.toStringAsFixed(0)}% promocional · -${formatoMoeda.format(item.descontoPromocionalValor!)}',
+                    style: pw.TextStyle(fontSize: fontSizeCorpo - 1, color: PdfColors.orange),
+                  ),
+                if (item.descontoTabelaUnitario > 0)
+                  pw.Text(
+                    'Desconto tabela: -${formatoMoeda.format(item.descontoTabelaUnitario * item.quantidade)}',
+                    style: pw.TextStyle(fontSize: fontSizeCorpo - 1, color: PdfColors.green700),
+                  ),
               ],
             ),
           );
@@ -1011,10 +1372,12 @@ class VendaPDFService {
 
   /// Constrói seção de descontos térmico
   static pw.Widget _buildDescontosTermico(VendaBalcao venda, NumberFormat formatoMoeda, double fontSizeCorpo) {
-    // Calcular subtotal sem desconto
+    // Calcular subtotal sem desconto (usa o preço de tabela quando houver
+    // desconto do perfil de preços aplicado no PDV)
     final subtotalSemDesconto = venda.itens.fold(
       0.0,
-      (sum, item) => sum + (item.precoUnitario * item.quantidade),
+      (sum, item) =>
+          sum + ((item.precoTabela ?? item.precoUnitario) * item.quantidade),
     );
     
     // Calcular desconto total
@@ -1196,58 +1559,13 @@ class VendaPDFService {
   }
 
   /// Constrói seção de entrega térmico
+  /// Constrói seção de troco da entrega térmico (o endereço destacado vai no bloco do cliente)
   static pw.Widget _buildDeliveryTermico(VendaBalcao venda, double fontSizeCorpo) {
     final info = venda.deliveryInfo!;
     final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
-        pw.Row(
-          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-          children: [
-            pw.Text(
-              'ENTREGA',
-              style: pw.TextStyle(
-                fontSize: fontSizeCorpo + 1,
-                fontWeight: pw.FontWeight.bold,
-              ),
-            ),
-            pw.Text(
-              info.status.toUpperCase(),
-              style: pw.TextStyle(
-                fontSize: fontSizeCorpo,
-                fontWeight: pw.FontWeight.bold,
-              ),
-            ),
-          ],
-        ),
-        pw.SizedBox(height: 4),
-        pw.Text(
-          'Endereço: ${info.logradouro}, ${info.numero}',
-          style: pw.TextStyle(fontSize: fontSizeCorpo, fontWeight: pw.FontWeight.bold),
-        ),
-        pw.Text(
-          'Bairro: ${info.bairro}',
-          style: pw.TextStyle(fontSize: fontSizeCorpo),
-        ),
-        pw.Text(
-          'Cidade/UF: ${info.cidade} - ${info.uf}',
-          style: pw.TextStyle(fontSize: fontSizeCorpo),
-        ),
-        if (info.taxaEntrega > 0) ...[
-          pw.SizedBox(height: 3),
-          pw.Text(
-            'Taxa: R\$ ${info.taxaEntrega.toStringAsFixed(2)}',
-            style: pw.TextStyle(fontSize: fontSizeCorpo, fontWeight: pw.FontWeight.bold),
-          ),
-        ],
-        if (info.motoristaNome != null && info.motoristaNome!.isNotEmpty) ...[
-          pw.SizedBox(height: 3),
-          pw.Text(
-            'Motorista: ${info.motoristaNome}',
-            style: pw.TextStyle(fontSize: fontSizeCorpo),
-          ),
-        ],
         if (info.valorParaTroco > 0) ...[
           pw.SizedBox(height: 4),
           pw.Row(
@@ -1276,9 +1594,9 @@ class VendaPDFService {
               ),
             ],
           ),
+          pw.SizedBox(height: 5),
+          pw.Divider(thickness: 1),
         ],
-        pw.SizedBox(height: 5),
-        pw.Divider(thickness: 1),
       ],
     );
   }
@@ -1327,85 +1645,45 @@ class VendaPDFService {
     );
   }
 
-  /// Helper para preview de PDF
-  static Future<void> _showPdfPreview(BuildContext context, Uint8List pdfBytes, String fileName, {bool isTermico = false}) async {
-    await showDialog(
-      context: context,
-      builder: (context) => Dialog(
-        backgroundColor: Colors.transparent,
-        child: Container(
-          width: MediaQuery.of(context).size.width * 0.8,
-          height: MediaQuery.of(context).size.height * 0.9,
-          clipBehavior: Clip.antiAlias,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: Column(
-            children: [
-              AppBar(
-                title: const Text('Pré-visualização de Impressão', style: TextStyle(color: Colors.white)),
-                backgroundColor: const Color(0xFF1E1E2E),
-                iconTheme: const IconThemeData(color: Colors.white),
-                leading: IconButton(
-                  icon: const Icon(Icons.close),
-                  onPressed: () => Navigator.pop(context),
-                ),
-              ),
-              Expanded(
-                child: PdfPreview(
-                  build: (format) async => pdfBytes,
-                  pdfFileName: '$fileName.pdf',
-                  canChangePageFormat: false,
-                  canChangeOrientation: false,
-                  allowPrinting: true,
-                  allowSharing: true,
-                  maxPageWidth: isTermico ? 320.0 : null,
-                  dpi: isTermico ? 200.0 : null,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// Imprime o PDF da venda
+  /// Imprime o PDF da venda (A4)
   static Future<void> imprimirPDF({
     required VendaBalcao venda,
     required Empresa empresa,
     BuildContext? context,
+    bool forcarPreview = false,
   }) async {
     try {
       final pdfBytes = await gerarPDF(venda: venda, empresa: empresa);
-      if (context != null) {
-        await _showPdfPreview(context, pdfBytes, 'Venda_${venda.numero}', isTermico: false);
-      } else {
-        await Printing.layoutPdf(
-          onLayout: (PdfPageFormat format) async => pdfBytes,
-        );
-      }
+      await ImpressaoService.imprimirPdf(
+        bytes: pdfBytes,
+        empresa: empresa,
+        name: 'Venda_${venda.numero}',
+        termico: false,
+        context: context,
+        forcarPreview: forcarPreview,
+      );
     } catch (e) {
       throw Exception('Erro ao imprimir PDF: $e');
     }
   }
 
-  /// Imprime o cupom não fiscal em formato térmico (80mm)
+  /// Imprime o cupom não fiscal em formato térmico (80mm) — preferência: direto na impressora
   static Future<void> imprimirPDFTermico({
     required VendaBalcao venda,
     required Empresa empresa,
     BuildContext? context,
+    bool forcarPreview = false,
   }) async {
     try {
       final pdfBytes = await gerarPDFTermico(venda: venda, empresa: empresa);
-      if (context != null) {
-        await _showPdfPreview(context, pdfBytes, 'Venda_Termico_${venda.numero}', isTermico: true);
-      } else {
-        await Printing.layoutPdf(
-          onLayout: (PdfPageFormat format) async => pdfBytes,
-        );
-      }
+      await ImpressaoService.imprimirPdf(
+        bytes: pdfBytes,
+        empresa: empresa,
+        name: 'Cupom_Nao_Fiscal_${venda.numero}',
+        termico: true,
+        context: context,
+        forcarPreview: forcarPreview,
+      );
     } catch (e) {
       throw Exception('Erro ao imprimir cupom não fiscal térmico: $e');
     }

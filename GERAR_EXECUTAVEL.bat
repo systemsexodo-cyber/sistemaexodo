@@ -10,7 +10,9 @@ cd backend_nfce
 
 echo [1/3] Preparando ambiente...
 :: Tentar usar o venv se existir
-if exist "..\.venv\Scripts\python.exe" (
+if exist "venv\Scripts\python.exe" (
+    set PYTHON_EXE=venv\Scripts\python.exe
+) else if exist "..\.venv\Scripts\python.exe" (
     set PYTHON_EXE=..\.venv\Scripts\python.exe
 ) else (
     set PYTHON_EXE=python

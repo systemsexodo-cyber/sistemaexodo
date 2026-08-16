@@ -61,6 +61,12 @@ class ItemVenda(BaseModel):
     icms_cst: Optional[str] = "00"
     icms_origem: Optional[int] = 0
     icms_aliquota: Optional[float] = 0.0
+    # Destaque de ICMS / Crédito Simples Nacional (NT 2025.002) — enviados pelo app
+    icms_base_calculo: Optional[float] = None
+    icms_valor: Optional[float] = None
+    icms_reducao_bc: Optional[float] = None
+    credito_aliquota: Optional[float] = None
+    credito_valor: Optional[float] = None
 
 class RequisicaoEmissao(BaseModel):
     empresa: ConfigEmpresa
@@ -71,6 +77,7 @@ class RequisicaoEmissao(BaseModel):
 
 # --- ENDPOINTS ---
 
+@app.post("/api/nfce/emitir")
 @app.post("/emitir")
 async def emitir(req: RequisicaoEmissao):
     try:
@@ -79,6 +86,7 @@ async def emitir(req: RequisicaoEmissao):
     except Exception as e:
         return {"status": "erro", "mensagem": str(e)}
 
+@app.post("/api/nfce/cancelar")
 @app.post("/cancelar")
 async def cancelar(req: Request):
     try:
@@ -88,7 +96,26 @@ async def cancelar(req: Request):
     except Exception as e:
         return {"success": False, "error": str(e)}
 
+@app.post("/api/nfce/consultar")
+async def consultar(req: Request):
+    try:
+        data = await req.json()
+        resultado = consultar_nfce_pynfe(data)
+        return resultado
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/certificado/validar")
+async def validar_certificado(req: Request):
+    try:
+        data = await req.json()
+        resultado = validar_certificado_pynfe(data)
+        return resultado
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
 @app.get("/health")
+@app.get("/api/nfce/health")
 async def health():
     return {
         "status": "online", 

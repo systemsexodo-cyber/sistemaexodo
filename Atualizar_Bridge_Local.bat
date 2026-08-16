@@ -17,8 +17,13 @@ timeout /t 2 /nobreak >nul
 
 echo === Atualizando Versao do Bridge ===
 cd /d "%~dp0"
+if exist "backend_nfce\venv\Scripts\python.exe" (
+    set PYTHON_EXE=backend_nfce\venv\Scripts\python.exe
+) else (
+    set PYTHON_EXE=python
+)
 echo Construindo novo executavel...
-pyinstaller ExodoNfceBridge.spec --noconfirm
+%PYTHON_EXE% -m PyInstaller ExodoNfceBridge.spec --noconfirm
 
 if exist "dist\ExodoNfceBridge.exe" (
     echo Movendo novo executavel...

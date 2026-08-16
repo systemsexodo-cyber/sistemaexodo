@@ -20,7 +20,7 @@ class TaxaEntrega {
 
   factory TaxaEntrega.fromMap(Map<String, dynamic> map) {
     return TaxaEntrega(
-      id: map['id'] ?? '',
+      id: map['id']?.toString() ?? '',
       bairro: map['bairro'] ?? '',
       valor: map['valor'] is num 
           ? (map['valor'] as num).toDouble() 

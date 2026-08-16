@@ -76,7 +76,7 @@ class EventoEntrega {
 
   factory EventoEntrega.fromMap(Map<String, dynamic> map) {
     return EventoEntrega(
-      id: map['id'] ?? '',
+      id: map['id']?.toString() ?? '',
       dataHora: DateTime.parse(map['dataHora']),
       status: StatusEntrega.values.firstWhere(
         (s) => s.name == map['status'],
@@ -207,7 +207,7 @@ class Entrega {
   }
   factory Entrega.fromMap(Map<String, dynamic> map) {
     return Entrega(
-      id: map['id'] ?? '',
+      id: map['id']?.toString() ?? '',
       pedidoId: map['pedidoId'] ?? '',
       pedidoNumero: map['pedidoNumero'],
       clienteNome: map['clienteNome'] ?? '',

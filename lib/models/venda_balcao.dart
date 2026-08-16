@@ -1,6 +1,7 @@
 import 'package:sistema_exodo_novo/models/forma_pagamento.dart';
 import 'package:sistema_exodo_novo/models/adicional_produto.dart';
 import 'package:sistema_exodo_novo/models/delivery_info.dart';
+import 'package:sistema_exodo_novo/models/pergunta_selecao.dart';
 import 'package:sistema_exodo_novo/utils/date_parser.dart';
 
 /// Item de uma venda de balcão
@@ -15,7 +16,15 @@ class ItemVendaBalcao {
   final String? trocadoPor; // ID do produto que substituiu este em uma troca
   final String? fornecedorNome; // Fornecedor do produto no momento da venda
   final String? observacao;
+  final double? precoOriginal; // Preço de tabela/cadastro antes de qualquer alteração no PDV
+  final double? precoSemPromocao; // Preço base ANTES das promoções (para exibir o desconto no cupom)
+  final double? precoTabela; // Preço de tabela SEM o desconto do perfil de preços (para exibir o desconto no cupom/NFC-e)
   final List<AdicionalProduto> adicionais;
+  final List<OpcaoPerguntaSelecao> opcoesCombo;
+  final bool baixaProporcional; // true = baixa pela conversão do saco; false = baixa a quantidade inteira no ingrediente
+  // Forma de venda escolhida no PDV (unidade/caixa/pacote/saco) e sua baixa
+  final String? unidadeVenda;
+  final double? quantidadeBaixa;
 
   ItemVendaBalcao({
     required this.id,
@@ -28,8 +37,51 @@ class ItemVendaBalcao {
     this.trocadoPor,
     this.fornecedorNome,
     this.observacao,
+    this.precoOriginal,
+    this.precoSemPromocao,
+    this.precoTabela,
     List<AdicionalProduto>? adicionais,
-  }) : adicionais = adicionais ?? [];
+    List<OpcaoPerguntaSelecao>? opcoesCombo,
+    this.baixaProporcional = true,
+    this.unidadeVenda,
+    this.quantidadeBaixa,
+  }) : adicionais = adicionais ?? [],
+       opcoesCombo = opcoesCombo ?? [];
+
+  /// Verifica se o preço do item foi alterado no momento da venda
+  bool get tevePrecoAlterado => precoOriginal != null && (precoUnitario - precoOriginal!).abs() > 0.001;
+  
+  /// Verifica se foi vendido por um valor menor que o cadastrado
+  bool get foiVendidoMenor => tevePrecoAlterado && precoUnitario < precoOriginal!;
+  
+  /// Verifica se foi vendido por um valor maior que o cadastrado
+  bool get foiVendidoMaior => tevePrecoAlterado && precoUnitario > precoOriginal!;
+  
+  /// Diferença de valor em R$ (positivo = acréscimo, negativo = desconto)
+  double get diferencaPreco => precoOriginal != null ? (precoUnitario - precoOriginal!) : 0.0;
+
+  /// Desconto (R\$) do perfil de preços por unidade (preço de tabela − preço
+  /// vendido, excluindo a parcela promocional já exibida separadamente).
+  /// Só é considerado desconto quando o preço vendido é MENOR que o de tabela.
+  double get descontoTabelaUnitario {
+    final baseComparada = precoSemPromocao ?? precoUnitario;
+    if (precoTabela == null || precoTabela! <= baseComparada + 0.001) return 0.0;
+    return precoTabela! - baseComparada;
+  }
+
+  /// Percentual do desconto promocional aplicado no item (null se não houver).
+  double? get descontoPromocionalPercent {
+    if (precoSemPromocao == null || precoSemPromocao! <= precoUnitario + 0.001) {
+      return null;
+    }
+    return (precoSemPromocao! - precoUnitario) / precoSemPromocao! * 100;
+  }
+
+  /// Valor (R\$) do desconto promocional aplicado no item (null se não houver).
+  double? get descontoPromocionalValor {
+    final pct = descontoPromocionalPercent;
+    return pct == null ? null : precoSemPromocao! - precoUnitario;
+  }
 
   /// Quantidade efetiva (descontando devoluções e trocas)
   double get quantidadeEfetiva =>
@@ -44,13 +96,15 @@ class ItemVendaBalcao {
 
   double get subtotal {
     final totalAdicionais = adicionais.fold(0.0, (sum, a) => sum + a.preco);
-    return (precoUnitario + totalAdicionais) * quantidade;
+    final totalCombo = opcoesCombo.fold(0.0, (sum, o) => sum + o.precoAdicional);
+    return (precoUnitario + totalAdicionais + totalCombo) * quantidade;
   }
 
   /// Subtotal efetivo (descontando devoluções)
   double get subtotalEfetivo {
     final totalAdicionais = adicionais.fold(0.0, (sum, a) => sum + a.preco);
-    return (precoUnitario + totalAdicionais) * quantidadeEfetiva;
+    final totalCombo = opcoesCombo.fold(0.0, (sum, o) => sum + o.precoAdicional);
+    return (precoUnitario + totalAdicionais + totalCombo) * quantidadeEfetiva;
   }
 
   factory ItemVendaBalcao.fromMap(Map<String, dynamic> map) {
@@ -64,7 +118,7 @@ class ItemVendaBalcao {
     final get = (String c, String s) => map[c] ?? map[s];
     
     return ItemVendaBalcao(
-      id: map['id'] ?? '',
+      id: map['id']?.toString() ?? '',
       nome: map['nome'] ?? '',
       precoUnitario: parseDouble(get('precoUnitario', 'preco_unitario')) ?? 0.0,
       quantidade: parseDouble(get('quantidade', 'quantidade')) ?? 1.0,
@@ -74,9 +128,18 @@ class ItemVendaBalcao {
       trocadoPor: get('trocadoPor', 'trocado_por'),
       fornecedorNome: get('fornecedorNome', 'fornecedor_nome'),
       observacao: map['observacao'],
+      precoOriginal: parseDouble(get('precoOriginal', 'preco_original')),
+      precoSemPromocao: parseDouble(get('precoSemPromocao', 'preco_sem_promocao')),
+      precoTabela: parseDouble(get('precoTabela', 'preco_tabela')),
       adicionais: (getList('adicionais', 'adicionais', map) as List<dynamic>?)
           ?.map((a) => AdicionalProduto.fromMap(a as Map<String, dynamic>))
           .toList() ?? [],
+      opcoesCombo: (getList('opcoesCombo', 'opcoes_combo', map) as List<dynamic>?)
+          ?.map((o) => OpcaoPerguntaSelecao.fromMap(o as Map<String, dynamic>))
+          .toList() ?? [],
+      baixaProporcional: (get('baixaProporcional', 'baixa_proporcional') ?? true) == true,
+      unidadeVenda: get('unidadeVenda', 'unidade_venda'),
+      quantidadeBaixa: parseDouble(get('quantidadeBaixa', 'quantidade_baixa')),
     );
   }
 
@@ -94,7 +157,14 @@ class ItemVendaBalcao {
       'trocado_por': trocadoPor,
       'fornecedor_nome': fornecedorNome,
       'observacao': observacao,
+      'preco_original': precoOriginal,
+      'preco_sem_promocao': precoSemPromocao,
+      'preco_tabela': precoTabela,
       'adicionais': adicionais.map((a) => a.toMap()).toList(),
+      'opcoes_combo': opcoesCombo.map((o) => o.toMap()).toList(),
+      'baixa_proporcional': baixaProporcional,
+      'unidade_venda': unidadeVenda,
+      'quantidade_baixa': quantidadeBaixa,
     };
   }
 
@@ -110,7 +180,11 @@ class ItemVendaBalcao {
     String? trocadoPor,
     String? fornecedorNome,
     String? observacao,
+    double? precoOriginal,
+    double? precoSemPromocao,
+    double? precoTabela,
     List<AdicionalProduto>? adicionais,
+    List<OpcaoPerguntaSelecao>? opcoesCombo,
   }) {
     return ItemVendaBalcao(
       id: id ?? this.id,
@@ -123,7 +197,11 @@ class ItemVendaBalcao {
       trocadoPor: trocadoPor ?? this.trocadoPor,
       fornecedorNome: fornecedorNome ?? this.fornecedorNome,
       observacao: observacao ?? this.observacao,
+      precoOriginal: precoOriginal ?? this.precoOriginal,
+      precoSemPromocao: precoSemPromocao ?? this.precoSemPromocao,
+      precoTabela: precoTabela ?? this.precoTabela,
       adicionais: adicionais ?? this.adicionais,
+      opcoesCombo: opcoesCombo ?? this.opcoesCombo,
     );
   }
 }
@@ -138,7 +216,8 @@ class VendaBalcao {
   final String? clienteTelefone;
   final String? clienteCpfCnpj;
   final List<ItemVendaBalcao> itens;
-  final TipoPagamento tipoPagamento;
+  final TipoPagamento tipoPagamento; // Forma principal (primeira) — mantida por compatibilidade
+  final List<PagamentoPedido> pagamentos; // Todas as formas de pagamento (split/parcial)
   final double valorTotal;
   final double? valorRecebido;
   final double? troco;
@@ -150,6 +229,8 @@ class VendaBalcao {
   final bool cancelado; // Indica se a venda foi cancelada
   final DeliveryInfo? deliveryInfo; // Informações de entrega
   final DateTime createdAt;
+  final DateTime updatedAt;
+  final String? senha; // Senha de atendimento/fila do pedido
 
   VendaBalcao({
     required this.id,
@@ -161,6 +242,7 @@ class VendaBalcao {
     this.clienteCpfCnpj,
     required this.itens,
     required this.tipoPagamento,
+    List<PagamentoPedido>? pagamentos,
     required this.valorTotal,
     this.valorRecebido,
     this.troco,
@@ -172,7 +254,11 @@ class VendaBalcao {
     this.cancelado = false,
     this.deliveryInfo,
     DateTime? createdAt,
-  }) : createdAt = createdAt ?? DateTime.now();
+    DateTime? updatedAt,
+    this.senha,
+  })  : pagamentos = pagamentos ?? [],
+        createdAt = createdAt ?? DateTime.now(),
+        updatedAt = updatedAt ?? createdAt ?? DateTime.now();
 
   // Quantidade total de itens
   double get quantidadeItens =>
@@ -202,8 +288,11 @@ class VendaBalcao {
 
     final tipoPagamentoStr = getStr('tipoPagamento', 'tipo_pagamento') ?? 'dinheiro';
 
+    final createdDate = DateParser.parse(map['created_at'] ?? map['createdAt']);
+    final updatedDateRaw = map['updated_at'] ?? map['updatedAt'];
+
     return VendaBalcao(
-      id: map['id'] ?? '',
+      id: map['id']?.toString() ?? '',
       numero: map['numero'] ?? '',
       dataVenda: DateParser.parse(map['data_venda'] ?? map['dataVenda']),
       clienteId: getStr('clienteId', 'cliente_id'),
@@ -217,6 +306,9 @@ class VendaBalcao {
         (t) => t.name == tipoPagamentoStr,
         orElse: () => TipoPagamento.dinheiro,
       ),
+      pagamentos: (getList('pagamentos', 'pagamentos') ?? [])
+          .map((p) => PagamentoPedido.fromMap(p as Map<String, dynamic>))
+          .toList(),
       valorTotal: (getNum('valorTotal', 'valor_total') ?? 0).toDouble(),
       valorRecebido: getNum('valorRecebido', 'valor_recebido')?.toDouble(),
       troco: getNum('troco', 'troco')?.toDouble(),
@@ -229,21 +321,28 @@ class VendaBalcao {
       deliveryInfo: getMap('deliveryInfo', 'delivery_info') != null
           ? DeliveryInfo.fromMap(getMap('deliveryInfo', 'delivery_info')! as Map<String, dynamic>)
           : null,
-      createdAt: DateParser.parse(map['created_at'] ?? map['createdAt']),
+      createdAt: createdDate,
+      updatedAt: updatedDateRaw != null ? DateParser.parse(updatedDateRaw) : createdDate,
+      senha: getStr('senha', 'senha'),
     );
   }
 
   Map<String, dynamic> toMap() {
+    // Serializar datas em UTC (sufixo Z) para evitar ambiguidade: o Postgres
+    // interpreta string sem fuso como UTC e o DateParser como hora LOCAL,
+    // deslocando vendas/caixas em -3h. Com Z, ambos usam o mesmo instante.
+    String iso(DateTime d) => d.toUtc().toIso8601String();
     return {
       'id': id,
       'numero': numero,
-      'data_venda': dataVenda.toIso8601String(),
+      'data_venda': iso(dataVenda),
       'cliente_id': clienteId,
       'cliente_nome': clienteNome,
       'cliente_telefone': clienteTelefone,
       'cliente_cpf_cnpj': clienteCpfCnpj,
       'itens': itens.map((i) => i.toMap()).toList(),
       'tipo_pagamento': tipoPagamento.name,
+      'pagamentos': pagamentos.map((p) => p.toMap()).toList(),
       'valor_total': valorTotal,
       'valor_recebido': valorRecebido,
       'troco': troco,
@@ -254,7 +353,9 @@ class VendaBalcao {
       'observacoes': observacoes,
       'cancelado': cancelado,
       'delivery_info': deliveryInfo?.toMap(),
-      'created_at': createdAt.toIso8601String(),
+      'created_at': iso(createdAt),
+      'updated_at': iso(updatedAt),
+      'senha': senha,
     };
   }
 
@@ -269,6 +370,7 @@ class VendaBalcao {
     String? clienteCpfCnpj,
     List<ItemVendaBalcao>? itens,
     TipoPagamento? tipoPagamento,
+    List<PagamentoPedido>? pagamentos,
     double? valorTotal,
     double? valorRecebido,
     double? troco,
@@ -279,6 +381,8 @@ class VendaBalcao {
     String? observacoes,
     bool? cancelado,
     DateTime? createdAt,
+    DateTime? updatedAt,
+    String? senha,
   }) {
     return VendaBalcao(
       id: id ?? this.id,
@@ -290,6 +394,7 @@ class VendaBalcao {
       clienteCpfCnpj: clienteCpfCnpj ?? this.clienteCpfCnpj,
       itens: itens ?? this.itens,
       tipoPagamento: tipoPagamento ?? this.tipoPagamento,
+      pagamentos: pagamentos ?? this.pagamentos,
       valorTotal: valorTotal ?? this.valorTotal,
       valorRecebido: valorRecebido ?? this.valorRecebido,
       troco: troco ?? this.troco,
@@ -301,6 +406,8 @@ class VendaBalcao {
       cancelado: cancelado ?? this.cancelado,
       deliveryInfo: deliveryInfo ?? this.deliveryInfo,
       createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      senha: senha ?? this.senha,
     );
   }
 }

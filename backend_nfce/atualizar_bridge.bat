@@ -29,8 +29,8 @@ taskkill /F /IM ExodoNfceBridgeWatchdog.exe >nul 2>&1
 timeout /t 2 /nobreak >nul
 
 echo Copiando versao nova...
-copy /Y backend_nfce\dist\ExodoNfceBridge_v340.exe ExodoNfceBridge.exe
-copy /Y backend_nfce\dist\ExodoNfceBridgeWatchdog_v340.exe ExodoNfceBridgeWatchdog.exe
+copy /Y backend_nfce\dist\ExodoNfceBridge_v355.exe ExodoNfceBridge.exe
+copy /Y backend_nfce\dist\ExodoNfceBridgeWatchdog_v355.exe ExodoNfceBridgeWatchdog.exe
 
 
 echo Iniciando novo Bridge...

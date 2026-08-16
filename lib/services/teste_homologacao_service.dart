@@ -5,10 +5,10 @@ import 'nfce_service.dart';
 
 /// Serviço para testes em ambiente de homologação
 class TesteHomologacaoService {
-  final NFCeService _nfceService;
+  final NfceService _nfceService;
 
   TesteHomologacaoService({
-    required NFCeService nfceService,
+    required NfceService nfceService,
   }) : _nfceService = nfceService;
 
   /// Executa teste básico de emissão em homologação
@@ -48,7 +48,7 @@ class TesteHomologacaoService {
       }
 
       // Tentar emitir NFC-e
-      final nfce = await _nfceService.emitir(
+      final nfce = await _nfceService.emitirNfce(
         empresa: empresa,
         produtos: produtos,
         quantidades: quantidades,

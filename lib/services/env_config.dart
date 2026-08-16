@@ -13,8 +13,18 @@ class EnvConfig {
   static Map<String, String> _loadEnv() {
     final values = <String, String>{};
     try {
-      // Procurar pelo arquivo .env no diretório de execução (CWD)
-      final file = File('.env');
+      var file = File('.env');
+      
+      if (!file.existsSync() && !kIsWeb) {
+        try {
+          final exeDir = File(Platform.resolvedExecutable).parent;
+          final fallbackFile = File('${exeDir.path}${Platform.pathSeparator}.env');
+          if (fallbackFile.existsSync()) {
+            file = fallbackFile;
+          }
+        } catch (_) {}
+      }
+
       if (file.existsSync()) {
         final lines = file.readAsLinesSync();
         for (var line in lines) {

@@ -17,6 +17,7 @@ class DeliveryInfo {
   final DateTime? dataEntrega;
   final DateTime? dataPedido;
   final String? observacoes;
+  final String? previsaoEntrega; // Previsão de entrega informada (ex: "30-45 min" ou "18:30")
 
   DeliveryInfo({
     required this.id,
@@ -36,6 +37,7 @@ class DeliveryInfo {
     this.dataEntrega,
     this.dataPedido,
     this.observacoes,
+    this.previsaoEntrega,
   });
 
   String get enderecoCompleto => '$logradouro, $numero - $bairro, $cidade/$uf';
@@ -59,6 +61,7 @@ class DeliveryInfo {
       dataEntrega: map['dataEntrega'] != null ? DateTime.parse(map['dataEntrega']) : null,
       dataPedido: map['dataPedido'] != null ? DateTime.parse(map['dataPedido']) : null,
       observacoes: map['observacoes']?.toString(),
+      previsaoEntrega: map['previsaoEntrega']?.toString() ?? map['previsao_entrega']?.toString(),
     );
   }
 
@@ -81,6 +84,7 @@ class DeliveryInfo {
       'dataEntrega': dataEntrega?.toIso8601String(),
       'dataPedido': dataPedido?.toIso8601String(),
       'observacoes': observacoes,
+      'previsaoEntrega': previsaoEntrega,
     };
   }
 
@@ -102,6 +106,7 @@ class DeliveryInfo {
     DateTime? dataEntrega,
     DateTime? dataPedido,
     String? observacoes,
+    String? previsaoEntrega,
   }) {
     return DeliveryInfo(
       id: id ?? this.id,
@@ -121,6 +126,7 @@ class DeliveryInfo {
       dataEntrega: dataEntrega ?? this.dataEntrega,
       dataPedido: dataPedido ?? this.dataPedido,
       observacoes: observacoes ?? this.observacoes,
+      previsaoEntrega: previsaoEntrega ?? this.previsaoEntrega,
     );
   }
 }

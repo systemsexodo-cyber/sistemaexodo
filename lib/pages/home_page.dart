@@ -13,10 +13,14 @@ import 'package:sistema_exodo_novo/widgets/tela_access_widget.dart';
 import 'package:sistema_exodo_novo/models/tela_sistema.dart';
 import 'produtos_page.dart';
 import 'servicos_page.dart';
+import 'cadastro_perfis_tributarios_page.dart';
+import 'cadastro_departamentos_page.dart';
+
 import 'pedidos_page.dart';
 import 'venda_direta_page.dart';
 import 'entrada_mercadorias_page.dart';
 import 'contas_pagar_page.dart';
+import 'contas_receber_page.dart';
 import 'agenda_contas_page.dart';
 import 'dashboard_page.dart';
 import 'gerenciar_permissoes_page.dart';
@@ -49,8 +53,9 @@ import '../services/bridge_manager_service.dart';
 import '../services/sincronizador_manager_service.dart';
 import 'motoristas_page.dart';
 import 'romaneios_page.dart';
-
-
+import 'nfe_page.dart';
+import 'bloqueio_mensalidade_page.dart';
+import '../models/empresa.dart';
 // Import condicional para Web
 import 'html_helper_stub.dart' if (dart.library.html) 'html_helper_web.dart' as html_helper;
 
@@ -112,6 +117,24 @@ class _HomePageState extends State<HomePage> {
         'page': (BuildContext context) => ProdutosPage(),
       },
       {
+        'id': 'impostos',
+        'title': 'Impostos',
+        'subtitle': 'Perfis Tributários',
+        'icon': Icons.gavel,
+        'color': Colors.amberAccent,
+        'tela': TelaSistema.produtos, // reutiliza permissão de produtos por simplicidade
+        'page': (BuildContext context) => const CadastroPerfisTributariosPage(),
+      },
+      {
+        'id': 'departamentos',
+        'title': 'Departamentos',
+        'subtitle': 'Cozinha, Bar e outros',
+        'icon': Icons.food_bank_outlined,
+        'color': Colors.orangeAccent,
+        'tela': TelaSistema.cozinhaBar,
+        'page': (BuildContext context) => const CadastroDepartamentosPage(),
+      },
+      {
         'id': 'servicos',
         'title': 'Serviços',
         'icon': Icons.build,
@@ -144,6 +167,7 @@ class _HomePageState extends State<HomePage> {
         'icon': Icons.account_balance_wallet,
         'color': const Color(0xFF4DB6AC),
         'tela': TelaSistema.caixa,
+        'permissao': TipoPermissao.caixaVerFluxoCaixa,
         'page': (BuildContext context) => const CaixaPage(),
       },
       {
@@ -170,6 +194,15 @@ class _HomePageState extends State<HomePage> {
         'color': const Color(0xFFD32F2F),
         'tela': TelaSistema.contasPagar,
         'page': (BuildContext context) => const ContasPagarPage(),
+      },
+      {
+        'id': 'contas_receber',
+        'title': 'Contas a Receber',
+        'subtitle': 'Recebíveis',
+        'icon': Icons.move_to_inbox,
+        'color': const Color(0xFF2E7D32),
+        'tela': TelaSistema.contasReceber,
+        'page': (BuildContext context) => const ContasReceberPage(),
       },
       {
         'id': 'agenda_contas',
@@ -216,6 +249,14 @@ class _HomePageState extends State<HomePage> {
         'icon': Icons.chat_bubble_outline,
         'color': const Color(0xFF25D366),
         'page': (BuildContext context) => const WhatsAppGerenciamentoPage(),
+      },
+      {
+        'id': 'nfe',
+        'title': 'Emissor NF-e',
+        'subtitle': 'Modelo 55',
+        'icon': Icons.description_outlined,
+        'color': Colors.blueAccent,
+        'page': (BuildContext context) => const NfePage(),
       },
     ];
   }
@@ -368,10 +409,48 @@ class _HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
+    final dataService = Provider.of<DataService>(context);
+    final authService = Provider.of<AuthService>(context);
+    final usuarioLogado = authService.usuarioAtual;
+    dataService.responsavelAtivo = usuarioLogado?.email ?? usuarioLogado?.nome;
+
+    final empresaAtual = dataService.empresaAtual ?? authService.empresaAtual;
+    final isMaster = usuarioLogado?.isMaster == true || usuarioLogado?.email.toLowerCase() == 'user';
+
+    if (empresaAtual != null) {
+      final motivo = empresaAtual.verificarMotivoBloqueio(
+        ultimaValidacaoOnline: dataService.ultimaValidacaoOnline,
+        ultimaDataExecucao: dataService.ultimaDataExecucao,
+        limiteDiasOffline: 5,
+      );
+      if (motivo != MotivoBloqueioEmpresa.nenhum && !dataService.liberacaoProvisoriaAtiva) {
+        return BloqueioMensalidadePage(
+          configs: empresaAtual.configuracoes ?? {},
+          motivoBloqueio: motivo,
+        );
+      }
+    }
+
     return AppTheme.appBackground(
       child: Scaffold(
         backgroundColor: Colors.transparent,
         appBar: AppBar(
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            tooltip: 'Voltar',
+            // Na tela do Dashboard (página 1 do PageView) volta para o menu Home;
+            // na Home, tenta voltar na pilha de navegação (Home é rota raiz, então vira no-op).
+            onPressed: () {
+              if (_currentPage == 1) {
+                _pageController.previousPage(
+                  duration: const Duration(milliseconds: 300),
+                  curve: Curves.easeInOut,
+                );
+              } else {
+                Navigator.of(context).maybePop();
+              }
+            },
+          ),
           title: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -634,20 +713,26 @@ class _HomePageState extends State<HomePage> {
                 
                 final isUser = usuarioAtual.email.toLowerCase() == 'user';
                 
-                return IconButton(
-                  icon: Icon(
-                    Icons.security,
-                    color: isUser ? Colors.blue : Colors.amber,
-                  ),
-                  tooltip: isUser 
-                      ? 'Gerenciar Permissões (User - Todas as Empresas)'
-                      : 'Gerenciar Permissões (Master - Todas as Empresas)',
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (context) => const GerenciarPermissoesPage()),
-                    );
-                  },
+                return Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+
+                    IconButton(
+                      icon: Icon(
+                        Icons.security,
+                        color: isUser ? Colors.blue : Colors.amber,
+                      ),
+                      tooltip: isUser 
+                          ? 'Gerenciar Permissoes (User - Todas as Empresas)'
+                          : 'Gerenciar Permissoes (Master - Todas as Empresas)',
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (context) => const GerenciarPermissoesPage()),
+                        );
+                      },
+                    ),
+                  ],
                 );
               },
             ),
@@ -828,6 +913,7 @@ class _HomePageState extends State<HomePage> {
       case 'contas-pagar': page = const ContasPagarPage(); urlPath = '/contas-pagar'; break;
       case 'agenda-contas': page = const AgendaContasPage(); urlPath = '/agenda-contas'; break;
       case 'cozinha-bar': page = const CozinhaBarPage(); urlPath = '/cozinha-bar'; break;
+      case 'departamentos': page = const CadastroDepartamentosPage(); urlPath = '/departamentos'; break;
       case 'mesas': page = CozinhaMesasFuncionarioPage(); urlPath = '/mesas'; break;
       case 'links-vendedores': page = const GerenciarLinksVendedoresPage(); urlPath = '/links-vendedores'; break;
       case 'vendedor-dashboard': page = const VendedorDashboardPage(); urlPath = '/vendedor-dashboard'; break;

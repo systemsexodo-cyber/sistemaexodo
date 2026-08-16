@@ -32,7 +32,7 @@ class Funcionario {
 
   factory Funcionario.fromMap(Map<String, dynamic> map) {
     return Funcionario(
-      id: map['id'] as String,
+      id: map['id']?.toString() ?? '',
       nome: map['nome'] as String,
       telefone: map['telefone'] as String?,
       email: map['email'] as String?,
@@ -40,14 +40,14 @@ class Funcionario {
       observacoes: map['observacoes'] as String?,
       ativo: map['ativo'] ?? true,
       temAcesso: map['temAcesso'] ?? false,
-      porcentagemComissao: (map['porcentagemComissao'] as num?)?.toDouble() ?? 0.0,
+      porcentagemComissao: double.tryParse(map['porcentagemComissao']?.toString() ?? '') ?? 0.0,
       tipoComissao: map['tipoComissao']?.toString() ?? 'Porcentagem',
-      valorComissao: (map['valorComissao'] as num?)?.toDouble() ?? 0.0,
+      valorComissao: double.tryParse(map['valorComissao']?.toString() ?? '') ?? 0.0,
       createdAt: map['createdAt'] != null
-          ? DateTime.parse(map['createdAt'] as String)
+          ? (map['createdAt'] is DateTime ? map['createdAt'] as DateTime : DateTime.parse(map['createdAt'].toString()))
           : DateTime.now(),
       updatedAt: map['updatedAt'] != null
-          ? DateTime.parse(map['updatedAt'] as String)
+          ? (map['updatedAt'] is DateTime ? map['updatedAt'] as DateTime : DateTime.parse(map['updatedAt'].toString()))
           : DateTime.now(),
     );
   }

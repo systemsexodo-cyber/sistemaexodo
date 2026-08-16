@@ -14,7 +14,8 @@ import '../services/bridge_management_service.dart';
 import 'google_drive_backup_page.dart';
 import '../services/supabase_service.dart';
 import '../services/app_update_service.dart';
-
+import 'bloqueio_mensalidade_page.dart';
+import 'monitor_page.dart';
 /// Classe para armazenar o progresso da importação
 class ImportProgress {
   final int processados;
@@ -219,9 +220,15 @@ class _EmpresasPageState extends State<EmpresasPage> {
                   _buildCardGoogleDriveBackup(context),
                   // NOVO: Card do Google Drive - RESTAURAR (Verde)
                   _buildCardGoogleDriveRestore(context),
+                  // NOVO: Card de Publicar Atualização Global
+                  if (podeAcessar)
+                    _buildCardPublicarAtualizacaoGlobal(context),
                   // NOVO: Card de Gerenciamento do Emissor NFC-e
                   if (podeAcessar)
                     _buildCardBridgeManagement(context),
+                  // Card de Monitor de Sincronizacao (Ciano)
+                  if (podeAcessar)
+                    _buildCardMonitorSync(context),
                   // Cards das empresas
                       if (empresasPermitidas.isEmpty)
                     _buildEmptyState()
@@ -241,6 +248,97 @@ class _EmpresasPageState extends State<EmpresasPage> {
           label: const Text(
             'IMPORTAR EXCEL',
             style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Card do Monitor de Sincronizacao
+  Widget _buildCardMonitorSync(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Colors.cyan.withOpacity(0.3), Colors.cyan.withOpacity(0.1)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.cyan, width: 2),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.cyan.withOpacity(0.2),
+            blurRadius: 8,
+            spreadRadius: 1,
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const MonitorPage()),
+            );
+          },
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: Colors.cyan,
+                    borderRadius: BorderRadius.circular(14),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.cyan.withOpacity(0.5),
+                        blurRadius: 8,
+                        spreadRadius: 1,
+                      ),
+                    ],
+                  ),
+                  child: const Icon(
+                    Icons.monitor_heart,
+                    color: Colors.white,
+                    size: 36,
+                  ),
+                ),
+                const SizedBox(width: 20),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '📡 MONITOR DE SINCRONIZACAO',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                      SizedBox(height: 6),
+                      Text(
+                        'Status de sync em tempo real de todos os clientes: online, fila, erros e logs.',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Colors.white70,
+                          height: 1.4,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(
+                  Icons.chevron_right,
+                  color: Colors.white,
+                  size: 24,
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -326,6 +424,245 @@ class _EmpresasPageState extends State<EmpresasPage> {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Erro inesperado: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  /// Card para publicar atualização GLOBAL (afeta todos os clientes)
+  Widget _buildCardPublicarAtualizacaoGlobal(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Colors.teal.withOpacity(0.3), Colors.teal.withOpacity(0.1)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.teal, width: 2),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.teal.withOpacity(0.3),
+            blurRadius: 10,
+            spreadRadius: 2,
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () => _publicarAtualizacaoGlobal(context),
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: Colors.teal,
+                    borderRadius: BorderRadius.circular(14),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.teal.withOpacity(0.5),
+                        blurRadius: 8,
+                        spreadRadius: 1,
+                      ),
+                    ],
+                  ),
+                  child: const Icon(
+                    Icons.cloud_upload,
+                    color: Colors.white,
+                    size: 36,
+                  ),
+                ),
+                const SizedBox(width: 20),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '🌍 PUBLICAR ATUALIZAÇÃO GLOBAL',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                      SizedBox(height: 6),
+                      Text(
+                        'Compilar e subir nova versão para TODOS os clientes. (app_latest)',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Colors.white70,
+                          height: 1.4,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(
+                  Icons.public,
+                  color: Colors.white,
+                  size: 24,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Publica atualização GLOBAL (app_latest) - afeta todos os clientes
+  Future<void> _publicarAtualizacaoGlobal(BuildContext context) async {
+    final versaoController = TextEditingController(text: AppUpdateService.currentAppVersion);
+    
+    final versao = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        title: const Text('Publicar Atualização GLOBAL', style: TextStyle(color: Colors.white)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.teal.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.teal.withOpacity(0.3)),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.public, color: Colors.teal, size: 20),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Isso vai atualizar TODOS os clientes que não têm atualização direcionada!',
+                      style: TextStyle(color: Colors.white, fontSize: 13),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: versaoController,
+              style: const TextStyle(color: Colors.white),
+              decoration: InputDecoration(
+                labelText: 'Versão',
+                labelStyle: const TextStyle(color: Colors.white70),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: Colors.white.withOpacity(0.2)),
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+          ),
+          ElevatedButton.icon(
+            onPressed: () => Navigator.pop(context, versaoController.text),
+            icon: const Icon(Icons.cloud_upload, size: 18),
+            label: const Text('Publicar Global'),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.teal),
+          ),
+        ],
+      ),
+    );
+
+    if (versao == null || versao.isEmpty) return;
+
+    // Mostrar loading
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const AlertDialog(
+        backgroundColor: Color(0xFF1E1E2E),
+        title: Text('Publicando Global...', style: TextStyle(color: Colors.white)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(color: Colors.teal),
+            SizedBox(height: 24),
+            Text(
+              'Compilando e enviando para todos os clientes...',
+              style: TextStyle(color: Colors.white70),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    try {
+      final result = await Process.run(
+        'python',
+        ['publicar_para_empresa.py', 'global', versao],
+        workingDirectory: Directory.current.path,
+        runInShell: true,
+      );
+
+      if (mounted) Navigator.pop(context);
+
+      if (result.exitCode == 0) {
+        if (mounted) {
+          showDialog(
+            context: context,
+            builder: (context) => AlertDialog(
+              backgroundColor: const Color(0xFF1E1E2E),
+              title: const Row(
+                children: [
+                  Icon(Icons.check_circle, color: Colors.green),
+                  SizedBox(width: 12),
+                  Text('Publicado Globalmente!', style: TextStyle(color: Colors.white)),
+                ],
+              ),
+              content: Text(
+                '✅ Versão $versao publicada para TODOS os clientes!\n\nQuando abrirem o app, vão receber a atualização automaticamente.',
+                style: const TextStyle(color: Colors.white70),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('OK'),
+                ),
+              ],
+            ),
+          );
+        }
+      } else {
+        // Script falhou - mostrar o erro
+        if (mounted) {
+          final err = result.stderr.toString();
+          final errorMsg = err.isEmpty
+              ? "Verifique se o Python está instalado."
+              : (err.length > 200 ? err.substring(0, 200) : err);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('❌ Falha ao publicar globalmente.\n$errorMsg'),
+              backgroundColor: Colors.red,
+              duration: const Duration(seconds: 10),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ Erro ao publicar: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 10),
+          ),
         );
       }
     }
@@ -1478,15 +1815,37 @@ class _EmpresasPageState extends State<EmpresasPage> {
                         return;
                       }
                       await authService.selecionarEmpresa(empresa);
+                      final dataService = Provider.of<DataService>(context, listen: false);
+                      final empAtualizada = authService.empresaAtual ?? empresa;
+                      dataService.setEmpresaAtual(empAtualizada);
+
+                      final motivo = empAtualizada.verificarMotivoBloqueio(
+                        ultimaValidacaoOnline: dataService.ultimaValidacaoOnline,
+                        ultimaDataExecucao: dataService.ultimaDataExecucao,
+                        limiteDiasOffline: 5,
+                      );
+
                       if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('✅ Empresa ${empresa.nomeExibicao} selecionada! Agora você pode importar produtos.'),
-                            backgroundColor: Colors.green,
-                            duration: const Duration(seconds: 3),
-                          ),
-                        );
-                        setState(() {}); // Atualizar UI
+                        if (motivo != MotivoBloqueioEmpresa.nenhum && !dataService.liberacaoProvisoriaAtiva) {
+                          Navigator.pushReplacement(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => BloqueioMensalidadePage(
+                                configs: empAtualizada.configuracoes ?? {},
+                                motivoBloqueio: motivo,
+                              ),
+                            ),
+                          );
+                        } else {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('✅ Empresa ${empresa.nomeExibicao} selecionada!'),
+                              backgroundColor: Colors.green,
+                              duration: const Duration(seconds: 3),
+                            ),
+                          );
+                          setState(() {});
+                        }
                       }
                     },
                     icon: const Icon(Icons.check_circle, size: 18),
@@ -1530,13 +1889,35 @@ class _EmpresasPageState extends State<EmpresasPage> {
                       return;
                     }
                     await authService.selecionarEmpresa(empresa);
+                    final dataService = Provider.of<DataService>(context, listen: false);
+                    final empAtualizada = authService.empresaAtual ?? empresa;
+                    dataService.setEmpresaAtual(empAtualizada);
+
+                    final motivo = empAtualizada.verificarMotivoBloqueio(
+                      ultimaValidacaoOnline: dataService.ultimaValidacaoOnline,
+                      ultimaDataExecucao: dataService.ultimaDataExecucao,
+                      limiteDiasOffline: 5,
+                    );
+
                     if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('Empresa ${empresa.nomeExibicao} selecionada'),
-                          backgroundColor: Colors.green,
-                        ),
-                      );
+                      if (motivo != MotivoBloqueioEmpresa.nenhum && !dataService.liberacaoProvisoriaAtiva) {
+                        Navigator.pushReplacement(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => BloqueioMensalidadePage(
+                              configs: empAtualizada.configuracoes ?? {},
+                              motivoBloqueio: motivo,
+                            ),
+                          ),
+                        );
+                      } else {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Empresa ${empresa.nomeExibicao} selecionada'),
+                            backgroundColor: Colors.green,
+                          ),
+                        );
+                      }
                     }
                   } else if (value == 'importar_produtos') {
                     // Verificar se a empresa está selecionada
@@ -1570,6 +1951,8 @@ class _EmpresasPageState extends State<EmpresasPage> {
                     );
                   } else if (value == 'outros_bridge') {
                     _mostrarDialogoGerenciamentoBridge(context);
+                  } else if (value == 'publicar_atualizacao') {
+                    _publicarAtualizacaoParaEmpresa(context, empresa);
                   }
                 },
                 itemBuilder: (context) {
@@ -1654,6 +2037,19 @@ class _EmpresasPageState extends State<EmpresasPage> {
                           ],
                         ),
                       ),
+                      // Separador visual
+                      PopupMenuDivider(),
+                      // NOVO: Publicar Atualização para esta empresa
+                      const PopupMenuItem(
+                        value: 'publicar_atualizacao',
+                        child: Row(
+                          children: [
+                            Icon(Icons.cloud_upload, color: Colors.cyan, size: 20),
+                            SizedBox(width: 12),
+                            Text('📤 Publicar Atualização', style: TextStyle(color: Colors.cyan)),
+                          ],
+                        ),
+                      ),
                     ],
                   ];
                 },
@@ -1663,6 +2059,214 @@ class _EmpresasPageState extends State<EmpresasPage> {
         ),
       ),
     );
+  }
+
+  /// Publica uma atualização do app direcionada para esta empresa no Supabase
+  Future<void> _publicarAtualizacaoParaEmpresa(BuildContext context, Empresa empresa) async {
+    // Pedir a versão
+    final versaoController = TextEditingController(text: '1.0.17');
+    final versao = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        title: const Text('Publicar Atualização', style: TextStyle(color: Colors.white)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Isso vai fazer upload da build atual para o Supabase\ne criar uma atualização direcionada para:',
+              style: TextStyle(color: Colors.white70, fontSize: 13),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.cyan.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.cyan.withOpacity(0.3)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.business, color: Colors.cyan, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      empresa.nomeExibicao,
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'ID: ${empresa.id}',
+              style: const TextStyle(color: Colors.white38, fontSize: 11),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: versaoController,
+              style: const TextStyle(color: Colors.white),
+              decoration: InputDecoration(
+                labelText: 'Versão',
+                labelStyle: const TextStyle(color: Colors.white70),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: Colors.white.withOpacity(0.2)),
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+          ),
+          ElevatedButton.icon(
+            onPressed: () => Navigator.pop(context, versaoController.text),
+            icon: const Icon(Icons.cloud_upload, size: 18),
+            label: const Text('Publicar'),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.cyan),
+          ),
+        ],
+      ),
+    );
+
+    if (versao == null || versao.isEmpty) return;
+
+    // Mostrar loading
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const AlertDialog(
+        backgroundColor: Color(0xFF1E1E2E),
+        title: Text('Publicando...', style: TextStyle(color: Colors.white)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(color: Colors.cyan),
+            SizedBox(height: 24),
+            Text(
+              'Enviando executável para o Supabase...',
+              style: TextStyle(color: Colors.white70),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    try {
+      // Chamar o script Python: python publicar_para_empresa.py ID VERSAO
+      final result = await Process.run(
+        'python',
+        [
+          'publicar_para_empresa.py',
+          empresa.id,
+          versao,
+        ],
+        workingDirectory: Directory.current.path,
+        runInShell: true,
+      );
+
+      if (mounted) Navigator.pop(context); // Fechar loading
+
+      if (result.exitCode == 0) {
+        if (mounted) {
+          showDialog(
+            context: context,
+            builder: (context) => AlertDialog(
+              backgroundColor: const Color(0xFF1E1E2E),
+              title: const Row(
+                children: [
+                  Icon(Icons.check_circle, color: Colors.green),
+                  SizedBox(width: 12),
+                  Text('Publicado!', style: TextStyle(color: Colors.white)),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '✅ Atualização $versao publicada para ${empresa.nomeExibicao}!',
+                    style: const TextStyle(color: Colors.white70),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Quando o cliente abrir o app, ele vai baixar e instalar automaticamente.',
+                    style: const TextStyle(color: Colors.white54, fontSize: 12),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('OK'),
+                ),
+              ],
+            ),
+          );
+        }
+      } else {
+        final stderr = result.stderr.toString();
+        final stdout = result.stdout.toString();
+        if (mounted) {
+          showDialog(
+            context: context,
+            builder: (context) => AlertDialog(
+              backgroundColor: const Color(0xFF1E1E2E),
+              title: const Row(
+                children: [
+                  Icon(Icons.error, color: Colors.red),
+                  SizedBox(width: 12),
+                  Text('Erro', style: TextStyle(color: Colors.white)),
+                ],
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Saída do script:', style: TextStyle(color: Colors.white70)),
+                    const SizedBox(height: 8),
+                    if (stdout.isNotEmpty)
+                      SelectableText(
+                        stdout,
+                        style: const TextStyle(color: Colors.white54, fontSize: 12, fontFamily: 'monospace'),
+                      ),
+                    if (stderr.isNotEmpty)
+                      SelectableText(
+                        stderr,
+                        style: const TextStyle(color: Colors.redAccent, fontSize: 12, fontFamily: 'monospace'),
+                      ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Fechar'),
+                ),
+              ],
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ Erro ao executar script: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 10),
+          ),
+        );
+      }
+    }
   }
 
   void _confirmarExclusao(

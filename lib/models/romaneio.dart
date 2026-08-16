@@ -47,11 +47,11 @@ class Romaneio {
 
   factory Romaneio.fromMap(Map<String, dynamic> map) {
     return Romaneio(
-      id: map['id'] ?? '',
+      id: map['id']?.toString() ?? '',
       numero: map['numero'] ?? '',
-      dataCriacao: DateTime.parse(map['dataCriacao'] ?? DateTime.now().toIso8601String()),
-      dataSaida: map['dataSaida'] != null ? DateTime.parse(map['dataSaida']) : null,
-      dataRetorno: map['dataRetorno'] != null ? DateTime.parse(map['dataRetorno']) : null,
+      dataCriacao: DateTime.parse(map['dataCriacao']?.toString() ?? DateTime.now().toIso8601String()),
+      dataSaida: map['dataSaida'] != null ? (map['dataSaida'] is DateTime ? map['dataSaida'] : DateTime.parse(map['dataSaida'].toString())) : null,
+      dataRetorno: map['dataRetorno'] != null ? (map['dataRetorno'] is DateTime ? map['dataRetorno'] : DateTime.parse(map['dataRetorno'].toString())) : null,
       motoristaId: map['motoristaId'],
       motoristaNome: map['motoristaNome'],
       veiculoId: map['veiculoId'],
@@ -63,8 +63,8 @@ class Romaneio {
       entregaIds: List<String>.from(map['entregaIds'] ?? []),
       pedidosEntregues: List<String>.from(map['pedidosEntregues'] ?? []),
       observacoes: map['observacoes'],
-      pesoTotal: (map['pesoTotal'] ?? 0).toDouble(),
-      valorTotal: (map['valorTotal'] ?? 0).toDouble(),
+      pesoTotal: double.tryParse(map['pesoTotal']?.toString() ?? '') ?? 0.0,
+      valorTotal: double.tryParse(map['valorTotal']?.toString() ?? '') ?? 0.0,
     );
   }
 

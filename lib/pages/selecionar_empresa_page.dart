@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:path/path.dart' as p;
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:async';
@@ -14,6 +15,7 @@ import '../models/usuario.dart';
 import '../widgets/exodo_logo.dart';
 import '../theme.dart';
 import 'home_page.dart';
+import 'bloqueio_mensalidade_page.dart';
 import 'adicionar_empresa_page.dart';
 import 'gerenciar_usuarios_page.dart';
 import 'login_page.dart';
@@ -58,6 +60,107 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
   void dispose() {
     _searchController.dispose();
     super.dispose();
+  }
+
+  void _abrirDialogoSimulacao(BuildContext context) {
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final authService = Provider.of<AuthService>(context, listen: false);
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.science, color: Colors.blueAccent),
+            SizedBox(width: 10),
+            Text('Simulador de Licença Offline', style: TextStyle(color: Colors.white, fontSize: 16)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Escolha um teste para simular o comportamento offline:', style: TextStyle(color: Colors.white70, fontSize: 13)),
+            const SizedBox(height: 16),
+            ListTile(
+              leading: const Icon(Icons.wifi_off, color: Colors.orangeAccent),
+              title: const Text('Simular 6 dias sem Internet', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+              subtitle: const Text('Simula que a última validação online foi há mais de 5 dias.', style: TextStyle(color: Colors.white54, fontSize: 11)),
+              onTap: () async {
+                Navigator.pop(ctx);
+                await dataService.simularDiasOffline(6);
+                authService.notificarMudancas();
+                final emp = dataService.empresaAtual ?? authService.empresaAtual ?? (authService.empresas.isNotEmpty ? authService.empresas.first : null);
+                if (emp != null && context.mounted) {
+                  final motivo = emp.verificarMotivoBloqueio(
+                    ultimaValidacaoOnline: dataService.ultimaValidacaoOnline,
+                    ultimaDataExecucao: dataService.ultimaDataExecucao,
+                    limiteDiasOffline: 5,
+                  );
+                  if (motivo != MotivoBloqueioEmpresa.nenhum) {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => BloqueioMensalidadePage(
+                          configs: emp.configuracoes ?? {},
+                          motivoBloqueio: motivo,
+                        ),
+                      ),
+                    );
+                  }
+                }
+              },
+            ),
+            const Divider(color: Colors.white10),
+            ListTile(
+              leading: const Icon(Icons.access_time_filled, color: Colors.redAccent),
+              title: const Text('Simular Relógio Adulterado', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+              subtitle: const Text('Simula que a data do sistema foi alterada para o passado.', style: TextStyle(color: Colors.white54, fontSize: 11)),
+              onTap: () async {
+                Navigator.pop(ctx);
+                await dataService.simularRelogioAdulterado();
+                authService.notificarMudancas();
+                final emp = dataService.empresaAtual ?? authService.empresaAtual ?? (authService.empresas.isNotEmpty ? authService.empresas.first : null);
+                if (emp != null && context.mounted) {
+                  final motivo = emp.verificarMotivoBloqueio(
+                    ultimaValidacaoOnline: dataService.ultimaValidacaoOnline,
+                    ultimaDataExecucao: dataService.ultimaDataExecucao,
+                    limiteDiasOffline: 5,
+                  );
+                  if (motivo != MotivoBloqueioEmpresa.nenhum) {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => BloqueioMensalidadePage(
+                          configs: emp.configuracoes ?? {},
+                          motivoBloqueio: motivo,
+                        ),
+                      ),
+                    );
+                  }
+                }
+              },
+            ),
+            const Divider(color: Colors.white10),
+            ListTile(
+              leading: const Icon(Icons.refresh, color: Colors.greenAccent),
+              title: const Text('Restaurar / Limpar Simulação', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+              subtitle: const Text('Restaura o estado normal de validação.', style: TextStyle(color: Colors.white54, fontSize: 11)),
+              onTap: () async {
+                Navigator.pop(ctx);
+                await dataService.resetarSimulacoesLicenca();
+                authService.notificarMudancas();
+              },
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Fechar')),
+        ],
+      ),
+    );
   }
 
   @override
@@ -637,18 +740,43 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
         color: Colors.transparent,
         child: InkWell(
           borderRadius: BorderRadius.circular(20),
-          onTap: _isLoading ? null : () async {
+            onTap: _isLoading ? null : () async {
             setState(() => _isLoading = true);
             try {
               await authService.selecionarEmpresa(empresa);
               final dataService = Provider.of<DataService>(context, listen: false);
-              dataService.setEmpresaAtual(empresa);
-              await dataService.definirEmpresaAtual(empresa.id);
+              
+              final empAtualizada = authService.empresaAtual ?? empresa;
+              dataService.setEmpresaAtual(empAtualizada);
+              await dataService.definirEmpresaAtual(empAtualizada.id);
+
+              final motivo = empAtualizada.verificarMotivoBloqueio(
+                ultimaValidacaoOnline: dataService.ultimaValidacaoOnline,
+                ultimaDataExecucao: dataService.ultimaDataExecucao,
+                limiteDiasOffline: 5,
+              );
+
+              final usuario = authService.usuarioAtual;
+              final isMaster = usuario?.isMaster == true || usuario?.email.toLowerCase() == 'user';
+              final podeBypassar = isMaster && dataService.liberacaoProvisoriaAtiva;
+
               if (context.mounted) {
-                Navigator.pushReplacement(
-                  context,
-                  MaterialPageRoute(builder: (context) => const HomePage()),
-                );
+                if (motivo != MotivoBloqueioEmpresa.nenhum && !podeBypassar) {
+                  Navigator.pushReplacement(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => BloqueioMensalidadePage(
+                        configs: empAtualizada.configuracoes ?? {},
+                        motivoBloqueio: motivo,
+                      ),
+                    ),
+                  );
+                } else {
+                  Navigator.pushReplacement(
+                    context,
+                    MaterialPageRoute(builder: (context) => const HomePage()),
+                  );
+                }
               }
             } catch (e) {
               if (context.mounted) {
@@ -866,11 +994,17 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                         case 'atualizar_sistema':
                           _selecionarPCEDispararComando(context, 'update', 'Atualizar Sistema', cnpjFilter: empresa.cnpj);
                           break;
+                        case 'atualizacao_direcionada':
+                          _abrirDialogAtualizacaoDirecionada(context, empresa);
+                          break;
                         case 'importar':
                           _importarProdutosExcel(context);
                           break;
                         case 'limpar':
                           _confirmarExcluirTodosProdutos(context, Provider.of<DataService>(context, listen: false));
+                          break;
+                        case 'mensalidade':
+                          _abrirDialogMensalidade(context, empresa);
                           break;
                       }
                     },
@@ -878,9 +1012,11 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                       const PopupMenuItem(value: 'edit', child: Row(children: [Icon(Icons.edit_outlined, size: 18), SizedBox(width: 12), Text('Editar')])),
                       const PopupMenuItem(value: 'users', child: Row(children: [Icon(Icons.people_outline, size: 18), SizedBox(width: 12), Text('Usuários')])),
                       const PopupMenuDivider(),
-                      const PopupMenuItem(value: 'atualizar_sistema', child: Row(children: [Icon(Icons.system_update_rounded, color: Colors.greenAccent, size: 18), SizedBox(width: 12), Text('Atualizar Sistema')])),
+                      const PopupMenuItem(value: 'atualizacao_direcionada', child: Row(children: [Icon(Icons.system_update_rounded, color: Colors.cyanAccent, size: 18), SizedBox(width: 12), Text('🚀 Atualização por Empresa')])),
+                      const PopupMenuItem(value: 'atualizar_sistema', child: Row(children: [Icon(Icons.system_update_rounded, color: Colors.greenAccent, size: 18), SizedBox(width: 12), Text('Disparar Update Emissor')])),
                       const PopupMenuItem(value: 'reiniciar', child: Row(children: [Icon(Icons.restart_alt_rounded, color: Colors.blueAccent, size: 18), SizedBox(width: 12), Text('Reiniciar Emissor')])),
                       const PopupMenuItem(value: 'importar', child: Row(children: [Icon(Icons.file_upload_outlined, color: Colors.green, size: 18), SizedBox(width: 12), Text('Importar Excel')])),
+                      const PopupMenuItem(value: 'mensalidade', child: Row(children: [Icon(Icons.monetization_on_outlined, color: Colors.amber, size: 18), SizedBox(width: 12), Text('Mensalidade / Licença')])),
                       const PopupMenuItem(value: 'limpar', child: Row(children: [Icon(Icons.delete_sweep_outlined, color: Colors.redAccent, size: 18), SizedBox(width: 12), Text('Limpar Produtos')])),
                     ],
                   ),
@@ -894,6 +1030,516 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
     );
   }
 
+
+  /// Abre a modal de configuração de atualização direcionada por empresa
+  void _abrirDialogAtualizacaoDirecionada(BuildContext context, Empresa empresa) {
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final configs = empresa.configuracoes ?? {};
+
+    final versaoAlvoCtrl = TextEditingController(text: configs['versao_alvo'] ?? AppUpdateService.currentAppVersion);
+    final urlDownloadCtrl = TextEditingController(text: configs['update_download_url'] ?? '');
+    bool atualizacaoAtiva = configs['atualizacao_ativa'] == true;
+    bool bloquearGlobal = configs['bloquear_atualizacao_global'] == true;
+    bool salvando = false;
+    bool enviandoArquivo = false;
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModalState) => AlertDialog(
+          backgroundColor: const Color(0xFF1E1E2E),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(
+            children: [
+              const Icon(Icons.system_update_rounded, color: Colors.cyanAccent),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Atualização Direcionada - ${empresa.razaoSocial}',
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.cyan.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.cyan.withOpacity(0.3)),
+                  ),
+                  child: const Text(
+                    'Configure uma versão específica exclusivamente para esta empresa. Nenhuma outra empresa da sua base será afetada.',
+                    style: TextStyle(fontSize: 12, color: Colors.white70),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text('Versão Atual Instalada: v${AppUpdateService.currentAppVersion}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.white54)),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: versaoAlvoCtrl,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(
+                    labelText: 'Versão Alvo (ex: 1.0.16)',
+                    labelStyle: TextStyle(color: Colors.cyanAccent),
+                    hintText: '1.0.16',
+                    hintStyle: TextStyle(color: Colors.white30),
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.numbers_rounded, color: Colors.cyanAccent),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: urlDownloadCtrl,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(
+                    labelText: 'URL do Executável (.exe)',
+                    labelStyle: TextStyle(color: Colors.cyanAccent),
+                    hintText: 'Ou selecione o arquivo abaixo...',
+                    hintStyle: TextStyle(color: Colors.white30),
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.link_rounded, color: Colors.cyanAccent),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.cyanAccent,
+                      side: const BorderSide(color: Colors.cyanAccent),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                    onPressed: enviandoArquivo ? null : () async {
+                      try {
+                        final result = await FilePicker.platform.pickFiles(
+                          type: FileType.custom,
+                          allowedExtensions: ['exe', 'zip', 'msi'],
+                        );
+                        if (result == null || result.files.isEmpty) return;
+                        
+                        final fileSelected = result.files.first;
+                        setModalState(() => enviandoArquivo = true);
+
+                        final String extension = p.extension(fileSelected.name).isNotEmpty ? p.extension(fileSelected.name) : '.exe';
+                        final String versaoLimpa = versaoAlvoCtrl.text.trim().replaceAll('.', '_');
+                        final String fileName = 'updates/empresa_${empresa.id}_v${versaoLimpa}_${DateTime.now().millisecondsSinceEpoch}$extension';
+
+                        String? publicUrl;
+                        if (fileSelected.path != null) {
+                          final file = File(fileSelected.path!);
+                          publicUrl = await SupabaseService.instance.uploadFile(
+                            'empresas',
+                            fileName,
+                            file,
+                          );
+                        } else if (fileSelected.bytes != null) {
+                          publicUrl = await SupabaseService.instance.uploadFile(
+                            'empresas',
+                            fileName,
+                            fileSelected.bytes!,
+                          );
+                        }
+
+                        setModalState(() => enviandoArquivo = false);
+
+                        if (publicUrl != null && publicUrl.isNotEmpty) {
+                          setModalState(() {
+                            urlDownloadCtrl.text = publicUrl!;
+                            atualizacaoAtiva = true;
+                          });
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('✅ Executável enviado com sucesso para a nuvem!'), backgroundColor: Colors.green),
+                            );
+                          }
+                        } else {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('❌ Falha ao enviar executável. Tente novamente.'), backgroundColor: Colors.red),
+                            );
+                          }
+                        }
+                      } catch (e) {
+                        setModalState(() => enviandoArquivo = false);
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text('Erro no upload: $e'), backgroundColor: Colors.red),
+                          );
+                        }
+                      }
+                    },
+                    icon: enviandoArquivo 
+                        ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.cyanAccent))
+                        : const Icon(Icons.cloud_upload_rounded),
+                    label: Text(enviandoArquivo ? 'ENVIANDO EXECUTÁVEL...' : '📁 SELECIONAR ARQUIVO .EXE DO MEU COMPUTADOR'),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                SwitchListTile(
+                  title: const Text('Ativar Atualização para Esta Empresa', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.white)),
+                  subtitle: const Text('Permite que os computadores desta empresa baixem esta versão.', style: TextStyle(fontSize: 11, color: Colors.white54)),
+                  value: atualizacaoAtiva,
+                  activeColor: Colors.cyanAccent,
+                  onChanged: (val) => setModalState(() => atualizacaoAtiva = val),
+                ),
+                SwitchListTile(
+                  title: const Text('Isolar da Atualização Global', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.white)),
+                  subtitle: const Text('Bloqueia atualizações gerais para não impactar este cliente.', style: TextStyle(fontSize: 11, color: Colors.white54)),
+                  value: bloquearGlobal,
+                  activeColor: Colors.amberAccent,
+                  onChanged: (val) => setModalState(() => bloquearGlobal = val),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancelar', style: TextStyle(color: Colors.white70)),
+            ),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.cyan, foregroundColor: Colors.black),
+              onPressed: salvando
+                  ? null
+                  : () async {
+                      setModalState(() => salvando = true);
+                      try {
+                        final novasConfigs = Map<String, dynamic>.from(empresa.configuracoes ?? {});
+                        novasConfigs['versao_alvo'] = versaoAlvoCtrl.text.trim();
+                        novasConfigs['update_download_url'] = urlDownloadCtrl.text.trim();
+                        novasConfigs['atualizacao_ativa'] = atualizacaoAtiva;
+                        novasConfigs['bloquear_atualizacao_global'] = bloquearGlobal;
+
+                        final empAtualizada = empresa.copyWith(
+                          configuracoes: novasConfigs,
+                          updatedAt: DateTime.now(),
+                        );
+
+                        await authService.atualizarEmpresa(empAtualizada);
+
+                        if (atualizacaoAtiva && versaoAlvoCtrl.text.trim().isNotEmpty) {
+                          try {
+                            await SupabaseService.instance.upsert('bridge_config', {
+                              'id': 'app_update_${empresa.id}',
+                              'version': versaoAlvoCtrl.text.trim(),
+                              'download_url': urlDownloadCtrl.text.trim(),
+                              'ativo': atualizacaoAtiva,
+                              'empresa_id': empresa.id,
+                              'updated_at': DateTime.now().toIso8601String(),
+                            });
+                          } catch (e) {
+                            debugPrint('Erro ao sincronizar bridge_config: $e');
+                          }
+                        }
+
+                        if (context.mounted) {
+                          Navigator.pop(context);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('Configuração de atualização direcionada salva para ${empresa.razaoSocial}!'),
+                              backgroundColor: Colors.green,
+                            ),
+                          );
+                          setState(() {});
+                        }
+                      } catch (e) {
+                        setModalState(() => salvando = false);
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text('Erro ao salvar: $e'), backgroundColor: Colors.red),
+                          );
+                        }
+                      }
+                    },
+              icon: const Icon(Icons.save_rounded, size: 18),
+              label: const Text('Salvar Regra de Atualização'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Abre a modal de gerenciamento de mensalidade da empresa
+  void _abrirDialogMensalidade(BuildContext context, Empresa empresa) {
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final configs = empresa.configuracoes ?? {};
+    
+    // Controladores
+    final dataInicioCtrl = TextEditingController(text: configs['data_inicio'] ?? configs['dataInicio'] ?? '');
+    final dataCobrancaCtrl = TextEditingController(text: configs['data_cobranca'] ?? configs['dataCobranca'] ?? '');
+    final linkPagamentoCtrl = TextEditingController(text: configs['link_pagamento'] ?? configs['linkPagamento'] ?? '');
+    String statusPagamento = configs['status_pagamento'] ?? configs['statusPagamento'] ?? 'pago';
+    bool bloqueadoManual = configs['bloqueado'] == true || configs['bloqueado'] == 'true';
+    String? ultimoMesPago = configs['ultimo_mes_pago']?.toString();
+
+    final agora = DateTime.now();
+    final mesAtualStr = '${agora.year}-${agora.month.toString().padLeft(2, '0')}';
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            final estaEmDia = ultimoMesPago != null && ultimoMesPago!.compareTo(mesAtualStr) >= 0;
+
+            return AlertDialog(
+              backgroundColor: const Color(0xFF1E1E2E),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              title: Row(
+                children: [
+                  const Icon(Icons.monetization_on_outlined, color: Colors.amber),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Mensalidade - ${empresa.razaoSocial}',
+                      style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Banner do Status de OK do Mês Atual
+                    Container(
+                      width: double.infinity,
+                      margin: const EdgeInsets.only(bottom: 16),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: estaEmDia ? Colors.green.withOpacity(0.12) : Colors.red.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: estaEmDia ? Colors.greenAccent.withOpacity(0.4) : Colors.redAccent.withOpacity(0.4),
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(
+                                estaEmDia ? Icons.check_circle_rounded : Icons.warning_amber_rounded,
+                                color: estaEmDia ? Colors.greenAccent : Colors.redAccent,
+                                size: 22,
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  estaEmDia
+                                      ? 'Mês Atual ($mesAtualStr): OK CONFIRMADO ✅'
+                                      : 'Mês Atual ($mesAtualStr): PENDENTE DE OK ⚠️',
+                                  style: TextStyle(
+                                    color: estaEmDia ? Colors.greenAccent : Colors.redAccent,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.green,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                            ),
+                            icon: const Icon(Icons.verified_rounded, size: 18),
+                            label: Text(
+                              estaEmDia ? 'RECONFIRMAR OK DESTE MÊS ($mesAtualStr)' : '✅ DAR OK - CONFIRMAR PAGAMENTO DESTE MÊS ($mesAtualStr)',
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                            ),
+                            onPressed: () {
+                              setState(() {
+                                statusPagamento = 'pago';
+                                bloqueadoManual = false;
+                                ultimoMesPago = mesAtualStr;
+                              });
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('OK de pagamento ativado para $mesAtualStr! Clique em "Salvar Alterações" para gravar no banco local.'),
+                                  backgroundColor: Colors.green,
+                                ),
+                              );
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    // Data Inicio
+                    TextFormField(
+                      controller: dataInicioCtrl,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: const InputDecoration(
+                        labelText: 'Data de Início (AAAA-MM-DD)',
+                        labelStyle: TextStyle(color: Colors.white70),
+                        hintText: 'Ex: 2026-07-01',
+                        hintStyle: TextStyle(color: Colors.white30),
+                        border: OutlineInputBorder(),
+                      ),
+                      keyboardType: TextInputType.datetime,
+                    ),
+                    const SizedBox(height: 16),
+
+                    // Data Cobrança (Vencimento)
+                    TextFormField(
+                      controller: dataCobrancaCtrl,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: const InputDecoration(
+                        labelText: 'Data de Cobrança / Vencimento (AAAA-MM-DD)',
+                        labelStyle: TextStyle(color: Colors.white70),
+                        hintText: 'Ex: 2026-08-01',
+                        hintStyle: TextStyle(color: Colors.white30),
+                        border: OutlineInputBorder(),
+                      ),
+                      keyboardType: TextInputType.datetime,
+                    ),
+                    const SizedBox(height: 16),
+
+                    // Link Pagamento
+                    TextFormField(
+                      controller: linkPagamentoCtrl,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: const InputDecoration(
+                        labelText: 'Link de Faturamento / Pagamento',
+                        labelStyle: TextStyle(color: Colors.white70),
+                        hintText: 'https://link.mercadopago.com.br/...',
+                        hintStyle: TextStyle(color: Colors.white30),
+                        border: OutlineInputBorder(),
+                      ),
+                      keyboardType: TextInputType.url,
+                    ),
+                    const SizedBox(height: 16),
+
+                    // Status Pagamento Dropdown
+                    DropdownButtonFormField<String>(
+                      dropdownColor: const Color(0xFF1E1E2E),
+                      value: statusPagamento,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: const InputDecoration(
+                        labelText: 'Status do Pagamento',
+                        labelStyle: TextStyle(color: Colors.white70),
+                        border: OutlineInputBorder(),
+                      ),
+                      items: const [
+                        DropdownMenuItem(value: 'pago', child: Text('Pago / Licenciado')),
+                        DropdownMenuItem(value: 'pendente', child: Text('Pendente de Pagamento')),
+                        DropdownMenuItem(value: 'inadimplente', child: Text('Bloqueado por Inadimplência')),
+                      ],
+                      onChanged: (val) {
+                        if (val != null) {
+                          setState(() {
+                            statusPagamento = val;
+                          });
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 16),
+
+                    // Checkbox Bloqueado Manualmente
+                    CheckboxListTile(
+                      title: const Text('Bloqueado Manualmente', style: TextStyle(color: Colors.white)),
+                      subtitle: const Text('Suspende o acesso do cliente de imediato', style: TextStyle(color: Colors.white54, fontSize: 12)),
+                      value: bloqueadoManual,
+                      onChanged: (val) {
+                        setState(() {
+                          bloqueadoManual = val ?? false;
+                        });
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.amber),
+                  onPressed: () async {
+                    try {
+                      // Montar o novo dicionário de configurações da empresa
+                      final Map<String, dynamic> novasConfigs = Map<String, dynamic>.from(configs);
+                      novasConfigs['data_inicio'] = dataInicioCtrl.text.trim().isEmpty ? null : dataInicioCtrl.text.trim();
+                      novasConfigs['data_cobranca'] = dataCobrancaCtrl.text.trim().isEmpty ? null : dataCobrancaCtrl.text.trim();
+                      novasConfigs['link_pagamento'] = linkPagamentoCtrl.text.trim().isEmpty ? null : linkPagamentoCtrl.text.trim();
+                      novasConfigs['status_pagamento'] = statusPagamento;
+                      novasConfigs['bloqueado'] = bloqueadoManual;
+                      novasConfigs['ultimo_mes_pago'] = ultimoMesPago;
+
+                      final empresaAtualizada = empresa.copyWith(
+                        configuracoes: novasConfigs,
+                      );
+
+                      // Chamar a gravação no Supabase/PostgreSQL
+                      await authService.atualizarEmpresa(empresaAtualizada);
+                      final dataService = Provider.of<DataService>(context, listen: false);
+                      if (dataService.empresaAtual?.id == empresaAtualizada.id) {
+                        dataService.setEmpresaAtual(empresaAtualizada);
+                      }
+                      authService.notificarMudancas();
+
+                      final motivo = empresaAtualizada.verificarMotivoBloqueio(
+                        ultimaValidacaoOnline: dataService.ultimaValidacaoOnline,
+                        ultimaDataExecucao: dataService.ultimaDataExecucao,
+                        limiteDiasOffline: 5,
+                      );
+
+                      if (context.mounted) {
+                        Navigator.pop(dialogContext);
+                        if (motivo != MotivoBloqueioEmpresa.nenhum) {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => BloqueioMensalidadePage(
+                                configs: empresaAtualizada.configuracoes ?? {},
+                                motivoBloqueio: motivo,
+                              ),
+                            ),
+                          );
+                        } else {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Mensalidade/Licença da empresa atualizada com sucesso!'),
+                              backgroundColor: Colors.green,
+                            ),
+                          );
+                        }
+                      }
+                    } catch (e) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Erro ao atualizar: $e'),
+                            backgroundColor: Colors.red,
+                          ),
+                        );
+                      }
+                    }
+                  },
+                  child: const Text('Salvar Alterações', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
 
   /// Realiza o backup de todas as empresas para o Google Drive
   Future<void> _realizarBackupGoogleDrive(BuildContext context) async {
@@ -1976,7 +2622,7 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
         title: Text('Selecione o PC para $acaoTitulo', style: const TextStyle(color: Colors.white, fontSize: 18)),
         content: SizedBox(
           width: double.maxFinite,
-          height: 300,
+          height: 380,
           child: FutureBuilder<List<Map<String, dynamic>>>(
             future: SupabaseService.instance.getBridgeStatus(),
             builder: (streamContext, snapshot) {
@@ -1987,73 +2633,100 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                 return Center(child: Text('Erro: ${snapshot.error}', style: const TextStyle(color: Colors.white)));
               }
   
-              var docs = snapshot.data ?? [];
+              final todosDocs = snapshot.data ?? [];
+              var docsFiltrados = todosDocs;
               
               if (cnpjFilter != null && cnpjFilter.isNotEmpty) {
                 final cnpjLimpo = cnpjFilter.replaceAll(RegExp(r'[^0-9]'), '');
-                docs = docs.where((b) {
+                docsFiltrados = todosDocs.where((b) {
                   final bCnpj = b['ultimo_cnpj']?.toString().replaceAll(RegExp(r'[^0-9]'), '') ?? '';
                   return bCnpj == cnpjLimpo;
                 }).toList();
               }
   
-              if (docs.isEmpty) {
-                return const Center(
-                  child: Padding(
-                    padding: EdgeInsets.all(20.0),
-                    child: Text('Nenhum emissor encontrado para esta empresa.', style: TextStyle(color: Colors.white54, fontSize: 13), textAlign: TextAlign.center),
-                  ),
-                );
-              }
-  
               return ListView(
                 children: [
+                  if (cnpjFilter != null && cnpjFilter.isNotEmpty) ...[
+                    ListTile(
+                      leading: const Icon(Icons.domain_rounded, color: Colors.cyanAccent),
+                      title: Text('ENVIAR DIRETO PARA O CNPJ ($cnpjFilter)', style: const TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold, fontSize: 12)),
+                      subtitle: const Text('Dispara o comando para a empresa mesmo se o PC estiver offline no momento.', style: TextStyle(color: Colors.white54, fontSize: 11)),
+                      onTap: () {
+                        Navigator.pop(dialogContext);
+                        final extra = Map<String, dynamic>.from(extraData ?? {});
+                        extra['cnpj'] = cnpjFilter.replaceAll(RegExp(r'[^0-9]'), '');
+                        _confirmarComandoBridge(pageContext, comando, 'Deseja $acaoTitulo no emissor do CNPJ $cnpjFilter?', targetPc: null, extraData: extra);
+                      },
+                    ),
+                    const Divider(color: Colors.white24),
+                  ],
+
                   ListTile(
-                    leading: const Icon(Icons.computer, color: Colors.white),
-                    title: Text(cnpjFilter != null && cnpjFilter.isNotEmpty ? 'TODOS OS COMPUTADORES DA EMPRESA' : 'TODOS OS COMPUTADORES', style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold)),
+                    leading: const Icon(Icons.computer, color: Colors.orangeAccent),
+                    title: const Text('TODOS OS COMPUTADORES REGISTRADOS', style: TextStyle(color: Colors.orangeAccent, fontWeight: FontWeight.bold, fontSize: 12)),
+                    subtitle: const Text('Dispara o comando para todos os emissores ativos na nuvem.', style: TextStyle(color: Colors.white54, fontSize: 11)),
                     onTap: () {
                       Navigator.pop(dialogContext);
-                      if (cnpjFilter != null && cnpjFilter.isNotEmpty) {
-                        final targets = docs.map((e) => e['id']?.toString()).whereType<String>().toList();
-                        _confirmarComandoBridgeParaMultiplos(pageContext, comando, 'Deseja $acaoTitulo em TODOS os emissores desta empresa?', targets, extraData: extraData);
-                      } else {
-                        _confirmarComandoBridge(pageContext, comando, 'Deseja $acaoTitulo em TODOS os emissores simultaneamente?', targetPc: null, extraData: extraData);
-                      }
+                      _confirmarComandoBridge(pageContext, comando, 'Deseja $acaoTitulo em TODOS os emissores simultaneamente?', targetPc: null, extraData: extraData);
                     },
                   ),
                   const Divider(color: Colors.white24),
-                  ...docs.map((data) {
-                    final pcName = data['pc_name'] ?? 'PC Desconhecido';
-                    final pcId = data['id'];
-                    final isOnline = data['online'] ?? false;
-                    
-                    return ListTile(
-                      leading: Icon(Icons.desktop_windows, color: isOnline ? Colors.green : Colors.white24),
-                      title: Text(pcName, style: const TextStyle(color: Colors.white)),
-                      subtitle: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            isOnline ? 'Online' : 'Offline',
-                            style: TextStyle(color: isOnline ? Colors.green : Colors.redAccent, fontSize: 11),
-                          ),
-                          if (data['versao_software'] != null || data['versao_windows'] != null)
-                            Padding(
-                              padding: const EdgeInsets.only(top: 2),
-                              child: Text(
-                                'Versão: ${data['versao_software'] ?? "Desconhecida"} (${data['versao_windows'] ?? "Windows"})',
-                                style: const TextStyle(color: Colors.white38, fontSize: 10),
-                              ),
-                            ),
-                        ],
-                      ),
-                      trailing: const Icon(Icons.send, color: Colors.white24, size: 16),
-                      onTap: () {
-                        Navigator.pop(dialogContext);
-                        _confirmarComandoBridge(pageContext, comando, 'Deseja $acaoTitulo no PC "$pcName"?', targetPc: pcId, extraData: extraData);
-                      },
-                    );
-                  }).toList(),
+
+                  if (docsFiltrados.isNotEmpty) ...[
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      child: Text('EMISSORES DESTA EMPRESA (${docsFiltrados.length}):', style: const TextStyle(color: Colors.greenAccent, fontSize: 11, fontWeight: FontWeight.bold)),
+                    ),
+                    ...docsFiltrados.map((data) {
+                      final pcName = data['pc_name'] ?? 'PC Desconhecido';
+                      final pcId = data['id'];
+                      final isOnline = data['online'] ?? false;
+                      return ListTile(
+                        leading: Icon(Icons.desktop_windows, color: isOnline ? Colors.green : Colors.white24),
+                        title: Text(pcName, style: const TextStyle(color: Colors.white, fontSize: 13)),
+                        subtitle: Text(
+                          isOnline ? 'Online' : 'Offline',
+                          style: TextStyle(color: isOnline ? Colors.green : Colors.redAccent, fontSize: 11),
+                        ),
+                        trailing: const Icon(Icons.send_rounded, color: Colors.cyanAccent, size: 18),
+                        onTap: () {
+                          Navigator.pop(dialogContext);
+                          _confirmarComandoBridge(pageContext, comando, 'Deseja $acaoTitulo no PC "$pcName"?', targetPc: pcId, extraData: extraData);
+                        },
+                      );
+                    }),
+                  ],
+
+                  if (todosDocs.isNotEmpty && (docsFiltrados.length < todosDocs.length)) ...[
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      child: Text('OUTROS COMPUTADORES CADASTRADOS NA NUVEM:', style: TextStyle(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.bold)),
+                    ),
+                    ...todosDocs.where((d) => !docsFiltrados.contains(d)).map((data) {
+                      final pcName = data['pc_name'] ?? 'PC Desconhecido';
+                      final pcId = data['id'];
+                      final isOnline = data['online'] ?? false;
+                      return ListTile(
+                        leading: Icon(Icons.desktop_windows, color: isOnline ? Colors.green : Colors.white24),
+                        title: Text(pcName, style: const TextStyle(color: Colors.white, fontSize: 13)),
+                        subtitle: Text(
+                          isOnline ? 'Online' : 'Offline',
+                          style: TextStyle(color: isOnline ? Colors.green : Colors.redAccent, fontSize: 11),
+                        ),
+                        trailing: const Icon(Icons.send_rounded, color: Colors.cyanAccent, size: 18),
+                        onTap: () {
+                          Navigator.pop(dialogContext);
+                          _confirmarComandoBridge(pageContext, comando, 'Deseja $acaoTitulo no PC "$pcName"?', targetPc: pcId, extraData: extraData);
+                        },
+                      );
+                    }),
+                  ],
+
+                  if (todosDocs.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.all(16.0),
+                      child: Text('Nenhum computador enviou sinal de vida ainda. Utilize a opção de Enviar Direto pelo CNPJ acima.', style: TextStyle(color: Colors.white54, fontSize: 11), textAlign: TextAlign.center),
+                    ),
                 ],
               );
             },
@@ -2062,7 +2735,7 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+            child: const Text('Cancelar', style: TextStyle(color: Colors.white70)),
           ),
         ],
       ),
@@ -2430,6 +3103,30 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
   }
 
   Future<StatusSyncEmpresa> _obterStatusSyncEmpresa(String empresaId, DataService dataService) async {
+    // 1. Prioridade: status centralizado no Supabase (sync_status), alimentado pelo sincronizador
+    try {
+      if (SupabaseService.isAvailable) {
+        final statusCloud = await SupabaseService.instance.getSyncStatus(empresaId);
+        if (statusCloud != null) {
+          final ultimaStr = statusCloud['ultima_sincronizacao']?.toString();
+          DateTime? ultimaSync;
+          if (ultimaStr != null && ultimaStr.isNotEmpty) {
+            ultimaSync = DateTime.tryParse(ultimaStr)?.toLocal();
+          }
+          final erroCloud = statusCloud['ultimo_erro']?.toString() ?? '';
+          if (ultimaSync != null || erroCloud.isNotEmpty) {
+            return StatusSyncEmpresa(
+              ultimaSincronizacaoSucesso: ultimaSync,
+              ultimoErro: erroCloud.isNotEmpty ? erroCloud : null,
+            );
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Erro ao obter status de sync do Supabase da empresa $empresaId: $e');
+    }
+
+    // 2. Fallback: status local
     try {
       final keySucesso = 'empresa_${empresaId}_exodo_ultima_sincronizacao_sucesso';
       final keyErro = 'empresa_${empresaId}_exodo_ultimo_erro_sync';
@@ -2451,6 +3148,45 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
       return StatusSyncEmpresa();
     }
   }
+
+  /// Carrega os logs de sync de uma empresa: primeiro do Supabase (sync_logs,
+  /// alimentado pelo sincronizador da nuvem), com fallback para os logs locais.
+  Future<List<String>> _carregarLogsSyncEmpresa(String empresaId, DataService dataService) async {
+    try {
+      if (SupabaseService.isAvailable) {
+        final logsCloud = await SupabaseService.instance.getSyncLogs(empresaId, limit: 50);
+        if (logsCloud.isNotEmpty) {
+          return logsCloud.map((log) {
+            final created = log['created_at']?.toString() ?? '';
+            DateTime? dt;
+            try {
+              dt = DateTime.tryParse(created)?.toLocal();
+            } catch (_) {}
+            final hora = dt != null
+                ? '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}'
+                : '';
+            final evento = log['evento']?.toString() ?? '';
+            final detalhes = log['detalhes']?.toString() ?? '';
+            final pc = log['pc_name']?.toString() ?? '';
+            return '[$hora] [$pc] $evento: $detalhes';
+          }).toList();
+        }
+      }
+    } catch (e) {
+      debugPrint('Erro ao carregar logs do Supabase da empresa $empresaId: $e');
+    }
+
+    try {
+      final rawLogs = await dataService.storage.carregar('empresa_${empresaId}_sync_logs');
+      if (rawLogs != null && rawLogs is List) {
+        return List<String>.from(rawLogs.map((e) => e.toString()));
+      }
+    } catch (e) {
+      debugPrint('Erro ao carregar logs locais da empresa $empresaId: $e');
+    }
+    return [];
+  }
+
 
   Future<void> _mostrarLogsEmpresa(BuildContext context, Empresa empresa, DataService dataService) async {
     showDialog(
@@ -2492,7 +3228,7 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
             width: double.maxFinite,
             height: 350,
             child: FutureBuilder<dynamic>(
-              future: dataService.storage.carregar('empresa_${empresa.id}_sync_logs'),
+              future: _carregarLogsSyncEmpresa(empresa.id, dataService),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator(color: Colors.blueAccent));
@@ -2577,7 +3313,7 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
           ),
           actions: [
             FutureBuilder<dynamic>(
-              future: dataService.storage.carregar('empresa_${empresa.id}_sync_logs'),
+              future: _carregarLogsSyncEmpresa(empresa.id, dataService),
               builder: (context, snapshot) {
                 final rawLogs = snapshot.data;
                 final List<String> logs = rawLogs != null && rawLogs is List

@@ -51,7 +51,7 @@ class ItemServico {
 
   factory ItemServico.fromMap(Map<String, dynamic> map) {
     return ItemServico(
-      id: map['id'] ?? '',
+      id: map['id']?.toString() ?? '',
       descricao: map['descricao'] ?? '',
       valor: (map['valor'] ?? 0).toDouble(),
       valorAdicional: (map['valorAdicional'] ?? 0.0).toDouble(),

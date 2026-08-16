@@ -37,7 +37,9 @@ class _TrocasDevolucoesBuscarPageState
   }
 
   void _buscar(DataService dataService) {
-    if (_termoBusca.isEmpty && _dataInicioFiltro == null && _dataFimFiltro == null) {
+    if (_termoBusca.isEmpty &&
+        _dataInicioFiltro == null &&
+        _dataFimFiltro == null) {
       setState(() => _resultados = []);
       return;
     }
@@ -50,7 +52,7 @@ class _TrocasDevolucoesBuscarPageState
       // Filtrar apenas pedidos finalizados (totalmente recebidos) e não cancelados
       if (pedido.status.toLowerCase() == 'cancelado') continue;
       if (!pedido.totalmenteRecebido) continue;
-      
+
       bool match = false;
 
       // Busca por número
@@ -90,8 +92,10 @@ class _TrocasDevolucoesBuscarPageState
       // - Não canceladas
       // - Com valorRecebido definido (vendas pagas) OU tipo diferente de "outro" (vendas salvas não aparecem)
       if (venda.isCancelada) continue;
-      if (venda.tipoPagamento == TipoPagamento.outro && venda.valorRecebido == null) continue;
-      
+      if (venda.tipoPagamento == TipoPagamento.outro &&
+          venda.valorRecebido == null)
+        continue;
+
       bool match = false;
 
       // Busca por número
@@ -269,9 +273,14 @@ class _TrocasDevolucoesBuscarPageState
                 ? _buildEstadoVazio()
                 : Column(
                     children: [
-                      if (_termoBusca.isNotEmpty || _dataInicioFiltro != null || _dataFimFiltro != null)
+                      if (_termoBusca.isNotEmpty ||
+                          _dataInicioFiltro != null ||
+                          _dataFimFiltro != null)
                         Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
                           child: Row(
                             children: [
                               Text(
@@ -294,7 +303,10 @@ class _TrocasDevolucoesBuscarPageState
                                 },
                                 child: const Text(
                                   'Limpar filtros',
-                                  style: TextStyle(color: Colors.orange, fontSize: 12),
+                                  style: TextStyle(
+                                    color: Colors.orange,
+                                    fontSize: 12,
+                                  ),
                                 ),
                               ),
                             ],
@@ -305,7 +317,10 @@ class _TrocasDevolucoesBuscarPageState
                           padding: const EdgeInsets.symmetric(horizontal: 16),
                           itemCount: _resultados.length,
                           itemBuilder: (context, index) {
-                            return _buildCardVenda(_resultados[index], dataService);
+                            return _buildCardVenda(
+                              _resultados[index],
+                              dataService,
+                            );
                           },
                         ),
                       ),
@@ -344,15 +359,19 @@ class _TrocasDevolucoesBuscarPageState
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(
-            (_termoBusca.isEmpty && _dataInicioFiltro == null && _dataFimFiltro == null) 
-                ? Icons.swap_horiz 
+            (_termoBusca.isEmpty &&
+                    _dataInicioFiltro == null &&
+                    _dataFimFiltro == null)
+                ? Icons.swap_horiz
                 : Icons.search_off,
             size: 80,
             color: Colors.white.withOpacity(0.15),
           ),
           const SizedBox(height: 24),
           Text(
-            (_termoBusca.isEmpty && _dataInicioFiltro == null && _dataFimFiltro == null)
+            (_termoBusca.isEmpty &&
+                    _dataInicioFiltro == null &&
+                    _dataFimFiltro == null)
                 ? 'Busque uma venda para iniciar'
                 : 'Nenhuma venda encontrada',
             style: TextStyle(
@@ -362,7 +381,9 @@ class _TrocasDevolucoesBuscarPageState
           ),
           const SizedBox(height: 8),
           Text(
-            (_termoBusca.isEmpty && _dataInicioFiltro == null && _dataFimFiltro == null)
+            (_termoBusca.isEmpty &&
+                    _dataInicioFiltro == null &&
+                    _dataFimFiltro == null)
                 ? 'Use o campo de busca ou os filtros de data'
                 : 'Tente buscar por outro termo ou período',
             style: TextStyle(
@@ -387,11 +408,7 @@ class _TrocasDevolucoesBuscarPageState
       ),
       child: Row(
         children: [
-          const Icon(
-            Icons.calendar_today,
-            size: 16,
-            color: Colors.orange,
-          ),
+          const Icon(Icons.calendar_today, size: 16, color: Colors.orange),
           const SizedBox(width: 8),
           Expanded(
             child: Row(
@@ -405,7 +422,10 @@ class _TrocasDevolucoesBuscarPageState
                 ),
                 const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 8),
-                  child: Text('até', style: TextStyle(color: Colors.white24, fontSize: 12)),
+                  child: Text(
+                    'até',
+                    style: TextStyle(color: Colors.white24, fontSize: 12),
+                  ),
                 ),
                 _buildBotaoData(
                   label: _dataFimFiltro != null
@@ -433,7 +453,11 @@ class _TrocasDevolucoesBuscarPageState
     );
   }
 
-  Widget _buildBotaoData({required String label, required VoidCallback onTap, bool isSet = false}) {
+  Widget _buildBotaoData({
+    required String label,
+    required VoidCallback onTap,
+    bool isSet = false,
+  }) {
     return Expanded(
       child: InkWell(
         onTap: onTap,
@@ -441,10 +465,14 @@ class _TrocasDevolucoesBuscarPageState
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
           decoration: BoxDecoration(
-            color: isSet ? Colors.orange.withOpacity(0.1) : Colors.white.withOpacity(0.05),
+            color: isSet
+                ? Colors.orange.withOpacity(0.1)
+                : Colors.white.withOpacity(0.05),
             borderRadius: BorderRadius.circular(8),
             border: Border.all(
-              color: isSet ? Colors.orange.withOpacity(0.3) : Colors.transparent,
+              color: isSet
+                  ? Colors.orange.withOpacity(0.3)
+                  : Colors.transparent,
             ),
           ),
           child: Text(
@@ -464,7 +492,8 @@ class _TrocasDevolucoesBuscarPageState
   Future<void> _selecionarData(bool isInicio, DataService dataService) async {
     final data = await showDatePicker(
       context: context,
-      initialDate: (isInicio ? _dataInicioFiltro : _dataFimFiltro) ?? DateTime.now(),
+      initialDate:
+          (isInicio ? _dataInicioFiltro : _dataFimFiltro) ?? DateTime.now(),
       firstDate: DateTime(2020),
       lastDate: DateTime.now(),
       builder: (context, child) {
@@ -487,7 +516,14 @@ class _TrocasDevolucoesBuscarPageState
         if (isInicio) {
           _dataInicioFiltro = DateTime(data.year, data.month, data.day);
         } else {
-          _dataFimFiltro = DateTime(data.year, data.month, data.day, 23, 59, 59);
+          _dataFimFiltro = DateTime(
+            data.year,
+            data.month,
+            data.day,
+            23,
+            59,
+            59,
+          );
         }
       });
       _buscar(dataService);
@@ -764,6 +800,7 @@ class SelecionarItensTrocaPageState extends State<SelecionarItensTrocaPage> {
   final Map<String, double> _itensSelecionados = {};
   TipoOperacao _tipoOperacao = TipoOperacao.devolucao;
   String _motivo = '';
+  bool _isProcessing = false;
 
   double get _valorTotal {
     double total = 0;
@@ -937,7 +974,9 @@ class SelecionarItensTrocaPageState extends State<SelecionarItensTrocaPage> {
                           ],
                         ),
                         ElevatedButton.icon(
-                          onPressed: () => _confirmarOperacao(dataService),
+                          onPressed: _isProcessing
+                              ? null
+                              : () => _confirmarOperacao(dataService),
                           style: ElevatedButton.styleFrom(
                             backgroundColor:
                                 _tipoOperacao == TipoOperacao.devolucao
@@ -958,9 +997,11 @@ class SelecionarItensTrocaPageState extends State<SelecionarItensTrocaPage> {
                                 : Icons.swap_horiz,
                           ),
                           label: Text(
-                            _tipoOperacao == TipoOperacao.devolucao
-                                ? 'Confirmar Devolução'
-                                : 'Ir para Troca',
+                            _isProcessing
+                                ? 'Processando...'
+                                : (_tipoOperacao == TipoOperacao.devolucao
+                                      ? 'Confirmar Devolução'
+                                      : 'Ir para Troca'),
                             style: const TextStyle(fontWeight: FontWeight.bold),
                           ),
                         ),
@@ -1189,6 +1230,8 @@ class SelecionarItensTrocaPageState extends State<SelecionarItensTrocaPage> {
   }
 
   void _confirmarOperacao(DataService dataService) {
+    if (_isProcessing) return;
+
     if (_tipoOperacao == TipoOperacao.devolucao) {
       _processarDevolucao(dataService);
     } else {
@@ -1197,445 +1240,491 @@ class SelecionarItensTrocaPageState extends State<SelecionarItensTrocaPage> {
   }
 
   Future<void> _processarDevolucao(DataService dataService) async {
+    if (_isProcessing) return;
+
+    _isProcessing = true;
+    if (mounted) setState(() {});
+
     final venda = widget.venda;
 
-    // --- NOVA LÓGICA DE ESCOLHA DE ESTORNO ---
-    String? metodoEstorno; // 'fiado' ou 'dinheiro'
-    
-    // Buscar cliente se existir
-    final cliente = venda.clienteId != null 
-        ? dataService.clientes.firstWhere((c) => c.id == venda.clienteId, orElse: () => null as dynamic) 
-        : null;
+    try {
+      // --- NOVA LÓGICA DE ESCOLHA DE ESTORNO ---
+      String? metodoEstorno; // 'fiado' ou 'dinheiro'
 
-    final escolha = await showDialog<String>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1E1E2E),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text(
-          'Como deseja devolver o valor?',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.red.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.red.withOpacity(0.3)),
+      // Buscar cliente se existir
+      final cliente = venda.clienteId != null
+          ? dataService.clientes.firstWhere(
+              (c) => c.id == venda.clienteId,
+              orElse: () => null as dynamic,
+            )
+          : null;
+
+      final escolha = await showDialog<String>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => AlertDialog(
+          backgroundColor: const Color(0xFF1E1E2E),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          title: const Text(
+            'Como deseja devolver o valor?',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.red.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.red.withOpacity(0.3)),
+                ),
+                child: Column(
+                  children: [
+                    const Text(
+                      'VALOR DO ESTORNO',
+                      style: TextStyle(
+                        color: Colors.redAccent,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    Text(
+                      _formatoMoeda.format(_valorTotal),
+                      style: const TextStyle(
+                        color: Colors.redAccent,
+                        fontSize: 28,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              child: Column(
-                children: [
-                  const Text(
-                    'VALOR DO ESTORNO',
-                    style: TextStyle(color: Colors.redAccent, fontSize: 12, fontWeight: FontWeight.bold),
-                  ),
-                  Text(
-                    _formatoMoeda.format(_valorTotal),
-                    style: const TextStyle(color: Colors.redAccent, fontSize: 28, fontWeight: FontWeight.bold),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 20),
-            // Opcao 1: Fiado (Se houver cliente)
-            _buildBotaoEstorno(
-              context,
-              venda.clienteId != null ? 'Crédito no Fiado' : 'Vincular Cliente (Crédito)',
-              venda.clienteId != null 
-                  ? 'Adicionar como crédito na conta do cliente'
-                  : 'Pesquisar cliente para salvar crédito',
-              Icons.account_balance_wallet,
-              Colors.blueAccent,
-              () async {
-                if (venda.clienteId != null) {
-                  Navigator.pop(context, 'fiado');
-                } else {
-                  // Abrir seletor de cliente
-                  final novoCliente = await _abrirSeletorCliente(context, dataService);
-                  if (novoCliente != null) {
-                    // Atualizar o ID do cliente na venda para o processamento posterior
-                    // (Note: venda é local a este método e é uma VendaParaTroca)
-                    // Como venda é final, usaremos uma variável local para o cliente selecionado
-                    Navigator.pop(context, 'fiado_novo:${novoCliente.id}');
+              const SizedBox(height: 20),
+              // Opcao 1: Fiado (Se houver cliente)
+              _buildBotaoEstorno(
+                context,
+                venda.clienteId != null
+                    ? 'Crédito no Fiado'
+                    : 'Vincular Cliente (Crédito)',
+                venda.clienteId != null
+                    ? 'Adicionar como crédito na conta do cliente'
+                    : 'Pesquisar cliente para salvar crédito',
+                Icons.account_balance_wallet,
+                Colors.blueAccent,
+                () async {
+                  if (venda.clienteId != null) {
+                    Navigator.pop(context, 'fiado');
+                  } else {
+                    // Abrir seletor de cliente
+                    final novoCliente = await _abrirSeletorCliente(
+                      context,
+                      dataService,
+                    );
+                    if (novoCliente != null) {
+                      // Atualizar o ID do cliente na venda para o processamento posterior
+                      // (Note: venda é local a este método e é uma VendaParaTroca)
+                      // Como venda é final, usaremos uma variável local para o cliente selecionado
+                      Navigator.pop(context, 'fiado_novo:${novoCliente.id}');
+                    }
                   }
-                }
-              },
-              extra: cliente != null ? 'Saldo atual: ${_formatoMoeda.format(cliente.saldoDevedor)}' : (venda.clienteId == null ? 'Venda sem cliente vinculado' : null),
-            ),
-            const SizedBox(height: 12),
-            // Opcao 2: Dinheiro
-            _buildBotaoEstorno(
-              context,
-              'Dinheiro (Espécie)',
-              'Devolver o valor em dinheiro agora',
-              Icons.money,
-              Colors.greenAccent,
-              () => Navigator.pop(context, 'dinheiro'),
+                },
+                extra: cliente != null
+                    ? 'Saldo atual: ${_formatoMoeda.format(cliente.saldoDevedor)}'
+                    : (venda.clienteId == null
+                          ? 'Venda sem cliente vinculado'
+                          : null),
+              ),
+              const SizedBox(height: 12),
+              // Opcao 2: Dinheiro
+              _buildBotaoEstorno(
+                context,
+                'Dinheiro (Espécie)',
+                'Devolver o valor em dinheiro agora',
+                Icons.money,
+                Colors.greenAccent,
+                () => Navigator.pop(context, 'dinheiro'),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, null),
+              child: const Text(
+                'Cancelar',
+                style: TextStyle(color: Colors.white54),
+              ),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, null),
-            child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
-          ),
-        ],
-      ),
-    );
+      );
 
-    if (escolha == null) return;
-    String idClienteFinal = venda.clienteId ?? '';
-    
-    if (escolha.startsWith('fiado_novo:')) {
-      idClienteFinal = escolha.split(':')[1];
-      metodoEstorno = 'fiado';
-    } else {
-      metodoEstorno = escolha;
-    }
-    // --- FIM DA NOVA LÓGICA ---
+      if (escolha == null) return;
+      String idClienteFinal = venda.clienteId ?? '';
 
+      if (escolha.startsWith('fiado_novo:')) {
+        idClienteFinal = escolha.split(':')[1];
+        metodoEstorno = 'fiado';
+      } else {
+        metodoEstorno = escolha;
+      }
+      // --- FIM DA NOVA LÓGICA ---
 
-    // 1. CRIAR LISTA DE ITENS DEVOLVIDOS E DEVOLVER AO ESTOQUE
-    final itensDevolvidos = <ItemTrocaDevolucao>[];
+      // 1. CRIAR LISTA DE ITENS DEVOLVIDOS E DEVOLVER AO ESTOQUE
+      final itensDevolvidos = <ItemTrocaDevolucao>[];
 
-    for (final item in venda.itens) {
-      final qtdDevolver = _itensSelecionados[item.id] ?? 0;
-      if (qtdDevolver > 0) {
-        itensDevolvidos.add(
-          ItemTrocaDevolucao(
-            produtoId: item.produtoId ?? item.id,
-            produtoNome: item.nome,
-            quantidade: qtdDevolver,
-            precoUnitario: item.preco,
-            valorTotal: qtdDevolver * item.preco,
-            motivo: _motivo.isNotEmpty ? _motivo : null,
-          ),
-        );
+      for (final item in venda.itens) {
+        final qtdDevolver = _itensSelecionados[item.id] ?? 0;
+        if (qtdDevolver > 0) {
+          itensDevolvidos.add(
+            ItemTrocaDevolucao(
+              produtoId: item.produtoId ?? item.id,
+              produtoNome: item.nome,
+              quantidade: qtdDevolver,
+              precoUnitario: item.preco,
+              valorTotal: qtdDevolver * item.preco,
+              motivo: _motivo.isNotEmpty ? _motivo : null,
+            ),
+          );
 
-        // Devolver ao estoque
-        try {
-          // Tentar buscar pelo ID primeiro (mais confiável), depois pelo nome
-          late Produto produto;
+          // Devolver ao estoque
           try {
-            produto = dataService.produtos.firstWhere(
-              (p) => p.id == item.id,
+            // Tentar buscar pelo ID primeiro (mais confiável), depois pelo nome
+            late Produto produto;
+            try {
+              produto = dataService.produtos.firstWhere((p) => p.id == item.id);
+            } catch (_) {
+              // Se não encontrou pelo ID, tentar pelo nome
+              produto = dataService.produtos.firstWhere(
+                (p) => p.nome == item.nome,
+              );
+            }
+
+            final estoqueAnterior = produto.estoque;
+            final novoEstoque = produto.estoque + qtdDevolver;
+
+            dataService.updateProduto(
+              produto.copyWith(estoque: novoEstoque, updatedAt: DateTime.now()),
             );
-          } catch (_) {
-            // Se não encontrou pelo ID, tentar pelo nome
-            produto = dataService.produtos.firstWhere(
-              (p) => p.nome == item.nome,
+
+            debugPrint('>>> ✓ Estoque atualizado - Devolução:');
+            debugPrint('>>>   Produto: ${produto.nome}');
+            debugPrint('>>>   Estoque anterior: $estoqueAnterior');
+            debugPrint('>>>   Quantidade devolvida: $qtdDevolver');
+            debugPrint('>>>   Novo estoque: $novoEstoque');
+          } catch (e) {
+            debugPrint(
+              '>>> ERRO ao devolver produto ${item.nome} ao estoque: $e',
             );
           }
-          
-          final estoqueAnterior = produto.estoque;
-          final novoEstoque = produto.estoque + qtdDevolver;
-          
-          dataService.updateProduto(
-            produto.copyWith(
-              estoque: novoEstoque,
+        }
+      }
+
+      // 2. CALCULAR NOVO VALOR: (original - valor devolvido), mínimo 0
+      final novoValor = (venda.valorTotal - _valorTotal).clamp(
+        0.0,
+        double.infinity,
+      );
+
+      // 3. CRIAR ITENS ATUALIZADOS (zerar preço dos devolvidos)
+      final novosItens = <ItemVendaBalcao>[];
+      for (final item in venda.itens) {
+        final qtdDevolver = _itensSelecionados[item.id] ?? 0;
+
+        if (qtdDevolver > 0 && qtdDevolver >= item.quantidade) {
+          // Item totalmente devolvido: zerar preço
+          novosItens.add(
+            ItemVendaBalcao(
+              id: item.id,
+              nome: item.nome,
+              precoUnitario: 0,
+              quantidade: item.quantidade,
+              isServico: false,
+              quantidadeDevolvida: item.quantidade,
+            ),
+          );
+        } else if (qtdDevolver > 0) {
+          // Item parcialmente devolvido
+          novosItens.add(
+            ItemVendaBalcao(
+              id: item.id,
+              nome: item.nome,
+              precoUnitario: item.preco,
+              quantidade: item.quantidade - qtdDevolver,
+              isServico: false,
+              quantidadeDevolvida: qtdDevolver,
+            ),
+          );
+        } else {
+          // Item não devolvido: manter igual
+          novosItens.add(
+            ItemVendaBalcao(
+              id: item.id,
+              nome: item.nome,
+              precoUnitario: item.preco,
+              quantidade: item.quantidade,
+              isServico: false,
+            ),
+          );
+        }
+      }
+
+      // 4. CRIAR/ATUALIZAR VENDA (igual à troca)
+      final vendaAtualizada = VendaBalcao(
+        id: venda.id,
+        numero: venda.numero,
+        dataVenda: venda.data,
+        clienteId: venda.clienteId,
+        clienteNome: venda.clienteNome,
+        itens: novosItens,
+        valorTotal: novoValor,
+        tipoPagamento: TipoPagamento.dinheiro,
+      );
+
+      // Atualizar ou adicionar na lista de vendasBalcao
+      final indexVenda = dataService.vendasBalcao.indexWhere(
+        (v) => v.id == venda.id || v.numero == venda.numero,
+      );
+
+      if (indexVenda != -1) {
+        await dataService.updateVendaBalcao(vendaAtualizada);
+      } else {
+        // Se não existe na lista, adicionar para manter o registro com itens devolvidos
+        await dataService.addVendaBalcao(vendaAtualizada);
+      }
+
+      // 5. ATUALIZAR PEDIDO CORRESPONDENTE (se existir)
+      final indexPedido = dataService.pedidos.indexWhere(
+        (p) => p.numero == venda.numero,
+      );
+
+      debugPrint('=== ATUALIZANDO PEDIDO ===');
+      debugPrint('indexPedido: $indexPedido');
+      debugPrint('venda.numero: ${venda.numero}');
+      debugPrint('novoValor: $novoValor');
+      debugPrint('_valorTotal (devolvido): $_valorTotal');
+      debugPrint('venda.valorTotal (original): ${venda.valorTotal}');
+
+      if (indexPedido != -1) {
+        final pedidoOriginal = dataService.pedidos[indexPedido];
+        debugPrint('Pedido encontrado: ${pedidoOriginal.numero}');
+        debugPrint('Pagamentos: ${pedidoOriginal.pagamentos.length}');
+
+        // Atualizar os pagamentos para refletir a devolução
+        // Se novoValor = 0, zerar todos os pagamentos
+        final pagamentosAtualizados = pedidoOriginal.pagamentos.map((pag) {
+          if (pag.recebido) {
+            double novoValorPag;
+            if (novoValor <= 0 || venda.valorTotal <= 0) {
+              // Devolução total - zerar pagamento
+              novoValorPag = 0;
+            } else {
+              // Devolução parcial - calcular proporção
+              final proporcao = novoValor / venda.valorTotal;
+              novoValorPag = pag.valor * proporcao;
+            }
+            debugPrint('Pagamento ${pag.id}: ${pag.valor} -> $novoValorPag');
+            return PagamentoPedido(
+              id: pag.id,
+              tipo: pag.tipo,
+              valor: novoValorPag,
+              recebido: pag.recebido,
+              dataVencimento: pag.dataVencimento,
+              dataRecebimento: pag.dataRecebimento,
+              parcelas: pag.parcelas,
+              numeroParcela: pag.numeroParcela,
+              parcelamentoId: pag.parcelamentoId,
+              observacao: pag.observacao,
+              tipoOriginal: pag.tipoOriginal,
+            );
+          }
+          return pag;
+        }).toList();
+
+        final pedidoAtualizado = pedidoOriginal.copyWith(
+          total: novoValor,
+          pagamentos: pagamentosAtualizados,
+        );
+        dataService.updatePedido(pedidoAtualizado);
+        debugPrint('Pedido atualizado com total: ${pedidoAtualizado.total}');
+        debugPrint('totalRecebido será: ${pedidoAtualizado.totalRecebido}');
+      } else {
+        debugPrint('!!! PEDIDO NÃO ENCONTRADO !!!');
+        // Listar todos os pedidos para debug
+        for (final p in dataService.pedidos) {
+          debugPrint('  - ${p.numero}');
+        }
+      }
+
+      // 5. CRIAR REGISTRO DA DEVOLUÇÃO
+
+      final troca = TrocaDevolucao(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        pedidoId: venda.id,
+        numeroPedido: venda.numero,
+        clienteId: idClienteFinal.isNotEmpty ? idClienteFinal : venda.clienteId,
+        clienteNome: idClienteFinal.isNotEmpty
+            ? dataService.clientes
+                  .firstWhere((c) => c.id == idClienteFinal)
+                  .nome
+            : venda.clienteNome,
+        dataOperacao: DateTime.now(),
+        tipo: TipoOperacao.devolucao,
+        itensDevolvidos: itensDevolvidos,
+        valorDevolvido: _valorTotal,
+        diferenca: -_valorTotal,
+        observacao: _motivo.isNotEmpty ? _motivo : null,
+        status: 'Concluído',
+        metodoEstorno: metodoEstorno,
+      );
+
+      await dataService.addTrocaDevolucao(troca);
+
+      // 6. APLICAR O ESTORNO ESCOLHIDO (Crédito ou Dinheiro)
+      if (metodoEstorno == 'fiado' && idClienteFinal.isNotEmpty) {
+        try {
+          final clienteParaAtualizar = dataService.clientes.firstWhere(
+            (c) => c.id == idClienteFinal,
+          );
+          await dataService.updateCliente(
+            clienteParaAtualizar.copyWith(
+              saldoDevedor: clienteParaAtualizar.saldoDevedor - _valorTotal,
               updatedAt: DateTime.now(),
             ),
           );
-          
-          debugPrint('>>> ✓ Estoque atualizado - Devolução:');
-          debugPrint('>>>   Produto: ${produto.nome}');
-          debugPrint('>>>   Estoque anterior: $estoqueAnterior');
-          debugPrint('>>>   Quantidade devolvida: $qtdDevolver');
-          debugPrint('>>>   Novo estoque: $novoEstoque');
+          debugPrint(
+            '>>> [Estorno] ✓ Crédito de ${_valorTotal} aplicado ao cliente ${clienteParaAtualizar.nome}',
+          );
+
+          // Se o cliente foi vinculado agora, podemos opcionalmente atualizar a venda original
+          // mas isso pode ser complexo. O registro da Devolução já terá o cliente correto.
         } catch (e) {
-          debugPrint('>>> ERRO ao devolver produto ${item.nome} ao estoque: $e');
+          debugPrint('>>> [Estorno] ERRO ao aplicar crédito no fiado: $e');
         }
-      }
-    }
-
-    // 2. CALCULAR NOVO VALOR: (original - valor devolvido), mínimo 0
-    final novoValor = (venda.valorTotal - _valorTotal).clamp(
-      0.0,
-      double.infinity,
-    );
-
-    // 3. CRIAR ITENS ATUALIZADOS (zerar preço dos devolvidos)
-    final novosItens = <ItemVendaBalcao>[];
-    for (final item in venda.itens) {
-      final qtdDevolver = _itensSelecionados[item.id] ?? 0;
-
-      if (qtdDevolver > 0 && qtdDevolver >= item.quantidade) {
-        // Item totalmente devolvido: zerar preço
-        novosItens.add(
-          ItemVendaBalcao(
-            id: item.id,
-            nome: item.nome,
-            precoUnitario: 0,
-            quantidade: item.quantidade,
-            isServico: false,
-            quantidadeDevolvida: item.quantidade,
-          ),
-        );
-      } else if (qtdDevolver > 0) {
-        // Item parcialmente devolvido
-        novosItens.add(
-          ItemVendaBalcao(
-            id: item.id,
-            nome: item.nome,
-            precoUnitario: item.preco,
-            quantidade: item.quantidade - qtdDevolver,
-            isServico: false,
-            quantidadeDevolvida: qtdDevolver,
-          ),
-        );
-      } else {
-        // Item não devolvido: manter igual
-        novosItens.add(
-          ItemVendaBalcao(
-            id: item.id,
-            nome: item.nome,
-            precoUnitario: item.preco,
-            quantidade: item.quantidade,
-            isServico: false,
-          ),
-        );
-      }
-    }
-
-    // 4. CRIAR/ATUALIZAR VENDA (igual à troca)
-    final vendaAtualizada = VendaBalcao(
-      id: venda.id,
-      numero: venda.numero,
-      dataVenda: venda.data,
-      clienteId: venda.clienteId,
-      clienteNome: venda.clienteNome,
-      itens: novosItens,
-      valorTotal: novoValor,
-      tipoPagamento: TipoPagamento.dinheiro,
-    );
-
-    // Atualizar ou adicionar na lista de vendasBalcao
-    final indexVenda = dataService.vendasBalcao.indexWhere(
-      (v) => v.id == venda.id || v.numero == venda.numero,
-    );
-
-    if (indexVenda != -1) {
-      await dataService.updateVendaBalcao(vendaAtualizada);
-    } else {
-      // Se não existe na lista, adicionar para manter o registro com itens devolvidos
-      await dataService.addVendaBalcao(vendaAtualizada);
-    }
-
-    // 5. ATUALIZAR PEDIDO CORRESPONDENTE (se existir)
-    final indexPedido = dataService.pedidos.indexWhere(
-      (p) => p.numero == venda.numero,
-    );
-
-    debugPrint('=== ATUALIZANDO PEDIDO ===');
-    debugPrint('indexPedido: $indexPedido');
-    debugPrint('venda.numero: ${venda.numero}');
-    debugPrint('novoValor: $novoValor');
-    debugPrint('_valorTotal (devolvido): $_valorTotal');
-    debugPrint('venda.valorTotal (original): ${venda.valorTotal}');
-
-    if (indexPedido != -1) {
-      final pedidoOriginal = dataService.pedidos[indexPedido];
-      debugPrint('Pedido encontrado: ${pedidoOriginal.numero}');
-      debugPrint('Pagamentos: ${pedidoOriginal.pagamentos.length}');
-
-      // Atualizar os pagamentos para refletir a devolução
-      // Se novoValor = 0, zerar todos os pagamentos
-      final pagamentosAtualizados = pedidoOriginal.pagamentos.map((pag) {
-        if (pag.recebido) {
-          double novoValorPag;
-          if (novoValor <= 0 || venda.valorTotal <= 0) {
-            // Devolução total - zerar pagamento
-            novoValorPag = 0;
-          } else {
-            // Devolução parcial - calcular proporção
-            final proporcao = novoValor / venda.valorTotal;
-            novoValorPag = pag.valor * proporcao;
-          }
-          debugPrint('Pagamento ${pag.id}: ${pag.valor} -> $novoValorPag');
-          return PagamentoPedido(
-            id: pag.id,
-            tipo: pag.tipo,
-            valor: novoValorPag,
-            recebido: pag.recebido,
-            dataVencimento: pag.dataVencimento,
-            dataRecebimento: pag.dataRecebimento,
-            parcelas: pag.parcelas,
-            numeroParcela: pag.numeroParcela,
-            parcelamentoId: pag.parcelamentoId,
-            observacao: pag.observacao,
-            tipoOriginal: pag.tipoOriginal,
+      } else if (metodoEstorno == 'dinheiro') {
+        try {
+          await dataService.registrarSangria(
+            valor: _valorTotal,
+            motivo: 'Estorno Devolução: ${venda.numero}',
+            responsavel: 'Sistema',
+          );
+          debugPrint('>>> [Estorno] ✓ Sangria de estorno registrada no caixa');
+        } catch (e) {
+          debugPrint(
+            '>>> [Estorno] AVISO: Sangria manual necessária. Erro: $e',
           );
         }
-        return pag;
-      }).toList();
-
-      final pedidoAtualizado = pedidoOriginal.copyWith(
-        total: novoValor,
-        pagamentos: pagamentosAtualizados,
-      );
-      dataService.updatePedido(pedidoAtualizado);
-      debugPrint('Pedido atualizado com total: ${pedidoAtualizado.total}');
-      debugPrint('totalRecebido será: ${pedidoAtualizado.totalRecebido}');
-    } else {
-      debugPrint('!!! PEDIDO NÃO ENCONTRADO !!!');
-      // Listar todos os pedidos para debug
-      for (final p in dataService.pedidos) {
-        debugPrint('  - ${p.numero}');
       }
-    }
 
-    // 5. CRIAR REGISTRO DA DEVOLUÇÃO
-    
-    final troca = TrocaDevolucao(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      pedidoId: venda.id,
-      numeroPedido: venda.numero,
-      clienteId: idClienteFinal.isNotEmpty ? idClienteFinal : venda.clienteId,
-      clienteNome: idClienteFinal.isNotEmpty 
-          ? dataService.clientes.firstWhere((c) => c.id == idClienteFinal).nome 
-          : venda.clienteNome,
-      dataOperacao: DateTime.now(),
-      tipo: TipoOperacao.devolucao,
-      itensDevolvidos: itensDevolvidos,
-      valorDevolvido: _valorTotal,
-      diferenca: -_valorTotal,
-      observacao: _motivo.isNotEmpty ? _motivo : null,
-      status: 'Concluído',
-      metodoEstorno: metodoEstorno,
-    );
-
-    await dataService.addTrocaDevolucao(troca);
-
-    // 6. APLICAR O ESTORNO ESCOLHIDO (Crédito ou Dinheiro)
-    if (metodoEstorno == 'fiado' && idClienteFinal.isNotEmpty) {
-      try {
-        final clienteParaAtualizar = dataService.clientes.firstWhere((c) => c.id == idClienteFinal);
-        await dataService.updateCliente(clienteParaAtualizar.copyWith(
-          saldoDevedor: clienteParaAtualizar.saldoDevedor - _valorTotal,
-          updatedAt: DateTime.now(),
-        ));
-        debugPrint('>>> [Estorno] ✓ Crédito de ${_valorTotal} aplicado ao cliente ${clienteParaAtualizar.nome}');
-        
-        // Se o cliente foi vinculado agora, podemos opcionalmente atualizar a venda original 
-        // mas isso pode ser complexo. O registro da Devolução já terá o cliente correto.
-      } catch (e) {
-        debugPrint('>>> [Estorno] ERRO ao aplicar crédito no fiado: $e');
-      }
-    } else if (metodoEstorno == 'dinheiro') {
-      try {
-        await dataService.registrarSangria(
-          valor: _valorTotal,
-          motivo: 'Estorno Devolução: ${venda.numero}',
-          responsavel: 'Sistema',
-        );
-        debugPrint('>>> [Estorno] ✓ Sangria de estorno registrada no caixa');
-      } catch (e) {
-        debugPrint('>>> [Estorno] AVISO: Sangria manual necessária. Erro: $e');
-      }
-    }
-
-    // Mostrar confirmação
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1E1E2E),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: Colors.green.withOpacity(0.2),
-                shape: BoxShape.circle,
+      // Mostrar confirmação
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => AlertDialog(
+          backgroundColor: const Color(0xFF1E1E2E),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Colors.green.withOpacity(0.2),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.check_circle,
+                  color: Colors.greenAccent,
+                  size: 60,
+                ),
               ),
-              child: const Icon(
-                Icons.check_circle,
-                color: Colors.greenAccent,
-                size: 60,
+              const SizedBox(height: 24),
+              const Text(
+                'Devolução Realizada!',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
-            ),
-            const SizedBox(height: 24),
-            const Text(
-              'Devolução Realizada!',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
+              const SizedBox(height: 12),
+              Text(
+                '${itensDevolvidos.length} ${itensDevolvidos.length == 1 ? 'item devolvido' : 'itens devolvidos'}\nEstoque atualizado',
+                style: const TextStyle(color: Colors.white70),
+                textAlign: TextAlign.center,
               ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              '${itensDevolvidos.length} ${itensDevolvidos.length == 1 ? 'item devolvido' : 'itens devolvidos'}\nEstoque atualizado',
-              style: const TextStyle(color: Colors.white70),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-              decoration: BoxDecoration(
-                color: Colors.green.withOpacity(0.2),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Column(
-                children: [
-                  Text(
-                    'Valor a devolver: ${_formatoMoeda.format(_valorTotal)}',
-                    style: const TextStyle(
-                      color: Colors.greenAccent,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 18,
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 12,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.green.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Column(
+                  children: [
+                    Text(
+                      'Valor a devolver: ${_formatoMoeda.format(_valorTotal)}',
+                      style: const TextStyle(
+                        color: Colors.greenAccent,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 18,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    metodoEstorno == 'fiado' 
-                        ? 'VALOR ADICIONADO AO SALDO DO CLIENTE'
-                        : 'VALOR DEVOLVIDO EM DINHEIRO',
-                    style: TextStyle(
-                      color: Colors.greenAccent.withOpacity(0.7),
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
+                    const SizedBox(height: 4),
+                    Text(
+                      metodoEstorno == 'fiado'
+                          ? 'VALOR ADICIONADO AO SALDO DO CLIENTE'
+                          : 'VALOR DEVOLVIDO EM DINHEIRO',
+                      style: TextStyle(
+                        color: Colors.greenAccent.withOpacity(0.7),
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () {
+                  Navigator.pop(context); // Fechar dialog
+                  Navigator.pop(context); // Voltar para seleção
+                  Navigator.pop(context); // Voltar para busca
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green.withOpacity(0.8),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
                   ),
-                ],
+                ),
+                child: const Text(
+                  'Concluir',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
               ),
             ),
           ],
         ),
-        actions: [
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              onPressed: () {
-                Navigator.pop(context); // Fechar dialog
-                Navigator.pop(context); // Voltar para seleção
-                Navigator.pop(context); // Voltar para busca
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.green.withOpacity(0.8),
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              child: const Text(
-                'Concluir',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
+      );
+    } finally {
+      _isProcessing = false;
+      if (mounted) setState(() {});
+    }
   }
 
   void _navegarParaTroca(DataService dataService) {
@@ -1669,7 +1758,10 @@ class SelecionarItensTrocaPageState extends State<SelecionarItensTrocaPage> {
     );
   }
 
-  Future<Cliente?> _abrirSeletorCliente(BuildContext context, DataService dataService) async {
+  Future<Cliente?> _abrirSeletorCliente(
+    BuildContext context,
+    DataService dataService,
+  ) async {
     return await showDialog<Cliente>(
       context: context,
       builder: (context) => _DialogBuscaCliente(dataService: dataService),
@@ -1773,6 +1865,7 @@ class SelecionarNovosProdutosPageState
 
   String _termoBusca = '';
   final Map<String, double> _novosProdutos = {}; // produtoId -> quantidade
+  bool _isProcessing = false;
 
   double get _valorNovos {
     final dataService = Provider.of<DataService>(context, listen: false);
@@ -2102,22 +2195,24 @@ class SelecionarNovosProdutosPageState
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton.icon(
-                        onPressed: () async {
-                          try {
-                            await _confirmarTroca(dataService);
-                          } catch (e, stack) {
-                            debugPrint('>>> ERRO NA TROCA: $e');
-                            debugPrint('>>> Stack: $stack');
-                            if (mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text('Erro: $e'),
-                                  backgroundColor: Colors.red,
-                                ),
-                              );
-                            }
-                          }
-                        },
+                        onPressed: _isProcessing
+                            ? null
+                            : () async {
+                                try {
+                                  await _confirmarTroca(dataService);
+                                } catch (e, stack) {
+                                  debugPrint('>>> ERRO NA TROCA: $e');
+                                  debugPrint('>>> Stack: $stack');
+                                  if (mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text('Erro: $e'),
+                                        backgroundColor: Colors.red,
+                                      ),
+                                    );
+                                  }
+                                }
+                              },
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.orange.withOpacity(0.8),
                           foregroundColor: Colors.white,
@@ -2127,9 +2222,9 @@ class SelecionarNovosProdutosPageState
                           ),
                         ),
                         icon: const Icon(Icons.swap_horiz),
-                        label: const Text(
-                          'Confirmar Troca',
-                          style: TextStyle(
+                        label: Text(
+                          _isProcessing ? 'Processando...' : 'Confirmar Troca',
+                          style: const TextStyle(
                             fontWeight: FontWeight.bold,
                             fontSize: 16,
                           ),
@@ -2146,542 +2241,599 @@ class SelecionarNovosProdutosPageState
   }
 
   Future<void> _confirmarTroca(DataService dataService) async {
+    if (_isProcessing) return;
+
+    _isProcessing = true;
+    if (mounted) setState(() {});
+
     final venda = widget.vendaOriginal;
 
-    // 1. CALCULAR VALORES
-    double valorDevolvido = 0;
-    for (final item in widget.itensDevolver) {
-      valorDevolvido += item.preco * item.quantidade;
-    }
+    try {
+      // 1. CALCULAR VALORES
+      double valorDevolvido = 0;
+      for (final item in widget.itensDevolver) {
+        valorDevolvido += item.preco * item.quantidade;
+      }
 
-    double valorNovos = 0;
-    final nomesNovos = <String>[];
-    for (final entry in _novosProdutos.entries) {
-      final produto = dataService.produtos.firstWhere((p) => p.id == entry.key);
-      valorNovos += produto.preco * entry.value;
-      nomesNovos.add('${entry.value}x ${produto.nome}');
-    }
+      double valorNovos = 0;
+      final nomesNovos = <String>[];
+      for (final entry in _novosProdutos.entries) {
+        final produto = dataService.produtos.firstWhere(
+          (p) => p.id == entry.key,
+        );
+        valorNovos += produto.preco * entry.value;
+        nomesNovos.add('${entry.value}x ${produto.nome}');
+      }
 
-    // VALIDAÇÃO: não permitir troca por valor maior
-    if (valorNovos > valorDevolvido) {
-      showDialog(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('Troca inválida'),
-          content: const Text(
-            'O valor dos itens novos não pode ser maior que o valor dos itens devolvidos.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('OK'),
+      // VALIDAÇÃO: não permitir troca por valor maior
+      if (valorNovos > valorDevolvido) {
+        showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Troca inválida'),
+            content: const Text(
+              'O valor dos itens novos não pode ser maior que o valor dos itens devolvidos.',
             ),
-          ],
-        ),
-      );
-      return;
-    }
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+        return;
+      }
 
-    // 2. CALCULAR NOVO VALOR: (original - devolvido) + novos
-    final novoValor = (venda.valorTotal - valorDevolvido) + valorNovos;
+      // 2. CALCULAR NOVO VALOR: (original - devolvido) + novos
+      final novoValor = (venda.valorTotal - valorDevolvido) + valorNovos;
 
-    // 3. ATUALIZAR ESTOQUE (devolver item trocado)
-    debugPrint('');
-    debugPrint('╔════════════════════════════════════════════════╗');
-    debugPrint('║  ATUALIZANDO ESTOQUE - DEVOLUÇÃO (TROCA)      ║');
-    debugPrint('╚════════════════════════════════════════════════╝');
-    for (final item in widget.itensDevolver) {
-      try {
-        // Tentar buscar pelo ID primeiro (mais confiável), depois pelo nome
-        late Produto produto;
-        bool encontrou = false;
+      // 3. ATUALIZAR ESTOQUE (devolver item trocado)
+      debugPrint('');
+      debugPrint('╔════════════════════════════════════════════════╗');
+      debugPrint('║  ATUALIZANDO ESTOQUE - DEVOLUÇÃO (TROCA)      ║');
+      debugPrint('╚════════════════════════════════════════════════╝');
+      for (final item in widget.itensDevolver) {
         try {
-          if (item.produtoId != null && item.produtoId!.isNotEmpty) {
+          // Tentar buscar pelo ID primeiro (mais confiável), depois pelo nome
+          late Produto produto;
+          bool encontrou = false;
+          try {
+            if (item.produtoId != null && item.produtoId!.isNotEmpty) {
+              produto = dataService.produtos.firstWhere(
+                (p) => p.id == item.produtoId,
+              );
+              encontrou = true;
+            }
+          } catch (_) {}
+
+          if (!encontrou) {
             produto = dataService.produtos.firstWhere(
-              (p) => p.id == item.produtoId,
+              (p) => p.nome == item.nome,
             );
-            encontrou = true;
           }
-        } catch (_) {}
-        
-        if (!encontrou) {
-          produto = dataService.produtos.firstWhere(
-            (p) => p.nome == item.nome,
+
+          final estoqueAnterior = produto.estoque;
+          final novoEstoque = produto.estoque + item.quantidade;
+
+          dataService.updateProduto(
+            produto.copyWith(estoque: novoEstoque, updatedAt: DateTime.now()),
+          );
+
+          debugPrint('>>> ✓ Item devolvido ao estoque:');
+          debugPrint('>>>   Produto: ${produto.nome}');
+          debugPrint('>>>   Estoque anterior: $estoqueAnterior');
+          debugPrint('>>>   Quantidade devolvida: ${item.quantidade}');
+          debugPrint('>>>   Novo estoque: $novoEstoque');
+        } catch (e) {
+          debugPrint(
+            '>>> ERRO ao devolver produto ${item.nome} ao estoque: $e',
           );
         }
-        
-        final estoqueAnterior = produto.estoque;
-        final novoEstoque = produto.estoque + item.quantidade;
-        
-        dataService.updateProduto(
-          produto.copyWith(
-            estoque: novoEstoque,
-            updatedAt: DateTime.now(),
-          ),
-        );
-        
-        debugPrint('>>> ✓ Item devolvido ao estoque:');
-        debugPrint('>>>   Produto: ${produto.nome}');
-        debugPrint('>>>   Estoque anterior: $estoqueAnterior');
-        debugPrint('>>>   Quantidade devolvida: ${item.quantidade}');
-        debugPrint('>>>   Novo estoque: $novoEstoque');
-      } catch (e) {
-        debugPrint('>>> ERRO ao devolver produto ${item.nome} ao estoque: $e');
       }
-    }
 
-    // 4. ATUALIZAR ESTOQUE (retirar novo item)
-    debugPrint('');
-    debugPrint('╔════════════════════════════════════════════════╗');
-    debugPrint('║  ATUALIZANDO ESTOQUE - BAIXA (NOVO ITEM)      ║');
-    debugPrint('╚════════════════════════════════════════════════╝');
-    for (final entry in _novosProdutos.entries) {
-      try {
-        final produto = dataService.produtos.firstWhere((p) => p.id == entry.key);
-        
-        // Verificar se há estoque suficiente
-        if (produto.estoque < entry.value) {
-          debugPrint('>>> ⚠ ATENÇÃO: Estoque insuficiente para ${produto.nome}');
-          debugPrint('>>>   Estoque disponível: ${produto.estoque}');
-          debugPrint('>>>   Quantidade solicitada: ${entry.value}');
-        }
-        
-        final estoqueAnterior = produto.estoque;
-        final novoEstoque = ((produto.estoque - entry.value) < 0 ? 0 : (produto.estoque - entry.value)).toDouble();
-        
-        dataService.updateProduto(
-          produto.copyWith(
-            estoque: novoEstoque,
-            updatedAt: DateTime.now(),
-          ),
-        );
-        
-        debugPrint('>>> ✓ Baixa no estoque:');
-        debugPrint('>>>   Produto: ${produto.nome}');
-        debugPrint('>>>   Estoque anterior: $estoqueAnterior');
-        debugPrint('>>>   Quantidade retirada: ${entry.value}');
-        debugPrint('>>>   Novo estoque: $novoEstoque');
-      } catch (e) {
-        debugPrint('>>> ERRO ao dar baixa no produto ${entry.key}: $e');
-      }
-    }
-    debugPrint('');
+      // 4. ATUALIZAR ESTOQUE (retirar novo item)
+      debugPrint('');
+      debugPrint('╔════════════════════════════════════════════════╗');
+      debugPrint('║  ATUALIZANDO ESTOQUE - BAIXA (NOVO ITEM)      ║');
+      debugPrint('╚════════════════════════════════════════════════╝');
+      for (final entry in _novosProdutos.entries) {
+        try {
+          final produto = dataService.produtos.firstWhere(
+            (p) => p.id == entry.key,
+          );
 
-    // 5. CRIAR ITENS ATUALIZADOS
-    final novosItens = <ItemVendaBalcao>[];
-    
-    // Criar lista de nomes dos produtos novos formatados
-    final produtosNovosList = <String>[]; // Lista de nomes formatados (ex: "2x Produto A, 1x Produto B")
-    for (final entry in _novosProdutos.entries) {
-      try {
-        final produto = dataService.produtos.firstWhere((p) => p.id == entry.key);
-        if (entry.value > 1) {
-          produtosNovosList.add('${entry.value}x ${produto.nome}');
-        } else {
-          produtosNovosList.add(produto.nome);
-        }
-        debugPrint('>>> Produto novo: ${entry.value}x ${produto.nome}');
-      } catch (e) {
-        debugPrint('>>> ERRO ao buscar produto: $e');
-        produtosNovosList.add('Produto não encontrado');
-      }
-    }
-    
-    // Criar string combinada de todos os produtos novos
-    final todosProdutosNovos = produtosNovosList.join(', ');
-    debugPrint('>>> Produtos novos combinados: $todosProdutosNovos');
-    debugPrint('>>> Total de itens devolvidos: ${widget.itensDevolver.length}');
-    
-    // Criar mapa: idItemOriginal -> string com todos os produtos novos
-    // Se houver múltiplos itens devolvidos, cada um recebe todos os produtos novos
-    final mapaTroca = <String, String>{}; 
-    
-    // Para cada item devolvido, encontrar o item correspondente na venda original
-    for (final itemDevolvido in widget.itensDevolver) {
-      // Encontrar o item correspondente na venda original
-      for (final itemOriginal in venda.itens) {
-        final matchPorId = itemOriginal.id == itemDevolvido.id || 
-                           itemOriginal.id == itemDevolvido.produtoId;
-        final matchPorNomePreco = itemOriginal.nome == itemDevolvido.nome && 
-                                   itemOriginal.preco == itemDevolvido.preco;
-        
-        if (matchPorId || matchPorNomePreco) {
-          // Associar este item original a todos os produtos novos
-          mapaTroca[itemOriginal.id] = todosProdutosNovos;
-          debugPrint('>>> ASSOCIADO: ${itemOriginal.nome} -> $todosProdutosNovos');
-          break;
+          // Verificar se há estoque suficiente
+          if (produto.estoque < entry.value) {
+            debugPrint(
+              '>>> ⚠ ATENÇÃO: Estoque insuficiente para ${produto.nome}',
+            );
+            debugPrint('>>>   Estoque disponível: ${produto.estoque}');
+            debugPrint('>>>   Quantidade solicitada: ${entry.value}');
+          }
+
+          final estoqueAnterior = produto.estoque;
+          final novoEstoque =
+              ((produto.estoque - entry.value) < 0
+                      ? 0
+                      : (produto.estoque - entry.value))
+                  .toDouble();
+
+          dataService.updateProduto(
+            produto.copyWith(estoque: novoEstoque, updatedAt: DateTime.now()),
+          );
+
+          debugPrint('>>> ✓ Baixa no estoque:');
+          debugPrint('>>>   Produto: ${produto.nome}');
+          debugPrint('>>>   Estoque anterior: $estoqueAnterior');
+          debugPrint('>>>   Quantidade retirada: ${entry.value}');
+          debugPrint('>>>   Novo estoque: $novoEstoque');
+        } catch (e) {
+          debugPrint('>>> ERRO ao dar baixa no produto ${entry.key}: $e');
         }
       }
-    }
+      debugPrint('');
 
-    debugPrint('>>> Total de associações no mapa: ${mapaTroca.length}');
+      // 5. CRIAR ITENS ATUALIZADOS
+      final novosItens = <ItemVendaBalcao>[];
 
-    // Converter itens da vendaOriginal para ItemVendaBalcao
-    for (final item in venda.itens) {
-      // Verificar se este item foi trocado
-      final itemDevolvido = widget.itensDevolver.firstWhere(
-        (d) => d.id == item.id || 
-               d.produtoId == item.id ||
-               (d.nome == item.nome && d.preco == item.preco),
-        orElse: () => ItemParaTroca(
-          id: '',
-          nome: '',
-          quantidade: 0,
-          preco: 0,
-        ),
-      );
-      
-      final foiTrocado = itemDevolvido.id.isNotEmpty;
-
-      if (foiTrocado) {
-        // IMPORTANTE: Garantir que sempre temos um valor para trocadoPor
-        // Primeiro tentar do mapa, depois usar todosProdutosNovos diretamente
-        String trocadoPorNome = mapaTroca[item.id] ?? '';
-        
-        // Se não encontrou no mapa ou está vazio, usar diretamente a lista completa de produtos novos
-        if (trocadoPorNome.isEmpty || trocadoPorNome.trim().isEmpty) {
-          if (todosProdutosNovos.isNotEmpty && todosProdutosNovos.trim().isNotEmpty) {
-            trocadoPorNome = todosProdutosNovos;
-            debugPrint('>>> [FALLBACK] Usando todosProdutosNovos diretamente: "$trocadoPorNome"');
+      // Criar lista de nomes dos produtos novos formatados
+      final produtosNovosList =
+          <
+            String
+          >[]; // Lista de nomes formatados (ex: "2x Produto A, 1x Produto B")
+      for (final entry in _novosProdutos.entries) {
+        try {
+          final produto = dataService.produtos.firstWhere(
+            (p) => p.id == entry.key,
+          );
+          if (entry.value > 1) {
+            produtosNovosList.add('${entry.value}x ${produto.nome}');
           } else {
-            // Se ainda estiver vazio, usar um valor padrão
-            trocadoPorNome = 'Produto não informado';
-            debugPrint('>>> [AVISO] Campo trocadoPor vazio - usando valor padrão');
+            produtosNovosList.add(produto.nome);
+          }
+          debugPrint('>>> Produto novo: ${entry.value}x ${produto.nome}');
+        } catch (e) {
+          debugPrint('>>> ERRO ao buscar produto: $e');
+          produtosNovosList.add('Produto não encontrado');
+        }
+      }
+
+      // Criar string combinada de todos os produtos novos
+      final todosProdutosNovos = produtosNovosList.join(', ');
+      debugPrint('>>> Produtos novos combinados: $todosProdutosNovos');
+      debugPrint(
+        '>>> Total de itens devolvidos: ${widget.itensDevolver.length}',
+      );
+
+      // Criar mapa: idItemOriginal -> string com todos os produtos novos
+      // Se houver múltiplos itens devolvidos, cada um recebe todos os produtos novos
+      final mapaTroca = <String, String>{};
+
+      // Para cada item devolvido, encontrar o item correspondente na venda original
+      for (final itemDevolvido in widget.itensDevolver) {
+        // Encontrar o item correspondente na venda original
+        for (final itemOriginal in venda.itens) {
+          final matchPorId =
+              itemOriginal.id == itemDevolvido.id ||
+              itemOriginal.id == itemDevolvido.produtoId;
+          final matchPorNomePreco =
+              itemOriginal.nome == itemDevolvido.nome &&
+              itemOriginal.preco == itemDevolvido.preco;
+
+          if (matchPorId || matchPorNomePreco) {
+            // Associar este item original a todos os produtos novos
+            mapaTroca[itemOriginal.id] = todosProdutosNovos;
+            debugPrint(
+              '>>> ASSOCIADO: ${itemOriginal.nome} -> $todosProdutosNovos',
+            );
+            break;
           }
         }
-        
-        // Garantir que o valor final não esteja vazio (trim e verificação final)
-        String valorFinal = trocadoPorNome.trim();
-        if (valorFinal.isEmpty) {
-          valorFinal = todosProdutosNovos.isNotEmpty ? todosProdutosNovos : 'Produto não informado';
-        }
-        
-        debugPrint('');
-        debugPrint('>>> ============================================');
-        debugPrint('>>> ITEM TROCADO: ${item.nome}');
-        debugPrint('>>> Quantidade trocada: ${itemDevolvido.quantidade}');
-        debugPrint('>>> Trocado por: "$valorFinal"');
-        debugPrint('>>> Tamanho da string: ${valorFinal.length}');
-        debugPrint('>>> ============================================');
-        debugPrint('');
-        
-        // Criar o item com trocadoPor garantido
-        final itemTrocado = ItemVendaBalcao(
-          id: item.id,
-          nome: item.nome,
-          precoUnitario: 0,
-          quantidade: item.quantidade,
-          isServico: false,
-          quantidadeTrocada: itemDevolvido.quantidade,
-          trocadoPor: valorFinal, // SEMPRE preenchido
+      }
+
+      debugPrint('>>> Total de associações no mapa: ${mapaTroca.length}');
+
+      // Converter itens da vendaOriginal para ItemVendaBalcao
+      for (final item in venda.itens) {
+        // Verificar se este item foi trocado
+        final itemDevolvido = widget.itensDevolver.firstWhere(
+          (d) =>
+              d.id == item.id ||
+              d.produtoId == item.id ||
+              (d.nome == item.nome && d.preco == item.preco),
+          orElse: () =>
+              ItemParaTroca(id: '', nome: '', quantidade: 0, preco: 0),
         );
-        
-        // Verificar se foi criado corretamente
-        debugPrint('>>> ✓ ItemVendaBalcao criado:');
-        debugPrint('>>>   - Nome: ${itemTrocado.nome}');
-        debugPrint('>>>   - quantidadeTrocada: ${itemTrocado.quantidadeTrocada}');
-        debugPrint('>>>   - trocadoPor: "${itemTrocado.trocadoPor}"');
-        debugPrint('>>>   - trocadoPor != null: ${itemTrocado.trocadoPor != null}');
-        debugPrint('>>>   - trocadoPor.isNotEmpty: ${itemTrocado.trocadoPor?.isNotEmpty ?? false}');
-        debugPrint('>>>   - trocadoPor.length: ${itemTrocado.trocadoPor?.length ?? 0}');
-        
-        novosItens.add(itemTrocado);
-      } else {
-        // Item não trocado: manter igual
-        novosItens.add(
-          ItemVendaBalcao(
+
+        final foiTrocado = itemDevolvido.id.isNotEmpty;
+
+        if (foiTrocado) {
+          // IMPORTANTE: Garantir que sempre temos um valor para trocadoPor
+          // Primeiro tentar do mapa, depois usar todosProdutosNovos diretamente
+          String trocadoPorNome = mapaTroca[item.id] ?? '';
+
+          // Se não encontrou no mapa ou está vazio, usar diretamente a lista completa de produtos novos
+          if (trocadoPorNome.isEmpty || trocadoPorNome.trim().isEmpty) {
+            if (todosProdutosNovos.isNotEmpty &&
+                todosProdutosNovos.trim().isNotEmpty) {
+              trocadoPorNome = todosProdutosNovos;
+              debugPrint(
+                '>>> [FALLBACK] Usando todosProdutosNovos diretamente: "$trocadoPorNome"',
+              );
+            } else {
+              // Se ainda estiver vazio, usar um valor padrão
+              trocadoPorNome = 'Produto não informado';
+              debugPrint(
+                '>>> [AVISO] Campo trocadoPor vazio - usando valor padrão',
+              );
+            }
+          }
+
+          // Garantir que o valor final não esteja vazio (trim e verificação final)
+          String valorFinal = trocadoPorNome.trim();
+          if (valorFinal.isEmpty) {
+            valorFinal = todosProdutosNovos.isNotEmpty
+                ? todosProdutosNovos
+                : 'Produto não informado';
+          }
+
+          debugPrint('');
+          debugPrint('>>> ============================================');
+          debugPrint('>>> ITEM TROCADO: ${item.nome}');
+          debugPrint('>>> Quantidade trocada: ${itemDevolvido.quantidade}');
+          debugPrint('>>> Trocado por: "$valorFinal"');
+          debugPrint('>>> Tamanho da string: ${valorFinal.length}');
+          debugPrint('>>> ============================================');
+          debugPrint('');
+
+          // Criar o item com trocadoPor garantido
+          final itemTrocado = ItemVendaBalcao(
             id: item.id,
             nome: item.nome,
-            precoUnitario: item.preco,
+            precoUnitario: 0,
             quantidade: item.quantidade,
+            isServico: false,
+            quantidadeTrocada: itemDevolvido.quantidade,
+            trocadoPor: valorFinal, // SEMPRE preenchido
+          );
+
+          // Verificar se foi criado corretamente
+          debugPrint('>>> ✓ ItemVendaBalcao criado:');
+          debugPrint('>>>   - Nome: ${itemTrocado.nome}');
+          debugPrint(
+            '>>>   - quantidadeTrocada: ${itemTrocado.quantidadeTrocada}',
+          );
+          debugPrint('>>>   - trocadoPor: "${itemTrocado.trocadoPor}"');
+          debugPrint(
+            '>>>   - trocadoPor != null: ${itemTrocado.trocadoPor != null}',
+          );
+          debugPrint(
+            '>>>   - trocadoPor.isNotEmpty: ${itemTrocado.trocadoPor?.isNotEmpty ?? false}',
+          );
+          debugPrint(
+            '>>>   - trocadoPor.length: ${itemTrocado.trocadoPor?.length ?? 0}',
+          );
+
+          novosItens.add(itemTrocado);
+        } else {
+          // Item não trocado: manter igual
+          novosItens.add(
+            ItemVendaBalcao(
+              id: item.id,
+              nome: item.nome,
+              precoUnitario: item.preco,
+              quantidade: item.quantidade,
+              isServico: false,
+            ),
+          );
+        }
+      }
+
+      // 6. ADICIONAR NOVOS PRODUTOS
+      for (final entry in _novosProdutos.entries) {
+        final produto = dataService.produtos.firstWhere(
+          (p) => p.id == entry.key,
+        );
+        novosItens.add(
+          ItemVendaBalcao(
+            id: '${produto.id}_${DateTime.now().millisecondsSinceEpoch}',
+            nome: produto.nome,
+            precoUnitario: produto.preco,
+            quantidade: entry.value,
             isServico: false,
           ),
         );
       }
-    }
 
-    // 6. ADICIONAR NOVOS PRODUTOS
-    for (final entry in _novosProdutos.entries) {
-      final produto = dataService.produtos.firstWhere((p) => p.id == entry.key);
-      novosItens.add(
-        ItemVendaBalcao(
-          id: '${produto.id}_${DateTime.now().millisecondsSinceEpoch}',
-          nome: produto.nome,
-          precoUnitario: produto.preco,
-          quantidade: entry.value,
-          isServico: false,
-        ),
+      // 7. CRIAR/ATUALIZAR VENDA
+      final vendaAtualizada = VendaBalcao(
+        id: venda.id,
+        numero: venda.numero,
+        dataVenda: venda.data,
+        clienteId: venda.clienteId,
+        clienteNome: venda.clienteNome,
+        itens: novosItens,
+        valorTotal: novoValor,
+        tipoPagamento: TipoPagamento.dinheiro,
       );
-    }
 
-    // 7. CRIAR/ATUALIZAR VENDA
-    final vendaAtualizada = VendaBalcao(
-      id: venda.id,
-      numero: venda.numero,
-      dataVenda: venda.data,
-      clienteId: venda.clienteId,
-      clienteNome: venda.clienteNome,
-      itens: novosItens,
-      valorTotal: novoValor,
-      tipoPagamento: TipoPagamento.dinheiro,
-    );
+      // Tentar atualizar na lista de vendasBalcao
+      final indexVenda = dataService.vendasBalcao.indexWhere(
+        (v) => v.id == venda.id || v.numero == venda.numero,
+      );
 
-    // Tentar atualizar na lista de vendasBalcao
-    final indexVenda = dataService.vendasBalcao.indexWhere(
-      (v) => v.id == venda.id || v.numero == venda.numero,
-    );
-
-    if (indexVenda != -1) {
-      // Log dos itens com troca antes de atualizar
-      debugPrint('');
-      debugPrint('╔════════════════════════════════════════════════╗');
-      debugPrint('║  ATUALIZANDO VENDA COM TROCA                   ║');
-      debugPrint('╚════════════════════════════════════════════════╝');
-      debugPrint('>>> Venda: ${venda.numero}');
-      debugPrint('>>> Total de itens na venda atualizada: ${vendaAtualizada.itens.length}');
-      for (final item in vendaAtualizada.itens) {
-        if (item.quantidadeTrocada > 0) {
-          debugPrint('>>> ✓ Item trocado: ${item.nome}');
-          debugPrint('>>>   - quantidadeTrocada: ${item.quantidadeTrocada}');
-          debugPrint('>>>   - trocadoPor: "${item.trocadoPor}"');
-          debugPrint('>>>   - trocadoPor é null? ${item.trocadoPor == null}');
-          debugPrint('>>>   - trocadoPor está vazio? ${item.trocadoPor?.isEmpty ?? true}');
-        }
-      }
-      
-      await dataService.updateVendaBalcao(vendaAtualizada);
-      
-      // FORÇAR atualização dos listeners
-      dataService.forceUpdate();
-      
-      // Aguardar um pouco para garantir que a atualização foi processada
-      await Future.delayed(const Duration(milliseconds: 200));
-      
-      // Log após atualizar
-      debugPrint('');
-      debugPrint('╔════════════════════════════════════════════════╗');
-      debugPrint('║  VERIFICANDO VENDA APÓS ATUALIZAÇÃO            ║');
-      debugPrint('╚════════════════════════════════════════════════╝');
-      final vendaVerificacao = dataService.getVendaPorNumero(venda.numero);
-      if (vendaVerificacao != null) {
-        debugPrint('>>> ✓ Venda encontrada! Total de itens: ${vendaVerificacao.itens.length}');
-        int countTrocados = 0;
-        for (final item in vendaVerificacao.itens) {
+      if (indexVenda != -1) {
+        // Log dos itens com troca antes de atualizar
+        debugPrint('');
+        debugPrint('╔════════════════════════════════════════════════╗');
+        debugPrint('║  ATUALIZANDO VENDA COM TROCA                   ║');
+        debugPrint('╚════════════════════════════════════════════════╝');
+        debugPrint('>>> Venda: ${venda.numero}');
+        debugPrint(
+          '>>> Total de itens na venda atualizada: ${vendaAtualizada.itens.length}',
+        );
+        for (final item in vendaAtualizada.itens) {
           if (item.quantidadeTrocada > 0) {
-            countTrocados++;
-            debugPrint('>>> ✓ Item trocado (verificação): ${item.nome}');
+            debugPrint('>>> ✓ Item trocado: ${item.nome}');
             debugPrint('>>>   - quantidadeTrocada: ${item.quantidadeTrocada}');
             debugPrint('>>>   - trocadoPor: "${item.trocadoPor}"');
-            debugPrint('>>>   - trocadoPor não é null? ${item.trocadoPor != null}');
-            debugPrint('>>>   - trocadoPor não está vazio? ${item.trocadoPor?.isNotEmpty ?? false}');
+            debugPrint('>>>   - trocadoPor é null? ${item.trocadoPor == null}');
+            debugPrint(
+              '>>>   - trocadoPor está vazio? ${item.trocadoPor?.isEmpty ?? true}',
+            );
           }
         }
-        debugPrint('>>> Total de itens trocados encontrados: $countTrocados');
-      } else {
-        debugPrint('>>> ❌ ERRO: Venda não encontrada após atualização!');
-      }
-    }
 
-    // Também tentar atualizar no pedido correspondente (se existir)
-    final indexPedido = dataService.pedidos.indexWhere(
-      (p) => p.numero == venda.numero,
-    );
+        await dataService.updateVendaBalcao(vendaAtualizada);
 
-    if (indexPedido != -1) {
-      final pedidoOriginal = dataService.pedidos[indexPedido];
+        // FORÇAR atualização dos listeners
+        dataService.forceUpdate();
 
-      // Atualizar os pagamentos para refletir a troca
-      final pagamentosAtualizados = pedidoOriginal.pagamentos.map((pag) {
-        if (pag.recebido) {
-          // Calcular nova proporção
-          final proporcao = venda.valorTotal > 0
-              ? novoValor / venda.valorTotal
-              : 0.0;
-          final novoValorPag = pag.valor * proporcao;
-          return PagamentoPedido(
-            id: pag.id,
-            tipo: pag.tipo,
-            valor: novoValorPag,
-            recebido: pag.recebido,
-            dataVencimento: pag.dataVencimento,
-            dataRecebimento: pag.dataRecebimento,
-            parcelas: pag.parcelas,
-            numeroParcela: pag.numeroParcela,
-            parcelamentoId: pag.parcelamentoId,
-            observacao: pag.observacao,
-            tipoOriginal: pag.tipoOriginal,
+        // Aguardar um pouco para garantir que a atualização foi processada
+        await Future.delayed(const Duration(milliseconds: 200));
+
+        // Log após atualizar
+        debugPrint('');
+        debugPrint('╔════════════════════════════════════════════════╗');
+        debugPrint('║  VERIFICANDO VENDA APÓS ATUALIZAÇÃO            ║');
+        debugPrint('╚════════════════════════════════════════════════╝');
+        final vendaVerificacao = dataService.getVendaPorNumero(venda.numero);
+        if (vendaVerificacao != null) {
+          debugPrint(
+            '>>> ✓ Venda encontrada! Total de itens: ${vendaVerificacao.itens.length}',
           );
+          int countTrocados = 0;
+          for (final item in vendaVerificacao.itens) {
+            if (item.quantidadeTrocada > 0) {
+              countTrocados++;
+              debugPrint('>>> ✓ Item trocado (verificação): ${item.nome}');
+              debugPrint(
+                '>>>   - quantidadeTrocada: ${item.quantidadeTrocada}',
+              );
+              debugPrint('>>>   - trocadoPor: "${item.trocadoPor}"');
+              debugPrint(
+                '>>>   - trocadoPor não é null? ${item.trocadoPor != null}',
+              );
+              debugPrint(
+                '>>>   - trocadoPor não está vazio? ${item.trocadoPor?.isNotEmpty ?? false}',
+              );
+            }
+          }
+          debugPrint('>>> Total de itens trocados encontrados: $countTrocados');
+        } else {
+          debugPrint('>>> ❌ ERRO: Venda não encontrada após atualização!');
         }
-        return pag;
-      }).toList();
+      }
 
-      final pedidoAtualizado = pedidoOriginal.copyWith(
-        total: novoValor,
-        pagamentos: pagamentosAtualizados,
+      // Também tentar atualizar no pedido correspondente (se existir)
+      final indexPedido = dataService.pedidos.indexWhere(
+        (p) => p.numero == venda.numero,
       );
-      dataService.updatePedido(pedidoAtualizado);
-    }
 
-    // 8. CRIAR REGISTRO DA TROCA
+      if (indexPedido != -1) {
+        final pedidoOriginal = dataService.pedidos[indexPedido];
 
-    // 1 para 1: associar cada item devolvido ao novo
-    final itensNovos = <ItemTrocaDevolucao>[];
-    final itensDevolvidos = <ItemTrocaDevolucao>[];
-    final novosProdutosEntriesList = _novosProdutos.entries.toList();
-    for (int i = 0; i < widget.itensDevolver.length; i++) {
-      final item = widget.itensDevolver[i];
-      final novoProduto = i < novosProdutosEntriesList.length
-          ? dataService.produtos.firstWhere(
-              (p) => p.id == novosProdutosEntriesList[i].key,
-            )
-          : null;
-      itensDevolvidos.add(
-        ItemTrocaDevolucao(
-          produtoId: item.produtoId ?? item.id,
-          produtoNome: item.nome,
-          quantidade: item.quantidade,
-          precoUnitario: item.preco,
-          valorTotal: item.quantidade * item.preco,
-          motivo: widget.motivo.isNotEmpty ? widget.motivo : null,
-          trocadoPor: novoProduto?.nome,
-        ),
-      );
-      if (novoProduto != null) {
-        itensNovos.add(
+        // Atualizar os pagamentos para refletir a troca
+        final pagamentosAtualizados = pedidoOriginal.pagamentos.map((pag) {
+          if (pag.recebido) {
+            // Calcular nova proporção
+            final proporcao = venda.valorTotal > 0
+                ? novoValor / venda.valorTotal
+                : 0.0;
+            final novoValorPag = pag.valor * proporcao;
+            return PagamentoPedido(
+              id: pag.id,
+              tipo: pag.tipo,
+              valor: novoValorPag,
+              recebido: pag.recebido,
+              dataVencimento: pag.dataVencimento,
+              dataRecebimento: pag.dataRecebimento,
+              parcelas: pag.parcelas,
+              numeroParcela: pag.numeroParcela,
+              parcelamentoId: pag.parcelamentoId,
+              observacao: pag.observacao,
+              tipoOriginal: pag.tipoOriginal,
+            );
+          }
+          return pag;
+        }).toList();
+
+        final pedidoAtualizado = pedidoOriginal.copyWith(
+          total: novoValor,
+          pagamentos: pagamentosAtualizados,
+        );
+        dataService.updatePedido(pedidoAtualizado);
+      }
+
+      // 8. CRIAR REGISTRO DA TROCA
+
+      // 1 para 1: associar cada item devolvido ao novo
+      final itensNovos = <ItemTrocaDevolucao>[];
+      final itensDevolvidos = <ItemTrocaDevolucao>[];
+      final novosProdutosEntriesList = _novosProdutos.entries.toList();
+      for (int i = 0; i < widget.itensDevolver.length; i++) {
+        final item = widget.itensDevolver[i];
+        final novoProduto = i < novosProdutosEntriesList.length
+            ? dataService.produtos.firstWhere(
+                (p) => p.id == novosProdutosEntriesList[i].key,
+              )
+            : null;
+        itensDevolvidos.add(
           ItemTrocaDevolucao(
-            produtoId: novoProduto.id,
-            produtoNome: novoProduto.nome,
-            quantidade: novosProdutosEntriesList[i].value,
-            precoUnitario: novoProduto.preco,
-            valorTotal: novoProduto.preco * novosProdutosEntriesList[i].value,
+            produtoId: item.produtoId ?? item.id,
+            produtoNome: item.nome,
+            quantidade: item.quantidade,
+            precoUnitario: item.preco,
+            valorTotal: item.quantidade * item.preco,
+            motivo: widget.motivo.isNotEmpty ? widget.motivo : null,
+            trocadoPor: novoProduto?.nome,
           ),
         );
+        if (novoProduto != null) {
+          itensNovos.add(
+            ItemTrocaDevolucao(
+              produtoId: novoProduto.id,
+              produtoNome: novoProduto.nome,
+              quantidade: novosProdutosEntriesList[i].value,
+              precoUnitario: novoProduto.preco,
+              valorTotal: novoProduto.preco * novosProdutosEntriesList[i].value,
+            ),
+          );
+        }
       }
-    }
 
-    final troca = TrocaDevolucao(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      pedidoId: venda.id,
-      numeroPedido: venda.numero,
-      clienteId: venda.clienteId,
-      clienteNome: venda.clienteNome,
-      dataOperacao: DateTime.now(),
-      tipo: _novosProdutos.isNotEmpty
-          ? TipoOperacao.troca
-          : TipoOperacao.devolucao,
-      itensDevolvidos: itensDevolvidos,
-      itensNovos: itensNovos,
-      valorDevolvido: widget.valorCredito,
-      valorNovosItens: _valorNovos,
-      diferenca: _diferenca,
-      observacao: widget.motivo.isNotEmpty ? widget.motivo : null,
-      status: 'Concluído',
-    );
+      final troca = TrocaDevolucao(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        pedidoId: venda.id,
+        numeroPedido: venda.numero,
+        clienteId: venda.clienteId,
+        clienteNome: venda.clienteNome,
+        dataOperacao: DateTime.now(),
+        tipo: _novosProdutos.isNotEmpty
+            ? TipoOperacao.troca
+            : TipoOperacao.devolucao,
+        itensDevolvidos: itensDevolvidos,
+        itensNovos: itensNovos,
+        valorDevolvido: widget.valorCredito,
+        valorNovosItens: _valorNovos,
+        diferenca: _diferenca,
+        observacao: widget.motivo.isNotEmpty ? widget.motivo : null,
+        status: 'Concluído',
+      );
 
-    await dataService.addTrocaDevolucao(troca);
+      await dataService.addTrocaDevolucao(troca);
 
-    // Mostrar confirmação
-    final isTroca = _novosProdutos.isNotEmpty;
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1E1E2E),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: (isTroca ? Colors.orange : Colors.red).withOpacity(0.2),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                isTroca ? Icons.swap_horiz : Icons.keyboard_return,
-                color: isTroca ? Colors.orange : Colors.red,
-                size: 60,
-              ),
-            ),
-            const SizedBox(height: 24),
-            Text(
-              isTroca ? 'Troca Realizada!' : 'Devolução Realizada!',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              isTroca
-                  ? '${itensDevolvidos.length} ${itensDevolvidos.length == 1 ? 'item devolvido' : 'itens devolvidos'}\n'
-                        '${itensNovos.length} ${itensNovos.length == 1 ? 'novo item' : 'novos itens'}'
-                  : '${itensDevolvidos.length} ${itensDevolvidos.length == 1 ? 'item devolvido' : 'itens devolvidos'}',
-              style: const TextStyle(color: Colors.white70),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 16),
-            if (_diferenca.abs() > 0.01)
+      // Mostrar confirmação
+      final isTroca = _novosProdutos.isNotEmpty;
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => AlertDialog(
+          backgroundColor: const Color(0xFF1E1E2E),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
               Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 12,
-                ),
+                padding: const EdgeInsets.all(20),
                 decoration: BoxDecoration(
-                  color: (_diferenca >= 0 ? Colors.red : Colors.green)
-                      .withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  _diferenca >= 0
-                      ? 'Cliente deve pagar: ${_formatoMoeda.format(_diferenca)}'
-                      : 'Devolver ao cliente: ${_formatoMoeda.format(_diferenca.abs())}',
-                  style: TextStyle(
-                    color: _diferenca >= 0
-                        ? Colors.redAccent
-                        : Colors.greenAccent,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 14,
+                  color: (isTroca ? Colors.orange : Colors.red).withOpacity(
+                    0.2,
                   ),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  isTroca ? Icons.swap_horiz : Icons.keyboard_return,
+                  color: isTroca ? Colors.orange : Colors.red,
+                  size: 60,
                 ),
               ),
-          ],
-        ),
-        actions: [
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              onPressed: () {
-                // Voltar para o histórico com valor atualizado
-                // Remove todas as páginas e vai direto para o histórico (nova instância)
-                Navigator.of(context).pushAndRemoveUntil(
-                  MaterialPageRoute(
-                    builder: (context) => const HistoricoVendasPage(),
-                  ),
-                  (route) => route.isFirst, // Mantém apenas a home
-                );
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: (isTroca ? Colors.orange : Colors.red)
-                    .withOpacity(0.8),
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              child: const Text(
-                'Concluir',
-                style: TextStyle(
+              const SizedBox(height: 24),
+              Text(
+                isTroca ? 'Troca Realizada!' : 'Devolução Realizada!',
+                style: const TextStyle(
                   color: Colors.white,
+                  fontSize: 20,
                   fontWeight: FontWeight.bold,
                 ),
               ),
-            ),
+              const SizedBox(height: 12),
+              Text(
+                isTroca
+                    ? '${itensDevolvidos.length} ${itensDevolvidos.length == 1 ? 'item devolvido' : 'itens devolvidos'}\n'
+                          '${itensNovos.length} ${itensNovos.length == 1 ? 'novo item' : 'novos itens'}'
+                    : '${itensDevolvidos.length} ${itensDevolvidos.length == 1 ? 'item devolvido' : 'itens devolvidos'}',
+                style: const TextStyle(color: Colors.white70),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              if (_diferenca.abs() > 0.01)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 12,
+                  ),
+                  decoration: BoxDecoration(
+                    color: (_diferenca >= 0 ? Colors.red : Colors.green)
+                        .withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    _diferenca >= 0
+                        ? 'Cliente deve pagar: ${_formatoMoeda.format(_diferenca)}'
+                        : 'Devolver ao cliente: ${_formatoMoeda.format(_diferenca.abs())}',
+                    style: TextStyle(
+                      color: _diferenca >= 0
+                          ? Colors.redAccent
+                          : Colors.greenAccent,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                    ),
+                  ),
+                ),
+            ],
           ),
-        ],
-      ),
-    );
+          actions: [
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () {
+                  // Voltar para o histórico com valor atualizado
+                  // Remove todas as páginas e vai direto para o histórico (nova instância)
+                  Navigator.of(context).pushAndRemoveUntil(
+                    MaterialPageRoute(
+                      builder: (context) => const HistoricoVendasPage(),
+                    ),
+                    (route) => route.isFirst, // Mantém apenas a home
+                  );
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: (isTroca ? Colors.orange : Colors.red)
+                      .withOpacity(0.8),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: const Text(
+                  'Concluir',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      _isProcessing = false;
+      if (mounted) setState(() {});
+    }
   }
 }
 
@@ -2775,13 +2927,16 @@ class _DialogBuscaClienteState extends State<_DialogBuscaCliente> {
     final clientes = widget.dataService.clientes.where((c) {
       if (_termo.isEmpty) return true;
       return c.nome.toLowerCase().contains(_termo.toLowerCase()) ||
-             c.telefone.contains(_termo);
+          c.telefone.contains(_termo);
     }).toList();
 
     return AlertDialog(
       backgroundColor: const Color(0xFF1E1E2E),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      title: const Text('Selecionar Cliente', style: TextStyle(color: Colors.white)),
+      title: const Text(
+        'Selecionar Cliente',
+        style: TextStyle(color: Colors.white),
+      ),
       content: SizedBox(
         width: 400,
         height: 500,
@@ -2797,7 +2952,9 @@ class _DialogBuscaClienteState extends State<_DialogBuscaCliente> {
                 prefixIcon: const Icon(Icons.search, color: Colors.white54),
                 filled: true,
                 fillColor: Colors.white.withOpacity(0.05),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
               onChanged: (v) => setState(() => _termo = v),
             ),
@@ -2810,10 +2967,19 @@ class _DialogBuscaClienteState extends State<_DialogBuscaCliente> {
                   return ListTile(
                     leading: CircleAvatar(
                       backgroundColor: Colors.blueAccent.withOpacity(0.2),
-                      child: Text(c.nome[0].toUpperCase(), style: const TextStyle(color: Colors.blueAccent)),
+                      child: Text(
+                        c.nome[0].toUpperCase(),
+                        style: const TextStyle(color: Colors.blueAccent),
+                      ),
                     ),
-                    title: Text(c.nome, style: const TextStyle(color: Colors.white)),
-                    subtitle: Text(c.telefone, style: const TextStyle(color: Colors.white54)),
+                    title: Text(
+                      c.nome,
+                      style: const TextStyle(color: Colors.white),
+                    ),
+                    subtitle: Text(
+                      c.telefone,
+                      style: const TextStyle(color: Colors.white54),
+                    ),
                     onTap: () => Navigator.pop(context, c),
                   );
                 },
@@ -2825,7 +2991,10 @@ class _DialogBuscaClienteState extends State<_DialogBuscaCliente> {
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('CANCELAR', style: TextStyle(color: Colors.white54)),
+          child: const Text(
+            'CANCELAR',
+            style: TextStyle(color: Colors.white54),
+          ),
         ),
       ],
     );

@@ -32,9 +32,9 @@ class AberturaCaixa {
     }
     
     return AberturaCaixa(
-      id: map['id'] ?? '',
+      id: map['id']?.toString() ?? '',
       numero: map['numero'] ?? '',
-      dataAbertura: DateParser.parse(map['data_abertura'] ?? map['dataAbertura']),
+      dataAbertura: DateParser.parse(map['data_abertura'] ?? map['dataAbertura'] ?? map['created_at'] ?? map['createdAt']),
       valorInicial: parseDouble(map['valor_inicial'] ?? map['valorInicial']) ?? 0.0,
       observacao: map['observacao'],
       responsavel: map['responsavel'],
@@ -44,15 +44,21 @@ class AberturaCaixa {
   }
 
   Map<String, dynamic> toMap() {
+    // Serializar datas SEMPRE em UTC (sufixo Z). As colunas do Supabase são
+    // timestamptz e as colunas locais podem ser TEXT: uma string sem fuso
+    // ("naive") é interpretada como UTC pelo Postgres e como hora LOCAL pelo
+    // DateParser — essa ambiguidade deslocava caixas em -3h a cada sincronização.
+    // Com o fuso explícito (Z), ambos interpretam o MESMO instante.
+    String iso(DateTime d) => d.toUtc().toIso8601String();
     return {
       'id': id,
       'numero': numero,
-      'data_abertura': dataAbertura.toIso8601String(),
+      'data_abertura': iso(dataAbertura),
       'valor_inicial': valorInicial,
       'observacao': observacao,
       'responsavel': responsavel,
-      'created_at': createdAt.toIso8601String(),
-      'updated_at': updatedAt.toIso8601String(),
+      'created_at': iso(createdAt),
+      'updated_at': iso(updatedAt),
     };
   }
 }
@@ -60,6 +66,7 @@ class AberturaCaixa {
 /// Modelo para representar uma sangria do caixa
 class SangriaCaixa {
   final String id;
+  final String? aberturaCaixaId; // ID da abertura correspondente
   final DateTime data;
   final double valor;
   final String motivo;
@@ -70,6 +77,7 @@ class SangriaCaixa {
 
   SangriaCaixa({
     required this.id,
+    this.aberturaCaixaId,
     required this.data,
     required this.valor,
     required this.motivo,
@@ -89,8 +97,9 @@ class SangriaCaixa {
     }
 
     return SangriaCaixa(
-      id: map['id'] ?? '',
-      data: DateParser.parse(map['data']),
+      id: map['id']?.toString() ?? '',
+      aberturaCaixaId: map['abertura_caixa_id']?.toString() ?? map['aberturaCaixaId']?.toString(),
+      data: DateParser.parse(map['data_operacao'] ?? map['dataOperacao'] ?? map['data']),
       valor: parseDouble(map['valor']) ?? 0.0,
       motivo: map['motivo'] ?? '',
       observacao: map['observacao'],
@@ -101,15 +110,18 @@ class SangriaCaixa {
   }
 
   Map<String, dynamic> toMap() {
+    String iso(DateTime d) => d.toUtc().toIso8601String();
     return {
       'id': id,
-      'data': data.toIso8601String(),
+      'abertura_caixa_id': aberturaCaixaId,
+      'data': iso(data),
+      'data_operacao': iso(data),
       'valor': valor,
       'motivo': motivo,
       'observacao': observacao,
       'responsavel': responsavel,
-      'created_at': createdAt.toIso8601String(),
-      'updated_at': updatedAt.toIso8601String(),
+      'created_at': iso(createdAt),
+      'updated_at': iso(updatedAt),
     };
   }
 }
@@ -117,6 +129,7 @@ class SangriaCaixa {
 /// Modelo para representar um suprimento do caixa
 class SuprimentoCaixa {
   final String id;
+  final String? aberturaCaixaId; // ID da abertura correspondente
   final DateTime data;
   final double valor;
   final String motivo;
@@ -127,6 +140,7 @@ class SuprimentoCaixa {
 
   SuprimentoCaixa({
     required this.id,
+    this.aberturaCaixaId,
     required this.data,
     required this.valor,
     required this.motivo,
@@ -146,8 +160,9 @@ class SuprimentoCaixa {
     }
 
     return SuprimentoCaixa(
-      id: map['id'] ?? '',
-      data: DateParser.parse(map['data']),
+      id: map['id']?.toString() ?? '',
+      aberturaCaixaId: map['abertura_caixa_id']?.toString() ?? map['aberturaCaixaId']?.toString(),
+      data: DateParser.parse(map['data_operacao'] ?? map['dataOperacao'] ?? map['data']),
       valor: parseDouble(map['valor']) ?? 0.0,
       motivo: map['motivo'] ?? '',
       observacao: map['observacao'],
@@ -158,15 +173,18 @@ class SuprimentoCaixa {
   }
 
   Map<String, dynamic> toMap() {
+    String iso(DateTime d) => d.toUtc().toIso8601String();
     return {
       'id': id,
-      'data': data.toIso8601String(),
+      'abertura_caixa_id': aberturaCaixaId,
+      'data': iso(data),
+      'data_operacao': iso(data),
       'valor': valor,
       'motivo': motivo,
       'observacao': observacao,
       'responsavel': responsavel,
-      'createdAt': createdAt.toIso8601String(),
-      'updatedAt': updatedAt.toIso8601String(),
+      'createdAt': iso(createdAt),
+      'updatedAt': iso(updatedAt),
     };
   }
 }
@@ -175,6 +193,7 @@ class SuprimentoCaixa {
 class FechamentoCaixa {
   final String id;
   final String aberturaCaixaId;
+  final String? numero; // Número do fechamento (ex: FECH-CAIXA-001)
   final DateTime dataFechamento;
   final double valorEsperado; // Valor que deveria ter no caixa
   final double valorReal; // Valor que realmente tem no caixa
@@ -189,6 +208,7 @@ class FechamentoCaixa {
   FechamentoCaixa({
     required this.id,
     required this.aberturaCaixaId,
+    this.numero,
     required this.dataFechamento,
     required this.valorEsperado,
     required this.valorReal,
@@ -218,9 +238,10 @@ class FechamentoCaixa {
     }
 
     return FechamentoCaixa(
-      id: map['id'] ?? '',
-      aberturaCaixaId: map['abertura_caixa_id'] ?? map['aberturaCaixaId'] ?? '',
-      dataFechamento: DateParser.parse(map['data_fechamento'] ?? map['dataFechamento']),
+      id: map['id']?.toString() ?? '',
+      aberturaCaixaId: map['abertura_caixa_id']?.toString() ?? map['aberturaCaixaId']?.toString() ?? '',
+      numero: map['numero'],
+      dataFechamento: DateParser.parse(map['data_fechamento'] ?? map['dataFechamento'] ?? map['created_at'] ?? map['createdAt']),
       valorEsperado: parseDouble(map['valor_esperado'] ?? map['valorEsperado']) ?? 0.0,
       valorReal: parseDouble(map['valor_real'] ?? map['valorReal']) ?? 0.0,
       diferenca: parseDouble(map['diferenca']) ?? 0.0,
@@ -238,10 +259,12 @@ class FechamentoCaixa {
   }
 
   Map<String, dynamic> toMap() {
+    String iso(DateTime d) => d.toUtc().toIso8601String();
     return {
       'id': id,
       'abertura_caixa_id': aberturaCaixaId,
-      'data_fechamento': dataFechamento.toIso8601String(),
+      'numero': numero,
+      'data_fechamento': iso(dataFechamento),
       'valor_esperado': valorEsperado,
       'valor_real': valorReal,
       'diferenca': diferenca,
@@ -249,8 +272,8 @@ class FechamentoCaixa {
       'suprimentos': suprimentos.map((s) => s.toMap()).toList(),
       'observacao': observacao,
       'responsavel': responsavel,
-      'created_at': createdAt.toIso8601String(),
-      'updated_at': updatedAt.toIso8601String(),
+      'created_at': iso(createdAt),
+      'updated_at': iso(updatedAt),
     };
   }
 }
@@ -278,7 +301,3 @@ class Caixa {
   double get totalSuprimentos =>
       suprimentos.fold(0.0, (sum, s) => sum + s.valor);
 }
-
-
-
-

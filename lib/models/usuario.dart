@@ -18,6 +18,7 @@ class Usuario {
   final Set<String>? permissoesNegadas; // Permissões removidas do padrão
   final List<String>? telasOcultas; // Telas que o usuário não pode ver/acessar
   final int serieNfce; // Série da NFC-e (cada usuário pode ter a sua)
+  final int numeroInicialNfce; // Número inicial da NFC-e para a série do usuário (padrão: 1)
   final DateTime createdAt;
   final DateTime updatedAt;
   final DateTime? ultimoAcesso;
@@ -38,6 +39,7 @@ class Usuario {
     this.permissoesNegadas,
     this.telasOcultas,
     this.serieNfce = 1,
+    this.numeroInicialNfce = 1,
     required this.createdAt,
     required this.updatedAt,
     this.ultimoAcesso,
@@ -60,6 +62,7 @@ class Usuario {
     Set<String>? permissoesNegadas,
     List<String>? telasOcultas,
     int? serieNfce,
+    int? numeroInicialNfce,
     DateTime? createdAt,
     DateTime? updatedAt,
     DateTime? ultimoAcesso,
@@ -80,6 +83,7 @@ class Usuario {
       permissoesNegadas: permissoesNegadas ?? this.permissoesNegadas,
       telasOcultas: telasOcultas ?? this.telasOcultas,
       serieNfce: serieNfce ?? this.serieNfce,
+      numeroInicialNfce: numeroInicialNfce ?? this.numeroInicialNfce,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       ultimoAcesso: ultimoAcesso ?? this.ultimoAcesso,
@@ -143,6 +147,7 @@ class Usuario {
       createdAt: DateParser.parse(map['created_at'] ?? map['createdAt']),
       updatedAt: DateParser.parse(map['updated_at'] ?? map['updatedAt']),
       serieNfce: get<num>('serieNfce', 'serie_nfce')?.toInt() ?? 1,
+      numeroInicialNfce: get<num>('numeroInicialNfce', 'numero_inicial_nfce')?.toInt() ?? 1,
       ultimoAcesso: (map['ultimo_acesso'] ?? map['ultimoAcesso']) != null
           ? DateParser.parse(map['ultimo_acesso'] ?? map['ultimoAcesso'])
           : null,
@@ -171,6 +176,7 @@ class Usuario {
       'permissoes_negadas': permissoesNegadas?.toList(),
       'telas_ocultas': telasOcultas,
       'serie_nfce': serieNfce,
+      'numero_inicial_nfce': numeroInicialNfce,
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt.toIso8601String(),
       'ultimo_acesso': ultimoAcesso?.toIso8601String(),

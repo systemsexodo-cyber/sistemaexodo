@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'supabase_service.dart';
@@ -11,10 +11,10 @@ typedef OnRealtimeData = void Function(String tabela, String evento, Map<String,
 /// Serviço de Sincronização em Tempo Real (Multi-PC)
 ///
 /// Arquitetura:
-///   Supabase Realtime (WebSocket) → SQLite local → DataService (memória) → UI
+///   Supabase Realtime (WebSocket) → PostgreSQL local → DataService (memória) → UI
 ///
 /// Quando PC-A salva uma venda, PC-B recebe via WebSocket em < 100ms e
-/// atualiza o SQLite e a UI automaticamente.
+/// atualiza o PostgreSQL e a UI automaticamente.
 class RealtimeSyncService {
   static final RealtimeSyncService instance = RealtimeSyncService._();
   RealtimeSyncService._();
@@ -29,7 +29,10 @@ class RealtimeSyncService {
   /// Callback para notificar o DataService sobre mudanças
   OnRealtimeData? onRealtimeData;
 
-  /// Referência ao DatabaseService para atualizar o SQLite local
+  /// Callback para notificar sobre início/fim de processamento em lote (suspenção da UI)
+  void Function(bool active)? onBatchStatus;
+
+  /// Referência ao DatabaseService para atualizar o PostgreSQL local
   final DatabaseService _dbService = DatabaseService();
 
   // Tabelas críticas que recebem tempo real
@@ -49,6 +52,11 @@ class RealtimeSyncService {
     'taxas_entrega',
     'romaneios',
   ];
+
+  // Buffer de atualizações agrupadas por tabela para evitar I/O lock
+  final Map<String, Map<String, _BufferedUpdate>> _bufferTabelas = {};
+  // Timers para debounce/flush de cada tabela
+  final Map<String, Timer> _timersTabelas = {};
 
   bool get ativo => _ativo;
   DateTime? get lastSyncAt => _lastSyncAt;
@@ -155,13 +163,14 @@ class RealtimeSyncService {
         dados.addAll(Map<String, dynamic>.from(payload));
       }
 
-      debugPrint('>>> [Realtime] 📨 $evento em $tabela: ${dados['id'] ?? '?'}');
+      final id = dados['id'] as String?;
+      if (id == null) return;
 
-      // 1. Atualizar SQLite local de forma assíncrona
-      _atualizarSQLiteLocal(tabela, evento, dados);
+      // Adicionar alteração ao buffer agrupado para evitar I/O excessivo
+      _bufferTabelas.putIfAbsent(tabela, () => {})[id] = _BufferedUpdate(evento, dados);
 
-      // 2. Notificar DataService para atualizar memória e UI
-      onRealtimeData?.call(tabela, evento, dados);
+      // Agendar descarregamento rápido do lote (debounce/throttle)
+      _agendarFlush(tabela);
 
       _lastSyncAt = DateTime.now();
     } catch (e) {
@@ -169,51 +178,80 @@ class RealtimeSyncService {
     }
   }
 
-  /// Atualiza o cache SQLite local com o dado recebido em tempo real
-  Future<void> _atualizarSQLiteLocal(String tabela, String evento, Map<String, dynamic> dados) async {
-    try {
-      // Mapear tabela Supabase → chave DatabaseService
-      final chave = _mapearTabelaParaChave(tabela);
-      if (chave == null) return;
-
-      if (evento == 'DELETE') {
-        final id = dados['id'] as String?;
-        if (id != null) {
-          await _removerItemSQLite(tabela, id);
-        }
-        return;
-      }
-
-      // INSERT ou UPDATE: salvar/atualizar no SQLite
-      // Adicionar delay para evitar concorrência com operações do app
-      await Future.delayed(const Duration(milliseconds: 50));
-      await _dbService.salvarLista(chave, [dados]);
-      
-      // Log especial para produtos mostrando o preço
-      if (tabela == 'produtos') {
-        debugPrint('>>> [Realtime] 💾 SQLite atualizado: $tabela - ${dados['nome'] ?? '?'} (preço: ${dados['preco'] ?? '?'})');
-      } else {
-        debugPrint('>>> [Realtime] 💾 SQLite atualizado: $tabela');
-      }
-    } on DatabaseException catch (e) {
-      // Ignorar erros de database locked - dados serão sincronizados na próxima sync completa
-      if (e.toString().contains('locked')) {
-        debugPrint('>>> [Realtime] ⏭️ SQLite ocupado, ignorando update de $tabela (sync completa resolverá)');
-      } else {
-        debugPrint('>>> [Realtime] ⚠️ Erro de banco ao atualizar $tabela: $e');
-      }
-    } catch (e) {
-      debugPrint('>>> [Realtime] ⚠️ Erro ao atualizar SQLite para $tabela: $e');
+  void _agendarFlush(String tabela) {
+    final tamanhoBuffer = _bufferTabelas[tabela]?.length ?? 0;
+    
+    // Se acumular mais de 100 itens para a tabela, descarrega imediatamente para não estourar memória
+    if (tamanhoBuffer >= 100) {
+      _timersTabelas[tabela]?.cancel();
+      _timersTabelas.remove(tabela);
+      _flushTabela(tabela);
+      return;
     }
+
+    // Aguarda 300ms de silêncio para descarregar de uma vez só
+    _timersTabelas[tabela]?.cancel();
+    _timersTabelas[tabela] = Timer(const Duration(milliseconds: 300), () {
+      _timersTabelas.remove(tabela);
+      _flushTabela(tabela);
+    });
   }
 
-  Future<void> _removerItemSQLite(String tabela, String id) async {
+  Future<void> _flushTabela(String tabela) async {
+    final buffer = _bufferTabelas.remove(tabela);
+    if (buffer == null || buffer.isEmpty) return;
+
+    final updates = <Map<String, dynamic>>[];
+    final deletes = <String>[];
+
+    for (final update in buffer.values) {
+      if (update.evento == 'DELETE') {
+        final id = update.dados['id'] as String?;
+        if (id != null) deletes.add(id);
+      } else {
+        updates.add(update.dados);
+      }
+    }
+
+    final chave = _mapearTabelaParaChave(tabela);
+    if (chave == null) return;
+
+    debugPrint('>>> [Realtime] ⚡ Lote processado em $tabela: ${updates.length} salvamentos, ${deletes.length} deleções');
+
+    // 1. Processar deleções acumuladas
+    for (final id in deletes) {
+      try {
+        await _dbService.removerItemPostgres(chave, id, _empresaIdAtual, isSync: true);
+      } catch (e) {
+        debugPrint('>>> [Realtime] ⚠️ Erro ao remover $id de $tabela no lote: $e');
+      }
+    }
+
+    // 2. Processar salvamentos acumulados de uma única vez (Economiza 99% das conexões/transações!)
+    if (updates.isNotEmpty) {
+      try {
+        await _dbService.salvarLista(chave, updates, isSync: true);
+      } catch (e) {
+        if (e.toString().contains('locked')) {
+          debugPrint('>>> [Realtime] ⏭️ Banco de Dados ocupado ao descarregar lote de $tabela, sync de segurança resolverá.');
+        } else {
+          debugPrint('>>> [Realtime] ⚠️ Erro ao salvar lote de $tabela no Banco de Dados: $e');
+        }
+      }
+    }
+
+    // 3. Notificar a UI em lote (na thread principal, extremamente rápido em memória)
+    onBatchStatus?.call(true);
     try {
-      final chave = _mapearTabelaParaChave(tabela);
-      if (chave == null) return;
-      await _dbService.removerItemPostgres(chave, id, _empresaIdAtual);
-    } catch (e) {
-      debugPrint('>>> [Realtime] ⚠️ Erro ao remover item de $tabela: $e');
+      for (final update in buffer.values) {
+        try {
+          onRealtimeData?.call(tabela, update.evento, update.dados);
+        } catch (e) {
+          debugPrint('>>> [Realtime] ⚠️ Erro ao notificar UI em lote para $tabela: $e');
+        }
+      }
+    } finally {
+      onBatchStatus?.call(false);
     }
   }
 
@@ -273,6 +311,12 @@ class RealtimeSyncService {
 
   /// Para a escuta em tempo real
   Future<void> parar() async {
+    for (final timer in _timersTabelas.values) {
+      timer.cancel();
+    }
+    _timersTabelas.clear();
+    _bufferTabelas.clear();
+
     if (_channel != null) {
       await _client.removeChannel(_channel!);
       _channel = null;
@@ -322,7 +366,13 @@ class RealtimeSyncService {
   static Map<String, dynamic> marcarAtualizado(Map<String, dynamic> dados) {
     return {
       ...dados,
-      'updated_at': DateTime.now().toUtc().toIso8601String(),
+      'updated_at': DateTime.now().toIso8601String(),
     };
   }
+}
+
+class _BufferedUpdate {
+  final String evento;
+  final Map<String, dynamic> dados;
+  _BufferedUpdate(this.evento, this.dados);
 }

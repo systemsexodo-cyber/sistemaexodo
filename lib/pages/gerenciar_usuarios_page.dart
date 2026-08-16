@@ -393,6 +393,7 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
     final senhaController = TextEditingController();
     final telefoneController = TextEditingController();
     final serieController = TextEditingController(text: '1');
+    final numeroInicialController = TextEditingController(text: '1');
     TipoUsuario tipoSelecionado = TipoUsuario.operador;
 
     showDialog(
@@ -553,6 +554,35 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
                       return null;
                     },
                   ),
+                  const SizedBox(height: 16),
+                  TextFormField(
+                    controller: numeroInicialController,
+                    decoration: const InputDecoration(
+                      labelText: 'Nº inicial da NFC-e (padrão: 1)',
+                      labelStyle: TextStyle(color: Colors.white70),
+                      enabledBorder: UnderlineInputBorder(
+                        borderSide: BorderSide(color: Colors.white30),
+                      ),
+                      focusedBorder: UnderlineInputBorder(
+                        borderSide: BorderSide(color: Colors.blueAccent),
+                      ),
+                      helperText: 'Número da primeira nota desta série',
+                      helperStyle: TextStyle(color: Colors.white38, fontSize: 11),
+                    ),
+                    style: const TextStyle(color: Colors.white),
+                    keyboardType: TextInputType.number,
+                    validator: (value) {
+                      if (value != null && value.isNotEmpty) {
+                        if (int.tryParse(value) == null) {
+                          return 'Apenas números';
+                        }
+                        if ((int.tryParse(value) ?? 0) <= 0) {
+                          return 'Informe um número maior que zero';
+                        }
+                      }
+                      return null;
+                    },
+                  ),
                 ],
               ),
             ),
@@ -581,6 +611,7 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
                     empresaId: widget.empresa.id,
                     ativo: true,
                     serieNfce: int.tryParse(serieController.text) ?? 1,
+                    numeroInicialNfce: int.tryParse(numeroInicialController.text) ?? 1,
                     createdAt: agora,
                     updatedAt: agora,
                   );
@@ -635,6 +666,7 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
                     empresaId: widget.empresa.id,
                     ativo: true,
                     serieNfce: int.tryParse(serieController.text) ?? 1,
+                    numeroInicialNfce: int.tryParse(numeroInicialController.text) ?? 1,
                     createdAt: agora,
                     updatedAt: agora,
                   );
@@ -686,6 +718,7 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
     final senhaController = TextEditingController();
     final telefoneController = TextEditingController(text: usuario.telefone ?? '');
     final serieController = TextEditingController(text: usuario.serieNfce.toString());
+    final numeroInicialController = TextEditingController(text: usuario.numeroInicialNfce.toString());
     TipoUsuario tipoSelecionado = usuario.tipo;
 
     showDialog(
@@ -845,6 +878,35 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
                       return null;
                     },
                   ),
+                  const SizedBox(height: 16),
+                  TextFormField(
+                    controller: numeroInicialController,
+                    decoration: const InputDecoration(
+                      labelText: 'Nº inicial da NFC-e (padrão: 1)',
+                      labelStyle: TextStyle(color: Colors.white70),
+                      enabledBorder: UnderlineInputBorder(
+                        borderSide: BorderSide(color: Colors.white30),
+                      ),
+                      focusedBorder: UnderlineInputBorder(
+                        borderSide: BorderSide(color: Colors.blueAccent),
+                      ),
+                      helperText: 'Número da primeira nota desta série',
+                      helperStyle: TextStyle(color: Colors.white38, fontSize: 11),
+                    ),
+                    style: const TextStyle(color: Colors.white),
+                    keyboardType: TextInputType.number,
+                    validator: (value) {
+                      if (value != null && value.isNotEmpty) {
+                        if (int.tryParse(value) == null) {
+                          return 'Apenas números';
+                        }
+                        if ((int.tryParse(value) ?? 0) <= 0) {
+                          return 'Informe um número maior que zero';
+                        }
+                      }
+                      return null;
+                    },
+                  ),
                   const SizedBox(height: 24),
                   // Botão para gerenciar permissões
                   ElevatedButton.icon(
@@ -893,6 +955,7 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
                         : telefoneController.text.trim(),
                     tipo: tipoSelecionado,
                     serieNfce: int.tryParse(serieController.text) ?? 1,
+                    numeroInicialNfce: int.tryParse(numeroInicialController.text) ?? 1,
                     updatedAt: DateTime.now(),
                   );
 

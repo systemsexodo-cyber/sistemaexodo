@@ -3,8 +3,10 @@ import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter/services.dart';
 import '../models/produto.dart';
+import '../models/perfil_tributario.dart';
 import '../services/data_service.dart';
 import '../services/auth_service.dart';
+import '../services/permission_service.dart';
 import '../produto_form.dart' as produto_form;
 import '../services/excel_export_service.dart';
 import '../custom_app_bar.dart';
@@ -14,6 +16,8 @@ import '../models/permissao.dart';
 import 'entrada_rapida_produtos_page.dart';
 import 'estoque_relatorio_geral_page.dart';
 import 'estoque_reposicao_page.dart';
+import 'quebras_page.dart';
+import 'inventario_page.dart';
 
 class ProdutosPage extends StatefulWidget {
   const ProdutosPage({super.key});
@@ -62,6 +66,18 @@ class _ProdutosPageState extends State<ProdutosPage> {
   // Hash baseado no updatedAt do produto mais recente — invalida cache após qualquer edição
   int _cacheUpdateHash = 0;
 
+
+  bool _podeVerCusto(BuildContext context) {
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final usuario = authService.usuarioAtual;
+    if (usuario == null) return false;
+    if (usuario.isAdmin || usuario.isGerente || usuario.isMaster || usuario.email.toLowerCase() == 'user') {
+      return true;
+    }
+    final permissionService = PermissionService();
+    return permissionService.temPermissao(usuario, TipoPermissao.produtosVisualizarCusto) ||
+           permissionService.temPermissao(usuario, TipoPermissao.vendasVerCusto);
+  }
 
   @override
   void initState() {
@@ -229,7 +245,7 @@ class _ProdutosPageState extends State<ProdutosPage> {
       if (produto.descricao != null && produto.descricao!.isNotEmpty) 'Descrição: ${produto.descricao}',
       'Preço: ${NumberFormat.currency(locale: "pt_BR", symbol: "R\$").format(produto.precoAtual)}',
       if (produto.codigo != null && produto.codigo!.isNotEmpty) 'Código: ${produto.codigo}',
-      if (produto.codigoBarras != null && produto.codigoBarras!.isNotEmpty) 'Barras: ${produto.codigoBarras}',
+      if (produto.todosCodigosBarras.isNotEmpty) 'Barras: ${produto.todosCodigosBarras.join(', ')}',
     ].join('\n');
     
     Clipboard.setData(ClipboardData(text: texto));
@@ -484,7 +500,71 @@ class _ProdutosPageState extends State<ProdutosPage> {
                         ),
                       ),
                     ),
+                  // Badge de validade crítica (produtos com lote vencido ou vencendo em 30 dias)
+                  if (service.contarProdutosComValidadeCritica(dias: 30) > 0)
+                    Positioned(
+                      right: 28,
+                      top: 8,
+                      child: Container(
+                        padding: const EdgeInsets.all(2),
+                        decoration: BoxDecoration(
+                          color: Colors.orangeAccent,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        constraints: const BoxConstraints(
+                          minWidth: 14,
+                          minHeight: 14,
+                        ),
+                        child: Text(
+                          service.contarProdutosComValidadeCritica(dias: 30).toString(),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 8,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    ),
                 ],
+              ),
+            ),
+            // Botão Inventário da Loja (contagem de conferência)
+            PermissionWidget(
+              permissao: TipoPermissao.estoqueVisualizar,
+              child: IconButton(
+                icon: const Icon(
+                  Icons.fact_check_outlined,
+                  color: Colors.tealAccent,
+                ),
+                tooltip: 'Inventário da Loja',
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const InventarioPage(),
+                    ),
+                  );
+                },
+              ),
+            ),
+            // Botão Relatório de Quebras / Perdas (lançamento manual)
+            PermissionWidget(
+              permissao: TipoPermissao.estoqueVisualizar,
+              child: IconButton(
+                icon: const Icon(
+                  Icons.broken_image_outlined,
+                  color: Colors.orangeAccent,
+                ),
+                tooltip: 'Quebras e Perdas',
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const QuebrasPage(),
+                    ),
+                  );
+                },
               ),
             ),
             // Botão Relatório Geral
@@ -1069,6 +1149,54 @@ class _ProdutosPageState extends State<ProdutosPage> {
                                               child: Text(produto.grupo.isEmpty ? 'GERAL' : produto.grupo.toUpperCase(),
                                                 style: const TextStyle(fontSize: 10, color: Colors.blueAccent, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
                                             ),
+                                            // Badge de Validade/Lote
+                                            if (service.lotesProdutos.any((l) => l.produtoId == produto.id)) ...[
+                                              const SizedBox(width: 8),
+                                              Builder(builder: (context) {
+                                                final proxima = service.proximaValidade(produto.id);
+                                                final temVencido = service.lotesProdutos.any((l) => l.produtoId == produto.id && l.estaVencido);
+                                                final venceBreve = proxima != null && !proxima.isAfter(DateTime.now().add(const Duration(days: 30)));
+                                                final corVal = temVencido
+                                                    ? Colors.redAccent
+                                                    : (venceBreve ? Colors.orangeAccent : Colors.greenAccent);
+                                                return Container(
+                                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                                  decoration: BoxDecoration(
+                                                    color: corVal.withOpacity(0.12),
+                                                    borderRadius: BorderRadius.circular(8),
+                                                    border: Border.all(color: corVal.withOpacity(0.3)),
+                                                  ),
+                                                  child: Row(
+                                                    mainAxisSize: MainAxisSize.min,
+                                                    children: [
+                                                      Icon(
+                                                        temVencido
+                                                            ? Icons.error
+                                                            : (venceBreve ? Icons.warning_amber : Icons.event_available),
+                                                        size: 11,
+                                                        color: corVal,
+                                                      ),
+                                                      const SizedBox(width: 4),
+                                                      Text(
+                                                        temVencido
+                                                            ? 'VENCIDO'
+                                                            : (proxima == null
+                                                                ? 'LOTE'
+                                                                : (venceBreve
+                                                                    ? 'VENCE ${DateFormat('dd/MM').format(proxima)}'
+                                                                    : 'VALIDADE OK')),
+                                                        style: TextStyle(
+                                                          fontSize: 9,
+                                                          color: corVal,
+                                                          fontWeight: FontWeight.bold,
+                                                          letterSpacing: 0.5,
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                );
+                                              }),
+                                            ],
                                             if (produto.enviaBalanca) ...[
                                               const SizedBox(width: 8),
                                               // Badge de Balança
@@ -1240,6 +1368,7 @@ class _ProdutosPageState extends State<ProdutosPage> {
     bool eIcmsAliq = false, eIcmsCst = false, eCsosn = false;
     bool ePisAliq = false, ePisCst = false, eCofinsAliq = false, eCofinsCst = false;
     bool eLoja = false, eDestaque = false, eCozinha = false, eBar = false, eBalanca = false;
+    bool ePerfil = false;
 
     // Controladores
     final cPreco = TextEditingController(), cEstoque = TextEditingController(), cGrupo = TextEditingController();
@@ -1250,6 +1379,7 @@ class _ProdutosPageState extends State<ProdutosPage> {
     
     // Valores booleanos
     bool vLoja = false, vDestaque = false, vCozinha = false, vBar = false, vBalanca = false;
+    String? selectedPerfilId;
 
     // Lista de grupos existentes para o autocomplete
     final gruposExistentes = service.produtos.map((p) => p.grupo).where((g) => g.isNotEmpty).toSet().toList();
@@ -1288,7 +1418,8 @@ class _ProdutosPageState extends State<ProdutosPage> {
                 children: [
                   _buildSecaoBulk('🛒 BÁSICO & ESTOQUE', [
                     _buildCampoBulk('Preço de Venda', cPreco, ePreco, (v) => setDs(() => ePreco = v!), kType: const TextInputType.numberWithOptions(decimal: true)),
-                    _buildCampoBulk('Preço de Custo', cCusto, eCusto, (v) => setDs(() => eCusto = v!), kType: const TextInputType.numberWithOptions(decimal: true)),
+                    if (_podeVerCusto(context))
+                      _buildCampoBulk('Preço de Custo', cCusto, eCusto, (v) => setDs(() => eCusto = v!), kType: const TextInputType.numberWithOptions(decimal: true)),
                     _buildCampoBulk('Estoque Atual', cEstoque, eEstoque, (v) => setDs(() => eEstoque = v!), kType: TextInputType.number),
                     _buildCampoBulk('Unidade (UN, KG, PC)', cUnidade, eUnidade, (v) => setDs(() => eUnidade = v!)),
                     // Grupo com sugestões
@@ -1296,6 +1427,115 @@ class _ProdutosPageState extends State<ProdutosPage> {
                   ]),
                   
                   _buildSecaoBulk('⚖️ FISCAL & TRIBUTAÇÃO', [
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Row(
+                        children: [
+                          Checkbox(
+                            value: ePerfil,
+                            onChanged: (v) => setDs(() => ePerfil = v!),
+                            activeColor: Colors.blueAccent,
+                          ),
+                          const Text('Perfil Tributário', style: TextStyle(color: Colors.white70, fontSize: 13)),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: DropdownButtonFormField<String?>(
+                              value: selectedPerfilId,
+                              dropdownColor: const Color(0xFF1E1E2E),
+                              style: const TextStyle(color: Colors.white, fontSize: 13),
+                              decoration: InputDecoration(
+                                filled: true,
+                                fillColor: const Color(0xFF161621),
+                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              ),
+                              items: [
+                                const DropdownMenuItem<String?>(
+                                  value: null,
+                                  child: Text('Sem Perfil / Manual', style: TextStyle(color: Colors.white54)),
+                                ),
+                                ...service.perfisTributariosDoRegime.map((p) => DropdownMenuItem<String?>(
+                                  value: p.id,
+                                  child: Text(p.nome, style: const TextStyle(color: Colors.white)),
+                                )),
+                              ],
+                              onChanged: ePerfil
+                                  ? (v) => setDs(() {
+                                        selectedPerfilId = v;
+                                        // Limpa campos aplicados por um perfil anterior para não vazar valores
+                                        eCfop = false;
+                                        cCfop.clear();
+                                        eNcm = false;
+                                        cNcm.clear();
+                                        eCsosn = false;
+                                        cCsosn.clear();
+                                        eIcmsCst = false;
+                                        cIcmsCst.clear();
+                                        eIcmsAliq = false;
+                                        cIcmsAliq.clear();
+                                        ePisCst = false;
+                                        cPisCst.clear();
+                                        ePisAliq = false;
+                                        cPisAliq.clear();
+                                        eCofinsCst = false;
+                                        cCofinsCst.clear();
+                                        eCofinsAliq = false;
+                                        cCofinsAliq.clear();
+                                        if (v != null) {
+                                          PerfilTributario? perfil;
+                                          for (final p in service.perfisTributariosDoRegime) {
+                                            if (p.id == v) {
+                                              perfil = p;
+                                              break;
+                                            }
+                                          }
+                                          if (perfil != null) {
+                                            // Aplica automaticamente os valores do perfil nos campos
+                                            if (perfil.cfop.isNotEmpty) {
+                                              eCfop = true;
+                                              cCfop.text = perfil.cfop;
+                                            }
+                                            if (perfil.ncm != null && perfil.ncm!.isNotEmpty) {
+                                              eNcm = true;
+                                              cNcm.text = perfil.ncm!;
+                                            }
+                                            if (perfil.csosn != null && perfil.csosn!.isNotEmpty) {
+                                              eCsosn = true;
+                                              cCsosn.text = perfil.csosn!;
+                                            }
+                                            if (perfil.icmsCst != null && perfil.icmsCst!.isNotEmpty) {
+                                              eIcmsCst = true;
+                                              cIcmsCst.text = perfil.icmsCst!;
+                                            }
+                                            if (perfil.aliquotaIcms != null) {
+                                              eIcmsAliq = true;
+                                              cIcmsAliq.text = perfil.aliquotaIcms!.toString();
+                                            }
+                                            if (perfil.pisCst != null && perfil.pisCst!.isNotEmpty) {
+                                              ePisCst = true;
+                                              cPisCst.text = perfil.pisCst!;
+                                            }
+                                            if (perfil.aliquotaPis != null) {
+                                              ePisAliq = true;
+                                              cPisAliq.text = perfil.aliquotaPis!.toString();
+                                            }
+                                            if (perfil.cofinsCst != null && perfil.cofinsCst!.isNotEmpty) {
+                                              eCofinsCst = true;
+                                              cCofinsCst.text = perfil.cofinsCst!;
+                                            }
+                                            if (perfil.aliquotaCofins != null) {
+                                              eCofinsAliq = true;
+                                              cCofinsAliq.text = perfil.aliquotaCofins!.toString();
+                                            }
+                                          }
+                                        }
+                                      })
+                                  : null,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                     _buildCampoBulk('NCM (8 dígitos)', cNcm, eNcm, (v) => setDs(() => eNcm = v!), kType: TextInputType.number),
                     _buildCampoBulk('CFOP Padrão', cCfop, eCfop, (v) => setDs(() => eCfop = v!), kType: TextInputType.number),
                     _buildCampoBulk('Origem (0-8)', cOrigem, eOrigem, (v) => setDs(() => eOrigem = v!), kType: TextInputType.number),
@@ -1352,6 +1592,7 @@ class _ProdutosPageState extends State<ProdutosPage> {
                       paraCozinha: eCozinha ? vCozinha : p.paraCozinha,
                       paraBar: eBar ? vBar : p.paraBar,
                       enviaBalanca: eBalanca ? vBalanca : p.enviaBalanca,
+                      perfilTributarioId: ePerfil ? selectedPerfilId : p.perfilTributarioId,
                       updatedAt: DateTime.now(),
                     );
                     service.updateProduto(up);
@@ -1484,16 +1725,17 @@ class _ProdutosPageState extends State<ProdutosPage> {
                     columnSpacing: 24,
                     headingTextStyle: const TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.bold),
                     dataTextStyle: const TextStyle(color: Colors.white70),
-                    columns: const [
-                      DataColumn(label: Text('Cod')),
-                      DataColumn(label: Text('Nome do Produto')),
-                      DataColumn(label: Text('Preço (R\$)')),
-                      DataColumn(label: Text('Custo (R\$)')),
-                      DataColumn(label: Text('Estoque')),
-                      DataColumn(label: Text('Grupo')),
+                    columns: [
+                      const DataColumn(label: Text('Cod')),
+                      const DataColumn(label: Text('Nome do Produto')),
+                      const DataColumn(label: Text('Preço (R\$)')),
+                      if (_podeVerCusto(context)) const DataColumn(label: Text('Custo (R\$)')),
+                      const DataColumn(label: Text('Estoque')),
+                      const DataColumn(label: Text('Grupo')),
                     ],
                     rows: selecionados.map((p) {
                       final atual = edicoes[p.id]!;
+                      final podeVerCusto = _podeVerCusto(context);
                       
                       return DataRow(
                         cells: [
@@ -1528,18 +1770,19 @@ class _ProdutosPageState extends State<ProdutosPage> {
                               ),
                             ),
                           ),
-                          DataCell(
-                            SizedBox(
-                              width: 80,
-                              child: TextFormField(
-                                initialValue: (atual.precoCusto ?? 0).toStringAsFixed(2),
-                                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                                style: const TextStyle(fontSize: 13, color: Colors.orangeAccent),
-                                decoration: const InputDecoration(border: InputBorder.none, isDense: true),
-                                onChanged: (v) => edicoes[p.id] = edicoes[p.id]!.copyWith(precoCusto: double.tryParse(v.replaceAll(',', '.')) ?? atual.precoCusto),
+                          if (podeVerCusto)
+                            DataCell(
+                              SizedBox(
+                                width: 80,
+                                child: TextFormField(
+                                  initialValue: (atual.precoCusto ?? 0).toStringAsFixed(2),
+                                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                  style: const TextStyle(fontSize: 13, color: Colors.orangeAccent),
+                                  decoration: const InputDecoration(border: InputBorder.none, isDense: true),
+                                  onChanged: (v) => edicoes[p.id] = edicoes[p.id]!.copyWith(precoCusto: double.tryParse(v.replaceAll(',', '.')) ?? atual.precoCusto),
+                                ),
                               ),
                             ),
-                          ),
                           DataCell(
                             SizedBox(
                               width: 60,

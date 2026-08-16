@@ -35,12 +35,32 @@ class GoogleDriveService {
   bool get isServiceAccount => _isServiceAccount;
   drive.DriveApi? get driveApi => _driveApi;
 
+  Future<bool> _isUsuarioMasterOuAdmin() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userJson = prefs.getString('usuario_atual');
+      if (userJson == null) return false;
+      final Map<String, dynamic> userMap = jsonDecode(userJson);
+      final tipo = userMap['tipo'];
+      final isMaster = userMap['is_master'] == true;
+      return tipo == 'administrador' || isMaster;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<bool> login({bool silencioso = false}) async {
     try {
       // 1. Tentar Conta de Serviço primeiro (para login "fixo")
       if (await _tentarLoginServiceAccount()) {
         debugPrint('>>> [GoogleDrive] ✅ Autenticado via Conta de Serviço (Fixo)');
         return true;
+      }
+
+      // Apenas permitir login OAuth se for usuário master ou administrador
+      if (!await _isUsuarioMasterOuAdmin()) {
+        debugPrint('>>> [GoogleDrive] ❌ Login rejeitado: Usuário atual não é master ou administrador.');
+        return false;
       }
 
       // 2. Se falhar ou não existir, tentar login do usuário (OAuth2)
@@ -121,6 +141,10 @@ class GoogleDriveService {
   /// Verifica se é necessário realizar um backup automático (intervalo de 24h)
   Future<void> verificarERealizarBackupAutomatico() async {
     try {
+      // Apenas realizar backup automático se for usuário master ou administrador
+      if (!await _isUsuarioMasterOuAdmin()) {
+        return;
+      }
       final prefs = await SharedPreferences.getInstance();
       final ultimoBackupStr = prefs.getString(_keyUltimoBackup);
       

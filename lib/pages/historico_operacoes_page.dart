@@ -34,10 +34,10 @@ class _HistoricoOperacoesPageState extends State<HistoricoOperacoesPage> {
     final formatoData = DateFormat('dd/MM/yyyy HH:mm:ss');
     final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
 
-    // Filtrar mesas/comandas
-    var mesasComandas = widget.mesaComanda != null
+    // Filtrar mesas/comandas (cria cópia modificável para permitir ordenação)
+    var mesasComandas = List<MesaComanda>.from(widget.mesaComanda != null
         ? [widget.mesaComanda!]
-        : dataService.mesasComandas;
+        : dataService.todasMesasComandas);
 
     if (_filtroTipo != 'Todos') {
       mesasComandas = mesasComandas.where((m) {
@@ -51,6 +51,7 @@ class _HistoricoOperacoesPageState extends State<HistoricoOperacoesPage> {
       mesasComandas = mesasComandas.where((m) {
         if (_filtroStatus == 'Abertas') return m.status == 'Aberta';
         if (_filtroStatus == 'Fechadas') return m.status == 'Fechada';
+        if (_filtroStatus == 'Deletadas') return m.status == 'Deletada';
         return true;
       }).toList();
     }
@@ -163,7 +164,7 @@ class _HistoricoOperacoesPageState extends State<HistoricoOperacoesPage> {
                           ),
                           dropdownColor: const Color(0xFF1E1E2E),
                           style: const TextStyle(color: Colors.white),
-                          items: ['Todos', 'Abertas', 'Fechadas']
+                          items: ['Todos', 'Abertas', 'Fechadas', 'Deletadas']
                               .map((status) => DropdownMenuItem(
                                     value: status,
                                     child: Text(status),
@@ -339,12 +340,16 @@ class _HistoricoOperacoesPageState extends State<HistoricoOperacoesPage> {
                   decoration: BoxDecoration(
                     color: mesaComanda.status == 'Aberta'
                         ? Colors.green.withOpacity(0.2)
-                        : Colors.grey.withOpacity(0.2),
+                        : (mesaComanda.status == 'Deletada'
+                            ? Colors.red.withOpacity(0.2)
+                            : Colors.grey.withOpacity(0.2)),
                     borderRadius: BorderRadius.circular(4),
                     border: Border.all(
                       color: mesaComanda.status == 'Aberta'
                           ? Colors.green
-                          : Colors.grey,
+                          : (mesaComanda.status == 'Deletada'
+                              ? Colors.red
+                              : Colors.grey),
                     ),
                   ),
                   child: Text(
@@ -352,7 +357,9 @@ class _HistoricoOperacoesPageState extends State<HistoricoOperacoesPage> {
                     style: TextStyle(
                       color: mesaComanda.status == 'Aberta'
                           ? Colors.green
-                          : Colors.grey,
+                          : (mesaComanda.status == 'Deletada'
+                              ? Colors.redAccent
+                              : Colors.grey),
                       fontSize: 10,
                       fontWeight: FontWeight.bold,
                     ),
@@ -376,10 +383,19 @@ class _HistoricoOperacoesPageState extends State<HistoricoOperacoesPage> {
                 'Aberta em: ${formatoData.format(mesaComanda.dataAbertura)}',
                 style: TextStyle(color: Colors.grey, fontSize: 11),
               ),
-              if (mesaComanda.dataFechamento != null)
+              if (mesaComanda.dataFechamento != null && mesaComanda.status == 'Fechada')
                 Text(
                   'Fechada em: ${formatoData.format(mesaComanda.dataFechamento!)}',
                   style: TextStyle(color: Colors.grey, fontSize: 11),
+                ),
+              if (mesaComanda.status == 'Deletada')
+                Text(
+                  'DELETADA em: ${formatoData.format(mesaComanda.dataFechamento ?? mesaComanda.updatedAt)} por: ${mesaComanda.usuarioModificou ?? "—"}',
+                  style: const TextStyle(
+                    color: Colors.redAccent,
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
             ],
           ),
@@ -576,11 +592,12 @@ class _HistoricoOperacoesPageState extends State<HistoricoOperacoesPage> {
               'Por: ${item.usuarioCriou}',
               style: TextStyle(color: Colors.blue, fontSize: 10),
             ),
-          if (item.usuarioModificou != null) ...[
-            Text(
-              'Modificado por: ${item.usuarioModificou}',
-              style: TextStyle(color: Colors.orange, fontSize: 10),
-            ),
+          if (item.usuarioModificou != null || item.acaoRealizada != null) ...[
+            if (item.usuarioModificou != null)
+              Text(
+                'Modificado por: ${item.usuarioModificou}',
+                style: TextStyle(color: Colors.orange, fontSize: 10),
+              ),
             if (item.dataModificacao != null)
               Text(
                 'Em: ${formatoData.format(item.dataModificacao!)}',

@@ -24,7 +24,7 @@ class OpcaoFrete {
 
   factory OpcaoFrete.fromMap(Map<String, dynamic> map) {
     return OpcaoFrete(
-      id: map['id'] ?? '',
+      id: map['id']?.toString() ?? '',
       nome: map['nome'] ?? '',
       tipo: map['tipo'] ?? '',
       valor: (map['valor'] ?? 0.0).toDouble(),

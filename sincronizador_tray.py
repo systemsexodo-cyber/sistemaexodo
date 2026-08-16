@@ -24,6 +24,17 @@ if sys.stderr is None:
 import setup_sync_local
 import sincronizar_local_supabase
 
+# Diretorio base: quando congelado (exe), a pasta do executavel; senao, a pasta do script.
+# IMPORTANTE: no PyInstaller onefile, load_dotenv() sem caminho procura a partir da pasta
+# temporaria _MEIxxxx e NUNCA acha o .env da pasta do sistema (C:\SistemaExodo).
+def get_base_dir():
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+BASE_DIR = get_base_dir()
+
+
 class SyncTrayApp:
     def __init__(self):
         self.icon = None
@@ -32,8 +43,13 @@ class SyncTrayApp:
         self.status = "Iniciando..."
         self.last_sync = "Nunca"
         self.total_synced = 0
-        
-        load_dotenv()
+        self.base_dir = BASE_DIR
+
+        # Carregar o .env SEMPRE a partir da pasta do executavel
+        env_path = os.path.join(self.base_dir, '.env')
+        env_existe = os.path.exists(env_path)
+        load_dotenv(env_path, override=False)
+
         self.supabase_url = os.getenv('SUPABASE_URL')
         self.api_key = os.getenv('SUPABASE_SERVICE_ROLE_KEY') or os.getenv('SUPABASE_ANON_KEY')
         self.db_host = os.getenv('DB_HOST', 'localhost')
@@ -41,6 +57,24 @@ class SyncTrayApp:
         self.db_name = os.getenv('DB_NAME')
         self.db_user = os.getenv('DB_USER')
         self.db_password = os.getenv('DB_PASSWORD')
+
+        # Log de inicializacao para facilitar diagnostico (agora vai para sincronizador.log)
+        faltando = [v for v in ('SUPABASE_URL', 'DB_NAME', 'DB_USER', 'DB_PASSWORD') if not os.getenv(v)]
+        if not self.api_key:
+            faltando.append('SUPABASE_ANON_KEY/SERVICE_ROLE_KEY')
+        if not env_existe:
+            sincronizar_local_supabase.print_log(
+                f"[INIT] AVISO: .env nao encontrado em {env_path}. Copie o .env para a pasta do executavel.",
+                sincronizar_local_supabase.Colors.YELLOW)
+        elif faltando:
+            sincronizar_local_supabase.print_log(
+                f"[INIT] AVISO: .env incompleto em {env_path}. Faltando: {faltando}",
+                sincronizar_local_supabase.Colors.YELLOW)
+        else:
+            sincronizar_local_supabase.print_log(
+                f"[INIT] .env carregado de {env_path} | Supabase: {self.supabase_url} | "
+                f"Banco local: {self.db_user}@{self.db_host}:{self.db_port}/{self.db_name}",
+                sincronizar_local_supabase.Colors.GREEN)
 
     def create_image(self, color=(52, 152, 219)):
         # Cria um ícone de nuvem simples para a bandeja com a cor fornecida
@@ -54,7 +88,7 @@ class SyncTrayApp:
         dc.rectangle([20, 40, 45, 50], fill=color)
         return image
 
-    def update_status_icon(self, state_type):
+    def update_status_icon(self, state_type, status_text=None):
         """Atualiza a cor do ícone de nuvem com base no estado atual da sincronização."""
         if not self.icon:
             return
@@ -69,8 +103,10 @@ class SyncTrayApp:
         color = colors.get(state_type, (52, 152, 219)) # Azul fallback
         self.icon.icon = self.create_image(color)
         
-        if state_type == 'offline':
-            self.status = "Sem Conexao com Supabase"
+        if status_text is not None:
+            self.status = status_text
+        elif state_type == 'offline':
+            self.status = "Offline (veja sincronizador.log)"
         elif state_type == 'syncing':
             self.status = "Sincronizando..."
         elif state_type == 'conflict':
@@ -83,20 +119,114 @@ class SyncTrayApp:
             self.update_icon_tooltip()
             setup_sync_local.main()
         except Exception as e:
-            print(f"Erro no setup: {e}")
+            self.status = "Erro no setup do banco local"
+            self.update_icon_tooltip()
+            sincronizar_local_supabase.print_log(f"[SETUP] Erro no setup do banco local: {e}",
+                                                 sincronizar_local_supabase.Colors.RED)
+
+    def _tentar_iniciar_postgres(self):
+        """Tenta iniciar o PostgreSQL embarcado (C:\\SistemaExodo\\postgresql\\bin).
+        Usado quando o banco local esta fora do ar - o tray se auto-recupera."""
+        import subprocess
+        pg_ctl = os.path.join(self.base_dir, 'postgresql', 'bin', 'pg_ctl.exe')
+        data_dir = os.path.join(self.base_dir, 'data')
+        if not os.path.exists(pg_ctl) or not os.path.exists(data_dir):
+            sincronizar_local_supabase.print_log(
+                f"[PG] pg_ctl nao encontrado ({pg_ctl}) ou data dir ausente ({data_dir})",
+                sincronizar_local_supabase.Colors.YELLOW)
+            return False
+        log_path = os.path.join(self.base_dir, 'logs', 'postgresql.log')
+        try:
+            # Garantir que a pasta de logs existe (instalacoes antigas podem nao ter)
+            try:
+                os.makedirs(os.path.dirname(log_path), exist_ok=True)
+            except Exception:
+                pass
+            # Se a maquina desligou com o banco aberto, sobra um postmaster.pid obsoleto
+            # que faz o pg_ctl start falhar. Se nenhum postgres.exe estiver rodando, remove.
+            pid_file = os.path.join(data_dir, 'postmaster.pid')
+            if os.path.exists(pid_file) and not self._postgres_processando():
+                sincronizar_local_supabase.print_log(
+                    "[PG] Removendo postmaster.pid obsoleto (nenhum postgres.exe ativo).",
+                    sincronizar_local_supabase.Colors.YELLOW)
+                try:
+                    os.remove(pid_file)
+                except Exception:
+                    pass
+            r = subprocess.run(
+                [pg_ctl, '-D', data_dir, '-l', log_path, 'start', '-w', '-t', '30'],
+                capture_output=True, text=True, timeout=45,
+                creationflags=0x08000000)  # CREATE_NO_WINDOW
+            if r.returncode == 0:
+                sincronizar_local_supabase.print_log(
+                    "[PG] PostgreSQL iniciado automaticamente pelo tray.",
+                    sincronizar_local_supabase.Colors.GREEN)
+                return True
+            sincronizar_local_supabase.print_log(
+                f"[PG] pg_ctl start falhou: {r.stdout.strip()} {r.stderr.strip()}",
+                sincronizar_local_supabase.Colors.RED)
+            return False
+        except Exception as e:
+            sincronizar_local_supabase.print_log(
+                f"[PG] Erro ao tentar iniciar PostgreSQL: {e}",
+                sincronizar_local_supabase.Colors.RED)
+            return False
+
+    def _postgres_processando(self):
+        """True se existe algum postgres.exe rodando (evita apagar pid em uso)."""
+        import subprocess
+        try:
+            r = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq postgres.exe'],
+                               capture_output=True, text=True, timeout=15,
+                               creationflags=0x08000000)
+            return 'postgres.exe' in r.stdout
+        except Exception:
+            return False
 
     def sync_cycle(self, force=False):
         if not all([self.supabase_url, self.api_key, self.db_name, self.db_user, self.db_password]):
             self.status = "Erro: .env incompleto!"
+            sincronizar_local_supabase.print_log(
+                "[CICLO] .env incompleto! Verifique o arquivo .env ao lado do executavel.",
+                sincronizar_local_supabase.Colors.RED)
             self.update_icon_tooltip()
             return
 
         conn = None
         try:
-            conn = psycopg2.connect(
-                host=self.db_host, port=self.db_port, dbname=self.db_name,
-                user=self.db_user, password=self.db_password
-            )
+            # 1. Conectar no banco LOCAL (exodo_user@localhost:5432/exodo_db)
+            try:
+                conn = psycopg2.connect(
+                    host=self.db_host, port=self.db_port, dbname=self.db_name,
+                    user=self.db_user, password=self.db_password, connect_timeout=5
+                )
+            except Exception as e_db:
+                sincronizar_local_supabase.print_log(
+                    f"[CICLO] ERRO ao conectar no PostgreSQL local "
+                    f"({self.db_user}@{self.db_host}:{self.db_port}/{self.db_name}): {e_db}",
+                    sincronizar_local_supabase.Colors.RED)
+                # AUTO-RECUPERACAO: tenta iniciar o PostgreSQL embarcado
+                if self._tentar_iniciar_postgres():
+                    sincronizar_local_supabase.print_log(
+                        "[CICLO] PostgreSQL iniciado pelo tray, tentando reconectar...",
+                        sincronizar_local_supabase.Colors.YELLOW)
+                    time.sleep(5)
+                    try:
+                        conn = psycopg2.connect(
+                            host=self.db_host, port=self.db_port, dbname=self.db_name,
+                            user=self.db_user, password=self.db_password, connect_timeout=8
+                        )
+                    except Exception as e_retry:
+                        self.update_status_icon('offline',
+                            f"Banco local indisponivel ({self.db_host}:{self.db_port})")
+                        sincronizar_local_supabase.print_log(
+                            f"[CICLO] Reconexao falhou apos iniciar PostgreSQL: {e_retry}",
+                            sincronizar_local_supabase.Colors.RED)
+                        return
+                else:
+                    self.update_status_icon('offline',
+                        f"Banco local indisponivel ({self.db_host}:{self.db_port})")
+                    return
 
             # Garantir tabela de controle
             sincronizar_local_supabase.garantir_tabela_controle(conn)
@@ -119,9 +249,9 @@ class SyncTrayApp:
             self.update_icon_tooltip()
 
         except Exception as e:
-            self.status = "Erro na sincronizacao (Off)"
-            self.update_status_icon('offline')
-            print(f"Erro no ciclo: {e}")
+            self.update_status_icon('offline', "Erro na sincronizacao (Off)")
+            sincronizar_local_supabase.print_log(f"[CICLO] Erro no ciclo: {e}",
+                                                 sincronizar_local_supabase.Colors.RED)
         finally:
             if conn is not None:
                 try:
@@ -154,11 +284,7 @@ class SyncTrayApp:
 
     def on_open_logs(self, icon, item):
         # Abre o arquivo de logs no editor padrão do Windows
-        if getattr(sys, 'frozen', False):
-            base_dir = os.path.dirname(sys.executable)
-        else:
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-        log_path = os.path.join(base_dir, 'sincronizador.log')
+        log_path = os.path.join(self.base_dir, 'sincronizador.log')
         if not os.path.exists(log_path):
             with open(log_path, 'w', encoding='utf-8') as f:
                 f.write("=== LOGS DE SINCRONIZAÇÃO EXODO ===\n")
@@ -262,6 +388,11 @@ class SyncTrayApp:
             sincronizar_local_supabase.print_log(f"Erro ao resolver conflitos via tray: {e}", sincronizar_local_supabase.Colors.RED)
 
     def run(self):
+        sincronizar_local_supabase.print_log(
+            f"[TRAY] Iniciando Sincronizador Nuvem | base_dir: {self.base_dir} | "
+            f".env presente: {os.path.exists(os.path.join(self.base_dir, '.env'))}",
+            sincronizar_local_supabase.Colors.BLUE)
+
         menu = pystray.Menu(
             item(lambda text: self.get_status_text(), lambda: None, enabled=False),
             pystray.Menu.SEPARATOR,

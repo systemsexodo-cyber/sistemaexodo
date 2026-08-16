@@ -1,4 +1,4 @@
-/// Modelo para representar uma NFC-e
+﻿/// Modelo para representar uma NFC-e
 class NFCe {
   final String id;
   final String numero;
@@ -12,6 +12,7 @@ class NFCe {
   final List<NFCePagamento> pagamentos;
   final String? chaveAcesso;
   final String? protocolo;
+  final int? modelo; // 55 para NF-e, 65 para NFC-e
   final String? status; // 'pendente', 'autorizada', 'rejeitada', 'denegada', 'cancelada'
   final String? xmlEnviado;
   final String? xmlRetorno;
@@ -34,6 +35,7 @@ class NFCe {
     required this.pagamentos,
     this.chaveAcesso,
     this.protocolo,
+    this.modelo,
     this.status,
     this.xmlEnviado,
     this.xmlRetorno,
@@ -46,37 +48,38 @@ class NFCe {
 
   factory NFCe.fromMap(Map<String, dynamic> map) {
     return NFCe(
-      id: map['id'] ?? '',
+      id: map['id']?.toString() ?? '',
       numero: map['numero'] ?? '',
       serie: map['serie'] ?? '',
-      dataEmissao: map['dataEmissao'] != null
-          ? DateTime.parse(map['dataEmissao'])
+      dataEmissao: (map['dataEmissao'] ?? map['data_emissao']) != null
+          ? DateTime.parse((map['dataEmissao'] ?? map['data_emissao']).toString())
           : DateTime.now(),
-      empresaId: map['empresaId'] ?? '',
+      empresaId: map['empresaId'] ?? map['empresa_id'] ?? '',
       itens: (map['itens'] as List<dynamic>?)
               ?.map((i) => NFCeItem.fromMap(i as Map<String, dynamic>))
               .toList() ??
           [],
-      valorTotal: (map['valorTotal'] as num?)?.toDouble() ?? 0.0,
-      cpfCnpjConsumidor: map['cpfCnpjConsumidor'],
-      nomeConsumidor: map['nomeConsumidor'],
+      valorTotal: double.tryParse((map['valorTotal'] ?? map['valor_total'])?.toString() ?? '') ?? 0.0,
+      cpfCnpjConsumidor: map['cpfCnpjConsumidor'] ?? map['cpf_cnpj_consumidor'],
+      nomeConsumidor: map['nomeConsumidor'] ?? map['nome_consumidor'],
       pagamentos: (map['pagamentos'] as List<dynamic>?)
               ?.map((p) => NFCePagamento.fromMap(p as Map<String, dynamic>))
               .toList() ??
           [],
-      chaveAcesso: map['chaveAcesso'],
+      chaveAcesso: map['chaveAcesso'] ?? map['chave_acesso'],
       protocolo: map['protocolo'],
+      modelo: map['modelo'],
       status: map['status'],
-      xmlEnviado: map['xmlEnviado'],
-      xmlRetorno: map['xmlRetorno'],
-      qrCode: map['qrCode'],
-      vendaId: map['vendaId'],
-      vendaNumero: map['vendaNumero'],
-      createdAt: map['createdAt'] != null
-          ? DateTime.parse(map['createdAt'])
+      xmlEnviado: map['xmlEnviado'] ?? map['xml_enviado'] ?? map['xml_autorizado'] ?? map['xml'],
+      xmlRetorno: map['xmlRetorno'] ?? map['xml_retorno'] ?? map['xml_autorizado'],
+      qrCode: map['qrCode'] ?? map['qr_code'],
+      vendaId: map['vendaId'] ?? map['venda_id'],
+      vendaNumero: map['vendaNumero'] ?? map['venda_numero'],
+      createdAt: (map['createdAt'] ?? map['created_at']) != null
+          ? DateTime.parse((map['createdAt'] ?? map['created_at']).toString())
           : DateTime.now(),
-      updatedAt: map['updatedAt'] != null
-          ? DateTime.parse(map['updatedAt'])
+      updatedAt: (map['updatedAt'] ?? map['updated_at']) != null
+          ? DateTime.parse((map['updatedAt'] ?? map['updated_at']).toString())
           : DateTime.now(),
     );
   }
@@ -87,22 +90,36 @@ class NFCe {
       'numero': numero,
       'serie': serie,
       'dataEmissao': dataEmissao.toIso8601String(),
+      'data_emissao': dataEmissao.toIso8601String(),
       'empresaId': empresaId,
+      'empresa_id': empresaId,
       'itens': itens.map((i) => i.toMap()).toList(),
       'valorTotal': valorTotal,
+      'valor_total': valorTotal,
       'cpfCnpjConsumidor': cpfCnpjConsumidor,
+      'cpf_cnpj_consumidor': cpfCnpjConsumidor,
       'nomeConsumidor': nomeConsumidor,
+      'nome_consumidor': nomeConsumidor,
       'pagamentos': pagamentos.map((p) => p.toMap()).toList(),
       'chaveAcesso': chaveAcesso,
+      'chave_acesso': chaveAcesso,
       'protocolo': protocolo,
+      'modelo': modelo,
       'status': status,
       'xmlEnviado': xmlEnviado,
+      'xml_enviado': xmlEnviado,
       'xmlRetorno': xmlRetorno,
+      'xml_retorno': xmlRetorno,
       'qrCode': qrCode,
+      'qr_code': qrCode,
       'vendaId': vendaId,
+      'venda_id': vendaId,
       'vendaNumero': vendaNumero,
+      'venda_numero': vendaNumero,
       'createdAt': createdAt.toIso8601String(),
+      'created_at': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
+      'updated_at': updatedAt.toIso8601String(),
     };
   }
 
@@ -119,6 +136,7 @@ class NFCe {
     List<NFCePagamento>? pagamentos,
     String? chaveAcesso,
     String? protocolo,
+    int? modelo,
     String? status,
     String? xmlEnviado,
     String? xmlRetorno,
@@ -141,6 +159,7 @@ class NFCe {
       pagamentos: pagamentos ?? this.pagamentos,
       chaveAcesso: chaveAcesso ?? this.chaveAcesso,
       protocolo: protocolo ?? this.protocolo,
+      modelo: modelo ?? this.modelo,
       status: status ?? this.status,
       xmlEnviado: xmlEnviado ?? this.xmlEnviado,
       xmlRetorno: xmlRetorno ?? this.xmlRetorno,
@@ -187,19 +206,19 @@ class NFCeItem {
 
   factory NFCeItem.fromMap(Map<String, dynamic> map) {
     return NFCeItem(
-      produtoId: map['produtoId'] ?? '',
+      produtoId: map['produtoId']?.toString() ?? map['produto_id']?.toString() ?? '',
       codigo: map['codigo'] ?? '',
       descricao: map['descricao'] ?? '',
       ncm: map['ncm'] ?? '',
       cfop: map['cfop'] ?? '',
       unidade: map['unidade'] ?? '',
       quantidade: (map['quantidade'] as num?)?.toDouble() ?? 0.0,
-      valorUnitario: (map['valorUnitario'] as num?)?.toDouble() ?? 0.0,
-      valorTotal: (map['valorTotal'] as num?)?.toDouble() ?? 0.0,
+      valorUnitario: ((map['valorUnitario'] ?? map['valor_unitario']) as num?)?.toDouble() ?? 0.0,
+      valorTotal: ((map['valorTotal'] ?? map['valor_total']) as num?)?.toDouble() ?? 0.0,
       origem: map['origem'],
       csosn: map['csosn'],
-      icmsCst: map['icmsCst'],
-      icmsAliquota: (map['icmsAliquota'] as num?)?.toDouble(),
+      icmsCst: map['icmsCst'] ?? map['icms_cst'],
+      icmsAliquota: ((map['icmsAliquota'] ?? map['icms_aliquota']) as num?)?.toDouble(),
     );
   }
 

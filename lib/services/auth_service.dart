@@ -4,10 +4,20 @@ import '../models/usuario.dart';
 import '../models/empresa.dart';
 import 'local_storage_service.dart';
 import 'supabase_service.dart';
+import 'database_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// Serviço de autenticação e gerenciamento de usuários
 class AuthService extends ChangeNotifier {
+
+  /// Remove os tokens de sessao do Supabase (chaves sb-*) do SharedPreferences.
+  Future<void> _removerTokensSbPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    for (final k in prefs.getKeys().where((k) => k.startsWith('sb-')).toList()) {
+      await prefs.remove(k);
+    }
+  }
   final LocalStorageService _storage = LocalStorageService();
   final SupabaseService _supabaseService = SupabaseService.instance;
   
@@ -137,11 +147,44 @@ class AuthService extends ChangeNotifier {
         debugPrint('>>> [AuthService] Erro ao carregar histórico: $e');
       }
 
-      // SEGURANÇA: Se é uma nova sessão (navegador aberto agora), limpar login antigo
+      // SEGURANCA: se e uma nova sessao (navegador aberto agora), limpar login antigo.
+      // No Desktop (Windows) a sessao NUNCA persiste entre execucoes:
+      // toda vez que o app abre, a tela de login deve aparecer.
       if (!_storage.isSessaoAtiva()) {
-        debugPrint('>>> [AuthService] 🔒 Nova sessão detectada! Limpando logins anteriores.');
-        await _storage.remover('usuario_atual');
-        await _storage.remover('empresa_atual');
+        debugPrint('>>> [AuthService] Inicializacao: limpando sessao anterior (Desktop sempre vai ao login).');
+        try {
+          await _storage.remover('usuario_atual');
+          await _storage.remover('empresa_atual');
+        } catch (e) {
+          debugPrint('>>> [AuthService] Erro ao limpar sessao local: ' + e.toString());
+        }
+        if (!kIsWeb) {
+          // Garantia extra no Desktop: limpar residuos em SharedPreferences
+          // e encerrar a sessao do Supabase, para que NENHUM mecanismo
+          // consiga restaurar um login anterior.
+          try {
+            final prefs = await SharedPreferences.getInstance();
+            // Preservado: o Google Drive le usuario_atual do SharedPreferences (backup)
+            // Preservado: o Google Drive le empresa_atual do SharedPreferences (backup)
+            await _removerTokensSbPrefs();
+            debugPrint('>>> [AuthService] Tokens sb-* do Supabase removidos do SharedPreferences (Desktop).');
+          } catch (e) {
+            debugPrint('>>> [AuthService] Erro ao limpar SharedPreferences: ' + e.toString());
+          }
+          try {
+            await _supabaseService.logout().timeout(const Duration(seconds: 5));
+            debugPrint('>>> [AuthService] Sessao Supabase encerrada no boot (Desktop).');
+          } catch (e) {
+            debugPrint('>>> [AuthService] Erro ao encerrar sessao Supabase: ' + e.toString());
+          }
+          // Re-remover apos o logout: o signOut() pode re-persistir a chave sb-*
+          try {
+            await _removerTokensSbPrefs();
+            debugPrint('>>> [AuthService] Tokens sb-* removidos apos logout (Desktop).');
+          } catch (e) {
+            debugPrint('>>> [AuthService] Erro ao limpar SharedPreferences apos logout: ' + e.toString());
+          }
+        }
       }
 
       // Carregar usuário e empresa atual selecionados de forma persistente
@@ -166,8 +209,56 @@ class AuthService extends ChangeNotifier {
         if (empresaMap != null && empresaMap is Map) {
           debugPrint('>>> [AuthService] ========================================');
           _empresaAtual = Empresa.fromMap(Map<String, dynamic>.from(empresaMap));
-          debugPrint('>>> [AuthService] Empresa carregada: ${_empresaAtual?.razaoSocial ?? "null"}');
+          debugPrint('>>> [AuthService] Empresa carregada localmente: ${_empresaAtual?.razaoSocial ?? "null"}');
           debugPrint('>>> [AuthService] ========================================');
+
+          // Se certificado ou senha estiverem ausentes no cache local, tenta baixar a versão completa do Supabase
+          if (_empresaAtual != null) {
+            final temCert = (_empresaAtual!.configuracoes?['certificadoDigitalBytes'] != null && 
+                             (_empresaAtual!.configuracoes!['certificadoDigitalBytes'] as String).isNotEmpty) ||
+                            (_empresaAtual!.certificadoDigitalUrl != null && _empresaAtual!.certificadoDigitalUrl!.isNotEmpty) ||
+                            (_empresaAtual!.configuracoes?['certificadoWindowsThumbprint'] != null);
+            final temPw = _empresaAtual!.senhaCertificado != null && _empresaAtual!.senhaCertificado!.isNotEmpty;
+            
+            if (!temCert || !temPw) {
+              debugPrint('>>> [AuthService] ⚠️ Certificado ou senha ausentes no cache na inicialização. Buscando dados do Supabase...');
+              Future.microtask(() async {
+                try {
+                  if (SupabaseService.isAvailable) {
+                    final empresaSupabase = await _supabaseService.buscarEmpresaPorSlug(_empresaAtual!.slug);
+                    if (empresaSupabase != null) {
+                      // MERGE: preserva configuracoes locais (perfis_preco, certificados, etc.)
+                      // O Supabase pode estar desatualizado se o upsert ainda não sincronizou
+                      final configLocal = _empresaAtual!.configuracoes ?? {};
+                      final configSupabase = empresaSupabase.configuracoes ?? {};
+                      // Merge: Supabase base + campos locais que faltam no Supabase
+                      final configMerged = <String, dynamic>{...configSupabase};
+                      for (final entry in configLocal.entries) {
+                        if (!configMerged.containsKey(entry.key) || configMerged[entry.key] == null) {
+                          configMerged[entry.key] = entry.value;
+                        }
+                      }
+                      // perfis_preco local sempre tem prioridade se existir
+                      if (configLocal.containsKey('perfis_preco') && (configLocal['perfis_preco'] as List?)?.isNotEmpty == true) {
+                        configMerged['perfis_preco'] = configLocal['perfis_preco'];
+                      }
+                      // perfis_tributarios local sempre tem prioridade se existir (mesma regra do perfis_preco)
+                      if (configLocal.containsKey('perfis_tributarios') && (configLocal['perfis_tributarios'] as List?)?.isNotEmpty == true) {
+                        configMerged['perfis_tributarios'] = configLocal['perfis_tributarios'];
+                      }
+                      
+                      _empresaAtual = empresaSupabase.copyWith(configuracoes: configMerged);
+                      await _storage.salvar('empresa_atual', _empresaAtual!.toMap());
+                      debugPrint('>>> [AuthService] ✓ Cache da empresa atualizado (merge local+Supabase) na inicialização.');
+                      notifyListeners();
+                    }
+                  }
+                } catch (e) {
+                  debugPrint('>>> [AuthService] Erro ao buscar empresa na inicialização: $e');
+                }
+              });
+            }
+          }
         }
       } catch (e) {
         debugPrint('>>> [AuthService] Erro ao carregar empresa atual: $e');
@@ -393,7 +484,8 @@ class AuthService extends ChangeNotifier {
                 for (final emp in empresasSupabase) {
                   final idx = _empresas.indexWhere((e) => e.id == emp.id);
                   if (idx != -1) {
-                    _empresas[idx] = emp; // Atualizar existente
+                    _empresas[idx] = _mesclarEmpresaComConfigsLocal(_empresas[idx], emp);
+                    // MERGE: preserva configurações locais (perfis, bridge, certificado etc.)
                   } else {
                     _empresas.add(emp); // Adicionar nova
                   }
@@ -476,6 +568,16 @@ class AuthService extends ChangeNotifier {
     notifyListeners();
   }
 
+  void notificarMudancas() {
+    notifyListeners();
+  }
+
+  Future<void> recarregarEmpresaAtual() async {
+    if (_empresaAtual != null) {
+      await selecionarEmpresaPorId(_empresaAtual!.id);
+    }
+  }
+
   /// Seleciona uma empresa
   Future<void> selecionarEmpresa(Empresa empresa) async {
     // VALIDAÇÃO DE SEGURANÇA: Verificar se o usuário tem acesso a esta empresa
@@ -485,57 +587,91 @@ class AuthService extends ChangeNotifier {
         throw Exception('Você não tem permissão para acessar esta empresa');
       }
     }
+
+    // Carregar configurações locais de mensalidade para não perder dados offline
+    final localMensalidade = await _storage.carregarConfiguracoesMensalidadeLocal(empresa.id);
+    if (localMensalidade != null && localMensalidade.isNotEmpty) {
+      final merged = Map<String, dynamic>.from(empresa.configuracoes ?? {});
+      merged.addAll(localMensalidade);
+      empresa = empresa.copyWith(configuracoes: merged);
+    }
     
     debugPrint('>>> [AuthService] ========================================');
     debugPrint('>>> [AuthService] Selecionando empresa: ${empresa.razaoSocial}');
     debugPrint('>>> [AuthService] ID: ${empresa.id}');
-    debugPrint('>>> [AuthService] configuracoes: ${empresa.configuracoes != null ? "presente" : "null"}');
-    if (empresa.configuracoes != null) {
-      debugPrint('>>> [AuthService] configuracoes.keys: ${empresa.configuracoes!.keys.toList()}');
-      final bytes = empresa.configuracoes!['certificadoDigitalBytes'];
-      debugPrint('>>> [AuthService] certificadoDigitalBytes: ${bytes != null ? "presente (${(bytes as String).length} chars)" : "null"}');
-      debugPrint('>>> [AuthService] certificadoWindowsThumbprint: ${empresa.configuracoes!['certificadoWindowsThumbprint'] ?? "null"}');
-    }
-    debugPrint('>>> [AuthService] certificadoDigitalUrl: ${empresa.certificadoDigitalUrl ?? "null"}');
-    debugPrint('>>> [AuthService] senhaCertificado: ${empresa.senhaCertificado != null && empresa.senhaCertificado!.isNotEmpty ? "presente (${empresa.senhaCertificado!.length} chars)" : "AUSENTE"}');
+    debugPrint('>>> [AuthService] status_pagamento: ${empresa.configuracoes?['status_pagamento']}');
+    debugPrint('>>> [AuthService] ultimo_mes_pago: ${empresa.configuracoes?['ultimo_mes_pago']}');
+    debugPrint('>>> [AuthService] data_cobranca: ${empresa.configuracoes?['data_cobranca']}');
     debugPrint('>>> [AuthService] ========================================');
     
-    // VERIFICAÇÃO CRÍTICA: Se certificado não estiver presente, tentar recarregar do Supabase
-    // VERIFICAÇÃO CRÍTICA: Se certificado não estiver presente, tentar recarregar do Supabase
+    // VERIFICAÇÃO CRÍTICA: Se certificado ou senha não estiverem presentes localmente, tentar recarregar do Supabase
     final temCertificado = (empresa.configuracoes?['certificadoDigitalBytes'] != null && 
                             (empresa.configuracoes!['certificadoDigitalBytes'] as String).isNotEmpty) ||
                            (empresa.certificadoDigitalUrl != null && empresa.certificadoDigitalUrl!.isNotEmpty) ||
                            (empresa.configuracoes?['certificadoWindowsThumbprint'] != null);
+    final temSenha = empresa.senhaCertificado != null && empresa.senhaCertificado!.isNotEmpty;
     
-    if (!temCertificado) {
-      debugPrint('>>> [AuthService] ⚠️ Certificado não encontrado na empresa local!');
-      debugPrint('>>> [AuthService] Tentando recarregar do Supabase...');
+    if (!temCertificado || !temSenha) {
+      debugPrint('>>> [AuthService] ⚠️ Certificado ou senha não encontrados na empresa local!');
+      debugPrint('>>> [AuthService] Tentando recarregar dados completos do Supabase...');
       
       try {
-        final empresaSupabase = await _supabaseService.buscarEmpresaPorSlug(empresa.slug);
+        var empresaSupabase = await _supabaseService.buscarEmpresaPorSlug(empresa.slug);
         
-        final temCertificadoSupabase = empresaSupabase != null && ((empresaSupabase.configuracoes?['certificadoDigitalBytes'] != null && 
-                                         (empresaSupabase.configuracoes!['certificadoDigitalBytes'] as String).isNotEmpty) ||
-                                        (empresaSupabase.certificadoDigitalUrl != null && empresaSupabase.certificadoDigitalUrl!.isNotEmpty) ||
-                                        (empresaSupabase.configuracoes?['certificadoWindowsThumbprint'] != null));
-        
-        if (temCertificadoSupabase) {
-          debugPrint('>>> [AuthService] ✓✓✓ Certificado encontrado no Supabase!');
-          _empresaAtual = empresaSupabase;
-          
-          // Atualizar na lista local também
-          final index = _empresas.indexWhere((e) => e.id == empresa.id);
-          if (index != -1) {
-            _empresas[index] = empresaSupabase;
+        if (empresaSupabase != null) {
+          if (localMensalidade != null && localMensalidade.isNotEmpty) {
+            final merged = Map<String, dynamic>.from(empresaSupabase.configuracoes ?? {});
+            merged.addAll(localMensalidade);
+            empresaSupabase = empresaSupabase.copyWith(configuracoes: merged);
           }
+
+          final temCertificadoSupabase = ((empresaSupabase.configuracoes?['certificadoDigitalBytes'] != null && 
+                                           (empresaSupabase.configuracoes!['certificadoDigitalBytes'] as String).isNotEmpty) ||
+                                          (empresaSupabase.certificadoDigitalUrl != null && empresaSupabase.certificadoDigitalUrl!.isNotEmpty) ||
+                                          (empresaSupabase.configuracoes?['certificadoWindowsThumbprint'] != null));
+          final temSenhaSupabase = empresaSupabase.senhaCertificado != null && empresaSupabase.senhaCertificado!.isNotEmpty;
           
-          final empresaMap = empresaSupabase.toMap();
-          await _storage.salvar('empresa_atual', empresaMap);
-          debugPrint('>>> [AuthService] ✓ Empresa com certificado salva no localStorage');
-          notifyListeners();
-          return;
-        } else {
-          debugPrint('>>> [AuthService] ⚠️ Certificado também não encontrado no Supabase');
+          if (temCertificadoSupabase && temSenhaSupabase) {
+            debugPrint('>>> [AuthService] ✓✓✓ Certificado e senha encontrados no Supabase!');
+            // MERGE: preserva configurações que existem apenas no cache local
+            // (perfis tributários, perfis de preço, certificado digital etc.).
+            // Sem este merge, a empresa vinda do Supabase (que pode estar sem
+            // essas chaves) substituiria a local e o usuário perderia os perfis
+            // tributários salvos ao entrar (bug: "perfil tributário não persiste").
+            final configLocal = empresa.configuracoes ?? {};
+            final configSupabase = empresaSupabase.configuracoes ?? {};
+            final configMerged = <String, dynamic>{...configSupabase};
+            for (final entry in configLocal.entries) {
+              if (!configMerged.containsKey(entry.key) ||
+                  configMerged[entry.key] == null) {
+                configMerged[entry.key] = entry.value;
+              }
+            }
+            // Dados locais sempre têm prioridade para estas chaves (mesma regra
+            // usada na inicialização), pois o Supabase pode estar desatualizado.
+            if ((configLocal['perfis_tributarios'] as List?)?.isNotEmpty == true) {
+              configMerged['perfis_tributarios'] = configLocal['perfis_tributarios'];
+            }
+            if ((configLocal['perfis_preco'] as List?)?.isNotEmpty == true) {
+              configMerged['perfis_preco'] = configLocal['perfis_preco'];
+            }
+            final empresaComConfig = empresaSupabase.copyWith(configuracoes: configMerged);
+            _empresaAtual = empresaComConfig;
+            
+            // Atualizar na lista local também
+            final index = _empresas.indexWhere((e) => e.id == empresa.id);
+            if (index != -1) {
+              _empresas[index] = empresaComConfig;
+            }
+            
+            final empresaMap = empresaComConfig.toMap();
+            await _storage.salvar('empresa_atual', empresaMap);
+            debugPrint('>>> [AuthService] ✓ Empresa com certificado/senha salva no localStorage');
+            notifyListeners();
+            return;
+          } else {
+            debugPrint('>>> [AuthService] ⚠️ Certificado ou senha também não encontrados no Supabase');
+          }
         }
       } catch (e) {
         debugPrint('>>> [AuthService] Erro ao recarregar do Supabase: $e');
@@ -790,7 +926,11 @@ class AuthService extends ChangeNotifier {
       if (remota != null) {
         final index = _empresas.indexWhere((e) => e.id == remota.id);
         if (index != -1) {
-          _empresas[index] = remota;
+          // MERGE: preserva configurações locais (perfis, bridge, certificado etc.)
+          final mesclada = _mesclarEmpresaComConfigsLocal(_empresas[index], remota);
+          _empresas[index] = mesclada;
+          notifyListeners();
+          return mesclada;
         } else {
           _empresas.add(remota);
         }
@@ -861,6 +1001,13 @@ class AuthService extends ChangeNotifier {
       _empresaAtual = empresaAtualizada;
       await _storage.salvar('empresa_atual', _empresaAtual!.toMap());
       debugPrint('>>> [AuthService] ✓ Empresa atual atualizada no localStorage');
+
+      // Salvar também no PostgreSQL local com suporte a JSONB para configuracoes
+      if (!kIsWeb) {
+        DatabaseService().salvarEmpresaLocal(_empresaAtual!.toMap()).catchError((e) {
+          debugPrint('>>> [AuthService] ⚠️ Erro ao salvar empresa no PostgreSQL local: $e');
+        });
+      }
       
       // Verificar se as configurações foram salvas corretamente
       final empresaSalva = await _storage.carregar('empresa_atual');
@@ -878,21 +1025,22 @@ class AuthService extends ChangeNotifier {
     // Salvar no localStorage
     await _salvarEmpresas();
     
-    // Salvar no Supabase de forma não bloqueante
-    Future.microtask(() async {
-      try {
-        await _supabaseService.upsert(SupabaseService.tableEmpresas, empresaAtualizada.toMap()).timeout(
-          const Duration(seconds: 5),
-          onTimeout: () {
-            debugPrint('>>> [AuthService] ⚠️ Timeout ao salvar empresa no Supabase (não bloqueante)');
-          },
-        );
-        debugPrint('>>> [AuthService] ✓ Empresa salva no Supabase');
-      } catch (e) {
-        debugPrint('>>> [AuthService] ⚠️ Erro ao salvar empresa no Supabase: $e (não bloqueante)');
-        // Não bloquear se o Supabase falhar
-      }
-    });
+    // Salvar no Supabase — tenta agora com timeout generoso
+    try {
+      await _supabaseService.upsert(
+        SupabaseService.tableEmpresas,
+        empresaAtualizada.toMap(),
+      ).timeout(
+        const Duration(seconds: 10),
+        onTimeout: () {
+          debugPrint('>>> [AuthService] ⚠️ Timeout ao salvar empresa no Supabase');
+        },
+      );
+      debugPrint('>>> [AuthService] ✓ Empresa salva no Supabase (incluindo configuracoes)');
+    } catch (e) {
+      debugPrint('>>> [AuthService] ⚠️ Erro ao salvar empresa no Supabase: $e');
+      // Não bloquear o fluxo se Supabase falhar
+    }
   }
 
   /// Remove uma empresa
@@ -910,27 +1058,92 @@ class AuthService extends ChangeNotifier {
 
   Future<void> _salvarUsuarios() async {
     try {
-      // Salvar no localStorage (Usando salvarLista para suporte nativo a SQLite)
+      // 1) Salvar no localStorage (PostgreSQL local — fonte primária de login)
       await _storage.salvarLista('usuarios', _usuarios);
       
-      // Salvar no Supabase
+      // 2) Salvar no Supabase (apenas usuários vinculados a uma empresa — a
+      //    tabela usuarios do Supabase tem empresa_id NOT NULL, então contas
+      //    master/suporte sem empresa ficam apenas locais).
+      //    Falhas são registradas de forma PERSISTENTE (exodo_config) para
+      //    diagnóstico — nunca mais um usuário "some" silenciosamente.
+      final errosAnteriores = await _carregarErrosSyncUsuarios();
+      final errosAgora = <Map<String, dynamic>>[];
+
       for (final usuario in _usuarios) {
-        try {
-          await _supabaseService.upsert(SupabaseService.tableUsuarios, usuario.toMap());
-        } catch (e) {
-          debugPrint('Erro ao salvar usuário ${usuario.id} no Supabase: $e');
+        if (usuario.empresaId == null || usuario.empresaId!.isEmpty) {
+          debugPrint('>>> Usuário ${usuario.id} sem empresa_id — mantido apenas local.');
+          continue;
         }
+        try {
+          await _supabaseService.upsertUsuario(usuario.toMap());
+        } catch (e) {
+          errosAgora.add({
+            'id': usuario.id,
+            'email': usuario.email,
+            'erro': e.toString(),
+            'quando': DateTime.now().toIso8601String(),
+          });
+          debugPrint('>>> [Sync Usuários] ❌ Falha persistente para ${usuario.email}: $e');
+        }
+      }
+
+      // Salvar o registro de erros (máx. 50, sem duplicar o mesmo usuário) para
+      // consulta futura — falhas ficam visíveis para diagnóstico, nunca silenciosas.
+      if (errosAgora.isNotEmpty) {
+        final porId = <String, Map<String, dynamic>>{};
+        for (final e in [...errosAgora, ...errosAnteriores]) {
+          porId[e['id']?.toString() ?? ''] = e; // novo sobrescreve antigo
+        }
+        final combinado = porId.values.take(50).toList();
+        await _storage.salvar('erros_sync_usuarios', combinado);
       }
     } catch (e) {
       debugPrint('Erro ao salvar usuários: $e');
     }
   }
 
-  Future<void> _salvarEmpresas() async {
+  /// Carrega o registro persistente de falhas de sincronização de usuários
+  Future<List<Map<String, dynamic>>> _carregarErrosSyncUsuarios() async {
     try {
-      // Salvar no localStorage (sempre fazer primeiro - crítico - Usando salvarLista para SQLite)
+      final dados = await _storage.carregar('erros_sync_usuarios');
+      if (dados is List) {
+        return dados.whereType<Map<String, dynamic>>().toList();
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  /// Mescla as configurações locais (perfis tributários, perfis de preço e outras
+  /// chaves apenas-locais) na versão remota da empresa, evitando que dados locais
+  /// sejam perdidos quando o Supabase está desatualizado ou não possui essas chaves.
+  Empresa _mesclarEmpresaComConfigsLocal(Empresa local, Empresa remota) {
+    final configLocal = local.configuracoes ?? {};
+    final configRemota = remota.configuracoes ?? {};
+    final configMerged = <String, dynamic>{...configRemota};
+    for (final entry in configLocal.entries) {
+      if (!configMerged.containsKey(entry.key) || configMerged[entry.key] == null) {
+        configMerged[entry.key] = entry.value;
+      }
+    }
+    if ((configLocal['perfis_tributarios'] as List?)?.isNotEmpty == true) {
+      configMerged['perfis_tributarios'] = configLocal['perfis_tributarios'];
+    }
+    if ((configLocal['perfis_preco'] as List?)?.isNotEmpty == true) {
+      configMerged['perfis_preco'] = configLocal['perfis_preco'];
+    }
+    return remota.copyWith(configuracoes: configMerged);
+  }
+
+Future<void> _salvarEmpresas() async {
+    try {
+      // Salvar no localStorage (sempre fazer primeiro - crítico - Usando salvarLista para PostgreSQL)
       await _storage.salvarLista('empresas', _empresas);
-      debugPrint('>>> [AuthService] ✓ Empresas salvas no localStorage');
+      for (final empresa in _empresas) {
+        if (empresa.configuracoes != null) {
+          await _storage.salvarConfiguracoesMensalidadeLocal(empresa.id, empresa.configuracoes!);
+        }
+      }
+      debugPrint('>>> [AuthService] ✓ Empresas e mensalidades salvas no banco local');
       
       // Salvar no Supabase de forma assíncrona (não bloquear)
       Future.microtask(() async {
@@ -987,8 +1200,39 @@ class AuthService extends ChangeNotifier {
                   onTimeout: () => <Usuario>[],
                 );
                 if (usuariosSupabase.isNotEmpty) {
+                  // MERGE SEGURO: o Supabase não tem coluna 'senha', então os
+                  // usuários vindos da nuvem chegam com senha vazia. Sobrescrever
+                  // a lista local por eles apagaria as senhas locais e o login
+                  // quebraria. Mesclamos por id preservando a senha/permissões
+                  // locais quando o registro da nuvem não tem esses dados.
+                  final locais = <String, Usuario>{
+                    for (final u in _usuarios) u.id: u,
+                  };
+                  final mesclados = <Usuario>[];
+                  for (final u in usuariosSupabase) {
+                    final local = locais[u.id];
+                    if (local != null && (u.senha.isEmpty || local.senha.isNotEmpty)) {
+                      mesclados.add(u.copyWith(
+                        senha: local.senha.isNotEmpty ? local.senha : u.senha,
+                        permissoesPersonalizadas: local.permissoesPersonalizadas ?? u.permissoesPersonalizadas,
+                        permissoesNegadas: local.permissoesNegadas ?? u.permissoesNegadas,
+                        telasOcultas: local.telasOcultas ?? u.telasOcultas,
+                        funcionarioId: local.funcionarioId ?? u.funcionarioId,
+                        serieNfce: local.serieNfce != 1 ? local.serieNfce : u.serieNfce,
+                        numeroInicialNfce: local.numeroInicialNfce != 1 ? local.numeroInicialNfce : u.numeroInicialNfce,
+                      ));
+                    } else {
+                      mesclados.add(u);
+                    }
+                  }
+                  // Preservar usuários locais que ainda não existem na nuvem
+                  for (final local in _usuarios) {
+                    if (!mesclados.any((m) => m.id == local.id)) {
+                      mesclados.add(local);
+                    }
+                  }
                   _usuarios.clear();
-                  _usuarios.addAll(usuariosSupabase);
+                  _usuarios.addAll(mesclados);
                   await _salvarUsuarios();
                   notifyListeners();
                 }
@@ -1009,6 +1253,9 @@ class AuthService extends ChangeNotifier {
             onTimeout: () => <Usuario>[],
           );
           if (usuariosSupabase.isNotEmpty) {
+            // Aqui não há lista local para mesclar (está vazia); os usuários
+            // vêm da nuvem sem senha. Mantemos a senha como está (a conta Auth
+            // continua sendo a fonte de autenticação nesse caso) e salvamos.
             _usuarios.clear();
             _usuarios.addAll(usuariosSupabase);
             await _salvarUsuarios();
@@ -1039,8 +1286,17 @@ class AuthService extends ChangeNotifier {
       );
       if (empresasMap.isNotEmpty) {
         _empresas.clear();
-        _empresas.addAll(empresasMap.map((map) => Empresa.fromMap(map)));
-        debugPrint('>>> ${_empresas.length} empresas carregadas do localStorage');
+        for (final map in empresasMap) {
+          Empresa emp = Empresa.fromMap(map);
+          final localMensalidade = await _storage.carregarConfiguracoesMensalidadeLocal(emp.id);
+          if (localMensalidade != null) {
+            final mergedConfigs = Map<String, dynamic>.from(emp.configuracoes ?? {});
+            mergedConfigs.addAll(localMensalidade);
+            emp = emp.copyWith(configuracoes: mergedConfigs);
+          }
+          _empresas.add(emp);
+        }
+        debugPrint('>>> ${_empresas.length} empresas com mensalidade local carregadas');
         notifyListeners();
         
         if (SupabaseService.isAvailable) {
@@ -1052,7 +1308,16 @@ class AuthService extends ChangeNotifier {
               );
               if (empresasSupabase.isNotEmpty) {
                 _empresas.clear();
-                _empresas.addAll(empresasSupabase);
+                for (var emp in empresasSupabase) {
+                  final localMensalidade = await _storage.carregarConfiguracoesMensalidadeLocal(emp.id);
+                  if (localMensalidade != null) {
+                    final mergedConfigs = Map<String, dynamic>.from(emp.configuracoes ?? {});
+                    // Atualiza chaves de cobrança locais se houver override offline
+                    mergedConfigs.addAll(localMensalidade);
+                    emp = emp.copyWith(configuracoes: mergedConfigs);
+                  }
+                  _empresas.add(emp);
+                }
                 await _salvarEmpresas();
                 notifyListeners();
               }
@@ -1088,3 +1353,5 @@ class AuthService extends ChangeNotifier {
     }
   }
 }
+
+

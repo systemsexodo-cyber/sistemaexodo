@@ -121,3 +121,32 @@ XML_EMITIDOS/
 
 # Cópia antiga duplicada do projeto
 Sistema Exodo/
+
+# Instalações locais / build
+postgresql/
+dist_build/
+build_sinc/
+installer_flutter/
+backend_nfce/dist/
+/dist/
+
+# Ferramentas locais / temp
+.continue/
+%TEMP%*
+.env.txt
+senha supabase.txt
+analyze.txt
+crash_db.txt
+Userscharles*.txt
+
+# Certificados digitais (não subir para o repositório)
+*.pfx
+*.p12
+*.key
+
+# Arquivos descartáveis
+flutter_03.png
+backup_trocas_devolucoes_corrompidas_*.csv
+
+# Scripts descartáveis de desenvolvimento na raiz
+scratch_*.py

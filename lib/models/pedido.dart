@@ -15,6 +15,7 @@ class Pedido {
   final String? clienteCpfCnpj;
   final String? vendedorId; // ID do vendedor (funcionário)
   final String? vendedorNome; // Nome do vendedor
+  final String? operador; // Responsável pela venda (quem atendeu no PDV/caixa)
   final String? linkVendedorId; // ID do link usado
   final String? linkVendedorCodigo; // Código do link (ex: ABC123)
   final bool origemEcommerce; // Indica se o pedido veio do e-commerce (loja pública)
@@ -22,6 +23,8 @@ class Pedido {
   final DateTime dataPedido;
   final String status; // Pendente, Em Andamento, Concluído, Cancelado
   final double total;
+  final double descontoTotal;
+  final double acrescimoTotal;
   final String? observacoes;
   final List<ItemPedido> produtos;
   final List<ItemServico> servicos;
@@ -30,6 +33,7 @@ class Pedido {
   final DeliveryInfo? deliveryInfo; // Informações de entrega
   final DateTime createdAt;
   final DateTime updatedAt;
+  final String? senha; // Senha de atendimento/fila do pedido
 
   Pedido({
     required this.id,
@@ -41,6 +45,7 @@ class Pedido {
     this.clienteCpfCnpj,
     this.vendedorId,
     this.vendedorNome,
+    this.operador,
     this.linkVendedorId,
     this.linkVendedorCodigo,
     this.origemEcommerce = false, // Por padrão, não é do e-commerce
@@ -48,6 +53,8 @@ class Pedido {
     DateTime? dataPedido,
     this.status = 'Pendente',
     this.total = 0.0,
+    this.descontoTotal = 0.0,
+    this.acrescimoTotal = 0.0,
     this.observacoes,
     required this.produtos,
     required this.servicos,
@@ -56,6 +63,7 @@ class Pedido {
     this.deliveryInfo,
     DateTime? createdAt,
     DateTime? updatedAt,
+    this.senha,
   }) : dataPedido = dataPedido ?? DateTime.now(),
        pagamentos = pagamentos ?? [],
        materiaisConsumidos = materiaisConsumidos ?? [],
@@ -81,12 +89,19 @@ class Pedido {
   // Calcula o total geral
   double get totalGeral {
     final subtotal = totalProdutos + totalServicos + (deliveryInfo?.taxaEntrega ?? 0.0);
+    
+    // Sum discounts and additions from payments
+    double descontoPagamentos = pagamentos.fold(0.0, (sum, pag) => sum + (pag.desconto ?? 0.0));
+    double acrescimoPagamentos = pagamentos.fold(0.0, (sum, pag) => sum + (pag.acrescimo ?? 0.0));
+    
+    final totalComDesconto = subtotal - descontoTotal + acrescimoTotal - descontoPagamentos + acrescimoPagamentos;
+
     // Se não há itens mas o total foi definido manualmente (ex: vindo de venda balcão compacta), usar o total.
     // Isso evita que vendas salvas sejam marcadas como "pagas" no PDV por terem total geral calculado como 0.
     if (subtotal < 0.01 && total > 0.01) {
-      return total;
+      return total - descontoTotal + acrescimoTotal - descontoPagamentos + acrescimoPagamentos;
     }
-    return subtotal;
+    return totalComDesconto;
   }
 
   // Quantidade total de itens
@@ -178,7 +193,7 @@ class Pedido {
     }
 
     return Pedido(
-      id: map['id'] ?? '',
+      id: map['id']?.toString() ?? '',
       numero: map['numero'] ?? '',
       clienteId: getStr('clienteId', 'cliente_id'),
       clienteNome: getStr('clienteNome', 'cliente_nome'),
@@ -187,6 +202,7 @@ class Pedido {
       clienteCpfCnpj: getStr('clienteCpfCnpj', 'cliente_cpf_cnpj'),
       vendedorId: getStr('vendedorId', 'vendedor_id'),
       vendedorNome: getStr('vendedorNome', 'vendedor_nome'),
+      operador: getStr('operador', 'operador'),
       linkVendedorId: getStr('linkVendedorId', 'link_vendedor_id'),
       linkVendedorCodigo: getStr('linkVendedorCodigo', 'link_vendedor_codigo'),
       origemEcommerce: getBool('origemEcommerce', 'origem_ecommerce') ?? false, 
@@ -194,6 +210,8 @@ class Pedido {
       dataPedido: getDate('dataPedido', 'data_pedido', DateTime.now()),
       status: map['status'] ?? 'Pendente',
       total: parseDouble(map['total']) ?? 0.0,
+      descontoTotal: parseDouble(map['descontoTotal']) ?? 0.0,
+      acrescimoTotal: parseDouble(map['acrescimoTotal']) ?? 0.0,
       observacoes: map['observacoes'],
       produtos: (getList('produtos', 'produtos') ?? [])
           .map((p) => ItemPedido.fromMap(p as Map<String, dynamic>))
@@ -212,6 +230,7 @@ class Pedido {
           : null,
       createdAt: getDate('createdAt', 'created_at', DateTime.now()),
       updatedAt: getDate('updatedAt', 'updated_at', DateTime.now()),
+      senha: getStr('senha', 'senha'),
     );
   }
 
@@ -226,6 +245,7 @@ class Pedido {
       'cliente_cpf_cnpj': clienteCpfCnpj,
       'vendedor_id': vendedorId,
       'vendedor_nome': vendedorNome,
+      'operador': operador,
       'link_vendedor_id': linkVendedorId,
       'link_vendedor_codigo': linkVendedorCodigo,
       'origem_ecommerce': origemEcommerce,
@@ -233,6 +253,8 @@ class Pedido {
       'data_pedido': dataPedido.toIso8601String(),
       'status': status,
       'total': total,
+      'descontoTotal': descontoTotal,
+      'acrescimoTotal': acrescimoTotal,
       'observacoes': observacoes,
       'produtos': produtos.map((p) => p.toMap()).toList(),
       'servicos': servicos.map((s) => s.toMap()).toList(),
@@ -241,6 +263,7 @@ class Pedido {
       'delivery_info': deliveryInfo?.toMap(),
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt.toIso8601String(),
+      'senha': senha,
     };
   }
 
@@ -255,6 +278,7 @@ class Pedido {
     String? clienteCpfCnpj,
     String? vendedorId,
     String? vendedorNome,
+    String? operador,
     String? linkVendedorId,
     String? linkVendedorCodigo,
     bool? origemEcommerce,
@@ -262,6 +286,8 @@ class Pedido {
     DateTime? dataPedido,
     String? status,
     double? total,
+    double? descontoTotal,
+    double? acrescimoTotal,
     String? observacoes,
     List<ItemPedido>? produtos,
     List<ItemServico>? servicos,
@@ -270,6 +296,7 @@ class Pedido {
     DeliveryInfo? deliveryInfo,
     DateTime? createdAt,
     DateTime? updatedAt,
+    String? senha,
   }) {
     return Pedido(
       id: id ?? this.id,
@@ -281,6 +308,7 @@ class Pedido {
       clienteCpfCnpj: clienteCpfCnpj ?? this.clienteCpfCnpj,
       vendedorId: vendedorId ?? this.vendedorId,
       vendedorNome: vendedorNome ?? this.vendedorNome,
+      operador: operador ?? this.operador,
       linkVendedorId: linkVendedorId ?? this.linkVendedorId,
       linkVendedorCodigo: linkVendedorCodigo ?? this.linkVendedorCodigo,
       origemEcommerce: origemEcommerce ?? this.origemEcommerce,
@@ -288,6 +316,8 @@ class Pedido {
       dataPedido: dataPedido ?? this.dataPedido,
       status: status ?? this.status,
       total: total ?? this.total,
+      descontoTotal: descontoTotal ?? this.descontoTotal,
+      acrescimoTotal: acrescimoTotal ?? this.acrescimoTotal,
       observacoes: observacoes ?? this.observacoes,
       produtos: produtos ?? this.produtos,
       servicos: servicos ?? this.servicos,
@@ -296,6 +326,7 @@ class Pedido {
       deliveryInfo: deliveryInfo ?? this.deliveryInfo,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? DateTime.now(),
+      senha: senha ?? this.senha,
     );
   }
 }

@@ -20,7 +20,7 @@ class RegistroPagamento {
 
   factory RegistroPagamento.fromMap(Map<String, dynamic> map) {
     return RegistroPagamento(
-      id: map['id'] ?? '',
+      id: map['id']?.toString() ?? '',
       valor: (map['valor'] ?? 0).toDouble(),
       dataPagamento: map['dataPagamento'] != null
           ? DateTime.parse(map['dataPagamento'])
@@ -299,7 +299,7 @@ class ContaPagar {
   /// Cria a partir de um Map (do Firestore)
   factory ContaPagar.fromMap(Map<String, dynamic> map) {
     return ContaPagar(
-      id: map['id'] ?? '',
+      id: map['id']?.toString() ?? '',
       numero: map['numero'],
       tipo: TipoContaPagar.values.firstWhere(
         (e) => e.name == map['tipo'],

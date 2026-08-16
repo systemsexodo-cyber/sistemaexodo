@@ -13,4 +13,17 @@ class DatabaseService {
     // Stub - Retorna vazio no Web
     return [];
   }
+
+  Future<void> salvarConfig(String chave, dynamic valor) async {
+    // Stub - Nao faz nada no Web
+  }
+
+  Future<dynamic> carregarConfig(String chave) async {
+    // Stub - Retorna null no Web
+    return null;
+  }
+
+  Future<void> removerConfig(String chave) async {
+    // Stub - Nao faz nada no Web
+  }
 }

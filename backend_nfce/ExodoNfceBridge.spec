@@ -39,7 +39,7 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 # --- Bridge Analysis ---
 a = Analysis(
     ['main.py'],
-    pathex=['..\\backend_pynfe', '..', '.'],
+    pathex=['.', '..'],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
@@ -55,7 +55,7 @@ pyz_a = PYZ(a.pure)
 # --- Watchdog Analysis ---
 w = Analysis(
     ['watchdog.py'],
-    pathex=['..\\backend_pynfe', '..', '.'],
+    pathex=['.', '..'],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
@@ -75,7 +75,7 @@ exe_bridge = EXE(
     a.binaries,
     a.datas,
     [],
-    name='ExodoNfceBridge_v348',
+    name='ExodoNfceBridge_v355',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -98,7 +98,7 @@ exe_watchdog = EXE(
     w.binaries,
     w.datas,
     [],
-    name='ExodoNfceBridgeWatchdog_v348',
+    name='ExodoNfceBridgeWatchdog_v355',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

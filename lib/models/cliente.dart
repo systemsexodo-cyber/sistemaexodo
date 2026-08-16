@@ -67,6 +67,8 @@ class Cliente {
   final bool ativo;
   final DateTime createdAt;
   final DateTime updatedAt;
+  final String? perfilPreco; // Perfil de preço do cliente (ex: Revenda, VIP)
+
 
   Cliente({
     required this.id,
@@ -101,6 +103,7 @@ class Cliente {
     this.emailLogin,
     this.habilitaTaxiDog = false,
     this.ativo = true,
+    this.perfilPreco,
     required this.createdAt,
     required this.updatedAt,
     List<EnderecoCliente>? enderecos,
@@ -247,6 +250,7 @@ class Cliente {
       emailLogin: getStr('emailLogin', 'email_login'),
       habilitaTaxiDog: getBool('habilitaTaxiDog', 'habilita_taxi_dog') ?? false,
       ativo: getBool('ativo', 'ativo') ?? true,
+      perfilPreco: getStr('perfilPreco', 'perfil_preco'),
       createdAt: DateParser.parse(getStr('createdAt', 'created_at') ?? ''),
       updatedAt: DateParser.parse(getStr('updatedAt', 'updated_at') ?? ''),
     );
@@ -288,6 +292,7 @@ class Cliente {
       'email_login': emailLogin,
       'habilita_taxi_dog': habilitaTaxiDog,
       'ativo': ativo,
+      'perfil_preco': perfilPreco,
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt.toIso8601String(),
     };

@@ -6,6 +6,7 @@ import '../services/pedido_service.dart';
 import '../models/pedido.dart';
 import '../models/produto.dart';
 import '../models/cliente.dart';
+import '../models/tabela_preco.dart';
 import '../models/item_pedido.dart';
 import '../models/forma_pagamento.dart';
 import '../widgets/pagamento_widget.dart';
@@ -74,7 +75,7 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
 
   // Estado do pedido
   Cliente? _clienteSelecionado;
-  final List<ItemCarrinho> _carrinho = [];
+    final List<ItemCarrinho> _carrinho = [];
   List<PagamentoPedido> _pagamentos = []; // Formas de pagamento
   String _statusPedido = 'Pendente';
   String _numeroPedido = '';
@@ -217,23 +218,25 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
         final nome = p.nome.toLowerCase();
         final codigo = (p.codigo ?? '').trim();
         final codigoLower = codigo.toLowerCase();
-        final codigoBarras = (p.codigoBarras ?? '').trim();
-        final codigoBarrasLower = codigoBarras.toLowerCase();
+        final todosBarras = p.todosCodigosBarras;
+        final barrasLower = todosBarras.map((b) => b.toLowerCase()).toList();
         final grupo = p.grupo.toLowerCase();
         
         // Extrair números dos códigos (removendo zeros à esquerda)
         final codigoNumeros = codigo.replaceAll(RegExp(r'[^0-9]'), '');
         final codigoNumerosSemZeros = codigoNumeros.isEmpty ? '' : int.tryParse(codigoNumeros)?.toString() ?? codigoNumeros;
-        final codigoBarrasNumeros = codigoBarras.replaceAll(RegExp(r'[^0-9]'), '');
-        final codigoBarrasNumerosSemZeros = codigoBarrasNumeros.isEmpty ? '' : int.tryParse(codigoBarrasNumeros)?.toString() ?? codigoBarrasNumeros;
+        final barrasNumeros = todosBarras.map((b) => b.replaceAll(RegExp(r'[^0-9]'), '')).toList();
+        final barrasNumerosSemZeros = barrasNumeros
+            .map((n) => n.isEmpty ? '' : (int.tryParse(n)?.toString() ?? n))
+            .toList();
 
         // 1. Match exato case-insensitive de código (maior prioridade)
         if (codigoLower == queryLower || codigo == query) {
           return true;
         }
         
-        // 2. Match exato case-insensitive de código de barras
-        if (codigoBarrasLower == queryLower || codigoBarras == query) {
+        // 2. Match exato case-insensitive de código de barras (principal + adicionais)
+        if (barrasLower.contains(queryLower) || todosBarras.contains(query)) {
           return true;
         }
         
@@ -241,11 +244,11 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
         // Ex: "001" encontra "1", "PROD-001", "001", etc.
         if (queryNumerosSemZeros.isNotEmpty) {
           if (codigoNumerosSemZeros == queryNumerosSemZeros || 
-              codigoBarrasNumerosSemZeros == queryNumerosSemZeros) {
+              barrasNumerosSemZeros.contains(queryNumerosSemZeros)) {
             return true;
           }
           // Também verificar com zeros à esquerda preservados
-          if (codigoNumeros == queryNumeros || codigoBarrasNumeros == queryNumeros) {
+          if (codigoNumeros == queryNumeros || barrasNumeros.contains(queryNumeros)) {
             return true;
           }
         }
@@ -255,8 +258,8 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
           return true;
         }
         
-        // 5. Código de barras começa exatamente com o termo
-        if (codigoBarrasLower.startsWith(queryLower) && codigoBarrasLower.isNotEmpty) {
+        // 5. Código de barras começa exatamente com o termo (principal + adicionais)
+        if (barrasLower.any((b) => b.startsWith(queryLower) && b.isNotEmpty)) {
           return true;
         }
         
@@ -273,15 +276,14 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
                 codigoNumerosSemZeros.length <= 3) {
               return true;
             }
-            if (codigoBarrasNumerosSemZeros.startsWith(queryNumerosSemZeros) &&
-                codigoBarrasNumerosSemZeros.length <= 3) {
+            if (barrasNumerosSemZeros.any((n) => n.startsWith(queryNumerosSemZeros) && n.length <= 3)) {
               return true;
             }
           }
           // Para números maiores (3+ dígitos), pode buscar por início
           else if (queryNumerosSemZeros.length >= 3) {
             if (codigoNumerosSemZeros.startsWith(queryNumerosSemZeros) ||
-                codigoBarrasNumerosSemZeros.startsWith(queryNumerosSemZeros)) {
+                barrasNumerosSemZeros.any((n) => n.startsWith(queryNumerosSemZeros))) {
               return true;
             }
           }
@@ -319,14 +321,14 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
         }
         
         // 12. Código de barras contém o termo (apenas se o termo tiver pelo menos 3 caracteres)
-        if (query.length >= 3 && codigoBarrasLower.contains(queryLower)) {
+        if (query.length >= 3 && barrasLower.any((b) => b.contains(queryLower))) {
           return true;
         }
         
         // 13. Código numérico contém o termo numérico (apenas se tiver 3+ dígitos)
         if (queryNumerosSemZeros.length >= 3 && 
             (codigoNumerosSemZeros.contains(queryNumerosSemZeros) ||
-             codigoBarrasNumerosSemZeros.contains(queryNumerosSemZeros))) {
+             barrasNumerosSemZeros.any((n) => n.contains(queryNumerosSemZeros)))) {
           return true;
         }
         
@@ -396,6 +398,46 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
     });
   }
 
+  void _recalcularPrecosCarrinho() {
+    final empresaAtual = Provider.of<DataService>(context, listen: false).empresaAtual;
+    final configPerfil = empresaAtual?.getConfigPerfilPreco(_clienteSelecionado?.perfilPreco);
+    
+    final qtdMinima = configPerfil != null && configPerfil['quantidade_minima'] != null 
+        ? (configPerfil['quantidade_minima'] as num).toDouble() 
+        : 0.0;
+        
+    final tipoQtdMinima = configPerfil != null && configPerfil['tipo_quantidade_minima'] != null 
+        ? configPerfil['tipo_quantidade_minima'] as String
+        : 'carrinho';
+        
+    final modificadorPerfil = configPerfil != null && (configPerfil['tipo'] == 'desconto' || configPerfil['tipo'] == 'acrescimo')
+        ? (configPerfil['valor'] as num?)?.toDouble() ?? 0.0
+        : 0.0;
+    final tipoModificador = configPerfil != null ? configPerfil['tipo'] as String? ?? 'desconto' : 'desconto';
+        
+    final totalItens = _totalItens;
+    
+    setState(() {
+      for (var item in _carrinho) {
+        bool aplicarTabela = false;
+        if (qtdMinima <= 0) {
+          aplicarTabela = true;
+        } else if (tipoQtdMinima == 'carrinho') {
+          aplicarTabela = totalItens >= qtdMinima;
+        } else { // 'item'
+          aplicarTabela = item.quantidade >= qtdMinima;
+        }
+        
+        item.precoUnitario = item.produto.getPrecoInteligente(
+          perfilCliente: aplicarTabela ? _clienteSelecionado?.perfilPreco : null,
+          modificadorPerfil: aplicarTabela ? modificadorPerfil : 0.0,
+          tipoModificador: tipoModificador,
+          quantidade: item.quantidade,
+        );
+      }
+    });
+  }
+
   void _adicionarProduto(Produto produto, {double quantidade = 1.0}) {
     if (produto.temAdicionais) {
       _exibirSelecaoAdicionais(produto, quantidade: quantidade);
@@ -412,14 +454,19 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
         // Incrementa quantidade
         _carrinho[index].quantidade += quantidade;
       } else {
-        // Adiciona novo item
-        _carrinho.add(ItemCarrinho(produto: produto, quantidade: quantidade));
+        _carrinho.add(ItemCarrinho(
+          produto: produto,
+          quantidade: quantidade,
+          precoUnitario: produto.preco, // Será recalculado abaixo
+        ));
       }
 
       // Limpa busca
       _buscaController.clear();
       _mostrarResultadosBusca = false;
     });
+    
+    _recalcularPrecosCarrinho();
 
     _mostrarFeedbackAdicao(produto);
     
@@ -577,6 +624,8 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
     setState(() {
       _carrinho.removeAt(index);
     });
+    
+    _recalcularPrecosCarrinho();
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -591,6 +640,7 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
             setState(() {
               _carrinho.insert(index, item);
             });
+            _recalcularPrecosCarrinho();
           },
         ),
       ),
@@ -606,6 +656,8 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
         _removerItem(index);
       }
     });
+    
+    _recalcularPrecosCarrinho();
   }
 
   double get _totalPedido {
@@ -2086,6 +2138,7 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
                       _clienteSelecionado = cliente;
                       _mostrarSugestoesCliente = false;
                     });
+                    _recalcularPrecosCarrinho();
                     _buscaClienteFocusNode.unfocus();
                   },
                 );

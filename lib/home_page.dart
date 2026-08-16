@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:intl/intl.dart';
+import 'package:flutter/services.dart';
 import 'services/data_service.dart';
+import 'services/auth_service.dart';
 import 'package:sistema_exodo_novo/pages/clientes_page.dart';
 import 'package:sistema_exodo_novo/pages/produtos_page.dart';
 import 'package:sistema_exodo_novo/pages/servicos_page.dart';
@@ -19,6 +22,138 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   String _busca = '';
   final _buscaController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _verificarVencimentoBreve();
+    });
+  }
+
+  void _verificarVencimentoBreve() {
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final authService = Provider.of<AuthService>(context, listen: false);
+
+    // Evitar alerta para o administrador do suporte
+    if (authService.usuarioAtual?.email.toLowerCase() == 'user') return;
+
+    final empresa = dataService.empresaAtual ?? authService.empresaAtual;
+    if (empresa == null) return;
+
+    final diasRestantes = empresa.diasRestantesVencimentoRecorrente;
+    if (diasRestantes == -1) return;
+
+    // Se faltar 2 dias ou menos para vencer, e nao está bloqueado ainda (pois se estiver ja cai na tela de bloqueio)
+    if (diasRestantes >= 0 && diasRestantes <= 2 && !empresa.isInadimplenteRecorrente) {
+      // Calcular a data exata do proximo vencimento recorrente
+      final agora = DateTime.now();
+      final hoje = DateTime(agora.year, agora.month, agora.day);
+      final dataProximoVencimento = hoje.add(Duration(days: diasRestantes));
+      
+      _mostrarAlertaVencimento(diasRestantes, dataProximoVencimento);
+    }
+  }
+
+  void _mostrarAlertaVencimento(int diasRestantes, DateTime dataVencimento) {
+    final dataFormatada = DateFormat('dd/MM/yyyy').format(dataVencimento);
+    final String labelDias = diasRestantes == 0 
+        ? "VENCE HOJE" 
+        : (diasRestantes == 1 ? "vence amanhã" : "vence em 2 dias");
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        final isDark = Theme.of(dialogContext).brightness == Brightness.dark;
+        return AlertDialog(
+          backgroundColor: isDark ? const Color(0xFF1E1E2E) : Colors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, color: Colors.amber, size: 28),
+              SizedBox(width: 12),
+              Text(
+                'Aviso de Vencimento',
+                style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold, fontSize: 18),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Atenção! Sua mensalidade do sistema Êxodo $labelDias ($dataFormatada).',
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Realize o pagamento via Pix para evitar o bloqueio automático do seu acesso.',
+                style: TextStyle(color: Colors.grey, fontSize: 13, height: 1.4),
+              ),
+              const SizedBox(height: 16),
+              // Card do Pix
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.green.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.green.withOpacity(0.2)),
+                ),
+                child: Column(
+                  children: [
+                    const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.pix_rounded, color: Colors.green, size: 18),
+                        SizedBox(width: 8),
+                        Text(
+                          'CHAVE PIX CELULAR',
+                          style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 12),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    const SelectableText(
+                      '12996435372',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, letterSpacing: 0.5),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Charles P (São Paulo)',
+                      style: TextStyle(fontSize: 11, color: Colors.grey),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Entendi, pagar depois', style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+              onPressed: () {
+                Navigator.pop(dialogContext);
+                // Copia chave pix
+                Clipboard.setData(const ClipboardData(text: '12996435372'));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Chave Pix copiada para a área de transferência!'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+              },
+              child: const Text('Copiar Chave Pix', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        );
+      },
+    );
+  }
 
   List<dynamic> _filtrarProdutos(List<dynamic> produtos) {
     String normalizar(String s) => s

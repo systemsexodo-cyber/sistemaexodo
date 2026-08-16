@@ -15,6 +15,10 @@ class ItemNotaEntrada {
   final int? estoqueAnterior;
   final int? estoqueMinimo; // Adicionado: estoque mínimo configurado na entrada
   final bool produtoNovo; // Se o produto foi criado por esta nota
+  // Controle de validade/lote (pet shop: ração, medicamentos, etc.)
+  final String? numeroLote; // Número do lote informado na entrada
+  final DateTime? dataValidade; // Validade do lote informado na entrada
+  final DateTime? dataFabricacao; // (Opcional) data de fabricação
 
   ItemNotaEntrada({
     required this.codigo,
@@ -32,6 +36,9 @@ class ItemNotaEntrada {
     this.estoqueAnterior,
     this.estoqueMinimo,
     this.produtoNovo = false,
+    this.numeroLote,
+    this.dataValidade,
+    this.dataFabricacao,
   });
 
   factory ItemNotaEntrada.fromMap(Map<String, dynamic> map) {
@@ -46,11 +53,22 @@ class ItemNotaEntrada {
       precoVenda: (map['precoVenda'] ?? 0).toDouble(),
       unidade: map['unidade'] ?? 'UN',
       produtoId: map['produtoId'],
-      precoCustoAnterior: map['precoCustoAnterior'] != null ? (map['precoCustoAnterior'] as num).toDouble() : null,
-      precoVendaAnterior: map['precoVendaAnterior'] != null ? (map['precoVendaAnterior'] as num).toDouble() : null,
-      estoqueAnterior: map['estoqueAnterior'] != null ? (map['estoqueAnterior'] as num).toInt() : null,
-      estoqueMinimo: map['estoqueMinimo'] != null ? (map['estoqueMinimo'] as num).toInt() : null,
+      precoCustoAnterior: map['precoCustoAnterior'] != null ? double.tryParse(map['precoCustoAnterior'].toString()) : null,
+      precoVendaAnterior: map['precoVendaAnterior'] != null ? double.tryParse(map['precoVendaAnterior'].toString()) : null,
+      estoqueAnterior: map['estoqueAnterior'] != null ? int.tryParse(map['estoqueAnterior'].toString()) : null,
+      estoqueMinimo: map['estoqueMinimo'] != null ? int.tryParse(map['estoqueMinimo'].toString()) : null,
       produtoNovo: map['produtoNovo'] ?? false,
+      numeroLote: map['numeroLote'],
+      dataValidade: map['dataValidade'] != null
+          ? (map['dataValidade'] is DateTime
+              ? map['dataValidade'] as DateTime
+              : DateTime.tryParse(map['dataValidade'].toString()))
+          : null,
+      dataFabricacao: map['dataFabricacao'] != null
+          ? (map['dataFabricacao'] is DateTime
+              ? map['dataFabricacao'] as DateTime
+              : DateTime.tryParse(map['dataFabricacao'].toString()))
+          : null,
     );
   }
 
@@ -71,6 +89,9 @@ class ItemNotaEntrada {
       'estoqueAnterior': estoqueAnterior,
       'estoqueMinimo': estoqueMinimo,
       'produtoNovo': produtoNovo,
+      'numeroLote': numeroLote,
+      'dataValidade': dataValidade?.toIso8601String(),
+      'dataFabricacao': dataFabricacao?.toIso8601String(),
     };
   }
 }
@@ -120,12 +141,12 @@ class NotaEntrada {
 
   factory NotaEntrada.fromMap(Map<String, dynamic> map) {
     return NotaEntrada(
-      id: map['id'] ?? '',
+      id: map['id']?.toString() ?? '',
       dataCriacao: map['dataCriacao'] != null
-          ? DateTime.parse(map['dataCriacao'])
+          ? (map['dataCriacao'] is DateTime ? map['dataCriacao'] as DateTime : DateTime.parse(map['dataCriacao'].toString()))
           : DateTime.now(),
       dataProcessamento: map['dataProcessamento'] != null
-          ? DateTime.parse(map['dataProcessamento'])
+          ? (map['dataProcessamento'] is DateTime ? map['dataProcessamento'] as DateTime : DateTime.parse(map['dataProcessamento'].toString()))
           : null,
       tipo: map['tipo'] ?? 'manual',
       status: map['status'] ?? 'rascunho',
@@ -139,14 +160,14 @@ class NotaEntrada {
       fornecedorNome: map['fornecedorNome'],
       fornecedorCNPJ: map['fornecedorCNPJ'],
       dataEmissao: map['dataEmissao'] != null
-          ? DateTime.parse(map['dataEmissao'])
+          ? (map['dataEmissao'] is DateTime ? map['dataEmissao'] as DateTime : DateTime.parse(map['dataEmissao'].toString()))
           : null,
-      valorTotal: map['valorTotal'] != null ? (map['valorTotal'] as num).toDouble() : null,
+      valorTotal: map['valorTotal'] != null ? double.tryParse(map['valorTotal'].toString()) : null,
       serie: map['serie'],
       modelo: map['modelo'],
       xmlOriginal: map['xmlOriginal'],
-      createdAt: map['createdAt'] != null ? DateTime.parse(map['createdAt']) : DateTime.now(),
-      updatedAt: map['updatedAt'] != null ? DateTime.parse(map['updatedAt']) : DateTime.now(),
+      createdAt: map['createdAt'] != null ? (map['createdAt'] is DateTime ? map['createdAt'] as DateTime : DateTime.parse(map['createdAt'].toString())) : DateTime.now(),
+      updatedAt: map['updatedAt'] != null ? (map['updatedAt'] is DateTime ? map['updatedAt'] as DateTime : DateTime.parse(map['updatedAt'].toString())) : DateTime.now(),
     );
   }
 

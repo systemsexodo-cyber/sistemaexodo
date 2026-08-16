@@ -55,20 +55,21 @@ class NFCeFocusService {
         'presenca_comprador': '1',
         'itens': produtos.map((p) {
           final qtd = quantidades[p.id] ?? 1.0;
+        
+          String cfopFinal = p.cfop?.replaceAll(RegExp(r'[^0-9]'), '') ?? '5102';
+          if ((p.csosn == '500' || p.icmsCst == '60') && (cfopFinal == '5102' || cfopFinal == '5101')) {
+            cfopFinal = '5405';
+          }
+          final valorUnitario = p.aplicarPromocoes(p.preco, quantidade: qtd);
           return {
             'codigo_produto': p.codigo ?? p.id,
             'descricao': p.nome,
             'ncm': p.ncm?.replaceAll(RegExp(r'[^0-9]'), '') ?? '00000000',
-            
-            String cfopFinal = p.cfop?.replaceAll(RegExp(r'[^0-9]'), '') ?? '5102';
-            if ((p.csosn == '500' || p.icmsCst == '60') && (cfopFinal == '5102' || cfopFinal == '5101')) {
-              cfopFinal = '5405';
-            }
             'cfop': cfopFinal,
             'unidade_comercial': p.unidade,
             'quantidade_comercial': qtd.toStringAsFixed(3),
-            'valor_unitario_comercial': p.precoAtual.toStringAsFixed(2),
-            'valor_total': (p.precoAtual * qtd).toStringAsFixed(2),
+            'valor_unitario_comercial': valorUnitario.toStringAsFixed(2),
+            'valor_total': (valorUnitario * qtd).toStringAsFixed(2),
             'icms_origem': p.origem ?? '0',
             'icms_situacao_tributaria': (empresa.crt == 3) ? (p.icmsCst ?? '00') : (p.csosn ?? '102'),
             'icms_aliquota': (p.icmsAliquota ?? 0).toStringAsFixed(2),
@@ -118,8 +119,8 @@ class NFCeFocusService {
               codigo: p.codigo ?? p.id,
               descricao: p.nome,
               quantidade: qtd,
-              valorUnitario: p.precoAtual,
-              valorTotal: p.precoAtual * qtd,
+              valorUnitario: p.aplicarPromocoes(p.preco, quantidade: qtd),
+              valorTotal: p.aplicarPromocoes(p.preco, quantidade: qtd) * qtd,
               ncm: p.ncm?.replaceAll(RegExp(r'[^0-9]'), '') ?? '00000000',
               cfop: cfopFinal,
               unidade: p.unidade,

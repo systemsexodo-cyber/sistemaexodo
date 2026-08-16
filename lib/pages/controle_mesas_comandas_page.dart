@@ -205,8 +205,8 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
   }
 
   Widget _buildMapaInteligente(DataService dataService) {
-    // Buscar mesas/comandas do DataService
-    final todasMesasComandas = dataService.mesasComandas;
+    // Buscar mesas/comandas do DataService (excluindo a comanda virtual de auditoria do carrinho)
+    final todasMesasComandas = dataService.todasMesasComandas.where((m) => m.id != 'carrinho-deletados').toList();
     
     // Filtrar por tipo (Mesa ou Comanda)
     var mesasComandas = todasMesasComandas.where((m) => m.tipo == _tipoSelecionado).toList();
@@ -216,6 +216,10 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
       mesasComandas = mesasComandas.where((m) => m.status == 'Aberta').toList();
     } else if (_filtroStatus == 'Fechadas') {
       mesasComandas = mesasComandas.where((m) => m.status == 'Fechada').toList();
+    } else {
+      // Se o filtro for 'Todas', exibimos apenas as ativas ('Aberta') no painel principal
+      // para não lotar a interface de comandas/mesas passadas. O usuário seleciona 'Fechadas' para ver as finalizadas.
+      mesasComandas = mesasComandas.where((m) => m.status == 'Aberta').toList();
     }
     
     // Filtrar por setor (Cozinha, Bar)
@@ -282,12 +286,12 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
       ),
       itemCount: mesasComandas.length,
       itemBuilder: (context, index) {
-        return _buildQuadroMesaComanda(mesasComandas[index]);
+        return _buildQuadroMesaComanda(mesasComandas[index], dataService);
       },
     );
   }
 
-  Widget _buildQuadroMesaComanda(MesaComanda mesaComanda) {
+  Widget _buildQuadroMesaComanda(MesaComanda mesaComanda, DataService dataService) {
     final temPendentes = mesaComanda.temItensPendentes;
     final temProntos = mesaComanda.temItensProntos;
     final pendente = mesaComanda.totalPendente;
@@ -367,15 +371,31 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
                               ),
                             ),
                           ),
-                          if (temProntos)
-                            Container(
-                              padding: const EdgeInsets.all(4),
-                              decoration: const BoxDecoration(
-                                color: Colors.greenAccent,
-                                shape: BoxShape.circle,
+                          Row(
+                            children: [
+                              if (temProntos)
+                                Container(
+                                  padding: const EdgeInsets.all(4),
+                                  decoration: const BoxDecoration(
+                                    color: Colors.greenAccent,
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(Icons.check, color: Colors.black, size: 10),
+                                ),
+                              const SizedBox(width: 6),
+                              IconButton(
+                                onPressed: () => _deletarMesaComanda(context, mesaComanda, dataService),
+                                icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 16),
+                                tooltip: 'Deletar',
+                                padding: EdgeInsets.zero,
+                                visualDensity: VisualDensity.compact,
+                                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                                style: IconButton.styleFrom(
+                                  backgroundColor: Colors.red.withOpacity(0.12),
+                                ),
                               ),
-                              child: const Icon(Icons.check, color: Colors.black, size: 10),
-                            ),
+                            ],
+                          ),
                         ],
                       ),
                       const SizedBox(height: 12),
@@ -624,6 +644,8 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
                         _limparMesaComanda(context, mesaComanda, dataService);
                       } else if (value == 'receber') {
                         _navegarParaReceber(context, mesaComanda);
+                      } else if (value == 'deletar') {
+                        _deletarMesaComanda(context, mesaComanda, dataService);
                       }
                     },
                     itemBuilder: (context) => [
@@ -664,6 +686,16 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
                             Icon(Icons.delete_sweep, color: Colors.redAccent, size: 20),
                             SizedBox(width: 8),
                             Text('Limpar Mesa (Histórico)', style: TextStyle(color: Colors.redAccent)),
+                          ],
+                        ),
+                      ),
+                      const PopupMenuItem(
+                        value: 'deletar',
+                        child: Row(
+                          children: [
+                            Icon(Icons.delete_forever, color: Colors.redAccent, size: 20),
+                            SizedBox(width: 8),
+                            Text('Deletar', style: TextStyle(color: Colors.redAccent)),
                           ],
                         ),
                       ),
@@ -1344,6 +1376,7 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
                         ),
                       ),
                       style: const TextStyle(color: Colors.white),
+                    ),
                     const SizedBox(height: 16),
                     TextField(
                       controller: nomeQuemPagouCouvertController,
@@ -1528,7 +1561,7 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
                     keyboardType: const TextInputType.numberWithOptions(decimal: true),
                     onChanged: (value) => setDialogState(() {}),
                     decoration: InputDecoration(
-                      labelText: 'Valor por Pessoa (R$)',
+                      labelText: 'Valor por Pessoa (R\$)',
                       labelStyle: const TextStyle(color: Colors.grey),
                       enabledBorder: const UnderlineInputBorder(
                         borderSide: BorderSide(color: Colors.grey),
@@ -1574,7 +1607,7 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
                             ),
                           ),
                           Text(
-                            NumberFormat.currency(locale: 'pt_BR', symbol: 'R$').format(valorTotalCouvert),
+                            NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(valorTotalCouvert),
                             style: const TextStyle(
                               color: Colors.greenAccent,
                               fontSize: 18,
@@ -1668,8 +1701,6 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
                         ),
                       );
                     }
-                  }
-                },   }
                   }
                 },
                 style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
@@ -1814,6 +1845,187 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
             ),
           );
         }
+      }
+    }
+  }
+
+  /// Deleta uma mesa/comanda mantendo o registro no Histórico de Operações
+  /// (auditoria: quem deletou e quando). Não gera venda, apenas registra.
+  Future<void> _deletarMesaComanda(
+    BuildContext context,
+    MesaComanda mesaComanda,
+    DataService dataService,
+  ) async {
+    final isComanda = mesaComanda.tipo == TipoControle.comanda;
+    final label = isComanda ? 'comanda' : 'mesa';
+    final temItensNaoFinalizados =
+        mesaComanda.temItensPendentes || mesaComanda.temItensEmPreparo;
+    final total = mesaComanda.totalCalculado;
+    final comandasVinculadas = isComanda
+        ? 0
+        : dataService.mesasComandas
+            .where((c) => c.tipo == TipoControle.comanda && c.mesaId == mesaComanda.id)
+            .length;
+
+    final confirmar = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            const Icon(Icons.delete_forever, color: Colors.redAccent),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Deletar ${isComanda ? "Comanda" : "Mesa"}?',
+                style: const TextStyle(color: Colors.white),
+              ),
+            ),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Você está prestes a deletar a $label ${mesaComanda.numero}.',
+                style: const TextStyle(color: Colors.white70),
+              ),
+              if (mesaComanda.clienteNome != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    'Cliente: ${mesaComanda.clienteNome}',
+                    style: const TextStyle(color: Colors.grey),
+                  ),
+                ),
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  'Itens: ${mesaComanda.itens.length} • Total: ${NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(total)}',
+                  style: const TextStyle(color: Colors.grey),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(Icons.history, color: Colors.orange, size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'O registro ficará salvo no Histórico de Operações com quem deletou e quando. Esta $label não poderá mais ser usada ou restaurada.',
+                        style: const TextStyle(color: Colors.white70, fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (comandasVinculadas > 0) ...[
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.purple.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.purple.withOpacity(0.4)),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(Icons.receipt_long, color: Colors.purple, size: 18),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Esta mesa tem $comandasVinculadas comanda(s) vinculada(s), que também serão deletadas e registradas no histórico.',
+                          style: const TextStyle(color: Colors.white70, fontSize: 12),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              if (temItensNaoFinalizados) ...[
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.red.withOpacity(0.3)),
+                  ),
+                  child: const Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(Icons.warning_amber_rounded, color: Colors.red, size: 18),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Atenção: ainda há itens pendentes ou em preparo. Eles não serão cobrados nem gerarão venda.',
+                          style: TextStyle(color: Colors.redAccent, fontSize: 12),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade800),
+            child: const Text('Sim, Deletar'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmar != true) return;
+
+    try {
+      final authService = Provider.of<AuthService>(context, listen: false);
+      await dataService.marcarMesaComandaDeletada(
+        mesaComanda.id,
+        usuario: authService.usuarioAtual?.nome,
+      );
+
+      if (context.mounted) {
+        setState(() {
+          if (_mesaComandaSelecionada?.id == mesaComanda.id) {
+            _mesaComandaSelecionada = null;
+          }
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '${isComanda ? "Comanda" : "Mesa"} ${mesaComanda.numero} deletada. Registro salvo no Histórico de Operações.',
+            ),
+            backgroundColor: Colors.red.shade800,
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erro ao deletar: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
       }
     }
   }

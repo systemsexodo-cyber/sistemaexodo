@@ -5,6 +5,8 @@ import 'package:intl/intl.dart';
 import '../models/nfce.dart';
 import '../models/empresa.dart';
 import '../services/danfe_service.dart';
+import '../services/whatsapp_service.dart';
+import 'dart:convert';
 
 /// Diálogo de sucesso premium para NFC-e do sistema Exodo
 /// Design moderno com gradientes vibrantes, efeitos de brilho e animações
@@ -195,21 +197,41 @@ class ExodoSuccessDialog extends StatelessWidget {
                       
                       const SizedBox(height: 12),
                       
-                      // Botão Secundário para Compartilhar
+                      // Botões Secundários
                       if (empresa != null)
-                        TextButton.icon(
-                          onPressed: () {
-                            DANFEService.compartilharPDF(nfce: nfce, empresa: empresa!);
-                          },
-                          icon: Icon(Icons.share_rounded, color: Colors.white.withOpacity(0.5), size: 18),
-                          label: Text(
-                            'COMPARTILHAR PDF',
-                            style: TextStyle(
-                              color: Colors.white.withOpacity(0.5),
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            TextButton.icon(
+                              onPressed: () {
+                                _enviarWhatsAppNfcePDF(context, nfce, empresa!);
+                              },
+                              icon: Icon(Icons.chat_bubble_outline, color: Colors.greenAccent.withOpacity(0.8), size: 18),
+                              label: Text(
+                                'WHATSAPP',
+                                style: TextStyle(
+                                  color: Colors.greenAccent.withOpacity(0.8),
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
                             ),
-                          ),
+                            const SizedBox(width: 16),
+                            TextButton.icon(
+                              onPressed: () {
+                                DANFEService.compartilharPDF(nfce: nfce, empresa: empresa!);
+                              },
+                              icon: Icon(Icons.share_rounded, color: Colors.white.withOpacity(0.5), size: 18),
+                              label: Text(
+                                'COMPARTILHAR',
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.5),
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                     ],
                   ),
@@ -220,6 +242,79 @@ class ExodoSuccessDialog extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Future<void> _enviarWhatsAppNfcePDF(BuildContext context, NFCe nfce, Empresa empresa) async {
+    final hasApi = empresa.whatsappApiUrl != null && empresa.whatsappApiKey != null;
+    bool isConnected = false;
+    
+    if (hasApi) {
+      final service = WhatsAppService.fromEmpresa(empresa);
+      isConnected = await service.isConectado();
+    }
+    
+    if (!hasApi || !isConnected) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('API do WhatsApp não configurada ou desconectada. Use a opção COMPARTILHAR nativa.'), backgroundColor: Colors.orange)
+      );
+      DANFEService.compartilharPDF(nfce: nfce, empresa: empresa);
+      return;
+    }
+
+    final controller = TextEditingController();
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        title: const Text('Enviar NFC-e (PDF)', style: TextStyle(color: Colors.white)),
+        content: TextField(
+          controller: controller,
+          keyboardType: TextInputType.phone,
+          style: const TextStyle(color: Colors.white),
+          decoration: const InputDecoration(labelText: 'WhatsApp do Cliente (DDD + Número)', labelStyle: TextStyle(color: Colors.white70)),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancelar', style: TextStyle(color: Colors.white54))),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, controller.text),
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF25D366)),
+            child: const Text('Enviar'),
+          ),
+        ],
+      ),
+    );
+
+    if (result == null || result.isEmpty) return;
+    
+    if (!context.mounted) return;
+    showDialog(
+      context: context, barrierDismissible: false,
+      builder: (context) => const Center(child: CircularProgressIndicator(color: Color(0xFF25D366))),
+    );
+
+    try {
+      final pdfBytes = await DANFEService.gerarPDF(nfce: nfce, empresa: empresa);
+      final base64Pdf = base64Encode(pdfBytes);
+      
+      final service = WhatsAppService.fromEmpresa(empresa);
+      final sucesso = await service.enviarArquivo(
+        numero: result,
+        base64Content: base64Pdf,
+        fileName: 'NFCe_${nfce.numero}.pdf',
+        caption: 'Segue em anexo a Nota Fiscal de Consumidor Eletrônica (NFC-e).',
+      );
+      
+      if (context.mounted) Navigator.pop(context); // fecha loading
+      
+      if (sucesso) {
+        if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('NFC-e enviada com sucesso!'), backgroundColor: Colors.green));
+      } else {
+        if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Falha ao enviar NFC-e via WhatsApp.'), backgroundColor: Colors.red));
+      }
+    } catch(e) {
+      if (context.mounted) Navigator.pop(context);
+      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: $e'), backgroundColor: Colors.red));
+    }
   }
 
   Widget _buildSmallDetailCard(String label, String value, IconData icon, {bool isHighlight = false}) {

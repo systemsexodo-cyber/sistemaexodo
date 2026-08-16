@@ -38,7 +38,7 @@ class AdicionalProduto {
 
   factory AdicionalProduto.fromMap(Map<String, dynamic> map) {
     return AdicionalProduto(
-      id: map['id'] as String,
+      id: map['id']?.toString() ?? '',
       nome: map['nome'] as String,
       preco: (map['preco'] as num).toDouble(),
       ativo: map['ativo'] as bool? ?? true,

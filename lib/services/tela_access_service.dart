@@ -1,38 +1,68 @@
 import '../models/empresa.dart';
 import '../models/tela_sistema.dart';
 import '../models/usuario.dart';
+import 'permission_service.dart';
 
 /// Serviço para verificar acesso às telas do sistema
 class TelaAccessService {
+  
+  /// Mapeia o código de uma tela para a permissão de visualização necessária
+  static String? _mapearTelaParaPermissao(String codigoTela) {
+    switch (codigoTela) {
+      case 'pdv':
+        return 'vendas.criar';
+      case 'vendas':
+      case 'pedidos':
+      case 'mesas':
+        return 'vendas.visualizar';
+      case 'clientes':
+        return 'clientes.visualizar';
+      case 'produtos':
+      case 'servicos':
+        return 'produtos.visualizar';
+      case 'funcionarios':
+      case 'usuarios':
+        return 'configuracoes.usuarios';
+      case 'estoque':
+      case 'entrada_mercadorias':
+        return 'estoque.visualizar';
+      case 'financeiro':
+      case 'contas_pagar':
+      case 'contas_receber':
+      case 'agenda_contas':
+        return 'financeiro.visualizar';
+      case 'caixa':
+        return 'caixa.visualizar';
+      case 'relatorios':
+        return 'relatorios.visualizar';
+      case 'relatorio_vendas':
+        return 'relatorios.vendas';
+      case 'relatorio_estoque':
+        return 'relatorios.estoque';
+      case 'relatorio_financeiro':
+        return 'relatorios.financeiro';
+      case 'cozinha_bar':
+        return 'cozinha.visualizar';
+      case 'configuracoes':
+        return 'configuracoes.visualizar';
+      case 'empresas':
+        return 'configuracoes.empresa';
+      case 'permissoes':
+        return 'configuracoes.permissoes';
+      case 'dashboard':
+        return 'dashboard.visualizar';
+      default:
+        return null;
+    }
+  }
+
   /// Verifica se o usuário pode acessar uma tela específica
-  /// 
-  /// Regras:
-  /// - Usuário "user" sempre tem acesso a todas as telas
-  /// - Se o usuário tiver a tela em telasOcultas, não pode acessar
-  /// - Se a empresa não tiver telasPermitidas configuradas (null), todas as telas são permitidas
-  /// - Caso contrário, verifica se a tela está na lista de telas permitidas
   static bool podeAcessarTela(
     Usuario? usuario,
     Empresa? empresa,
     TelaSistema tela,
   ) {
-    // Usuário "user", admin ou master sempre tá acesso a tudo
-    if (usuario != null && (usuario.email.toLowerCase() == 'user' || usuario.isAdmin || usuario.isMaster)) {
-      return true;
-    }
-    
-    // Verificar se o usuário tem a tela oculta
-    if (usuario != null && usuario.telasOcultas != null && usuario.telasOcultas!.contains(tela.codigo)) {
-      return false;
-    }
-    
-    // Se não houver empresa, permitir acesso (fallback)
-    if (empresa == null) {
-      return true;
-    }
-    
-    // Verificar se a empresa permite acesso à tela
-    return empresa.podeAcessarTela(tela.codigo);
+    return podeAcessarTelaPorCodigo(usuario, empresa, tela.codigo);
   }
   
   /// Verifica se o usuário pode acessar uma tela por código
@@ -41,23 +71,41 @@ class TelaAccessService {
     Empresa? empresa,
     String codigoTela,
   ) {
-    // Usuário "user", admin ou master sempre tém acesso a tudo
-    if (usuario != null && (usuario.email.toLowerCase() == 'user' || usuario.isAdmin || usuario.isMaster)) {
-      return true;
+    // 1. Usuário "user", admin, master ou GERENTE sempre têm acesso total
+    if (usuario != null) {
+      final emailMin = usuario.email.toLowerCase();
+      final isUserSuporte = emailMin == 'user';
+      final isGerente = usuario.isGerente || usuario.tipo.name == 'gerente';
+      
+      if (isUserSuporte || usuario.isAdmin || usuario.isMaster || isGerente) {
+        return true;
+      }
     }
     
-    // Verificar se o usuário tem a tela oculta
+    // 2. Verificar se o usuário tem a tela explicitamente oculta (bloqueio individual)
     if (usuario != null && usuario.telasOcultas != null && usuario.telasOcultas!.contains(codigoTela)) {
       return false;
     }
     
-    // Se não houver empresa, permitir acesso (fallback)
-    if (empresa == null) {
-      return true;
+    // 3. Verificar se o usuário tem a permissão para acessar essa tela (por cargo ou personalizada)
+    // Isso é verificado ANTES da restrição de empresa para que operadores com permissões adequadas
+    // possam acessar as telas mesmo que a empresa tenha telasPermitidas configuradas (licença)
+    final codigoPermissao = _mapearTelaParaPermissao(codigoTela);
+    if (usuario != null && codigoPermissao != null) {
+      final permissionService = PermissionService();
+      if (permissionService.temPermissaoPorCodigo(usuario, codigoPermissao)) {
+        return true;
+      }
     }
     
-    // Verificar se a empresa permite acesso à tela
-    return empresa.podeAcessarTela(codigoTela);
+    // 4. Se não tem permissão para essa tela, verifica empresa (licença)
+    // Se a empresa tem lista de telas e esta tela não está nela, bloqueia
+    if (empresa != null && !empresa.podeAcessarTela(codigoTela)) {
+      return false;
+    }
+    
+    // 5. Default: se não tem permissão mapeada e não é licença de empresa, bloqueia por segurança
+    return false;
   }
   
   /// Retorna todas as telas que o usuário pode acessar
@@ -65,33 +113,25 @@ class TelaAccessService {
     Usuario? usuario,
     Empresa? empresa,
   ) {
-    // Usuário "user", admin ou master sempre tém acesso a tudo
-    if (usuario != null && (usuario.email.toLowerCase() == 'user' || usuario.isAdmin || usuario.isMaster)) {
-      return TelaSistema.values;
+    // Se for admin, master, suporte ou gerente, retorna todas as telas do sistema
+    if (usuario != null) {
+      final emailMin = usuario.email.toLowerCase();
+      final isUserSuporte = emailMin == 'user';
+      final isGerente = usuario.isGerente || usuario.tipo.name == 'gerente';
+      
+      if (isUserSuporte || usuario.isAdmin || usuario.isMaster || isGerente) {
+        return TelaSistema.values;
+      }
     }
     
-    // Começar com todas as telas
-    var telas = TelaSistema.values;
-    
-    // Filtrar telas ocultas do usuário
-    if (usuario != null && usuario.telasOcultas != null && usuario.telasOcultas!.isNotEmpty) {
-      telas = telas.where((tela) => !usuario.telasOcultas!.contains(tela.codigo)).toList();
+    // Para operadores e vendedores, filtramos com base nas permissões
+    final telasAcessiveis = <TelaSistema>[];
+    for (final tela in TelaSistema.values) {
+      if (podeAcessarTelaPorCodigo(usuario, empresa, tela.codigo)) {
+        telasAcessiveis.add(tela);
+      }
     }
     
-    // Se não houver empresa, retornar telas filtradas (fallback)
-    if (empresa == null) {
-      return telas;
-    }
-    
-    // Se empresa não tiver restrições, retornar telas filtradas
-    if (empresa.telasPermitidas == null || empresa.telasPermitidas!.isEmpty) {
-      return telas;
-    }
-    
-    // Retornar apenas telas permitidas pela empresa e não ocultas pelo usuário
-    return telas
-        .where((tela) => empresa.telasPermitidas!.contains(tela.codigo))
-        .toList();
+    return telasAcessiveis;
   }
 }
-

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:sistema_exodo_novo/models/servico.dart';
+import 'package:sistema_exodo_novo/models/empresa.dart';
 import 'package:sistema_exodo_novo/models/agendamento_servico.dart';
 import 'package:sistema_exodo_novo/models/cliente.dart';
 import 'package:sistema_exodo_novo/models/pet.dart';
@@ -128,6 +129,8 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
     final authService = Provider.of<AuthService>(context, listen: false);
     
     if (widget.slugEmpresa != null) {
+      // Preservar configurações locais da empresa atual (perfis, bridge, certificado etc.)
+      final empresaAnterior = dataService.empresaAtual;
       // Sempre tentar buscar a versão mais recente da empresa ao entrar na página
       final emp = await authService.buscarEmpresaPorSlugAsync(widget.slugEmpresa!);
       if (emp != null) {
@@ -139,11 +142,28 @@ class _AgendamentoPublicoPageState extends State<AgendamentoPublicoPage> {
         }
         
         // Atualizar o objeto empresa no DataService para ter as configurações de agendamento frescas
-        dataService.setEmpresaAtual(emp);
+        // MERGE: preserva configs apenas-locais (perfis tributários, bridge, certificado etc.)
+        dataService.setEmpresaAtual(_preservarConfigsLocais(emp, empresaAnterior));
         
         if (mounted) setState(() {});
       }
     }
+  }
+
+  /// Preserva as configurações locais da empresa anterior (perfis, bridge, certificado)
+  /// ao substituir a empresa do DataService pela versão fresca do Supabase.
+  Empresa _preservarConfigsLocais(Empresa remota, Empresa? local) {
+    // Só mescla quando é a MESMA empresa (evita vazar configs de uma empresa em outra).
+    if (local == null || local.id != remota.id) return remota;
+    final configLocal = local.configuracoes ?? {};
+    final configRemota = remota.configuracoes ?? {};
+    final merged = <String, dynamic>{...configRemota};
+    for (final entry in configLocal.entries) {
+      if (!merged.containsKey(entry.key) || merged[entry.key] == null) {
+        merged[entry.key] = entry.value;
+      }
+    }
+    return remota.copyWith(configuracoes: merged);
   }
 
   void _onNomeChanged() {

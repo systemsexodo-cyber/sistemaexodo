@@ -1,4 +1,4 @@
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 import base64
 import os
 import re
@@ -78,7 +78,98 @@ class MockFonteDados:
     def obter_lista(self, *args, **kwargs): return [self.nota]
     def limpar_dados(self): pass
 
+def adicionar_produto_com_icms(nota_fiscal, item, emp, descricao=None, cfop_sugerido=None):
+    """
+    Adiciona um produto/serviço à nota fiscal aplicando a tributação de ICMS
+    conforme o regime tributário (CRT) da empresa:
+
+      - CRT 3 (Regime Normal): usa CST (padrão 00, ex: CFOP 5102/CST 00) e monta
+        o bloco ICMS completo (modBC/vBC/pICMS/vICMS — obrigatórios no schema 4.00).
+      - CRT 1/2 (Simples Nacional): usa CSOSN (padrão 102, ex: CFOP 5102/CSOSN 102),
+        sem destaque de ICMS.
+
+    Retorna o NotaFiscalProduto criado (para testes/inspeção).
+    Mantém o mesmo comportamento do backend_nfce para consistência entre os motores.
+    """
+    regime_normal = str(getattr(emp, 'crt', '1') or '1') == '3'
+    csosn_atual = str(getattr(item, 'icms_csosn', '102') or '102').strip()
+    cst_atual = str(getattr(item, 'icms_cst', '00') or '00').strip()
+    cfop_atual = str(cfop_sugerido or getattr(item, 'cfop', '5102') or '5102').replace('.', '').strip()
+
+    # Inteligência Fiscal: Auto-correção de CFOP para ST (Double Check no Backend)
+    if (csosn_atual == '500' or cst_atual == '60') and (cfop_atual in ['5101', '5102']):
+        cfop_final = '5405'
+        print(f">>> [FISCAL] Corrigindo CFOP item {item.codigo}: {cfop_atual} -> {cfop_final} (ST detectada)")
+    else:
+        cfop_final = cfop_atual
+
+    p_nfe = nota_fiscal.adicionar_produto_servico(
+        codigo=item.codigo, descricao=descricao or item.descricao, ncm=item.ncm,
+        cfop=cfop_final,
+        unidade_comercial='UN', quantidade_comercial=Decimal(str(item.quantidade)),
+        valor_unitario_comercial=Decimal(str(item.valor_unitario)),
+        valor_total_bruto=Decimal(str(item.valor_total)),
+        unidade_tributavel='UN', quantidade_tributavel=Decimal(str(item.quantidade)),
+        valor_unitario_tributavel=Decimal(str(item.valor_unitario)),
+        ean='SEM GTIN', ean_tributavel='SEM GTIN',
+        icms_origem=getattr(item, 'icms_origem', 0) or 0,
+        icms_modalidade=(cst_atual or '00') if regime_normal else (csosn_atual or '102')
+    )
+    if regime_normal:
+        # Regime Normal: usa CST (padrão 00, ex: CFOP 5102/CST 00) e monta o
+        # bloco ICMS completo (modBC/vBC/pICMS/vICMS obrigatórios no schema 4.00)
+        p_nfe.icms_csosn = ''  # garante que nada do Simples Nacional vaze
+        p_nfe.icms_cst = cst_atual or '00'
+        p_nfe.icms_modalidade = cst_atual or '00'
+        p_nfe.icms_modalidade_determinacao_bc = '3'  # 3 = Valor da operação
+        try:
+            vbc_item = Decimal(str(getattr(item, 'icms_base_calculo', None) or item.valor_total or 0.0))
+        except Exception:
+            vbc_item = Decimal(str(item.valor_total or 0.0))
+        aliq_item = Decimal(str(getattr(item, 'icms_aliquota', 0.0) or 0.0))
+        p_nfe.icms_valor_base_calculo = vbc_item.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        p_nfe.icms_aliquota = aliq_item
+        p_nfe.icms_valor = (vbc_item * aliq_item / Decimal('100')).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+    else:
+        # Simples Nacional: usa CSOSN (padrão 102) e não destaca ICMS
+        p_nfe.icms_cst = ''
+        p_nfe.icms_csosn = csosn_atual or '102'
+    return p_nfe
+
+
 # --- FUNÇÃO PRINCIPAL DE EMISSÃO ---
+def corrigir_blocos_icms_simples(xml_element):
+    """Corrige o bug do pynfe 0.6.5 na serialização dos blocos do Simples Nacional.
+
+    O pynfe gera o bloco <ICMSSN102> para CSOSN 103/300/400 (e <ICMSSN202> para
+    203), mas o schema da NF-e 4.00 exige que o nome do bloco corresponda ao CSOSN
+    (ex: CSOSN 400 deve estar dentro de <ICMSSN400>). Esta função percorre cada
+    <ICMS> e renomeia o bloco filho conforme o valor real do <CSOSN>.
+    """
+    ns = "http://www.portalfiscal.inf.br/nfe"
+    for icms_tag in xml_element.iter():
+        tag_icms = icms_tag.tag.split('}')[-1] if '}' in icms_tag.tag else icms_tag.tag
+        if tag_icms != 'ICMS':
+            continue
+        for bloco in list(icms_tag):
+            tag_name = bloco.tag.split('}')[-1] if '}' in bloco.tag else bloco.tag
+            if not tag_name.startswith('ICMSSN'):
+                continue
+            csosn_el = bloco.find(f"{{{ns}}}CSOSN")
+            if csosn_el is None:
+                csosn_el = bloco.find("CSOSN")
+            if csosn_el is None or csosn_el.text is None:
+                continue
+            csosn_val = str(csosn_el.text).strip()
+            bloco_esperado = f"ICMSSN{csosn_val}"
+            if tag_name != bloco_esperado:
+                print(f"[FIX] Bloco ICMS renomeado: {tag_name} -> {bloco_esperado} (CSOSN {csosn_val})")
+                if '}' in bloco.tag:
+                    bloco.tag = f"{{{ns}}}{bloco_esperado}"
+                else:
+                    bloco.tag = bloco_esperado
+
+
 def emitir_nfce_pynfe(req):
     # Decodificar certificado Base64
     cert_bytes = base64.b64decode(req.empresa.certificado_base64)
@@ -124,28 +215,16 @@ def emitir_nfce_pynfe(req):
         nota_fiscal.adicionar_pagamento(t_pag='01', v_pag=Decimal(str(req.valor_total)))
 
         for item in req.itens:
-            p_nfe = nota_fiscal.adicionar_produto_servico(
-                codigo=item.codigo, descricao=item.descricao, ncm=item.ncm, cfop=item.cfop,
-                unidade_comercial='UN', quantidade_comercial=Decimal(str(item.quantidade)),
-                valor_unitario_comercial=Decimal(str(item.valor_unitario)),
-                valor_total_bruto=Decimal(str(item.valor_total)),
-                unidade_tributavel='UN', quantidade_tributavel=Decimal(str(item.quantidade)),
-                valor_unitario_tributavel=Decimal(str(item.valor_unitario)),
-                ean='SEM GTIN', ean_tributavel='SEM GTIN',
-                icms_origem=item.icms_origem or 0,
-                icms_modalidade=item.icms_cst if str(emp.crt) == '3' else item.icms_csosn
-            )
-            if str(emp.crt) == '3':
-                p_nfe.icms_cst = item.icms_cst or '00'
-                p_nfe.icms_aliquota = Decimal(str(item.icms_aliquota or 0.0))
-            else:
-                p_nfe.icms_csosn = item.icms_csosn or '102'
+            # A tributação de ICMS é aplicada conforme o regime (CRT) da empresa
+            adicionar_produto_com_icms(nota_fiscal, item, emp)
 
         # Assinatura e Serialização
         assinatura = AssinaturaA1(caminho_cert, emp.senha_certificado)
         serializador = SerializacaoXML(MockFonteDados(nota_fiscal), homologacao=(emp.ambiente == 2))
         xml_string = serializador.exportar(retorna_string=True)
         xml_element = etree.fromstring(xml_string.encode('utf-8'))
+        # Corrigir blocos do Simples Nacional (pynfe gera ICMSSN102 p/ CSOSN 103/300/400)
+        corrigir_blocos_icms_simples(xml_element)
         
         # Ordem crítica e QR Code (simplificado para cloud)
         # Nota: Idealmente o monkeypatch do QR Code deveria estar aqui também
@@ -188,4 +267,26 @@ def consultar_nfce_pynfe(data):
     return {"success": False, "error": "Consulta em nuvem pendente de implementação total"}
 
 def validar_certificado_pynfe(data):
-    return {"success": False, "error": "Validação em nuvem pendente de implementação total"}
+    try:
+        certificado_base64 = data.get('certificado_base64') or data.get('certificado')
+        senha = data.get('senha') or data.get('senha_certificado') or data.get('senhaCertificado')
+        
+        if not certificado_base64 or not senha:
+            return {"success": False, "error": "Certificado ou senha não fornecidos"}
+            
+        cert_bytes = base64.b64decode(certificado_base64)
+        from pynfe.entidades.certificado import CertificadoA1
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pfx") as tmp_cert:
+            tmp_cert.write(cert_bytes)
+            caminho_cert = tmp_cert.name
+            
+        try:
+            cert = CertificadoA1(caminho_cert)
+            chave, cert_pem = cert.separar_arquivo(senha, caminho=True)
+            if os.path.exists(chave): os.remove(chave)
+            if os.path.exists(cert_pem): os.remove(cert_pem)
+            return {"success": True, "message": "Certificado válido e carregado com sucesso", "validado": True}
+        finally:
+            if os.path.exists(caminho_cert): os.remove(caminho_cert)
+    except Exception as e:
+        return {"success": False, "error": f"Erro ao decodificar certificado: {str(e)}", "validado": False}

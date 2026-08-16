@@ -40,7 +40,7 @@ class HistoricoProduto {
 
   factory HistoricoProduto.fromMap(Map<String, dynamic> map) {
     return HistoricoProduto(
-      id: map['id'] as String,
+      id: map['id']?.toString() ?? '',
       produtoId: map['produto_id'] as String? ?? '',
       produtoNome: map['produto_nome'] as String? ?? 'Desconhecido',
       acao: map['acao'] as String? ?? 'atualizacao',

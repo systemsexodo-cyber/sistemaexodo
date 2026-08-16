@@ -370,56 +370,7 @@ class _FuncionariosListTabState extends State<_FuncionariosListTab> {
                     ),
                     keyboardType: TextInputType.emailAddress,
                   ),
-                  const SizedBox(height: 16),
-                  CheckboxListTile(
-                    title: const Text(
-                      'Permitir acesso ao sistema',
-                      style: TextStyle(color: Colors.white),
-                    ),
-                    subtitle: const Text(
-                      'O funcionário poderá fazer login e ver seus pedidos/comissões',
-                      style: TextStyle(color: Colors.white54, fontSize: 12),
-                    ),
-                    value: temAcesso,
-                    onChanged: (value) {
-                      setState(() {
-                        temAcesso = value ?? false;
-                      });
-                    },
-                  ),
-                  if (temAcesso) ...[
-                    const SizedBox(height: 16),
-                    TextFormField(
-                      controller: senhaController,
-                      style: const TextStyle(color: Colors.white),
-                      decoration: const InputDecoration(
-                        labelText: 'Senha para login *',
-                        labelStyle: TextStyle(color: Colors.white70),
-                        border: OutlineInputBorder(),
-                        helperText: 'Senha que o funcionário usará para fazer login',
-                        helperMaxLines: 2,
-                      ),
-                      obscureText: obscureSenha,
-                      keyboardType: TextInputType.visiblePassword,
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Checkbox(
-                          value: obscureSenha,
-                          onChanged: (value) {
-                            setState(() {
-                              obscureSenha = value ?? true;
-                            });
-                          },
-                        ),
-                        const Text(
-                          'Mostrar senha',
-                          style: TextStyle(color: Colors.white70, fontSize: 12),
-                        ),
-                      ],
-                    ),
-                  ],
+
                   const SizedBox(height: 16),
                   TextFormField(
                     controller: observacoesController,
@@ -600,58 +551,7 @@ class _FuncionariosListTabState extends State<_FuncionariosListTab> {
                     ),
                     keyboardType: TextInputType.emailAddress,
                   ),
-                  const SizedBox(height: 16),
-                  CheckboxListTile(
-                    title: const Text(
-                      'Permitir acesso ao sistema',
-                      style: TextStyle(color: Colors.white),
-                    ),
-                    subtitle: const Text(
-                      'O funcionário poderá fazer login e ver seus pedidos/comissões',
-                      style: TextStyle(color: Colors.white54, fontSize: 12),
-                    ),
-                    value: temAcesso,
-                    onChanged: (value) {
-                      setState(() {
-                        temAcesso = value ?? false;
-                      });
-                    },
-                  ),
-                  if (temAcesso) ...[
-                    const SizedBox(height: 16),
-                    TextFormField(
-                      controller: senhaController,
-                      style: const TextStyle(color: Colors.white),
-                      decoration: InputDecoration(
-                        labelText: funcionario.temAcesso ? 'Nova senha (deixe em branco para manter)' : 'Senha para login *',
-                        labelStyle: const TextStyle(color: Colors.white70),
-                        border: const OutlineInputBorder(),
-                        helperText: funcionario.temAcesso 
-                            ? 'Deixe em branco para manter a senha atual'
-                            : 'Senha que o funcionário usará para fazer login',
-                        helperMaxLines: 2,
-                      ),
-                      obscureText: obscureSenha,
-                      keyboardType: TextInputType.visiblePassword,
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Checkbox(
-                          value: obscureSenha,
-                          onChanged: (value) {
-                            setState(() {
-                              obscureSenha = value ?? true;
-                            });
-                          },
-                        ),
-                        const Text(
-                          'Mostrar senha',
-                          style: TextStyle(color: Colors.white70, fontSize: 12),
-                        ),
-                      ],
-                    ),
-                  ],
+
                   const SizedBox(height: 16),
                   TextFormField(
                     controller: observacoesController,

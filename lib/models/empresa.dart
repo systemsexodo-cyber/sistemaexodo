@@ -45,6 +45,7 @@ class Empresa {
   
   // Configurações do sistema
   final Map<String, dynamic>? configuracoes; // Configurações específicas da empresa
+  final List<String> perfisDePreco; // Perfis de preço de clientes (ex: Revenda, VIP)
   
   // Controle de acesso às telas
   final Set<String>? telasPermitidas; // Códigos das telas que podem ser acessadas (null = todas permitidas)
@@ -97,6 +98,7 @@ class Empresa {
     this.ambienteHomologacao,
     this.focusNFeToken,
     this.configuracoes,
+    this.perfisDePreco = const [],
     this.telasPermitidas,
     this.whatsappApiUrl,
     this.whatsappApiKey,
@@ -111,6 +113,36 @@ class Empresa {
 
   /// Retorna o nome de exibição (nome fantasia ou razão social)
   String get nomeExibicao => nomeFantasia ?? razaoSocial;
+
+  /// Retorna as regras completas configuradas para um perfil de preço
+  Map<String, dynamic>? getConfigPerfilPreco(String? perfil) {
+    if (perfil == null || configuracoes == null || configuracoes!['perfis_preco'] == null) {
+      return null;
+    }
+    
+    final perfisList = configuracoes!['perfis_preco'] as List;
+    for (var p in perfisList) {
+      if (p is Map && p['nome'] == perfil) {
+        return Map<String, dynamic>.from(p);
+      }
+    }
+    return null;
+  }
+
+  /// Retorna o valor do modificador (desconto ou acréscimo) global para um determinado perfil
+  double getModificadorPerfilValor(String? perfil) {
+    final config = getConfigPerfilPreco(perfil);
+    if (config != null && (config['tipo'] == 'desconto' || config['tipo'] == 'acrescimo')) {
+      return (config['valor'] as num?)?.toDouble() ?? 0.0;
+    }
+    return 0.0;
+  }
+
+  /// Retorna o tipo do modificador global ('desconto', 'acrescimo' ou 'fixo')
+  String getModificadorPerfilTipo(String? perfil) {
+    final config = getConfigPerfilPreco(perfil);
+    return config?['tipo'] as String? ?? 'desconto';
+  }
 
   /// Retorna o endereço completo formatado
   String get enderecoCompleto {
@@ -175,6 +207,7 @@ class Empresa {
     bool? ambienteHomologacao,
     String? focusNFeToken,
     Map<String, dynamic>? configuracoes,
+    List<String>? perfisDePreco,
     Set<String>? telasPermitidas,
     String? whatsappApiUrl,
     String? whatsappApiKey,
@@ -225,6 +258,7 @@ class Empresa {
               ? (Map<String, dynamic>.from(this.configuracoes!)..addAll(configuracoes))
               : configuracoes)
           : this.configuracoes,
+      perfisDePreco: perfisDePreco ?? this.perfisDePreco,
       telasPermitidas: telasPermitidas ?? this.telasPermitidas,
       whatsappApiUrl: whatsappApiUrl ?? this.whatsappApiUrl,
       whatsappApiKey: whatsappApiKey ?? this.whatsappApiKey,
@@ -259,7 +293,7 @@ class Empresa {
     }
     
     return Empresa(
-      id: map['id'] ?? '',
+      id: map['id']?.toString() ?? '',
       razaoSocial: getString('razaoSocial', 'razao_social') ?? '',
       nomeFantasia: getString('nomeFantasia', 'nome_fantasia'),
       cnpj: getString('cnpj', 'cnpj'),
@@ -301,6 +335,20 @@ class Empresa {
       configuracoes: map['configuracoes'] != null
           ? Map<String, dynamic>.from(map['configuracoes'])
           : null,
+      perfisDePreco: () {
+        // Prioridade 1: extrair nomes de configuracoes['perfis_preco']
+        final perfisList = map['configuracoes']?['perfis_preco'];
+        if (perfisList is List && perfisList.isNotEmpty) {
+          return perfisList.map((e) {
+            if (e is Map) return e['nome']?.toString() ?? '';
+            return e.toString(); // fallback se for string simples
+          }).where((n) => n.isNotEmpty).toList();
+        }
+        // Prioridade 2: campo perfisDePreco direto
+        if (map['perfisDePreco'] is List) return List<String>.from(map['perfisDePreco']);
+        if (map['perfis_de_preco'] is List) return List<String>.from(map['perfis_de_preco']);
+        return <String>[];
+      }(),
       telasPermitidas: map['telasPermitidas'] != null
           ? Set<String>.from(map['telasPermitidas'])
           : null,
@@ -322,10 +370,10 @@ class Empresa {
     return {
       'id': id,
       'razao_social': razaoSocial,
+      'razaoSocial': razaoSocial,
       'nome_fantasia': nomeFantasia,
+      'nomeFantasia': nomeFantasia,
       'cnpj': cnpj,
-      // 'inscricao_estadual': inscricaoEstadual, // Removido para evitar erro PGRST204 (coluna não existe no Supabase)
-      // 'inscricao_municipal': inscricaoMunicipal, // Removido para evitar erro PGRST204 (coluna não existe no Supabase)
       'crt': crt,
       'email': email,
       'telefone': telefone,
@@ -338,27 +386,43 @@ class Empresa {
       'cidade': cidade,
       'estado': estado,
       'cep': cep,
-      // 'codigo_ibge': codigoIBGE, // Removido para evitar erro PGRST204 (coluna não existe no Supabase)
-      // 'logo_url': logoUrl, // Removido para evitar erro PGRST204 (coluna não existe no Supabase)
-      // 'cor_primaria': corPrimaria, // Removido para evitar erro PGRST204 (coluna não existe no Supabase)
-      // 'cor_secundaria': corSecundaria, // Removido para evitar erro PGRST204
       'ativo': ativo,
       'slug': slug,
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt.toIso8601String(),
-      // Configurações NFC-e removidas do toMap para evitar erro PGRST204 (não existem no Supabase)
+      'createdAt': createdAt.toIso8601String(),
+      'updatedAt': updatedAt.toIso8601String(),
       'configuracoes': configuracoes,
       'telas_permitidas': telasPermitidas?.toList(),
-      // Campos removidos para evitar erro PGRST204 (não existem no Supabase)
-      // 'whatsapp_api_url': whatsappApiUrl,
-      // 'whatsapp_api_key': whatsappApiKey,
-      // 'whatsapp_instance_name': whatsappInstanceName,
-      // 'whatsapp_tipo': whatsappTipo,
-      // 'whatsapp_ativo': whatsappAtivo,
-      // 'modulo_pet': moduloPet,
-      // 'modelos_adicionais': modelosAdicionais.map((e) => e.toMap()).toList(),
-      // 'email_contabilidade': emailContabilidade,
-      // 'envio_fiscal_automatico': envioFiscalAutomatico, // Removido para evitar erro PGRST204
+      'telasPermitidas': telasPermitidas?.toList(),
+      'perfisDePreco': perfisDePreco, // backup caso configuracoes seja nulo
+      
+      // Colunas camelCase que existem no Supabase:
+      'inscricaoEstadual': inscricaoEstadual,
+      'inscricaoMunicipal': inscricaoMunicipal,
+      'codigoIBGE': codigoIBGE,
+      'logoUrl': logoUrl,
+      'corPrimaria': corPrimaria,
+      'corSecundaria': corSecundaria,
+      'whatsappApiUrl': whatsappApiUrl,
+      'whatsappApiKey': whatsappApiKey,
+      'whatsappInstanceName': whatsappInstanceName,
+      'whatsappTipo': whatsappTipo,
+      'whatsappAtivo': whatsappAtivo,
+      'moduloPet': moduloPet,
+      'modelosAdicionais': modelosAdicionais.map((e) => e.toMap()).toList(),
+      'emailContabilidade': emailContabilidade,
+      'envioFiscalAutomatico': envioFiscalAutomatico,
+
+      // Campos de NFC-e/certificado:
+      'certificadoDigitalUrl': certificadoDigitalUrl,
+      'senhaCertificado': senhaCertificado,
+      'senha_certificado': senhaCertificado,
+      'csc': csc,
+      'cscIdToken': cscIdToken,
+      'serieNFCe': serieNFCe,
+      'ambienteHomologacao': ambienteHomologacao,
+      'focusNFeToken': focusNFeToken,
     };
   }
 
@@ -399,6 +463,134 @@ class Empresa {
     return telasPermitidas!.contains(codigoTela);
   }
 
+  /// Verifica se a empresa está inadimplente baseado na recorrência mensal
+  bool get isInadimplenteRecorrente {
+    final configs = configuracoes;
+    if (configs == null) return false;
+
+    // 1. Bloqueio manual direto
+    if (configs['bloqueado'] == true || configs['bloqueado'] == 'true') {
+      return true;
+    }
+    // 2. Bloqueio por status inadimplente
+    if (configs['status_pagamento'] == 'inadimplente') {
+      return true;
+    }
+
+    final agora = DateTime.now();
+    final hoje = DateTime(agora.year, agora.month, agora.day);
+
+    // 3. Obter o dia do vencimento mensal (extrai dia do mês)
+    int? diaVencimento;
+    final dataCobrancaStr = configs['data_cobranca'] ?? configs['dataCobranca'];
+    if (dataCobrancaStr != null && dataCobrancaStr.toString().trim().isNotEmpty) {
+      final str = dataCobrancaStr.toString().trim();
+      final parsedDate = DateTime.tryParse(str);
+      if (parsedDate != null) {
+        diaVencimento = parsedDate.day;
+      } else {
+        diaVencimento = int.tryParse(str);
+      }
+    }
+
+    // Se o status do pagamento estiver como pendente e sem confirmação do mês -> bloqueia
+    if (configs['status_pagamento'] == 'pendente') {
+      final ultimoMesPago = configs['ultimo_mes_pago']?.toString();
+      final mesAtualStr = '${agora.year}-${agora.month.toString().padLeft(2, '0')}';
+      if (ultimoMesPago == null || ultimoMesPago.compareTo(mesAtualStr) < 0) {
+        return true;
+      }
+    }
+
+    if (diaVencimento != null && diaVencimento > 0) {
+      // Competência necessária:
+      // Se a data de hoje já é maior ou igual ao dia de vencimento (ex: hoje = 23, vencimento = 22):
+      // exige que a competência do MÊS ATUAL (ex: '2026-07') tenha o OK de pagamento!
+      // Se a data de hoje é menor que o dia de vencimento (ex: hoje = 10, vencimento = 22):
+      // exige que o MÊS ANTERIOR (ex: '2026-06') tenha o OK de pagamento!
+      String mesCompetenciaNecessario;
+      if (hoje.day < diaVencimento) {
+        final mesPassado = DateTime(hoje.year, hoje.month - 1, 1);
+        final stringMes = mesPassado.month.toString().padLeft(2, '0');
+        mesCompetenciaNecessario = '${mesPassado.year}-$stringMes';
+      } else {
+        final stringMes = hoje.month.toString().padLeft(2, '0');
+        mesCompetenciaNecessario = '${hoje.year}-$stringMes';
+      }
+
+      final ultimoMesPago = configs['ultimo_mes_pago']?.toString();
+
+      // Sem o OK de pagamento (ultimo_mes_pago < mesCompetenciaNecessario) -> BLOQUEIA!
+      if (ultimoMesPago == null || ultimoMesPago.compareTo(mesCompetenciaNecessario) < 0) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /// Verifica se há algum motivo de bloqueio (Inadimplência, > 5 dias offline ou relógio alterado)
+  MotivoBloqueioEmpresa verificarMotivoBloqueio({
+    DateTime? ultimaValidacaoOnline,
+    DateTime? ultimaDataExecucao,
+    int limiteDiasOffline = 5,
+  }) {
+    // 1. Anti-Adulteração de Relógio do Sistema (voltar data)
+    if (ultimaDataExecucao != null) {
+      final agora = DateTime.now();
+      if (agora.isBefore(ultimaDataExecucao.subtract(const Duration(minutes: 5)))) {
+        return MotivoBloqueioEmpresa.relogioAdulterado;
+      }
+    }
+
+    // 2. Inadimplência ou vencimento no cache local
+    if (isInadimplenteRecorrente) {
+      return MotivoBloqueioEmpresa.inadimplente;
+    }
+
+    // 3. Excesso de dias sem sincronização online
+    if (ultimaValidacaoOnline != null) {
+      final diferencaDias = DateTime.now().difference(ultimaValidacaoOnline).inDays;
+      if (diferencaDias > limiteDiasOffline) {
+        return MotivoBloqueioEmpresa.excessoDiasOffline;
+      }
+    }
+
+    return MotivoBloqueioEmpresa.nenhum;
+  }
+
+  /// Retorna o número de dias restantes para o vencimento recorrente
+  /// Retorna -1 se não houver vencimento configurado
+  int get diasRestantesVencimentoRecorrente {
+    final configs = configuracoes;
+    if (configs == null) return -1;
+
+    final dataCobrancaStr = configs['data_cobranca'] ?? configs['dataCobranca'];
+    if (dataCobrancaStr == null) return -1;
+
+    final dataCobrancaOriginal = DateTime.tryParse(dataCobrancaStr.toString());
+    if (dataCobrancaOriginal == null) return -1;
+
+    final agora = DateTime.now();
+    final hoje = DateTime(agora.year, agora.month, agora.day);
+
+    // Se o primeiro vencimento ainda é no futuro
+    if (hoje.isBefore(dataCobrancaOriginal)) {
+      return dataCobrancaOriginal.difference(hoje).inDays;
+    }
+
+    // Caso contrário, calcula o dia do vencimento deste mês
+    int diaVencimento = dataCobrancaOriginal.day;
+    DateTime vencimentoDesteMes = DateTime(hoje.year, hoje.month, diaVencimento);
+    
+    // Se o vencimento deste mês já passou, o próximo vencimento é no mês seguinte
+    if (vencimentoDesteMes.isBefore(hoje)) {
+      vencimentoDesteMes = DateTime(hoje.year, hoje.month + 1, diaVencimento);
+    }
+
+    return vencimentoDesteMes.difference(hoje).inDays;
+  }
+
   /// Gera um slug a partir de um texto (ex: "Exodo Systems" -> "exodo-systems")
   static String gerarSlug(String texto) {
     if (texto.isEmpty) return 'loja';
@@ -430,4 +622,12 @@ class Empresa {
     
     return slug.trim();
   }
+}
+
+/// Enum para representar o motivo do bloqueio da empresa
+enum MotivoBloqueioEmpresa {
+  nenhum,
+  inadimplente,
+  excessoDiasOffline,
+  relogioAdulterado,
 }

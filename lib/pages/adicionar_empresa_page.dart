@@ -8,11 +8,13 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:path_provider/path_provider.dart';
 import '../services/auth_service.dart';
+import '../services/impressao_service.dart';
 import '../services/certificado_service.dart';
 import '../services/certificado_backend_service.dart';
 import '../services/windows_certificate_service.dart';
 import '../models/empresa.dart';
 import '../models/tela_sistema.dart';
+import '../models/forma_pagamento.dart';
 import '../theme.dart';
 import '../services/data_service.dart';
 import '../services/whatsapp_service.dart';
@@ -85,6 +87,10 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
   final _comandaFonteCorpoController = TextEditingController(text: '9.0');
   final _comandaFonteStatusController = TextEditingController(text: '8.0');
   bool _comandaNegrito = true;
+  bool _mostrarEnderecoCupom = true; // Exibir endereco de entrega no cupom nao fiscal
+  // Janela de seleção de impressora (estilo Windows) antes de imprimir
+  bool _mostrarDialogoImpressora = false;
+  String _impressoraSelecionada = ''; // Última impressora escolhida (padrão)
 
   
   Color _corPrimaria = Colors.blueAccent;
@@ -98,6 +104,10 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
   final _whatsappApiKeyController = TextEditingController();
   final _whatsappInstanceNameController = TextEditingController();
   bool _whatsappAtivo = false;
+  Map<String, Map<String, dynamic>> _pagamentosConfig = {};
+  List<String> _perfisDePreco = [];
+  List<Map<String, dynamic>> _configPerfisPreco = [];
+  final _novoPerfilController = TextEditingController();
   String _whatsappTipo = 'evolution'; // 'evolution' ou 'twilio'
   bool _moduloPet = false;
   String? _whatsappConnectionState; // 'open', 'close', ou null
@@ -191,6 +201,16 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
     _comandaFonteCorpoController.text = empresa.configuracoes?['comandaFonteCorpo']?.toString() ?? '9.0';
     _comandaFonteStatusController.text = empresa.configuracoes?['comandaFonteStatus']?.toString() ?? '8.0';
     _comandaNegrito = empresa.configuracoes?['comandaNegrito'] ?? true;
+    _mostrarEnderecoCupom = empresa.configuracoes?['mostrarEnderecoCupom'] ?? true;
+    _mostrarDialogoImpressora = empresa.configuracoes?['mostrarDialogoImpressora'] ?? false;
+    _impressoraSelecionada = (empresa.configuracoes?['impressoraSelecionada'] as String?) ?? '';
+    if (_impressoraSelecionada.isEmpty) {
+      ImpressaoService.getUltimaImpressora(empresaId: empresa.id).then((val) {
+        if (val != null && val.isNotEmpty && mounted) {
+          setState(() => _impressoraSelecionada = val);
+        }
+      });
+    }
 
     
     // Converter cores hex para Color
@@ -213,6 +233,22 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
     _whatsappAtivo = empresa.whatsappAtivo;
     _whatsappTipo = empresa.whatsappTipo ?? 'evolution';
     _moduloPet = empresa.moduloPet;
+    _perfisDePreco = List.from(empresa.perfisDePreco);
+    
+    if (empresa.configuracoes?['perfis_preco'] != null) {
+      _configPerfisPreco = List<Map<String, dynamic>>.from(
+        (empresa.configuracoes!['perfis_preco'] as List).map((e) => Map<String, dynamic>.from(e as Map))
+      );
+      // Força a sincronização dos nomes
+      _perfisDePreco = _configPerfisPreco.map((c) => c['nome'] as String).toList();
+    } else {
+      // Retrocompatibilidade
+      _configPerfisPreco = _perfisDePreco.map((p) => <String, dynamic>{
+        'nome': p,
+        'tipo': 'fixo',
+        'valor': 0.0,
+      }).toList();
+    }
     
     // Fiscal / Contabilidade
     _emailContabilidadeController.text = empresa.emailContabilidade ?? '';
@@ -230,6 +266,16 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
     _senhaAdminController.text = empresa.configuracoes?['senha_admin'] ?? '';
     _exigirSenhaAlterarPedido = empresa.configuracoes?['exigir_senha_alterar_pedido'] ?? false;
     _exigirSenhaCancelarPedido = empresa.configuracoes?['exigir_senha_cancelar_pedido'] ?? false;
+
+    if (empresa.configuracoes?['pagamentos'] != null) {
+      _pagamentosConfig = Map<String, Map<String, dynamic>>.from(
+        (empresa.configuracoes!['pagamentos'] as Map).map(
+          (key, value) => MapEntry(key.toString(), Map<String, dynamic>.from(value as Map)),
+        ),
+      );
+    } else {
+      _pagamentosConfig = {};
+    }
   }
 
   // Senha do Administrador e Segurança
@@ -277,7 +323,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
     super.dispose();
   }
 
-  Future<void> _salvar() async {
+  Future<void> _salvar({bool fecharTela = true}) async {
     if (!_formKey.currentState!.validate()) {
       return;
     }
@@ -287,6 +333,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
 
     try {
       final authService = Provider.of<AuthService>(context, listen: false);
+      final dataService = Provider.of<DataService>(context, listen: false);
       final agora = DateTime.now();
 
       debugPrint('>>> [AdicionarEmpresa] Criando objeto Empresa...');
@@ -365,6 +412,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
           : _serieNFCeController.text.trim(),
       ambienteHomologacao: _ambienteHomologacao,
       telasPermitidas: _telasPermitidas.isEmpty ? null : _telasPermitidas,
+      perfisDePreco: _perfisDePreco,
       whatsappApiUrl: _whatsappApiUrlController.text.trim().isEmpty
           ? null
           : _whatsappApiUrlController.text.trim(),
@@ -381,6 +429,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
       envioFiscalAutomatico: _envioFiscalAutomatico,
       configuracoes: {
         ...?widget.empresa?.configuracoes, // Preservar outras configurações
+        if (_crt != null) 'crt': _crt, // Código de Regime Tributário (1=Simples Nacional, 2=SN excesso, 3=Regime Normal)
         if (_certificadoDigitalBytes != null)
           'certificadoDigitalBytes': _certificadoDigitalBytes,
         if (_certificadoWindowsThumbprint != null)
@@ -403,6 +452,9 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
         'comandaFonteCorpo': double.tryParse(_comandaFonteCorpoController.text.trim()) ?? 9.0,
         'comandaFonteStatus': double.tryParse(_comandaFonteStatusController.text.trim()) ?? 8.0,
         'comandaNegrito': _comandaNegrito,
+        'mostrarEnderecoCupom': _mostrarEnderecoCupom,
+        'mostrarDialogoImpressora': _mostrarDialogoImpressora,
+        'impressoraSelecionada': _impressoraSelecionada,
 
         'ultimo_numero_nfce': _ultimoNumeroNFCeController.text.trim().isEmpty ? null : _ultimoNumeroNFCeController.text.trim(),
         
@@ -418,6 +470,9 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
         'senha_admin': _senhaAdminController.text.trim(),
         'exigir_senha_alterar_pedido': _exigirSenhaAlterarPedido,
         'exigir_senha_cancelar_pedido': _exigirSenhaCancelarPedido,
+        
+        'perfis_preco': _configPerfisPreco,
+        'pagamentos': _pagamentosConfig,
       },
     );
 
@@ -425,6 +480,16 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
       debugPrint('>>> [AdicionarEmpresa] Razão Social: ${empresa.razaoSocial}');
       debugPrint('>>> [AdicionarEmpresa] Certificado presente: ${empresa.configuracoes?['certificadoDigitalBytes'] != null ? "SIM" : "NÃO"}');
       
+      // =====================================================================
+      // MIGRAÇÃO DE IMPOSTOS AO TROCAR O REGIME TRIBUTÁRIO
+      // =====================================================================
+      final crtAnterior = widget.empresa?.configuracoes?['crt']?.toString() ?? widget.empresa?.crt?.toString();
+      final regimeAnterior = crtAnterior == '3' ? 'normal' : 'simples';
+      final regimeNovo = _crt == 3 ? 'normal' : 'simples';
+      // Guard: só migra se houver empresa, se o usuário escolheu um regime (_crt != null)
+      // e se o regime realmente mudou.
+      final trocouRegime = widget.empresa != null && _crt != null && regimeAnterior != regimeNovo;
+
       if (widget.empresa == null) {
         debugPrint('>>> [AdicionarEmpresa] Adicionando nova empresa...');
         await authService.adicionarEmpresa(empresa);
@@ -433,11 +498,45 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
         debugPrint('>>> [AdicionarEmpresa] Atualizando empresa existente...');
         await authService.atualizarEmpresa(empresa);
         debugPrint('>>> [AdicionarEmpresa] ✓ Empresa atualizada com sucesso');
+
+        // Se o regime mudou, migrar os impostos de todos os produtos
+        // (CSOSN <-> CST e perfil equivalente) automaticamente.
+        if (trocouRegime) {
+          debugPrint('>>> [AdicionarEmpresa] Regime alterado: $regimeAnterior -> $regimeNovo. Migrando impostos dos produtos...');
+          final alterados = await dataService.migrarImpostosProdutosPorRegime(
+            paraSimples: regimeNovo == 'simples',
+          );
+          debugPrint('>>> [AdicionarEmpresa] ✓ Migração concluída: $alterados produto(s) alterado(s)');
+
+          // Sincronizar o regime atualizado no DataService para que o filtro de
+          // perfis e os dropdowns reflitam o novo regime imediatamente.
+          dataService.setEmpresaAtual(empresa);
+
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  'Regime alterado para ${regimeNovo == 'simples' ? 'Simples Nacional' : 'Regime Normal'}: impostos de $alterados produto(s) migrados (CSOSN ↔ CST).',
+                ),
+                backgroundColor: Colors.orange.shade800,
+                duration: const Duration(seconds: 6),
+              ),
+            );
+          }
+        }
       }
 
-      if (mounted) {
+      if (mounted && fecharTela) {
         debugPrint('>>> [AdicionarEmpresa] Fechando página e retornando...');
         Navigator.pop(context, true);
+      } else if (mounted && !fecharTela) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✓ Tabela de preço salva!'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
+        );
       }
     } catch (e, stackTrace) {
       debugPrint('>>> [AdicionarEmpresa] ❌ ERRO ao salvar empresa: $e');
@@ -916,6 +1015,47 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
               const SizedBox(height: 24),
 
               _buildSectionTitle('Ajuste de Todas as Impressões (Geral)'),
+              SwitchListTile(
+                title: const Text('Sempre Perguntar a Impressora ao Imprimir (Windows)', style: TextStyle(color: Colors.white)),
+                subtitle: const Text('Ao imprimir, abre uma janela para escolher ou confirmar a impressora. A escolha fica salva como padrão — e você pode trocar quando quiser.', style: TextStyle(color: Colors.white60, fontSize: 11)),
+                value: _mostrarDialogoImpressora,
+                onChanged: (value) => setState(() => _mostrarDialogoImpressora = value),
+                activeColor: Colors.blueAccent,
+                contentPadding: EdgeInsets.zero,
+              ),
+              const SizedBox(height: 8),
+              ListTile(
+                leading: const Icon(Icons.print, color: Colors.blueAccent),
+                title: Text(
+                  _impressoraSelecionada.isEmpty
+                      ? 'Impressora Padrão (Toque para selecionar)'
+                      : _impressoraSelecionada,
+                  style: const TextStyle(color: Colors.white, fontSize: 14),
+                ),
+                subtitle: const Text(
+                  'Clique para selecionar ou trocar a impressora padrão',
+                  style: TextStyle(color: Colors.white60, fontSize: 11),
+                ),
+                trailing: const Icon(Icons.chevron_right, color: Colors.white54),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                tileColor: Colors.white.withOpacity(0.05),
+                onTap: () async {
+                  // Portal: define a impressora padrão da EMPRESA (compartilhada entre máquinas)
+                  final escolhida = await ImpressaoService.selecionarImpressoraPadrao(
+                    context,
+                    empresa: widget.empresa,
+                    somenteLocal: false,
+                  );
+                  if (escolhida != null && mounted) {
+                    setState(() => _impressoraSelecionada = escolhida);
+                    await ImpressaoService.salvarUltimaImpressora(
+                      escolhida,
+                      empresaId: widget.empresa?.id,
+                    );
+                  }
+                },
+              ),
+              const SizedBox(height: 16),
               Row(
                 children: [
                   Expanded(
@@ -1000,6 +1140,15 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                 activeColor: Colors.purple,
                 contentPadding: EdgeInsets.zero,
               ),
+              const SizedBox(height: 8),
+              SwitchListTile(
+                title: const Text('Mostrar Endereço de Entrega no Cupom', style: TextStyle(color: Colors.white)),
+                subtitle: const Text('Quando a venda for DELIVERY, exibe o endereço de entrega destacado no cupom não fiscal', style: TextStyle(color: Colors.white60, fontSize: 11)),
+                value: _mostrarEnderecoCupom,
+                onChanged: (value) => setState(() => _mostrarEnderecoCupom = value),
+                activeColor: Colors.orange,
+                contentPadding: EdgeInsets.zero,
+              ),
               const SizedBox(height: 24),
 
               // Cores (opcional)
@@ -1026,6 +1175,9 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                 },
               ),
 
+              const SizedBox(height: 24),
+
+              _buildPerfisDePreco(),
               const SizedBox(height: 24),
 
               // Configurações de Módulos
@@ -1473,6 +1625,98 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
               const SizedBox(height: 32),
 
               // Segurança e Senha do Administrador
+
+                    const SizedBox(height: 24),
+                    _buildSectionTitle('Formas de Pagamento (PDV)'),
+                    Card(
+                      color: Colors.white.withOpacity(0.05),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Configure quais formas de pagamento estarão ativas no PDV e se elas possuem descontos/acréscimos automáticos.',
+                              style: TextStyle(color: Colors.white70),
+                            ),
+                            const SizedBox(height: 16),
+                            ...TipoPagamento.values.map((tipo) {
+                              final nome = tipo.nome;
+                              final config = _pagamentosConfig[tipo.name] ?? {'ativo': true, 'descontoPerc': 0.0, 'acrescimoPerc': 0.0};
+                              final bool isAtivo = config['ativo'] ?? true;
+                              
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: 16.0),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      flex: 2,
+                                      child: SwitchListTile(
+                                        title: Text(nome, style: const TextStyle(color: Colors.white)),
+                                        value: isAtivo,
+                                        activeColor: ExodoTheme.primaryColor,
+                                        onChanged: (v) {
+                                          setState(() {
+                                            _pagamentosConfig[tipo.name] = {
+                                              ...config,
+                                              'ativo': v,
+                                            };
+                                          });
+                                        },
+                                      ),
+                                    ),
+                                    Expanded(
+                                      flex: 1,
+                                      child: TextFormField(
+                                        enabled: isAtivo,
+                                        initialValue: (config['descontoPerc'] ?? 0.0).toString(),
+                                        style: const TextStyle(color: Colors.white),
+                                        decoration: const InputDecoration(
+                                          labelText: 'Desconto (%)',
+                                          labelStyle: TextStyle(color: Colors.white54),
+                                          enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+                                        ),
+                                        keyboardType: TextInputType.number,
+                                        onChanged: (v) {
+                                          final val = double.tryParse(v.replaceAll(',', '.')) ?? 0.0;
+                                          _pagamentosConfig[tipo.name] = {
+                                            ...config,
+                                            'descontoPerc': val,
+                                          };
+                                        },
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      flex: 1,
+                                      child: TextFormField(
+                                        enabled: isAtivo,
+                                        initialValue: (config['acrescimoPerc'] ?? 0.0).toString(),
+                                        style: const TextStyle(color: Colors.white),
+                                        decoration: const InputDecoration(
+                                          labelText: 'Acréscimo (%)',
+                                          labelStyle: TextStyle(color: Colors.white54),
+                                          enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+                                        ),
+                                        keyboardType: TextInputType.number,
+                                        onChanged: (v) {
+                                          final val = double.tryParse(v.replaceAll(',', '.')) ?? 0.0;
+                                          _pagamentosConfig[tipo.name] = {
+                                            ...config,
+                                            'acrescimoPerc': val,
+                                          };
+                                        },
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            }).toList(),
+                          ],
+                        ),
+                      ),
+                    ),
               _buildSectionTitle('Segurança e Senha do Administrador'),
               Container(
                 padding: const EdgeInsets.all(16),
@@ -1935,6 +2179,270 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
   }
 
   /// Widget para toggle de visibilidade de botões do PDV
+  
+  Widget _buildPerfisDePreco() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Perfis de Preço (Clientes)',
+          style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'Defina os perfis de preço para os clientes. Ex: Revenda, Atacado, VIP.',
+          style: TextStyle(color: Colors.white70, fontSize: 14),
+        ),
+        const SizedBox(height: 16),
+        OutlinedButton.icon(
+          onPressed: _abrirModalNovoPerfilPreco,
+          icon: const Icon(Icons.add),
+          label: const Text('Adicionar Tabela de Preço'),
+          style: OutlinedButton.styleFrom(foregroundColor: Colors.blueAccent),
+        ),
+        const SizedBox(height: 16),
+        if (_configPerfisPreco.isEmpty)
+          const Text('Nenhum perfil cadastrado.', style: TextStyle(color: Colors.white54, fontStyle: FontStyle.italic))
+        else
+          ListView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: _configPerfisPreco.length,
+            itemBuilder: (context, index) {
+              final config = _configPerfisPreco[index];
+              final nome = config['nome'] as String;
+              final isDesconto = config['tipo'] == 'desconto';
+              // Usar num? para aceitar tanto int (vindo do Postgres/Supabase p/ números
+              // inteiros, ex: 5) quanto double (salvo localmente) — evita o crash
+              // "type 'int' is not a subtype of type 'double?'".
+              final valor = (config['valor'] as num?)?.toDouble() ?? 0.0;
+              
+              return Card(
+                color: Colors.white.withOpacity(0.05),
+                margin: const EdgeInsets.only(bottom: 8),
+                child: ListTile(
+                  title: Text(nome, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  subtitle: Text(
+                    isDesconto 
+                      ? 'Desconto Global: ${valor.toStringAsFixed(1)}%' 
+                      : (config['tipo'] == 'acrescimo' 
+                          ? 'Acréscimo Global: ${valor.toStringAsFixed(1)}%' 
+                          : 'Preço Fixo no Cadastro do Produto'),
+                    style: TextStyle(
+                      color: isDesconto 
+                          ? Colors.greenAccent 
+                          : (config['tipo'] == 'acrescimo' ? Colors.redAccent : Colors.orangeAccent)
+                    ),
+                  ),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.delete, color: Colors.redAccent),
+                    onPressed: () {
+                      setState(() {
+                        _configPerfisPreco.removeAt(index);
+                        _perfisDePreco.remove(nome);
+                      });
+                      // Auto-salvar após remover sem fechar a tela
+                      _salvar(fecharTela: false);
+                    },
+                  ),
+                ),
+              );
+            },
+          ),
+      ],
+    );
+  }
+
+  void _abrirModalNovoPerfilPreco() {
+    final nomeController = TextEditingController();
+    final valorController = TextEditingController();
+    final qtdMinimaController = TextEditingController();
+    String tipoSelecionado = 'fixo'; // 'fixo' ou 'desconto'
+    String tipoQtdSelecionado = 'carrinho'; // 'carrinho' ou 'item'
+    List<String> formasSelecionadas = [];
+
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setStateModal) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF1E1E2E),
+              title: const Text('Nova Tabela de Preço', style: TextStyle(color: Colors.white)),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    TextField(
+                      controller: nomeController,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: const InputDecoration(
+                        labelText: 'Nome do Perfil (ex: Revenda, VIP)',
+                        labelStyle: TextStyle(color: Colors.white70),
+                        enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    const Text('Tipo de Regra', style: TextStyle(color: Colors.white70)),
+                    RadioListTile<String>(
+                      title: const Text('Preço Fixo no Produto', style: TextStyle(color: Colors.white, fontSize: 14)),
+                      value: 'fixo',
+                      groupValue: tipoSelecionado,
+                      activeColor: Colors.blueAccent,
+                      onChanged: (v) => setStateModal(() => tipoSelecionado = v!),
+                    ),
+                    RadioListTile<String>(
+                      title: const Text('Desconto Global (%)', style: TextStyle(color: Colors.white, fontSize: 14)),
+                      value: 'desconto',
+                      groupValue: tipoSelecionado,
+                      activeColor: Colors.blueAccent,
+                      onChanged: (v) => setStateModal(() => tipoSelecionado = v!),
+                    ),
+                    RadioListTile<String>(
+                      title: const Text('Acréscimo Global (%)', style: TextStyle(color: Colors.white, fontSize: 14)),
+                      value: 'acrescimo',
+                      groupValue: tipoSelecionado,
+                      activeColor: Colors.blueAccent,
+                      onChanged: (v) => setStateModal(() => tipoSelecionado = v!),
+                    ),
+                    if (tipoSelecionado == 'desconto' || tipoSelecionado == 'acrescimo') ...[
+                      const SizedBox(height: 16),
+                      TextField(
+                        controller: valorController,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        style: TextStyle(color: tipoSelecionado == 'desconto' ? Colors.greenAccent : Colors.redAccent),
+                        decoration: InputDecoration(
+                          labelText: tipoSelecionado == 'desconto' ? 'Desconto (%)' : 'Acréscimo (%)',
+                          labelStyle: const TextStyle(color: Colors.white70),
+                          enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+                        ),
+                      ),
+                    ],
+                    
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 16),
+                      child: Divider(color: Colors.white24),
+                    ),
+                    
+                    const Text('Regras Opcionais', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Preencha apenas se quiser restringir o uso desta tabela.',
+                      style: TextStyle(color: Colors.white54, fontSize: 12),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: qtdMinimaController,
+                      keyboardType: TextInputType.number,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: const InputDecoration(
+                        labelText: 'Qtd. Mínima (Deixe vazio p/ não usar)',
+                        labelStyle: TextStyle(color: Colors.white70),
+                        enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    RadioListTile<String>(
+                      title: const Text('Contabilizar pelo Total do Carrinho', style: TextStyle(color: Colors.white, fontSize: 13)),
+                      value: 'carrinho',
+                      groupValue: tipoQtdSelecionado,
+                      activeColor: Colors.blueAccent,
+                      contentPadding: EdgeInsets.zero,
+                      onChanged: (v) => setStateModal(() => tipoQtdSelecionado = v!),
+                    ),
+                    RadioListTile<String>(
+                      title: const Text('Contabilizar Por Item/Produto', style: TextStyle(color: Colors.white, fontSize: 13)),
+                      value: 'item',
+                      groupValue: tipoQtdSelecionado,
+                      activeColor: Colors.blueAccent,
+                      contentPadding: EdgeInsets.zero,
+                      onChanged: (v) => setStateModal(() => tipoQtdSelecionado = v!),
+                    ),
+                    const SizedBox(height: 24),
+                    const Text('Formas de Pagamento Aceitas', style: TextStyle(color: Colors.white70)),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: TipoPagamento.values.map((tipo) {
+                        final isSelected = formasSelecionadas.contains(tipo.name);
+                        return FilterChip(
+                          label: Text(tipo.nome, style: TextStyle(color: isSelected ? Colors.white : Colors.white70)),
+                          selected: isSelected,
+                          selectedColor: ExodoTheme.primaryColor.withOpacity(0.3),
+                          checkmarkColor: Colors.white,
+                          backgroundColor: Colors.white.withOpacity(0.05),
+                          onSelected: (bool selected) {
+                            setStateModal(() {
+                              if (selected) {
+                                formasSelecionadas.add(tipo.name);
+                              } else {
+                                formasSelecionadas.remove(tipo.name);
+                              }
+                            });
+                          },
+                        );
+                      }).toList(),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Cancelar', style: TextStyle(color: Colors.white70)),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    final nome = nomeController.text.trim();
+                    if (nome.isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Por favor, informe o nome da tabela.')),
+                      );
+                      return;
+                    }
+                    
+                    if (_configPerfisPreco.any((p) => (p['nome'] as String).toLowerCase() == nome.toLowerCase())) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Já existe um perfil com esse nome.')),
+                      );
+                      return;
+                    }
+
+                    final valor = (tipoSelecionado == 'desconto' || tipoSelecionado == 'acrescimo')
+                        ? (double.tryParse(valorController.text.replaceAll(',', '.')) ?? 0.0) 
+                        : 0.0;
+                        
+                    final qtdMinima = int.tryParse(qtdMinimaController.text) ?? 0;
+
+                    setState(() {
+                      _perfisDePreco.add(nome);
+                      _configPerfisPreco.add(<String, dynamic>{
+                        'nome': nome,
+                        'tipo': tipoSelecionado,
+                        'valor': valor,
+                        if (qtdMinima > 0) 'quantidade_minima': qtdMinima,
+                        if (qtdMinima > 0) 'tipo_quantidade_minima': tipoQtdSelecionado,
+                        if (formasSelecionadas.isNotEmpty) 'formas_pagamento': formasSelecionadas,
+                      });
+                    });
+                    
+                    Navigator.pop(ctx);
+                    
+                    // Auto-salvar sem fechar a tela
+                    _salvar(fecharTela: false);
+                  },
+                  child: const Text('Adicionar'),
+                ),
+              ],
+            );
+          }
+        );
+      },
+    );
+  }
+
   Widget _buildBotaoToggle({
     required IconData icon,
     required String label,

@@ -206,6 +206,7 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
   bool _isLoading = false;
 
   // Controladores
+  final _codigoController = TextEditingController();
   final _nomeController = TextEditingController();
   final _nomeFantasiaController = TextEditingController();
   final _cpfCnpjController = TextEditingController();
@@ -234,6 +235,7 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
   bool _ativo = true;
   bool _bloqueado = false;
   bool _habilitaTaxiDog = false;
+  String? _perfilPrecoSelecionado;
 
   // Pets e Endereços
   List<Pet> _pets = [];
@@ -258,6 +260,40 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
           ),
         ),
       ],
+    );
+  }
+
+  
+  Widget _buildDropdownPerfilPreco() {
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final perfis = dataService.empresaAtual?.perfisDePreco ?? [];
+    
+    if (perfis.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return DropdownButtonFormField<String>(
+      value: _perfilPrecoSelecionado,
+      dropdownColor: const Color(0xFF1E1E2E),
+      style: const TextStyle(color: Colors.white),
+      decoration: const InputDecoration(
+        labelText: 'Perfil de Preço (Atacarejo/Revenda)',
+        labelStyle: TextStyle(color: Colors.white70),
+        enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+        focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white)),
+        prefixIcon: Icon(Icons.price_change, color: Colors.white54),
+      ),
+      items: [
+        const DropdownMenuItem(
+          value: null,
+          child: Text('Padrão (Sem Perfil)'),
+        ),
+        ...perfis.map((p) => DropdownMenuItem(
+          value: p,
+          child: Text(p),
+        ))
+      ],
+      onChanged: (v) => setState(() => _perfilPrecoSelecionado = v),
     );
   }
 
@@ -536,9 +572,24 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
     }
   }
 
+  String _gerarProximoCodigoCliente(DataService dataService) {
+    int maiorCodigo = 0;
+    for (final c in dataService.clientes) {
+      final codStr = c.dadosExtras?['codigo']?.toString();
+      if (codStr != null) {
+        final codInt = int.tryParse(codStr.replaceAll(RegExp(r'[^\d]'), ''));
+        if (codInt != null && codInt > maiorCodigo) {
+          maiorCodigo = codInt;
+        }
+      }
+    }
+    return (maiorCodigo > 0 ? maiorCodigo + 1 : 1001).toString();
+  }
+
   void _carregarDados() {
     if (widget.cliente != null) {
       final c = widget.cliente!;
+      _codigoController.text = c.dadosExtras?['codigo']?.toString() ?? '';
       _nomeController.text = c.nome;
       _nomeFantasiaController.text = c.nomeFantasia ?? '';
       _tipoPessoa = c.tipoPessoa;
@@ -578,6 +629,7 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
       _dataNascimento = c.dataNascimento;
       _profissaoController.text = c.profissao ?? '';
       _observacoesController.text = c.observacoes ?? '';
+      _perfilPrecoSelecionado = c.perfilPreco;
       _limiteCreditoController.text = c.limiteCredito?.toStringAsFixed(2) ?? '';
       _saldoDevedorController.text = c.saldoDevedor.toStringAsFixed(2);
       
@@ -592,12 +644,16 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
       _habilitaTaxiDog = c.habilitaTaxiDog;
       _pets = List.from(c.pets);
       _enderecos = List.from(c.enderecos);
+    } else {
+      final dataService = Provider.of<DataService>(context, listen: false);
+      _codigoController.text = _gerarProximoCodigoCliente(dataService);
     }
   }
 
   @override
   void dispose() {
     _tabController.dispose();
+    _codigoController.dispose();
     _nomeController.dispose();
     _nomeFantasiaController.dispose();
     _cpfCnpjController.dispose();
@@ -747,6 +803,12 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
               icon: Icons.store,
             ),
           ],
+          const SizedBox(height: 12),
+          _buildCampoTexto(
+            controller: _codigoController,
+            label: 'Código do Cliente',
+            icon: Icons.vpn_key_rounded,
+          ),
           const SizedBox(height: 12),
           Row(
             children: [
@@ -1275,6 +1337,11 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
           ],
 
           // Crédito
+          _buildSecaoTitulo('Perfil de Preços / Precificação', Icons.price_change),
+          const SizedBox(height: 12),
+          _buildDropdownPerfilPreco(),
+          const SizedBox(height: 24),
+
           _buildSecaoTitulo('Crédito e Saldos Iniciais', Icons.account_balance_wallet),
           const SizedBox(height: 12),
           Row(
@@ -3676,6 +3743,7 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
             : _observacoesController.text.trim(),
         pets: _pets,
         enderecos: _enderecos,
+        perfilPreco: _perfilPrecoSelecionado,
         limiteCredito: double.tryParse(
           _limiteCreditoController.text.replaceAll(',', '.'),
         ),
@@ -3687,6 +3755,9 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
           'credito_inicial': double.tryParse(
             _creditoInicialController.text.replaceAll(',', '.'),
           ) ?? 0.0,
+          'codigo': _codigoController.text.trim().isEmpty
+              ? null
+              : _codigoController.text.trim(),
         },
         bloqueado: _bloqueado,
         habilitaTaxiDog: _habilitaTaxiDog,
@@ -5251,6 +5322,8 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
         return Icons.more_horiz;
       case TipoPagamento.alimentacao:
         return Icons.restaurant;
+      case TipoPagamento.transferencia:
+        return Icons.swap_horiz;
     }
   }
 
@@ -5274,6 +5347,8 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
         return Colors.grey;
       case TipoPagamento.alimentacao:
         return Colors.teal;
+      case TipoPagamento.transferencia:
+        return Colors.blueAccent;
     }
   }
 
