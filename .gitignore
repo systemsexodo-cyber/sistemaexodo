@@ -101,3 +101,23 @@ yarn.lock
 gdrive_service_account.json
 gdrive_client_id.json
 gdrive_token.json
+.aider*
+
+# Python / ambiente virtual
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# Logs e temporários
+logs/
+tmp/
+
+# Backups e dados locais
+.backups_versionamento/
+backups_postgresql/
+backups_usuarios/
+XML_EMITIDOS/
+
+# Cópia antiga duplicada do projeto
+Sistema Exodo/
