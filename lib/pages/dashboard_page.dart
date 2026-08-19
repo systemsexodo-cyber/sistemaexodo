@@ -14,6 +14,7 @@ import '../models/nfce.dart';
 import '../widgets/sync_status_widget.dart';
 import '../services/excel_export_service.dart';
 import '../services/lucro_calculator.dart';
+import '../services/garcom_service.dart';
 import 'relatorio_lucro_page.dart';
 import 'html_helper_stub.dart' if (dart.library.html) 'html_helper_web.dart' as html_helper;
 
@@ -176,6 +177,15 @@ class _DashboardPageState extends State<DashboardPage> {
                 LucroCalculator.vendasDoPeriodo(dataService, inicioPeriodo, fimPeriodo);
             final totaisLucro = LucroCalculator.totais(dataService, vendasLucro);
 
+            // Garçons: total vendido e comissões no período
+            final rankingGarcons = GarcomService.rankingGarcons(
+              funcionarios: dataService.funcionarios,
+              vendas: dataService.vendasBalcao,
+              pedidos: dataService.pedidos,
+              inicio: inicioPeriodo,
+              fim: fimPeriodo,
+            );
+
             return SingleChildScrollView(
               scrollDirection: Axis.vertical,
               padding: const EdgeInsets.all(16),
@@ -230,6 +240,11 @@ class _DashboardPageState extends State<DashboardPage> {
                   // Status do Caixa (saldo fica visível para operação)
                   _buildCardCaixa(statsCaixa),
                   const SizedBox(height: 16),
+
+                  // Vendas e Comissões dos Garçons
+                  if (podeVerTotais)
+                    _buildCardGarcons(rankingGarcons),
+                  if (podeVerTotais) const SizedBox(height: 16),
 
                   // Grid de Métricas
                   Row(
@@ -1111,6 +1126,101 @@ class _DashboardPageState extends State<DashboardPage> {
                   ),
                 ],
               ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Card com o total vendido pelos GARÇONS e suas comissões no período.
+  Widget _buildCardGarcons(List<GarcomResumo> ranking) {
+    final formato = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+    final totalVendido = ranking.fold<double>(0, (s, r) => s + r.totalVendido);
+    final totalComissao = ranking.fold<double>(0, (s, r) => s + r.totalComissao);
+    final top3 = ranking.take(3).toList();
+    final medalhas = ['🥇', '🥈', '🥉'];
+
+    return Card(
+      color: const Color(0xFF1E1E2E).withOpacity(0.8),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.deepOrangeAccent.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.emoji_events_outlined, color: Colors.amberAccent, size: 28),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Garçons',
+                        style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+                      ),
+                      Text(
+                        'Vendas e comissões do período',
+                        style: TextStyle(color: Colors.white70, fontSize: 13),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildStatItem('Total Vendido', formato.format(totalVendido), Colors.greenAccent),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildStatItem('Comissões', formato.format(totalComissao), Colors.orangeAccent),
+                ),
+              ],
+            ),
+            if (top3.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              const Divider(color: Colors.white12, height: 1),
+              const SizedBox(height: 12),
+              ...top3.asMap().entries.map((e) {
+                final item = e.value;
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Row(
+                    children: [
+                      Text(medalhas[e.key], style: const TextStyle(fontSize: 18)),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          item.funcionario.nome,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13),
+                        ),
+                      ),
+                      Text(
+                        '${formato.format(item.totalVendido)}  •  ${item.percentual.toStringAsFixed(1)}%',
+                        style: TextStyle(
+                          color: e.key == 0 ? Colors.amberAccent : Colors.white70,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }),
             ],
           ],
         ),

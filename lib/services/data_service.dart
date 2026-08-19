@@ -551,12 +551,19 @@ class DataService extends ChangeNotifier {
         if (map.containsKey('created_at')) map['createdAt'] = map.remove('created_at');
         if (map.containsKey('updated_at')) map['updatedAt'] = map.remove('updated_at');
       } else if (table == 'fechamentos_caixa') {
-        if (map.containsKey('abertura_caixa_id')) map['aberturaCaixaId'] = map.remove('abertura_caixa_id');
-        if (map.containsKey('data_fechamento')) map['dataFechamento'] = map.remove('data_fechamento');
+        // ⚠️ NÃO remover as chaves snake ao mapear para camel: a nuvem tem AMBAS
+        // as colunas e o sincronizador local as usa no download. Antes, remover
+        // abertura_caixa_id fazia a nuvem guardar só a camel; no download o
+        // sincronizador convertia o ID (13 dígitos) em timestamp (coluna local
+        // de tipo errado) e o vínculo fechamento→abertura se perdia — o caixa
+        // ficava "sempre aberto". Enviar snake E camel mantém o dado íntegro.
+        if (map.containsKey('abertura_caixa_id')) map['aberturaCaixaId'] = map['abertura_caixa_id'];
+        if (map.containsKey('data_fechamento')) map['dataFechamento'] = map['data_fechamento'];
+        // A nuvem só tem a versão camel dos valores numéricos — renomear.
         if (map.containsKey('valor_esperado')) map['valorEsperado'] = map.remove('valor_esperado');
         if (map.containsKey('valor_real')) map['valorReal'] = map.remove('valor_real');
-        if (map.containsKey('created_at')) map['createdAt'] = map.remove('created_at');
-        if (map.containsKey('updated_at')) map['updatedAt'] = map.remove('updated_at');
+        if (map.containsKey('created_at')) map['createdAt'] = map['created_at'];
+        if (map.containsKey('updated_at')) map['updatedAt'] = map['updated_at'];
       }
 
       // 4. Controle de updated_at. Para estoque_historico a data é a coluna 'data'

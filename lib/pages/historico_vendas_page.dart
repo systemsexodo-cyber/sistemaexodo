@@ -27,6 +27,7 @@ import '../widgets/permission_widget.dart';
 import '../services/caixa_pdf_service.dart';
 import '../services/venda_pdf_service.dart';
 import '../services/pedido_pdf_service.dart';
+import '../services/producao_pdf_service.dart';
 
 class _ProdutoVendido {
   final String nome;
@@ -127,6 +128,7 @@ class ItemHistorico {
   final bool isPagamento;
   final bool isNfce;
   final String? responsavel;
+  final String? caixaNumero; // Número do caixa (ex: CAIXA-001) a que o item pertence
   final String? motoristaNome;
   final EstoqueHistorico? estoqueHistorico;
 
@@ -150,6 +152,7 @@ class ItemHistorico {
     this.isPagamento = false,
     this.isNfce = false,
     this.responsavel,
+    this.caixaNumero,
     this.motoristaNome,
     this.estoqueHistorico,
   });
@@ -198,6 +201,7 @@ class ItemHistorico {
     bool? isPagamento,
     bool? isNfce,
     String? responsavel,
+    String? caixaNumero,
     String? motoristaNome,
     EstoqueHistorico? estoqueHistorico,
   }) {
@@ -221,6 +225,7 @@ class ItemHistorico {
       isPagamento: isPagamento ?? this.isPagamento,
       isNfce: isNfce ?? this.isNfce,
       responsavel: responsavel ?? this.responsavel,
+      caixaNumero: caixaNumero ?? this.caixaNumero,
       motoristaNome: motoristaNome ?? this.motoristaNome,
       estoqueHistorico: estoqueHistorico ?? this.estoqueHistorico,
     );
@@ -404,46 +409,56 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
   }) {
     final Map<String, ItemHistorico> mapItens = {};
 
-    // Determinar início e fim da sessão de caixa do OPERADOR atual (ou a última
-    // sessão dele, se já fechada). ANTES pegava a abertura mais recente GLOBAL
-    // — caixa de outro usuário, ou uma abertura já fechada com janela minúscula,
-    // fazia TODAS as vendas sumirem do filtro.
-    DateTime? inicioCaixa;
-    DateTime? fimCaixa;
-    AberturaCaixa? ultimaAbertura;
+    // Determinar TODOS os caixas do OPERADOR atual (abertos e fechados) para o
+    // filtro "Apenas Meu Caixa". ANTES usava só a última sessão do operador:
+    // se o operador não fosse encontrado (nome/email divergente) ou tivesse
+    // mais de um caixa no período, TODAS as vendas sumiam do histórico.
+    String? operadorAtual;
+    final List<AberturaCaixa> caixasDoOperador = [];
     if (apenasMeuCaixa) {
-      final operadorAtual =
-          dataService.responsavelAtivo ?? dataService.usuarioAtualEmail;
-      ultimaAbertura = dataService.ultimaAberturaDoOperador(operadorAtual);
-      final ultima = ultimaAbertura;
-      if (ultima != null) {
-        inicioCaixa = ultima.dataAbertura;
-
-        // Se já foi fechado, filtrar até o momento do fechamento
-        final fechamento = dataService.fechamentosCaixa.firstWhereOrNull(
-          (f) => f.aberturaCaixaId == ultima.id,
-        );
-        if (fechamento != null) {
-          fimCaixa = fechamento.dataFechamento;
+      operadorAtual = dataService.responsavelAtivo ?? dataService.usuarioAtualEmail;
+      if (operadorAtual != null && operadorAtual.trim().isNotEmpty) {
+        for (final ab in dataService.aberturasCaixa) {
+          if (dataService.vendaPertenceAoOperador(operadorAtual, ab.responsavel)) {
+            caixasDoOperador.add(ab);
+          }
         }
       }
     }
-    final _dataInicio = (apenasMeuCaixa && inicioCaixa != null) ? inicioCaixa : inicio;
-    final _dataFim = (apenasMeuCaixa && inicioCaixa != null) ? (fimCaixa ?? DateTime.now().add(const Duration(days: 1))) : fim;
+    // Mantém o período selecionado nos filtros de data; a pertença ao caixa é
+    // decidida por venda (operador + janela do caixa) — nunca zera a lista.
+    final _dataInicio = inicio;
+    final _dataFim = fim;
 
     bool pertenceAoCaixa(DateTime data, {String? operador}) {
       if (!apenasMeuCaixa) return true;
-      if (inicioCaixa == null) return false;
-      if (data.isBefore(inicioCaixa)) return false;
-      if (fimCaixa != null && data.isAfter(fimCaixa)) return false;
-      // Sessão do caixa: vendas de OUTRO operador (quando identificadas) não entram
-      // no "meu caixa" (venda sem operador é legada e continua entrando).
-      if (operador != null &&
-          !dataService.vendaPertenceAoOperador(
-              operador, ultimaAbertura?.responsavel)) {
-        return false;
+      final op = (operador ?? '').trim();
+      // 1. Venda identificada: pertence se o operador da venda é o operador
+      //    atual. Se NÃO bate, NÃO descarta — cai para Branch 2 para checar
+      //    se a data está dentro da janela do caixa (evita sumiço de vendas
+      //    quando o campo operador diverge levemente do responsável).
+      if (op.isNotEmpty &&
+          operadorAtual != null &&
+          operadorAtual.trim().isNotEmpty) {
+        if (dataService.vendaPertenceAoOperador(op, operadorAtual)) {
+          return true;
+        }
+        // Operador não bateu — verificar se a data cai dentro da janela de
+        // QUALQUER caixa do operador atual (fallback).
       }
-      return true;
+      // 2. Venda sem operador (legada) ou item genérico (fechamento, sangria,
+      //    troca, conta paga): pertence se está dentro da janela de QUALQUER
+      //    caixa do operador atual (aberto ou fechado).
+      if (caixasDoOperador.isEmpty) return false;
+      for (final ab in caixasDoOperador) {
+        if (data.isBefore(ab.dataAbertura)) continue;
+        final fechamento = dataService.fechamentosCaixa
+            .firstWhereOrNull((f) => f.aberturaCaixaId == ab.id);
+        final fimCaixa = fechamento?.dataFechamento;
+        if (fimCaixa != null && data.isAfter(fimCaixa)) continue;
+        return true;
+      }
+      return false;
     }
 
     // 0. NFC-es e NF-es (Para identificar quais vendas possuem nota fiscal emitida)
@@ -630,7 +645,51 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
       }
     }
 
-    return mapItens.values.toList();
+    // Anotar em cada item o caixa (número + operador) para exibição no histórico
+    final itens = mapItens.values.toList();
+    for (var i = 0; i < itens.length; i++) {
+      final item = itens[i];
+      final aberturaId = item.fechamentoCaixa?.aberturaCaixaId ??
+          item.sangria?.aberturaCaixaId ??
+          item.suprimento?.aberturaCaixaId;
+      final ab = _caixaDoItem(dataService, item.data,
+          operador: item.responsavel, aberturaId: aberturaId);
+      if (ab != null) {
+        itens[i] = item.copyWith(
+          caixaNumero: ab.numero,
+          responsavel: ab.responsavel ?? item.responsavel,
+        );
+      }
+    }
+    return itens;
+  }
+
+  /// Encontra o caixa (abertura) ao qual um item do histórico pertence, pela
+  /// janela de tempo [dataAbertura, fechamento] e pelo operador. Quando
+  /// [aberturaId] é informado (fechamentos/sangrias/suprimentos), a busca é
+  /// exata. Usado para exibir o número do caixa e o operador no histórico.
+  AberturaCaixa? _caixaDoItem(DataService ds, DateTime data,
+      {String? operador, String? aberturaId}) {
+    AberturaCaixa? melhor;
+    for (final ab in ds.aberturasCaixa) {
+      if (aberturaId != null && ab.id != aberturaId) continue;
+      if (data.isBefore(ab.dataAbertura)) continue;
+      final fechamento = ds.fechamentosCaixa
+          .firstWhereOrNull((f) => f.aberturaCaixaId == ab.id);
+      final fim = fechamento?.dataFechamento;
+      if (fim != null && data.isAfter(fim)) continue;
+      final respAb = (ab.responsavel ?? '').trim();
+      final op = (operador ?? '').trim();
+      if (op.isNotEmpty &&
+          respAb.isNotEmpty &&
+          !ds.vendaPertenceAoOperador(op, respAb)) {
+        continue;
+      }
+      if (melhor == null || ab.dataAbertura.isAfter(melhor.dataAbertura)) {
+        melhor = ab;
+      }
+    }
+    return melhor;
   }
 
   @override
@@ -1732,6 +1791,22 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                               fontSize: 12,
                             ),
                           ),
+                          if (item.caixaNumero != null) ...[
+                            Text(
+                              ' • ',
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.2),
+                              ),
+                            ),
+                            Text(
+                              'Caixa ${item.caixaNumero}',
+                              style: TextStyle(
+                                color: Colors.blueAccent.withOpacity(0.8),
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
                           if (item.responsavel != null) ...[
                             Text(
                               ' • ',
@@ -2776,6 +2851,34 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                   ),
                 ),
               const SizedBox(height: 8),
+              // Botão de Reimpressão dos Tickets de Produção (impressoras por setor)
+              if (!item.isCancelada &&
+                  (item.vendaBalcao != null || item.pedido != null) &&
+                  !item.isSangria &&
+                  !item.isSuprimento &&
+                  item.fechamentoCaixa == null)
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () => _reimprimirProducao(item),
+                    icon: const Icon(Icons.restaurant, color: Colors.deepOrangeAccent),
+                    label: const Text(
+                      'REIMPRIMIR PRODUÇÃO',
+                      style: TextStyle(
+                        color: Colors.deepOrangeAccent,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: Colors.deepOrangeAccent),
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                ),
+              const SizedBox(height: 8),
               // Botão de Cancelamento (Apenas se não estiver cancelado e for venda/pedido)
               if (!item.isCancelada &&
                   (item.vendaBalcao != null || item.pedido != null) &&
@@ -2908,6 +3011,174 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Erro ao reimprimir cupom: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    }
+  }
+
+  /// Reimprime os tickets de produção (impressoras por setor do produto)
+  /// de uma venda/pedido já salvo no histórico.
+  Future<void> _reimprimirProducao(ItemHistorico item) async {
+    try {
+      final dataService = Provider.of<DataService>(context, listen: false);
+      final authService = Provider.of<AuthService>(context, listen: false);
+      final emp = authService.empresaAtual ?? dataService.empresaAtual;
+      if (emp == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Nenhuma empresa selecionada para imprimir a produção'),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 3),
+          ),
+        );
+        return;
+      }
+
+      final inputs = <ItemProducaoInput>[];
+      String numeroDoc = item.numero;
+      String? clienteNome = item.clienteNome;
+
+      // Detalhes do ticket (mesa, telefone, entrega, pagamento, observações)
+      String? mesaComanda;
+      String? clienteTelefone;
+      String? enderecoEntrega;
+      String? motorista;
+      String? previsaoEntrega;
+      List<String> formasPagamento = const [];
+      double troco = 0;
+      bool pagamentoConcluido = false;
+      String? observacoesGerais;
+      // Hora do pedido + responsável (para a cozinha na reimpressão)
+      DateTime? dataPedido;
+      String? usuarioCriou;
+
+      // Extrai "MESA 5" / "COMANDA 12" do nome do cliente quando a origem é mesa
+      String? extrairMesa(String? nome) {
+        if (nome == null) return null;
+        final m = RegExp(r'\[(MESA|COMANDA)\]\s*([\w\- ]+)').firstMatch(nome);
+        if (m == null) return null;
+        return '${m.group(1)} ${m.group(2)!.trim().split(' ').first}';
+      }
+
+      if (item.vendaBalcao != null) {
+        final venda = item.vendaBalcao!;
+        numeroDoc = venda.numero;
+        clienteNome = venda.clienteNome;
+        mesaComanda = venda.origem == 'Mesa/Comanda' ? extrairMesa(venda.clienteNome) : null;
+        clienteTelefone = venda.clienteTelefone;
+        enderecoEntrega = venda.deliveryInfo?.enderecoCompleto;
+        motorista = venda.deliveryInfo?.motoristaNome;
+        previsaoEntrega = venda.deliveryInfo?.previsaoEntrega;
+        formasPagamento = venda.pagamentos
+            .where((p) => p.valor > 0)
+            .map((p) => p.tipo.nome)
+            .toList();
+        troco = venda.pagamentos
+            .where((p) => p.troco != null && p.troco! > 0)
+            .fold(0.0, (sum, p) => sum + (p.troco ?? 0));
+        pagamentoConcluido = venda.cancelado
+            ? false
+            : venda.pagamentos.isNotEmpty
+                ? venda.pagamentos.every((p) => p.recebido)
+                : false;
+        observacoesGerais = venda.observacoes;
+        dataPedido = venda.dataVenda;
+        usuarioCriou = venda.operador;
+        for (final it in venda.itens) {
+          if (it.isServico) continue;
+          inputs.add(ItemProducaoInput(
+            id: it.id,
+            nome: it.nome,
+            quantidade: it.quantidade,
+            observacao: it.observacao,
+            adicionais: it.adicionais.map((a) => a.nome).toList(),
+            opcoesCombo: it.opcoesCombo.map((o) => o.nome).toList(),
+          ));
+        }
+      } else if (item.pedido != null) {
+        final pedido = item.pedido!;
+        numeroDoc = pedido.numero;
+        clienteNome = pedido.clienteNome;
+        mesaComanda = pedido.origem == 'Mesa/Comanda' ? extrairMesa(pedido.clienteNome) : null;
+        clienteTelefone = pedido.clienteTelefone;
+        enderecoEntrega = pedido.clienteEndereco;
+        motorista = pedido.deliveryInfo?.motoristaNome;
+        previsaoEntrega = pedido.deliveryInfo?.previsaoEntrega;
+        formasPagamento = pedido.pagamentos
+            .where((p) => p.valor > 0)
+            .map((p) => p.tipo.nome)
+            .toList();
+        troco = pedido.pagamentos
+            .where((p) => p.troco != null && p.troco! > 0)
+            .fold(0.0, (sum, p) => sum + (p.troco ?? 0));
+        pagamentoConcluido = pedido.totalmenteRecebido;
+        observacoesGerais = pedido.observacoes;
+        dataPedido = pedido.dataPedido;
+        usuarioCriou = pedido.operador;
+        for (final it in pedido.produtos) {
+          inputs.add(ItemProducaoInput(
+            id: it.id,
+            nome: it.nome,
+            quantidade: it.quantidade,
+            observacao: it.observacao,
+            adicionais: it.adicionais.map((a) => a.nome).toList(),
+          ));
+        }
+      }
+
+      if (inputs.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Nenhum item para reimprimir nesta venda'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 3),
+          ),
+        );
+        return;
+      }
+
+      final qtd = await ProducaoPdfService.imprimirTicketsProducao(
+        itens: inputs,
+        dataService: dataService,
+        empresa: emp,
+        numeroDocumento: numeroDoc,
+        clienteNome: clienteNome,
+        isDelivery: item.pedido?.deliveryInfo != null,
+        detalhes: DetalhesTicketProducao(
+          mesaComanda: mesaComanda,
+          clienteTelefone: clienteTelefone,
+          enderecoEntrega: enderecoEntrega,
+          motorista: motorista,
+          previsaoEntrega: previsaoEntrega,
+          formasPagamento: formasPagamento,
+          troco: troco > 0 ? troco : null,
+          pagamentoConcluido: pagamentoConcluido,
+          observacoesGerais: observacoesGerais,
+          // Hora do pedido + responsável (para a cozinha)
+          dataPedido: dataPedido,
+          usuarioCriou: usuarioCriou,
+        ),
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(qtd > 0
+                ? '✓ $qtd ticket(s) de produção reimpresso(s) em suas impressoras'
+                : 'Nenhum item com impressora de produção configurada'),
+            backgroundColor: qtd > 0 ? Colors.green : Colors.orange,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erro ao reimprimir produção: $e'),
             backgroundColor: Colors.red,
             duration: const Duration(seconds: 4),
           ),
@@ -5547,12 +5818,26 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
         numeroInicial: usuario?.numeroInicialNfce ?? 1,
       ).toString();
 
+      // ===== AJUSTE FISCAL: Taxa de Entrega e Serviço do Garçom =====
+      double ajusteFiscal = 0.0;
+      if (!empresa.incluirTaxaEntregaNfce) {
+        final taxaEntrega = item.vendaBalcao?.deliveryInfo?.taxaEntrega ?? 0.0;
+        if (taxaEntrega > 0.01) ajusteFiscal += taxaEntrega;
+      }
+      if (!empresa.incluirServicoGarcomNfce) {
+        final itemGarcom = item.vendaBalcao?.itens
+            .where((i) => i.id == 'garcom' && i.isServico)
+            .fold(0.0, (sum, i) => sum + i.subtotal) ?? 0.0;
+        if (itemGarcom > 0.01) ajusteFiscal += itemGarcom;
+      }
+      final valorTotalNfce = item.valorTotal - ajusteFiscal;
+
       final nfce = await nfceService.emitir(
         empresa: empresa,
         produtos: produtos,
         quantidades: quantidades,
         pagamentos: pagamentos,
-        valorTotal: item.valorTotal,
+        valorTotal: valorTotalNfce,
         cpfCnpjConsumidor: cpfCnpj.isNotEmpty ? cpfCnpj : null,
         nomeConsumidor: nomeConsumidor.isNotEmpty ? nomeConsumidor : null,
         observacoes: item.vendaBalcao?.observacoes ?? item.pedido?.observacoes,

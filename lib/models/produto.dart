@@ -25,6 +25,7 @@ class Produto {
   // Quando vazio, o PDV usa a forma principal (unidadeVenda/quantidadeBaixa/preco).
   final List<FormaVenda> formasVenda;
   final String grupo; // Novo: Grupo/Categoria do produto
+  final String subgrupo; // Subgrupo dentro do grupo (ex: grupo 'Bebidas' -> subgrupo 'Refrigerantes')
   final double preco;
   final double? precoCusto; // Preço de custo do produto
   final double estoque;
@@ -66,8 +67,11 @@ class Produto {
   final bool? paraCozinha; // Se true, item é preparado na cozinha
   final bool? paraBar; // Se true, item é preparado no bar
   final String? departamentoId; // Departamento/setor de preparação (ex: "Cozinha", "Bar", "Sobremesas") — entidade separada da impressora
-  final String? impressoraProducao; // Nome/Setor da impressora de produção (ex: "Cozinha", "Bar", ou nome da impressora Windows)
-  final List<String> impressoraProducaoExtra; // Outros setores/impressoras onde o produto também deve imprimir (multi-seleção)
+  // Outros DEPARTAMENTOS onde o produto também deve imprimir (multi-seleção).
+  // Cada departamento imprime na impressora configurada nele.
+  final List<String> departamentosAdicionais;
+  final String? impressoraProducao; // Legado: nome/Setor da impressora de produção (ex: "Cozinha", "Bar", ou nome da impressora Windows)
+  final List<String> impressoraProducaoExtra; // Legado: outros setores/impressoras onde o produto também deve imprimir (multi-seleção)
   
   // Campos para E-commerce
   final bool exibirNaLoja; // Se true, produto aparece na loja pública
@@ -130,6 +134,7 @@ class Produto {
     this.quantidadeBaixa = 1.0,
     List<FormaVenda>? formasVenda,
     required this.grupo,
+    this.subgrupo = '',
     required this.preco,
     this.precoCusto,
     required this.estoque,
@@ -158,6 +163,7 @@ class Produto {
     this.paraCozinha,
     this.paraBar,
     this.departamentoId,
+    this.departamentosAdicionais = const [],
     this.impressoraProducao,
     this.impressoraProducaoExtra = const [],
     this.exibirNaLoja = false,
@@ -479,6 +485,7 @@ class Produto {
       'quantidade_baixa': quantidadeBaixa,
       'formas_venda': formasVenda.map((f) => f.toMap()).toList(),
       'grupo': grupo,
+      'subgrupo': subgrupo,
       'preco': preco,
       'preco_custo': precoCusto,
       'estoque': estoque,
@@ -510,6 +517,7 @@ class Produto {
       'para_cozinha': paraCozinha,
       'para_bar': paraBar,
       'departamento_id': departamentoId,
+      'departamentos_adicionais': departamentosAdicionais,
       'impressora_producao': impressoraProducao,
       'impressora_producao_extra': impressoraProducaoExtra,
       'exibir_na_loja': exibirNaLoja,
@@ -600,6 +608,7 @@ class Produto {
           .map((f) => FormaVenda.fromMap(Map<String, dynamic>.from(f is Map ? f : {})))
           .toList(),
       grupo: map['grupo'] as String? ?? 'Sem Grupo',
+      subgrupo: map['subgrupo'] as String? ?? '',
       preco: (getNum('preco', 'preco') ?? 0.0).toDouble(),
       precoCusto: getNum('precoCusto', 'preco_custo')?.toDouble(),
       estoque: (getNum('estoque', 'estoque') ?? 0.0).toDouble(),
@@ -631,6 +640,7 @@ class Produto {
       paraCozinha: getBool('paraCozinha', 'para_cozinha'),
       paraBar: getBool('paraBar', 'para_bar'),
       departamentoId: getStr('departamentoId', 'departamento_id'),
+      departamentosAdicionais: getList('departamentosAdicionais', 'departamentos_adicionais')?.map((e) => e.toString()).toList() ?? [],
       impressoraProducao: (map['impressoraProducao'] ?? map['impressora_producao']) as String?,
       impressoraProducaoExtra: (getList('impressoraProducaoExtra', 'impressora_producao_extra') ?? [])
           .map((e) => e.toString())
@@ -682,6 +692,7 @@ class Produto {
     double? quantidadeBaixa,
     List<FormaVenda>? formasVenda,
     String? grupo,
+    String? subgrupo,
     double? preco,
     double? precoCusto,
     double? estoque,
@@ -711,6 +722,7 @@ class Produto {
     bool? paraCozinha,
     bool? paraBar,
     String? departamentoId,
+    List<String>? departamentosAdicionais,
     String? impressoraProducao,
     List<String>? impressoraProducaoExtra,
     bool? exibirNaLoja,
@@ -755,6 +767,7 @@ class Produto {
       quantidadeBaixa: quantidadeBaixa ?? this.quantidadeBaixa,
       formasVenda: formasVenda ?? this.formasVenda,
       grupo: grupo ?? this.grupo,
+      subgrupo: subgrupo ?? this.subgrupo,
       preco: preco ?? this.preco,
       precoCusto: precoCusto ?? this.precoCusto,
       estoque: estoque ?? this.estoque,
@@ -784,6 +797,7 @@ class Produto {
       paraCozinha: paraCozinha ?? this.paraCozinha,
       paraBar: paraBar ?? this.paraBar,
       departamentoId: departamentoId ?? this.departamentoId,
+      departamentosAdicionais: departamentosAdicionais ?? this.departamentosAdicionais,
       impressoraProducao: impressoraProducao ?? this.impressoraProducao,
       impressoraProducaoExtra: impressoraProducaoExtra ?? this.impressoraProducaoExtra,
       exibirNaLoja: exibirNaLoja ?? this.exibirNaLoja,

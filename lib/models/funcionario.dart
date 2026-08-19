@@ -7,6 +7,7 @@ class Funcionario {
   final String? observacoes;
   final bool ativo;
   final bool temAcesso; // Se o funcionário tem acesso ao sistema
+  final bool garcom; // Garçom: acesso restrito às telas de mesas/comandas
   final double porcentagemComissao;
   final String tipoComissao; // 'Porcentagem' ou 'Fixo'
   final double valorComissao;
@@ -22,6 +23,7 @@ class Funcionario {
     this.observacoes,
     this.ativo = true,
     this.temAcesso = false, // Por padrão, funcionário não tem acesso
+    this.garcom = false,
     this.porcentagemComissao = 0.0,
     this.tipoComissao = 'Porcentagem',
     this.valorComissao = 0.0,
@@ -40,6 +42,7 @@ class Funcionario {
       observacoes: map['observacoes'] as String?,
       ativo: map['ativo'] ?? true,
       temAcesso: map['temAcesso'] ?? false,
+      garcom: map['garcom'] ?? false,
       porcentagemComissao: double.tryParse(map['porcentagemComissao']?.toString() ?? '') ?? 0.0,
       tipoComissao: map['tipoComissao']?.toString() ?? 'Porcentagem',
       valorComissao: double.tryParse(map['valorComissao']?.toString() ?? '') ?? 0.0,
@@ -62,6 +65,7 @@ class Funcionario {
       'observacoes': observacoes,
       'ativo': ativo,
       'temAcesso': temAcesso,
+      'garcom': garcom,
       'porcentagemComissao': porcentagemComissao,
       'tipoComissao': tipoComissao,
       'valorComissao': valorComissao,
@@ -79,6 +83,7 @@ class Funcionario {
     String? observacoes,
     bool? ativo,
     bool? temAcesso,
+    bool? garcom,
     double? porcentagemComissao,
     String? tipoComissao,
     double? valorComissao,
@@ -94,6 +99,7 @@ class Funcionario {
       observacoes: observacoes ?? this.observacoes,
       ativo: ativo ?? this.ativo,
       temAcesso: temAcesso ?? this.temAcesso,
+      garcom: garcom ?? this.garcom,
       porcentagemComissao: porcentagemComissao ?? this.porcentagemComissao,
       tipoComissao: tipoComissao ?? this.tipoComissao,
       valorComissao: valorComissao ?? this.valorComissao,

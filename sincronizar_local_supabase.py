@@ -1024,6 +1024,7 @@ def executar_ciclo_sincronizacao(conn, supabase_url, api_key, on_state_change=No
               AND LEFT(table_name, 1) <> '_'
               AND LEFT(table_name, 3) <> 'vw_'
               AND LEFT(table_name, 5) <> 'view_'
+              AND POSITION('_bkp_' IN table_name) = 0
               AND table_name NOT IN ('cache_dados', 'bridge_status', 'bridge_commands', 'exodo_sync_conflitos', 'exodo_config')
             ORDER BY table_name
         """)

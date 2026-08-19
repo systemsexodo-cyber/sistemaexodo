@@ -12,6 +12,7 @@ class Usuario {
   final TipoUsuario tipo;
   final String? empresaId; // ID da empresa associada
   final String? funcionarioId; // ID do funcionário associado (para vendedores)
+  final bool garcom; // Garçom: acesso restrito às telas de mesas/comandas + suas vendas/comissões/ranking
   final bool ativo;
   final bool isMaster; // Usuário master da empresa (pode gerenciar permissões)
   final Set<String>? permissoesPersonalizadas; // Permissões adicionais concedidas
@@ -33,6 +34,7 @@ class Usuario {
     this.tipo = TipoUsuario.operador,
     this.empresaId,
     this.funcionarioId,
+    this.garcom = false,
     this.ativo = true,
     this.isMaster = false,
     this.permissoesPersonalizadas,
@@ -56,6 +58,7 @@ class Usuario {
     TipoUsuario? tipo,
     String? empresaId,
     String? funcionarioId,
+    bool? garcom,
     bool? ativo,
     bool? isMaster,
     Set<String>? permissoesPersonalizadas,
@@ -77,6 +80,7 @@ class Usuario {
       tipo: tipo ?? this.tipo,
       empresaId: empresaId ?? this.empresaId,
       funcionarioId: funcionarioId ?? this.funcionarioId,
+      garcom: garcom ?? this.garcom,
       ativo: ativo ?? this.ativo,
       isMaster: isMaster ?? this.isMaster,
       permissoesPersonalizadas: permissoesPersonalizadas ?? this.permissoesPersonalizadas,
@@ -133,6 +137,7 @@ class Usuario {
       ),
       empresaId: empId,
       funcionarioId: getStr('funcionarioId', 'funcionario_id'),
+      garcom: getBool('garcom', 'garcom') ?? false,
       ativo: getBool('ativo', 'ativo') ?? true,
       isMaster: getBool('isMaster', 'is_master') ?? false,
       permissoesPersonalizadas: get('permissoesPersonalizadas', 'permissoes_personalizadas') != null
@@ -170,6 +175,7 @@ class Usuario {
       'tipo': tipo.name,
       'empresa_id': empresaId,
       'funcionario_id': funcionarioId,
+      'garcom': garcom,
       'ativo': ativo,
       'is_master': isMaster,
       'permissoes_personalizadas': permissoesPersonalizadas?.toList(),
@@ -191,6 +197,9 @@ class Usuario {
 
   /// Verifica se o usuário é gerente
   bool get isGerente => tipo == TipoUsuario.gerente;
+
+  /// Verifica se o usuário é garçom (acesso restrito às telas de mesas/comandas)
+  bool get isGarcom => garcom;
 
   /// Verifica se o usuário tem permissões de administrador ou gerente
   bool get podeGerenciarUsuarios => isAdmin || isGerente;

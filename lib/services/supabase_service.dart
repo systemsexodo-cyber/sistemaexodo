@@ -615,6 +615,15 @@ class SupabaseService {
         dataToUpsert.removeWhere((k, _) => !colunas.contains(k));
       }
 
+      // empresas: o toMap() envia ~40 chaves (razaoSocial, whatsapp*, etc.)
+      // mas a tabela real só tem algumas. Sem filtrar, o upsert falhava com
+      // PGRST204 (engolido silenciosamente) e o configuracoes — que carrega o
+      // OK de mensalidade — nunca chegava à nuvem.
+      if (table == SupabaseService.tableEmpresas) {
+        final colunas = await _detectarColunasEmpresas();
+        dataToUpsert.removeWhere((k, _) => !colunas.contains(k));
+      }
+
       final safeData = _toSafeMap(dataToUpsert);
       await _client.from(table).upsert(safeData).timeout(const Duration(seconds: 8));
       debugPrint('>>> [Supabase] ✅ Upsert concluído em $table');
@@ -690,6 +699,73 @@ class SupabaseService {
     return const {
       'id', 'email', 'nome', 'empresa_id', 'perfil', 'ativo',
       'created_at', 'updated_at',
+    };
+  }
+
+  Set<String>? _colunasEmpresasCache;
+  Future<Set<String>>? _detectandoColunasEmpresas;
+
+  /// Detecta (uma única vez) as colunas reais da tabela 'empresas' consultando
+  /// o endpoint OpenAPI do PostgREST (/rest/v1/), igual à detecção de 'usuarios'.
+  /// O Empresa.toMap() envia ~40 chaves (razaoSocial, email, whatsapp*,
+  /// modelosAdicionais, etc.) mas a tabela real só tem algumas — sem filtrar,
+  /// o upsert falhava com PGRST204 e o 'configuracoes' (OK de mensalidade,
+  /// perfis de preço, NFC-e) nunca chegava à nuvem.
+  Future<Set<String>> _detectarColunasEmpresas() async {
+    final cached = _colunasEmpresasCache;
+    if (cached != null) return cached;
+    final emAndamento = _detectandoColunasEmpresas;
+    if (emAndamento != null) return emAndamento;
+    final futuro = _detectarColunasEmpresasInterno();
+    _detectandoColunasEmpresas = futuro;
+    try {
+      final colunas = await futuro;
+      _colunasEmpresasCache = colunas;
+      return colunas;
+    } finally {
+      _detectandoColunasEmpresas = null;
+    }
+  }
+
+  Future<Set<String>> _detectarColunasEmpresasInterno() async {
+    try {
+      final resp = await http.get(
+        Uri.parse('${SupabaseConfig.url}/rest/v1/'),
+        headers: {
+          'apikey': SupabaseConfig.anonKey,
+          'Authorization': 'Bearer ${SupabaseConfig.anonKey}',
+          'Accept': 'application/json',
+        },
+      ).timeout(const Duration(seconds: 10));
+
+      if (resp.statusCode == 200) {
+        final decoded = jsonDecode(resp.body);
+        if (decoded is Map<String, dynamic>) {
+          final definitions = decoded['definitions'];
+          if (definitions is Map<String, dynamic>) {
+            final empresas = definitions['empresas'];
+            if (empresas is Map<String, dynamic>) {
+              final properties = empresas['properties'];
+              if (properties is Map<String, dynamic>) {
+                final colunas = properties.keys.toSet();
+                debugPrint('>>> [Supabase] ℹ️ Colunas reais de empresas detectadas (${colunas.length}): ${colunas.join(', ')}');
+                return colunas;
+              }
+            }
+          }
+        }
+      } else {
+        debugPrint('>>> [Supabase] ⚠️ Falha ao detectar colunas de empresas (HTTP ${resp.statusCode})');
+      }
+    } catch (e) {
+      debugPrint('>>> [Supabase] ⚠️ Falha ao detectar colunas de empresas: $e');
+    }
+    // Fallback conservador: colunas conhecidas do schema
+    // (ADICIONAR_CONFIGURACOES_EMPRESA.sql / SUPABASE_FIX_ALL.sql).
+    return const {
+      'id', 'empresa_id', 'razao_social', 'nome_fantasia', 'cnpj', 'slug',
+      'ativo', 'created_at', 'updated_at', 'configuracoes', 'perfis_de_preco',
+      'perfisDePreco',
     };
   }
 
@@ -817,6 +893,14 @@ class SupabaseService {
       // de custo que ainda não existem até rodar o SUPABASE_FIX_ALL.sql).
       if (table == SupabaseService.tableEstoqueHistorico) {
         final colunas = await _detectarColunasEstoqueHistorico();
+        enrichedData = enrichedData
+            .map((m) => m..removeWhere((k, _) => !colunas.contains(k)))
+            .toList();
+      }
+
+      // empresas: mesma proteção do upsert individual (ver _detectarColunasEmpresas).
+      if (table == SupabaseService.tableEmpresas) {
+        final colunas = await _detectarColunasEmpresas();
         enrichedData = enrichedData
             .map((m) => m..removeWhere((k, _) => !colunas.contains(k)))
             .toList();

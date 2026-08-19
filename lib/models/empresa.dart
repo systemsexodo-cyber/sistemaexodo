@@ -62,6 +62,8 @@ class Empresa {
   // Fiscal / Contabilidade
   final String? emailContabilidade;   // E-mail da contabilidade para envio de XMLs
   final bool envioFiscalAutomatico;    // Se deve enviar no dia 01 de cada mês automaticamente
+  final bool incluirTaxaEntregaNfce;   // Incluir taxa de entrega no valor total da NFC-e
+  final bool incluirServicoGarcomNfce; // Incluir serviço do garçom (10%) no valor total da NFC-e
 
   Empresa({
     required this.id,
@@ -109,6 +111,8 @@ class Empresa {
     this.modelosAdicionais = const [],
     this.emailContabilidade,
     this.envioFiscalAutomatico = false,
+    this.incluirTaxaEntregaNfce = true,
+    this.incluirServicoGarcomNfce = true,
   });
 
   /// Retorna o nome de exibição (nome fantasia ou razão social)
@@ -218,6 +222,8 @@ class Empresa {
     List<AdicionalProduto>? modelosAdicionais,
     String? emailContabilidade,
     bool? envioFiscalAutomatico,
+    bool? incluirTaxaEntregaNfce,
+    bool? incluirServicoGarcomNfce,
   }) {
     return Empresa(
       id: id ?? this.id,
@@ -269,6 +275,8 @@ class Empresa {
       modelosAdicionais: modelosAdicionais ?? this.modelosAdicionais,
       emailContabilidade: emailContabilidade ?? this.emailContabilidade,
       envioFiscalAutomatico: envioFiscalAutomatico ?? this.envioFiscalAutomatico,
+      incluirTaxaEntregaNfce: incluirTaxaEntregaNfce ?? this.incluirTaxaEntregaNfce,
+      incluirServicoGarcomNfce: incluirServicoGarcomNfce ?? this.incluirServicoGarcomNfce,
     );
   }
 
@@ -363,6 +371,8 @@ class Empresa {
           .toList() ?? [],
       emailContabilidade: getString('emailContabilidade', 'email_contabilidade'),
       envioFiscalAutomatico: getBool('envioFiscalAutomatico', 'envio_fiscal_automatico', false) ?? false,
+      incluirTaxaEntregaNfce: getBool('incluirTaxaEntregaNfce', 'incluir_taxa_entrega_nfce', true) ?? true,
+      incluirServicoGarcomNfce: getBool('incluirServicoGarcomNfce', 'incluir_servico_garcom_nfce', true) ?? true,
     );
   }
 
@@ -413,6 +423,8 @@ class Empresa {
       'modelosAdicionais': modelosAdicionais.map((e) => e.toMap()).toList(),
       'emailContabilidade': emailContabilidade,
       'envioFiscalAutomatico': envioFiscalAutomatico,
+      'incluirTaxaEntregaNfce': incluirTaxaEntregaNfce,
+      'incluirServicoGarcomNfce': incluirServicoGarcomNfce,
 
       // Campos de NFC-e/certificado:
       'certificadoDigitalUrl': certificadoDigitalUrl,

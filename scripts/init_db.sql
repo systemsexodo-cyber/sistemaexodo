@@ -477,8 +477,6 @@ CREATE TABLE IF NOT EXISTS public.fechamentos_caixa (
     totais jsonb,
     created_at timestamp with time zone,
     updated_at timestamp with time zone,
-    "aberturaCaixaId" timestamp with time zone,
-    "dataFechamento" timestamp with time zone,
     "valorEsperado" numeric,
     "valorReal" numeric,
     diferenca numeric,
@@ -785,6 +783,7 @@ CREATE TABLE IF NOT EXISTS public.produtos (
     descricao text,
     unidade text,
     grupo text,
+    subgrupo text,
     preco numeric,
     preco_custo numeric,
     preco_promocional text,
@@ -1779,6 +1778,12 @@ CREATE TRIGGER trg_exodo_sync_log_usuarios AFTER INSERT OR DELETE OR UPDATE ON p
 
 DROP TRIGGER IF EXISTS trg_exodo_sync_log_vendas_balcao ON public.vendas_balcao;
 CREATE TRIGGER trg_exodo_sync_log_vendas_balcao AFTER INSERT OR DELETE OR UPDATE ON public.vendas_balcao FOR EACH ROW EXECUTE FUNCTION public.log_sync_event();
+
+--
+-- Migração: subgrupo do produto (grupo -> subgrupo)
+--
+ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS subgrupo text;
+ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS departamentos_adicionais jsonb;
 
 --
 -- PostgreSQL database dump complete

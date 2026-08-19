@@ -19,6 +19,7 @@ import 'pdv_page.dart';
 import 'entrega_detalhes_page.dart';
 import 'venda_direta_page.dart';
 import '../services/pedido_pdf_service.dart';
+import '../services/producao_pdf_service.dart';
 import '../services/auth_service.dart';
 import '../models/empresa.dart';
 import '../widgets/sync_status_widget.dart';
@@ -1640,6 +1641,22 @@ class _PedidosPageState extends State<PedidosPage> {
                     ),
                     tooltip: 'Imprimir Pedido',
                   ),
+                  const SizedBox(width: 2),
+                  // Botão reimprimir produção - imprime os tickets nas impressoras dos setores
+                  IconButton(
+                    onPressed: () => _reimprimirProducao(context, pedido),
+                    icon: const Icon(
+                      Icons.restaurant,
+                      size: 18,
+                      color: Colors.deepOrangeAccent,
+                    ),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                      minWidth: 32,
+                      minHeight: 32,
+                    ),
+                    tooltip: 'Reimprimir Produção (setores)',
+                  ),
                 ],
               ),
               // Linha 5: Botão de Receber em destaque (para pedidos não pagos e não cancelados)
@@ -2131,6 +2148,94 @@ class _PedidosPageState extends State<PedidosPage> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Erro ao gerar PDF: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  /// Reimprime os tickets de produção do pedido nas impressoras dos setores
+  /// (Cozinha, Bar, etc. — conforme configurado em cada produto/departamento).
+  Future<void> _reimprimirProducao(BuildContext context, Pedido pedido) async {
+    try {
+      final dataService = Provider.of<DataService>(context, listen: false);
+      final authService = Provider.of<AuthService>(context, listen: false);
+      final empresa = authService.empresaAtual;
+      if (empresa == null) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Nenhuma empresa selecionada para imprimir a produção'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      final inputs = pedido.produtos
+          .map((it) => ItemProducaoInput(
+                id: it.id,
+                nome: it.nome,
+                quantidade: it.quantidade,
+                observacao: it.observacao,
+                adicionais: it.adicionais.map((a) => a.nome).toList(),
+              ))
+          .toList();
+
+      if (inputs.isEmpty) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Nenhum item para reimprimir neste pedido'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+        return;
+      }
+
+      final qtd = await ProducaoPdfService.imprimirTicketsProducao(
+        itens: inputs,
+        dataService: dataService,
+        empresa: empresa,
+        numeroDocumento: pedido.numero,
+        clienteNome: pedido.clienteNome,
+        isDelivery: pedido.deliveryInfo != null,
+        detalhes: DetalhesTicketProducao(
+          mesaComanda: pedido.origem,
+          clienteTelefone: pedido.clienteTelefone,
+          enderecoEntrega: pedido.clienteEndereco,
+          motorista: pedido.deliveryInfo?.motoristaNome,
+          previsaoEntrega: pedido.deliveryInfo?.previsaoEntrega,
+          formasPagamento: pedido.pagamentos
+              .where((p) => p.valor > 0)
+              .map((p) => p.tipo.nome)
+              .toList(),
+          pagamentoConcluido: pedido.totalmenteRecebido,
+          observacoesGerais: pedido.observacoes,
+          // Hora do pedido + operador (para a cozinha)
+          dataPedido: pedido.dataPedido,
+          usuarioCriou: pedido.operador,
+        ),
+      );
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(qtd > 0
+                ? '✓ $qtd ticket(s) de produção reimpresso(s) em suas impressoras'
+                : 'Nenhum item com impressora de produção configurada'),
+            backgroundColor: qtd > 0 ? Colors.green : Colors.orange,
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erro ao reimprimir produção: $e'),
             backgroundColor: Colors.red,
           ),
         );

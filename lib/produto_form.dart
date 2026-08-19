@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:collection/collection.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:sistema_exodo_novo/services/data_service.dart';
@@ -22,6 +23,7 @@ import 'package:sistema_exodo_novo/models/adicional_produto.dart';
 import 'package:sistema_exodo_novo/models/item_composicao.dart';
 import 'package:sistema_exodo_novo/models/pergunta_selecao.dart';
 import 'package:sistema_exodo_novo/services/impressao_service.dart';
+import 'package:sistema_exodo_novo/services/producao_pdf_service.dart';
 import 'package:sistema_exodo_novo/models/permissao.dart';
 import 'package:sistema_exodo_novo/services/permission_service.dart';
 import 'package:uuid/uuid.dart';
@@ -45,6 +47,7 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
   final _descricaoController = TextEditingController();
   final _unidadeController = TextEditingController();
   final _grupoController = TextEditingController();
+  final _subgrupoController = TextEditingController();
   final _precoController = TextEditingController();
   final _precoCustoController = TextEditingController();
   final _estoqueController = TextEditingController();
@@ -108,6 +111,7 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
   late String _descricao;
   late String _unidade;
   late String _grupo;
+  late String _subgrupo;
   late double _quantidadeBaixa;
   late double _preco;
   late double? _precoCusto;
@@ -170,10 +174,10 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
   bool _paraCozinha = false;
   bool _paraBar = false;
   String? _departamentoId; // Departamento/setor de preparação (entidade separada da impressora)
+  List<String> _departamentosAdicionais = []; // Outros DEPARTAMENTOS onde o produto também deve imprimir (multi-seleção)
   bool _enviaBalanca = false;
-  String? _impressoraProducao;
+  String? _impressoraProducao; // Legado
   List<String> _impressoraProducaoExtra = []; // Outras impressoras onde o produto também deve imprimir (multi-seleção)
-  List<String> _impressorasSistema = [];
   List<String> _codigosFornecedor = [];
   
   // Campos para Adicionais
@@ -227,6 +231,9 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
           ? widget.item!.unidade
           : 'peça';
       _grupo = widget.item?.grupo ?? 'Sem Grupo';
+      _subgrupo = widget.item is Produto
+          ? (widget.item as Produto).subgrupo
+          : '';
       _preco = widget.item?.preco ?? 0.0;
       _precoCusto = widget.item?.precoCusto;
       _estoque = widget.item?.estoque ?? 0.0;
@@ -256,6 +263,7 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
           ? List<FormaVenda>.from((widget.item as Produto).formasVendaEfetivas)
           : [];
       _grupoController.text = _grupo;
+      _subgrupoController.text = _subgrupo;
       _precoController.text = _preco.toString();
       _precoCustoController.text = _precoCusto?.toString() ?? '';
       _estoqueController.text = _estoque.toString();
@@ -278,6 +286,9 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
       _paraCozinha = widget.item?.paraCozinha ?? false;
       _paraBar = widget.item?.paraBar ?? false;
       _departamentoId = widget.item is Produto ? (widget.item as Produto).departamentoId : null;
+      _departamentosAdicionais = widget.item is Produto
+          ? List<String>.from((widget.item as Produto).departamentosAdicionais)
+          : [];
       _enviaBalanca = widget.item?.enviaBalanca ?? false;
       _impressoraProducao = widget.item is Produto ? (widget.item as Produto).impressoraProducao : null;
       _impressoraProducaoExtra = widget.item is Produto
@@ -286,13 +297,6 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
               .toList()
           : [];
       
-      ImpressaoService.listarImpressoras().then((lista) {
-        if (mounted) {
-          setState(() {
-            _impressorasSistema = lista.map((p) => p.name).toList();
-          });
-        }
-      });
       _codigosFornecedor = List<String>.from(widget.item?.codigosFornecedor ?? []);
       _observacaoPadraoController.text = widget.item is Produto ? ((widget.item as Produto).observacaoPadrao ?? '') : '';
       
@@ -513,6 +517,7 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
     _unidadeController.dispose();
     _quantidadeBaixaController.dispose();
     _grupoController.dispose();
+    _subgrupoController.dispose();
     _precoController.dispose();
     _precoCustoController.dispose();
     _estoqueController.dispose();
@@ -925,6 +930,7 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
       quantidadeBaixa: ((double.tryParse(_quantidadeBaixaController.text.replaceAll(',', '.')) ?? 1.0).clamp(0.001, 9999999)).toDouble(),
       formasVenda: _formasVenda.isNotEmpty ? _formasVenda : null,
       grupo: (_grupo.isNotEmpty ? _grupo : 'Sem Grupo'),
+      subgrupo: _subgrupoController.text.trim(),
       preco: _preco,
       precoCusto: _precoCusto,
       estoque: _estoque,
@@ -957,6 +963,7 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
       paraCozinha: _paraCozinha,
       paraBar: _paraBar,
       departamentoId: _departamentoId,
+      departamentosAdicionais: _departamentosAdicionais,
       enviaBalanca: _enviaBalanca,
       impressoraProducao: _impressoraProducao,
       impressoraProducaoExtra: _impressoraProducaoExtra,
@@ -2056,40 +2063,102 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
     );
   }
 
-  /// Chip de seleção múltipla de destino de impressão (setor ou impressora).
-  Widget _buildDestinoChip(String nome, IconData icon, Color cor) {
-    final selecionado = _impressoraProducaoExtra.contains(nome);
-    final ehPrincipal = _impressoraProducao == nome;
-    return FilterChip(
-      label: Text(nome),
-      selected: selecionado,
-      // O destino principal já está coberto pelo dropdown — o chip fica desabilitado
-      onSelected: ehPrincipal
-          ? null
-          : (sel) => setState(() {
-              if (sel) {
-                if (!_impressoraProducaoExtra.contains(nome)) {
-                  _impressoraProducaoExtra.add(nome);
-                }
-              } else {
-                _impressoraProducaoExtra.remove(nome);
-              }
-            }),
-      selectedColor: cor.withOpacity(0.25),
-      checkmarkColor: cor,
-      backgroundColor: Colors.white.withOpacity(0.05),
-      side: BorderSide(
-        color: selecionado ? cor : Colors.white24,
+  /// Resolve as impressoras de produção deste produto a partir dos
+  /// DEPARTAMENTOS selecionados (principal + adicionais), com fallback para os
+  /// campos legados de impressora direta.
+  List<String> _impressorasProducaoDoProduto() {
+    final ds = Provider.of<DataService>(context, listen: false);
+    final deps = ds.departamentos;
+    final setores = <String>{};
+    void addDep(String? id) {
+      if (id == null || id.isEmpty) return;
+      final dep = deps.where((d) => d.id == id).firstOrNull;
+      if (dep == null) return;
+      if (dep.impressoraProducao != null && dep.impressoraProducao!.trim().isNotEmpty) {
+        setores.add(dep.impressoraProducao!.trim());
+      }
+      for (final e in dep.impressoraProducaoExtra) {
+        if (e.trim().isNotEmpty) setores.add(e.trim());
+      }
+    }
+    addDep(_departamentoId);
+    for (final id in _departamentosAdicionais) {
+      addDep(id);
+    }
+    // Legado: impressora configurada direto no produto
+    if (setores.isEmpty || _departamentoId == null) {
+      if (_impressoraProducao != null && _impressoraProducao!.trim().isNotEmpty) {
+        setores.add(_impressoraProducao!.trim());
+      }
+      for (final e in _impressoraProducaoExtra) {
+        if (e.trim().isNotEmpty) setores.add(e.trim());
+      }
+    }
+    return setores.toList();
+  }
+
+  /// Imprime um ticket de PRODUÇÃO de exemplo nas impressoras configuradas,
+  /// para o usuário conferir o layout e a impressora certa.
+  Future<void> _testarImpressaoProducao() async {
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final empresa = dataService.empresaAtual ?? authService.empresaAtual;
+    if (empresa == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Empresa não encontrada para o teste de impressão.')),
+      );
+      return;
+    }
+
+    final impressoras = _impressorasProducaoDoProduto();
+
+    // Confirmação antes de imprimir (informa onde vai imprimir)
+    final destino = impressoras.isEmpty
+        ? 'IMPRESSORA PADRÃO DO TERMINAL'
+        : impressoras.join(' • ');
+    final confirmou = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        title: const Text('Testar Impressão de Produção',
+            style: TextStyle(color: Colors.white, fontSize: 16)),
+        content: Text(
+          impressoras.isEmpty
+              ? 'Nenhuma impressora de produção configurada para este produto.\n\nO ticket de teste será enviado para a impressora padrão do terminal para você conferir o layout.'
+              : 'O ticket de teste será impresso em:\n\n$destino\n\nConfira se é a impressora do setor de produção (Cozinha, Bar, etc.).',
+          style: const TextStyle(color: Colors.white70, fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar', style: TextStyle(color: Colors.white60)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.amberAccent),
+            child: const Text('Imprimir Teste',
+                style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+          ),
+        ],
       ),
-      labelStyle: TextStyle(
-        color: selecionado ? Colors.white : Colors.white70,
-        fontWeight: selecionado ? FontWeight.bold : FontWeight.normal,
-        fontSize: 12,
-      ),
-      avatar: Icon(
-        icon,
-        size: 16,
-        color: ehPrincipal ? Colors.amberAccent : (selecionado ? cor : Colors.white54),
+    );
+    if (confirmou != true || !mounted) return;
+
+    final impressos = await ProducaoPdfService.imprimirTicketTeste(
+      empresa: empresa,
+      impressoras: impressoras,
+      dataService: dataService,
+    );
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          impressos > 0
+              ? '✅ Ticket de teste enviado para: $destino'
+              : 'Não foi possível imprimir. Verifique se há uma impressora instalada/ativa no Windows.',
+        ),
+        backgroundColor: impressos > 0 ? Colors.green : Colors.redAccent,
       ),
     );
   }
@@ -2151,6 +2220,19 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
     }
     grupos.sort();
     return grupos;
+  }
+
+  /// Subgrupos já cadastrados (ex: 'Refrigerantes', 'Sucos' dentro de 'Bebidas').
+  List<String> _obterSubgruposUnicos() {
+    final service = Provider.of<DataService>(context, listen: false);
+    final subgrupos = service.produtos
+        .map((p) => p.subgrupo)
+        .where((s) => s.trim().isNotEmpty)
+        .map((s) => s.trim())
+        .toSet()
+        .toList();
+    subgrupos.sort();
+    return subgrupos;
   }
 
   List<String> _obterUnidadesUnicas() {
@@ -2561,7 +2643,7 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
 
           const SizedBox(height: 14),
 
-          // ── IMPRESSORA (separada do departamento) ──────────────────────────
+          // ── IMPRESSÃO POR DEPARTAMENTO (multi-seleção) ─────────────────────
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
@@ -2569,108 +2651,124 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
               borderRadius: BorderRadius.circular(10),
               border: Border.all(color: Colors.blueAccent.withOpacity(0.3)),
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Row(
-                  children: [
-                    Icon(Icons.print, color: Colors.blueAccent, size: 18),
-                    SizedBox(width: 8),
-                    Text(
-                      'Impressora de Produção',
-                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Escolha APENAS a impressora física. O departamento é definido acima — são coisas separadas.',
-                  style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 11),
-                ),
-                const SizedBox(height: 10),
-                DropdownButtonFormField<String?>(
-                  value: (_impressoraProducao != null && _impressoraProducao!.isNotEmpty)
-                      ? _impressoraProducao
-                      : null,
-                  dropdownColor: const Color(0xFF2A2D3E),
-                  style: const TextStyle(color: Colors.white, fontSize: 13),
-                  decoration: InputDecoration(
-                    hintText: 'Padrão do terminal',
-                    hintStyle: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 12),
-                    filled: true,
-                    fillColor: Colors.black12,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Colors.white24)),
-                  ),
-                  items: [
-                    const DropdownMenuItem<String?>(
-                      value: null,
-                      child: Text('Padrão do terminal', style: TextStyle(color: Colors.white70)),
-                    ),
-                    ..._impressorasSistema.map((printerName) => DropdownMenuItem<String?>(
-                          value: printerName,
-                          child: Text(printerName, style: const TextStyle(color: Colors.white)),
-                        )),
-                  ],
-                  onChanged: (val) => setState(() {
-                    _impressoraProducao = val;
-                    // Evita duplicar a impressora principal na lista de extras
-                    if (val != null && val.isNotEmpty) {
-                      _impressoraProducaoExtra.remove(val);
-                    }
-                  }),
-                ),
-
-                const SizedBox(height: 14),
-                const Divider(color: Colors.white12, height: 1),
-                const SizedBox(height: 12),
-
-                // Multi-seleção: imprimir também em outras impressoras
-                const Row(
-                  children: [
-                    Icon(Icons.library_add_check, color: Colors.tealAccent, size: 18),
-                    SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'Imprimir também em outras impressoras',
+            child: Builder(builder: (context) {
+              final ds = Provider.of<DataService>(context, listen: false);
+              final deps = ds.departamentos;
+              final destinoResolvido = _impressorasProducaoDoProduto();
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(
+                    children: [
+                      Icon(Icons.print, color: Colors.blueAccent, size: 18),
+                      SizedBox(width: 8),
+                      Text(
+                        'Impressão de Produção',
                         style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'O ticket imprime na impressora configurada no departamento acima e em cada departamento extra marcado abaixo (a impressora de cada um é definida no cadastro de Departamentos).',
+                    style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 11),
+                  ),
+                  const SizedBox(height: 10),
+                  if (deps.isEmpty)
+                    Text(
+                      'Nenhum departamento cadastrado. Cadastre os departamentos no menu → Departamentos.',
+                      style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 12),
+                    )
+                  else
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: deps.map((dep) {
+                        final ehPrincipal = dep.id == _departamentoId;
+                        final selecionado = _departamentosAdicionais.contains(dep.id);
+                        return FilterChip(
+                          label: Text(
+                            dep.nome + (ehPrincipal ? ' ★' : ''),
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                          selected: ehPrincipal || selecionado,
+                          // O principal já imprime — chip desabilitado como extra
+                          onSelected: ehPrincipal
+                              ? null
+                              : (sel) => setState(() {
+                                  if (sel) {
+                                    if (!_departamentosAdicionais.contains(dep.id)) {
+                                      _departamentosAdicionais.add(dep.id);
+                                    }
+                                  } else {
+                                    _departamentosAdicionais.remove(dep.id);
+                                  }
+                                }),
+                          selectedColor: Colors.tealAccent.withOpacity(0.25),
+                          checkmarkColor: Colors.tealAccent,
+                          backgroundColor: Colors.white.withOpacity(0.05),
+                          side: BorderSide(
+                            color: ehPrincipal || selecionado ? Colors.tealAccent : Colors.white24,
+                          ),
+                          labelStyle: TextStyle(
+                            color: ehPrincipal || selecionado ? Colors.white : Colors.white70,
+                            fontWeight: ehPrincipal || selecionado ? FontWeight.bold : FontWeight.normal,
+                          ),
+                          avatar: Icon(
+                            ehPrincipal ? Icons.star : Icons.print_outlined,
+                            size: 16,
+                            color: ehPrincipal
+                                ? Colors.amberAccent
+                                : (selecionado ? Colors.tealAccent : Colors.white54),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  if (destinoResolvido.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.tealAccent.withOpacity(0.08),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.tealAccent.withOpacity(0.3)),
+                      ),
+                      child: Text(
+                        'Vai imprimir em: ${destinoResolvido.join(' • ')}',
+                        style: const TextStyle(color: Colors.tealAccent, fontSize: 11, fontWeight: FontWeight.w600),
                       ),
                     ),
                   ],
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Marque outras impressoras físicas onde este produto também deve imprimir (pode marcar várias).',
-                  style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 11),
-                ),
-                const SizedBox(height: 10),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: _impressorasSistema.map(
-                    (nome) => _buildDestinoChip(nome, Icons.print, Colors.tealAccent),
-                  ).toList(),
-                ),
-                if (_impressoraProducaoExtra.isNotEmpty) ...[
-                  const SizedBox(height: 10),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: Colors.tealAccent.withOpacity(0.08),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.tealAccent.withOpacity(0.3)),
-                    ),
-                    child: Text(
-                      'Vai imprimir em: ${<String>[
-                        if (_impressoraProducao != null && _impressoraProducao!.isNotEmpty) _impressoraProducao!,
-                        ..._impressoraProducaoExtra,
-                      ].join(' • ')}',
-                      style: const TextStyle(color: Colors.tealAccent, fontSize: 11, fontWeight: FontWeight.w600),
+
+                  const SizedBox(height: 14),
+                  const Divider(color: Colors.white12, height: 1),
+                  const SizedBox(height: 12),
+                  // Teste de impressão de produção
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: _testarImpressaoProducao,
+                      icon: const Icon(Icons.print_outlined, color: Colors.amberAccent, size: 18),
+                      label: const Text(
+                        'TESTAR IMPRESSÃO DE PRODUÇÃO',
+                        style: TextStyle(color: Colors.amberAccent, fontSize: 12, fontWeight: FontWeight.bold),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.amberAccent,
+                        side: const BorderSide(color: Colors.amberAccent, width: 1.2),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
                     ),
                   ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Imprime um ticket de exemplo na(s) impressora(s) acima para conferir se o layout e a impressora estão certos.',
+                    style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 10),
+                  ),
                 ],
-              ],
-            ),
+              );
+            }),
           ),
         ]),
 
@@ -2980,6 +3078,15 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
               hint: 'Ex: Bebidas',
               sugestoes: _obterGruposUnicos(),
               onChanged: (v) => _grupo = v,
+            ),
+          ),
+          _buildField(
+            label: 'Subgrupo',
+            child: _buildAutocomplete(
+              controller: _subgrupoController,
+              hint: 'Ex: Refrigerantes (dentro de Bebidas)',
+              sugestoes: _obterSubgruposUnicos(),
+              onChanged: (_) => setState(() {}),
             ),
           ),
           _buildField(

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../services/data_service.dart';
+import '../services/producao_pdf_service.dart';
 import '../services/pedido_service.dart';
 import '../models/pedido.dart';
 import '../models/produto.dart';
@@ -830,10 +831,64 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
       dataService.updatePedido(pedidoFinal);
     } else {
       await dataService.addPedido(pedidoFinal);
+
+      // IMPRIMIR TICKETS DE PRODUÇÃO automaticamente (impressoras por setor do produto)
+      await _imprimirTicketsProducao(pedidoFinal);
     }
 
     if (mounted) {
       Navigator.of(context).pop(pedidoFinal);
+    }
+  }
+
+  /// Imprime os tickets de produção do pedido recém-criado nas impressoras
+  /// dos setores configuradas em cada produto (Cozinha, Bar, etc.).
+  /// Silencioso: falhas não impedem o salvamento do pedido.
+  Future<void> _imprimirTicketsProducao(Pedido pedido) async {
+    try {
+      final dataService = Provider.of<DataService>(context, listen: false);
+      final empresa = dataService.empresaAtual;
+      if (empresa == null) return;
+
+      final inputs = _carrinho
+          .map((item) => ItemProducaoInput(
+                id: item.produto.id,
+                nome: item.produto.nome,
+                quantidade: item.quantidade,
+                observacao: item.observacao,
+                adicionais: item.adicionais.map((a) => a.nome).toList(),
+              ))
+          .toList();
+
+      final qtd = await ProducaoPdfService.imprimirTicketsProducao(
+        itens: inputs,
+        dataService: dataService,
+        empresa: empresa,
+        numeroDocumento: pedido.numero,
+        clienteNome: pedido.clienteNome,
+        isDelivery: pedido.deliveryInfo != null,
+        detalhes: DetalhesTicketProducao(
+          mesaComanda: pedido.origem,
+          clienteTelefone: pedido.clienteTelefone,
+          enderecoEntrega: pedido.clienteEndereco,
+          motorista: pedido.deliveryInfo?.motoristaNome,
+          previsaoEntrega: pedido.deliveryInfo?.previsaoEntrega,
+          formasPagamento: pedido.pagamentos
+              .where((p) => p.valor > 0)
+              .map((p) => p.tipo.nome)
+              .toList(),
+          pagamentoConcluido: pedido.totalmenteRecebido,
+          observacoesGerais: pedido.observacoes,
+          // Hora do pedido + operador (para a cozinha)
+          dataPedido: pedido.dataPedido,
+          usuarioCriou: pedido.operador,
+        ),
+      );
+      if (qtd > 0) {
+        debugPrint('>>> [Producao] ✓ $qtd ticket(s) de produção impressos (pedido ${pedido.numero})');
+      }
+    } catch (e) {
+      debugPrint('>>> [Producao] ⚠️ Erro ao imprimir tickets de produção: $e');
     }
   }
 

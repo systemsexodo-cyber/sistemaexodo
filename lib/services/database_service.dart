@@ -139,6 +139,26 @@ class DatabaseService {
         await conn.execute('ALTER TABLE sangrias_caixa ADD COLUMN IF NOT EXISTS abertura_caixa_id VARCHAR;');
         await conn.execute('ALTER TABLE suprimentos_caixa ADD COLUMN IF NOT EXISTS abertura_caixa_id VARCHAR;');
         await conn.execute('ALTER TABLE fechamentos_caixa ADD COLUMN IF NOT EXISTS numero VARCHAR;');
+        // CORREÇÃO CAIXA "NUNCA FECHA": a tabela fechamentos_caixa ganhou colunas
+        // duplicadas com TIPO ERRADO ("aberturaCaixaId" e "dataFechamento" como
+        // TIMESTAMP) numa migração antiga. O sincronizador convertia o ID (13
+        // dígitos) da abertura em timestamp ao gravá-las, e o carregamento
+        // sobrescrevia o id correto — o vínculo fechamento→abertura se perdia e
+        // o caixa ficava "sempre aberto". O dado real vive nas colunas snake
+        // (abertura_caixa_id TEXT / data_fechamento TEXT). Remover as duplicatas.
+        await conn.execute('ALTER TABLE fechamentos_caixa DROP COLUMN IF EXISTS "aberturaCaixaId";');
+        await conn.execute('ALTER TABLE fechamentos_caixa DROP COLUMN IF EXISTS "dataFechamento";');
+        // Reparo idempotente de dados já corrompidos: fechamentos cujo
+        // abertura_caixa_id foi gravado como DATA (timestamp string) em vez do
+        // id da abertura. Casa pela data de abertura e restaura o vínculo real.
+        await conn.execute(r'''
+          UPDATE fechamentos_caixa f
+          SET abertura_caixa_id = a.id
+          FROM aberturas_caixa a
+          WHERE NOT EXISTS (SELECT 1 FROM aberturas_caixa x WHERE x.id = f.abertura_caixa_id)
+            AND replace(substr(f.abertura_caixa_id, 1, 19), ' ', 'T')
+              = replace(substr(a.data_abertura::text, 1, 19), ' ', 'T')
+        ''');
         await conn.execute('ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS senha VARCHAR;');
         await conn.execute('ALTER TABLE vendas_balcao ADD COLUMN IF NOT EXISTS senha VARCHAR;');
         await conn.execute('ALTER TABLE empresas ADD COLUMN IF NOT EXISTS configuracoes JSONB;');
@@ -154,6 +174,8 @@ class DatabaseService {
         await conn.execute('ALTER TABLE produtos ADD COLUMN IF NOT EXISTS quantidade_baixa NUMERIC DEFAULT 1;');
         await conn.execute('ALTER TABLE produtos ADD COLUMN IF NOT EXISTS formas_venda JSONB;');
         await conn.execute('ALTER TABLE produtos ADD COLUMN IF NOT EXISTS departamento_id VARCHAR;');
+        await conn.execute('ALTER TABLE produtos ADD COLUMN IF NOT EXISTS departamentos_adicionais JSONB;');
+        await conn.execute('ALTER TABLE produtos ADD COLUMN IF NOT EXISTS subgrupo VARCHAR;');
 
         // Garantir tabelas de monitoramento
         await _garantirSyncStatus(conn);
@@ -876,7 +898,16 @@ class DatabaseService {
               } catch (_) {}
             }
             if (convertedMap.containsKey(k)) {
-              if (val != null) {
+              // Nunca deixar uma coluna duplicada (camelCase) sobrescrever um
+              // valor string já lido — ex.: fechamentos_caixa tem
+              // "aberturaCaixaId" TIMESTAMP (migração antiga, tipo errado) que
+              // vinha DEPOIS de abertura_caixa_id TEXT e sobrescrevia o id com
+              // uma data, quebrando o vínculo fechamento→abertura (caixa que
+              // nunca fechava). Se o atual é uma string não vazia e o novo é
+              // DateTime/num, mantém o string (o id real).
+              final atual = convertedMap[k];
+              final mantemAtual = atual is String && atual.isNotEmpty && val is! String;
+              if (!mantemAtual && val != null) {
                 convertedMap[k] = val;
               }
             } else {

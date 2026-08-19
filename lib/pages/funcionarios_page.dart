@@ -322,6 +322,7 @@ class _FuncionariosListTabState extends State<_FuncionariosListTab> {
     String tipoComissao = 'Porcentagem';
     bool ativo = true;
     bool temAcesso = false;
+    bool garcom = false;
     bool obscureSenha = true;
 
     showDialog(
@@ -331,7 +332,7 @@ class _FuncionariosListTabState extends State<_FuncionariosListTab> {
           return AlertDialog(
             backgroundColor: const Color(0xFF10151B),
             title: const Text(
-              'Cadastrar Funcionário / Vendedor',
+              'Cadastrar Funcionário / Garçom / Vendedor',
               style: TextStyle(color: Colors.white),
             ),
             content: SingleChildScrollView(
@@ -430,6 +431,44 @@ class _FuncionariosListTabState extends State<_FuncionariosListTab> {
                       });
                     },
                   ),
+                  const SizedBox(height: 8),
+                  CheckboxListTile(
+                    title: const Text(
+                      '👨‍🍳 Garçom (acesso restrito: mesas/comandas + suas vendas e ranking)',
+                      style: TextStyle(color: Colors.white, fontSize: 13),
+                    ),
+                    subtitle: const Text(
+                      'Cria login próprio; ao entrar, vê apenas as telas de mesas/comandas e suas comissões.',
+                      style: TextStyle(color: Colors.white54, fontSize: 11),
+                    ),
+                    value: garcom,
+                    onChanged: (value) {
+                      setState(() {
+                        garcom = value ?? false;
+                        if (garcom) temAcesso = true; // Garçom precisa de login
+                      });
+                    },
+                  ),
+                  if (garcom) ...[
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: senhaController,
+                      obscureText: obscureSenha,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: InputDecoration(
+                        labelText: 'Senha de acesso *',
+                        labelStyle: const TextStyle(color: Colors.white70),
+                        border: const OutlineInputBorder(),
+                        suffixIcon: IconButton(
+                          icon: Icon(
+                            obscureSenha ? Icons.visibility_off : Icons.visibility,
+                            color: Colors.white54,
+                          ),
+                          onPressed: () => setState(() => obscureSenha = !obscureSenha),
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -450,7 +489,7 @@ class _FuncionariosListTabState extends State<_FuncionariosListTab> {
                     return;
                   }
 
-                  if (temAcesso && senhaController.text.trim().isEmpty) {
+                  if ((temAcesso || garcom) && senhaController.text.trim().isEmpty) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
                         content: Text('Informe uma senha para o acesso ao sistema'),
@@ -468,12 +507,13 @@ class _FuncionariosListTabState extends State<_FuncionariosListTab> {
                     emailController.text.trim().isEmpty
                         ? null
                         : emailController.text.trim(),
-                    temAcesso ? senhaController.text.trim() : null,
+                    (temAcesso || garcom) ? senhaController.text.trim() : null,
                     observacoesController.text.trim().isEmpty
                         ? null
                         : observacoesController.text.trim(),
                     ativo,
-                    temAcesso,
+                    temAcesso || garcom,
+                    garcom,
                     tipoComissao == 'Porcentagem' ? (double.tryParse(comissaoController.text.replaceAll(',', '.')) ?? 0.0) : 0.0,
                     tipoComissao,
                     tipoComissao == 'Fixo' ? (double.tryParse(comissaoController.text.replaceAll(',', '.')) ?? 0.0) : 0.0,
@@ -504,6 +544,7 @@ class _FuncionariosListTabState extends State<_FuncionariosListTab> {
     String tipoComissao = funcionario.tipoComissao;
     bool ativo = funcionario.ativo;
     bool temAcesso = funcionario.temAcesso;
+    bool garcom = funcionario.garcom;
     bool obscureSenha = true;
 
     showDialog(
@@ -611,6 +652,20 @@ class _FuncionariosListTabState extends State<_FuncionariosListTab> {
                       });
                     },
                   ),
+                  const SizedBox(height: 8),
+                  CheckboxListTile(
+                    title: const Text(
+                      '👨‍🍳 Garçom (acesso restrito: mesas/comandas + suas vendas e ranking)',
+                      style: TextStyle(color: Colors.white, fontSize: 13),
+                    ),
+                    value: garcom,
+                    onChanged: (value) {
+                      setState(() {
+                        garcom = value ?? false;
+                        if (garcom) temAcesso = true; // Garçom precisa de login
+                      });
+                    },
+                  ),
                 ],
               ),
             ),
@@ -658,7 +713,8 @@ class _FuncionariosListTabState extends State<_FuncionariosListTab> {
                       ? null
                       : observacoesController.text.trim(),
                   ativo,
-                  temAcesso,
+                  temAcesso || garcom,
+                  garcom,
                   tipoComissao == 'Porcentagem' ? (double.tryParse(comissaoController.text.replaceAll(',', '.')) ?? 0.0) : 0.0,
                   tipoComissao,
                   tipoComissao == 'Fixo' ? (double.tryParse(comissaoController.text.replaceAll(',', '.')) ?? 0.0) : 0.0,
@@ -681,6 +737,7 @@ class _FuncionariosListTabState extends State<_FuncionariosListTab> {
     String? observacoes,
     bool ativo,
     bool temAcesso,
+    bool garcom,
     double porcentagemComissao,
     String tipoComissao,
     double valorComissao,
@@ -723,6 +780,7 @@ class _FuncionariosListTabState extends State<_FuncionariosListTab> {
             tipo: TipoUsuario.vendedor,
             empresaId: empresaId,
             funcionarioId: funcionarioId,
+            garcom: garcom,
             ativo: ativo,
             isMaster: false,
             createdAt: DateTime.now(),
@@ -765,6 +823,7 @@ class _FuncionariosListTabState extends State<_FuncionariosListTab> {
     String? observacoes,
     bool ativo,
     bool temAcesso,
+    bool garcom,
     double porcentagemComissao,
     String tipoComissao,
     double valorComissao,
@@ -780,6 +839,7 @@ class _FuncionariosListTabState extends State<_FuncionariosListTab> {
       observacoes: observacoes,
       ativo: ativo,
       temAcesso: temAcesso,
+      garcom: garcom,
       porcentagemComissao: porcentagemComissao,
       tipoComissao: tipoComissao,
       valorComissao: valorComissao,
@@ -819,6 +879,7 @@ class _FuncionariosListTabState extends State<_FuncionariosListTab> {
             tipo: TipoUsuario.vendedor,
             empresaId: empresaId,
             funcionarioId: funcionario.id,
+            garcom: garcom,
             ativo: ativo,
             isMaster: false,
             createdAt: DateTime.now(),
@@ -834,6 +895,7 @@ class _FuncionariosListTabState extends State<_FuncionariosListTab> {
             senha: senha != null && senha.isNotEmpty ? senha : usuarioExistente.senha,
             telefone: telefone,
             ativo: ativo,
+            garcom: garcom,
             updatedAt: DateTime.now(),
           );
           await authService.atualizarUsuario(usuarioAtualizado);

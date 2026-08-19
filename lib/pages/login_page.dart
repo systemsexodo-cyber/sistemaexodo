@@ -6,6 +6,7 @@ import 'dart:ui';
 import 'package:google_fonts/google_fonts.dart';
 import '../theme.dart';
 import 'home_page.dart';
+import 'garcom_home_page.dart';
 import 'selecionar_empresa_page.dart';
 import 'bloqueio_mensalidade_page.dart';
 import '../models/empresa.dart';
@@ -50,6 +51,15 @@ class _LoginPageState extends State<LoginPage> {
       // Se for o usuário Master / Suporte, entra DIRETO na tela do Portal Êxodo (SelecionarEmpresaPage)
       if (isMaster) {
         Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const SelecionarEmpresaPage()));
+        return;
+      }
+
+      // GARÇOM: acesso restrito — entra direto na tela de mesas/comandas + vendas/ranking
+      if (usuario?.isGarcom == true) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const GarcomHomePage()),
+        );
         return;
       }
 

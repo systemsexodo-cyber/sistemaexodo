@@ -8562,6 +8562,34 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         return;
       }
 
+      // ===== AJUSTE FISCAL: Taxa de Entrega e Serviço do Garçom =====
+      // Configurações da empresa permitem incluir/excluir esses valores do
+      // total da NFC-e (emissão fiscal). Quando desligados, o valor da
+      // nota fiscal é apenas o subtotal dos produtos, sem os acréscimos.
+      double ajusteFiscal = 0.0; // Valor a subtrair do total para a NFC-e
+
+      // Taxa de entrega
+      if (!empresaFinal.incluirTaxaEntregaNfce) {
+        final taxaEntrega = vendaBalcao.deliveryInfo?.taxaEntrega ?? 0.0;
+        if (taxaEntrega > 0.01) {
+          ajusteFiscal += taxaEntrega;
+          debugPrint('>>> [VendaDireta] NFC-e: taxa de entrega R\$ ${taxaEntrega.toStringAsFixed(2)} EXCLUÍDA do total fiscal');
+        }
+      }
+
+      // Serviço do garçom (10%)
+      if (!empresaFinal.incluirServicoGarcomNfce) {
+        final itemGarcom = vendaBalcao.itens
+            .where((i) => i.id == 'garcom' && i.isServico)
+            .fold(0.0, (sum, i) => sum + i.subtotal);
+        if (itemGarcom > 0.01) {
+          ajusteFiscal += itemGarcom;
+          debugPrint('>>> [VendaDireta] NFC-e: serviço do garçom R\$ ${itemGarcom.toStringAsFixed(2)} EXCLUÍDO do total fiscal');
+        }
+      }
+
+      final valorTotalNfce = vendaBalcao.valorTotal - ajusteFiscal;
+
       // Converter pagamentos
       final pagamentos = <NFCePagamento>[];
       String _tipoNFCe(TipoPagamento t) {
@@ -8587,21 +8615,21 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
             NFCePagamento(tipo: _tipoNFCe(pag.tipo), valor: pag.valor),
           );
         }
-        // Garantir que o total bata (soma dos splits deve igualar o total)
+        // Garantir que o total bata (soma dos splits deve igualar o total fiscal)
         final somaSplits = pagsSplit.fold(0.0, (s, p) => s + p.valor);
-        if ((somaSplits - vendaBalcao.valorTotal).abs() > 0.01 &&
+        if ((somaSplits - valorTotalNfce).abs() > 0.01 &&
             pagamentos.isNotEmpty) {
           // Ajustar a última parcela para fechar a diferença (arredondamento)
           pagamentos.last = NFCePagamento(
             tipo: pagamentos.last.tipo,
-            valor: pagamentos.last.valor + (vendaBalcao.valorTotal - somaSplits),
+            valor: pagamentos.last.valor + (valorTotalNfce - somaSplits),
           );
         }
       } else {
         pagamentos.add(
           NFCePagamento(
             tipo: _tipoNFCe(vendaBalcao.tipoPagamento),
-            valor: vendaBalcao.valorTotal,
+            valor: valorTotalNfce,
           ),
         );
       }
@@ -8667,8 +8695,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         0.0,
         (sum, p) => sum + (p.preco * (quantidades[p.id] ?? 1.0)),
       );
-      final valorDesconto = (somaItensNfce - vendaBalcao.valorTotal) > 0.01
-          ? somaItensNfce - vendaBalcao.valorTotal
+      final valorDesconto = (somaItensNfce - valorTotalNfce) > 0.01
+          ? somaItensNfce - valorTotalNfce
           : 0.0;
 
       final nfce = await nfceService.emitir(
@@ -8676,7 +8704,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         produtos: produtos,
         quantidades: quantidades,
         pagamentos: pagamentos,
-        valorTotal: vendaBalcao.valorTotal,
+        valorTotal: valorTotalNfce,
         valorDesconto: valorDesconto,
         cpfCnpjConsumidor: cpfCnpjOverride ?? vendaBalcao.clienteCpfCnpj,
         nomeConsumidor: nomeOverride ?? vendaBalcao.clienteNome,

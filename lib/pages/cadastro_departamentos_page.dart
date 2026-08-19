@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/data_service.dart';
+import '../services/producao_pdf_service.dart';
 import '../models/departamento.dart';
 import '../services/impressao_service.dart';
 import 'package:uuid/uuid.dart';
@@ -255,6 +256,44 @@ class _CadastroDepartamentosPageState extends State<CadastroDepartamentosPage> {
     }
   }
 
+  /// Imprime um ticket de PRODUÇÃO de exemplo na impressora do departamento,
+  /// para conferir o layout e a impressora certa.
+  Future<void> _testarImpressaoDepartamento(
+    BuildContext ctx,
+    String? impressora,
+    DataService ds,
+  ) async {
+    final empresa = ds.empresaAtual;
+    if (empresa == null) {
+      ScaffoldMessenger.of(ctx).showSnackBar(
+        const SnackBar(content: Text('Empresa não encontrada para o teste de impressão.')),
+      );
+      return;
+    }
+
+    final impressoras = (impressora != null && impressora.isNotEmpty)
+        ? [impressora]
+        : <String>[];
+
+    final impressos = await ProducaoPdfService.imprimirTicketTeste(
+      empresa: empresa,
+      impressoras: impressoras,
+      dataService: ds,
+    );
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(ctx).showSnackBar(
+      SnackBar(
+        content: Text(
+          impressos > 0
+              ? '✅ Ticket de teste enviado para: ${impressoras.isEmpty ? 'IMPRESSORA PADRÃO DO TERMINAL' : impressoras.join(' • ')}'
+              : 'Não foi possível imprimir. Verifique se há uma impressora instalada/ativa no Windows.',
+        ),
+        backgroundColor: impressos > 0 ? Colors.green : Colors.redAccent,
+      ),
+    );
+  }
+
   Future<void> _abrirFormulario(Departamento? departamento) async {
     final ds = Provider.of<DataService>(context, listen: false);
     final nomeController = TextEditingController(text: departamento?.nome ?? '');
@@ -389,6 +428,29 @@ class _CadastroDepartamentosPageState extends State<CadastroDepartamentosPage> {
                       ),
                     ],
                     onChanged: (v) => setDialogState(() => impressora = v),
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () => _testarImpressaoDepartamento(ctx, impressora, ds),
+                      icon: const Icon(Icons.print_outlined, color: Colors.amberAccent, size: 18),
+                      label: const Text(
+                        'TESTAR IMPRESSÃO DE PRODUÇÃO',
+                        style: TextStyle(color: Colors.amberAccent, fontSize: 12, fontWeight: FontWeight.bold),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.amberAccent,
+                        side: const BorderSide(color: Colors.amberAccent, width: 1.2),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Imprime um ticket de exemplo na impressora acima para conferir o layout e a impressora.',
+                    style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 10),
                   ),
                 ],
               ),

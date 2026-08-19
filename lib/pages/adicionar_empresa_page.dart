@@ -70,6 +70,8 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
   // Fiscal / Contabilidade
   final _emailContabilidadeController = TextEditingController();
   bool _envioFiscalAutomatico = false;
+  bool _incluirTaxaEntregaNfce = true;
+  bool _incluirServicoGarcomNfce = true;
   
   // Customizações de Impressão NFC-e
 
@@ -253,6 +255,8 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
     // Fiscal / Contabilidade
     _emailContabilidadeController.text = empresa.emailContabilidade ?? '';
     _envioFiscalAutomatico = empresa.envioFiscalAutomatico;
+    _incluirTaxaEntregaNfce = empresa.incluirTaxaEntregaNfce;
+    _incluirServicoGarcomNfce = empresa.incluirServicoGarcomNfce;
     
     // Configurações de visibilidade dos botões do PDV
     _mostrarBotaoCliente = empresa.configuracoes?['mostrarBotaoCliente'] ?? true;
@@ -427,6 +431,8 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
       moduloPet: _moduloPet,
       emailContabilidade: _emailContabilidadeController.text.trim().isEmpty ? null : _emailContabilidadeController.text.trim(),
       envioFiscalAutomatico: _envioFiscalAutomatico,
+      incluirTaxaEntregaNfce: _incluirTaxaEntregaNfce,
+      incluirServicoGarcomNfce: _incluirServicoGarcomNfce,
       configuracoes: {
         ...?widget.empresa?.configuracoes, // Preservar outras configurações
         if (_crt != null) 'crt': _crt, // Código de Regime Tributário (1=Simples Nacional, 2=SN excesso, 3=Regime Normal)
@@ -1009,6 +1015,34 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                 },
                 activeColor: Colors.orange,
                 secondary: const Icon(Icons.auto_awesome, color: Colors.orange),
+                contentPadding: EdgeInsets.zero,
+              ),
+              const SizedBox(height: 8),
+              _buildSectionTitle('Emissão Fiscal (NFC-e / NF-e)'),
+              SwitchListTile(
+                title: const Text('Incluir Taxa de Entrega na NFC-e', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                subtitle: const Text('Se ativo, a taxa de entrega será somada ao valor total da nota fiscal. Se desativo, a taxa fica apenas no cupom.', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                value: _incluirTaxaEntregaNfce,
+                onChanged: (bool value) {
+                  setState(() {
+                    _incluirTaxaEntregaNfce = value;
+                  });
+                },
+                activeColor: Colors.greenAccent,
+                secondary: const Icon(Icons.delivery_dining, color: Colors.greenAccent),
+                contentPadding: EdgeInsets.zero,
+              ),
+              SwitchListTile(
+                title: const Text('Incluir Serviço do Garçom (10%) na NFC-e', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                subtitle: const Text('Se ativo, a taxa de serviço (garçom) será somada ao valor total da nota fiscal. Se desativo, fica apenas no cupom.', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                value: _incluirServicoGarcomNfce,
+                onChanged: (bool value) {
+                  setState(() {
+                    _incluirServicoGarcomNfce = value;
+                  });
+                },
+                activeColor: Colors.amberAccent,
+                secondary: const Icon(Icons.restaurant, color: Colors.amberAccent),
                 contentPadding: EdgeInsets.zero,
               ),
 

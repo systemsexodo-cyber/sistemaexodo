@@ -122,6 +122,67 @@ class ImpressaoService {
     );
   }
 
+  /// Imprime bytes de PDF em uma impressora ESPECÍFICA (pelo nome).
+  ///
+  /// Usado pelos tickets de produção: cada setor (Cozinha, Bar, ...) tem a sua
+  /// impressora, então o documento vai direto para a impressora indicada.
+  /// Se a impressora não for encontrada, tenta a padrão do sistema e, em último
+  /// caso, cai no diálogo nativo de impressão (sem bloquear a venda).
+  static Future<void> imprimirPdfNaImpressora({
+    required Uint8List bytes,
+    required String nomeImpressora,
+    String name = 'Documento',
+    bool termico = true,
+  }) async {
+    if (kIsWeb) {
+      await Printing.layoutPdf(
+        onLayout: (_) async => bytes,
+        name: name,
+        usePrinterSettings: true,
+        dynamicLayout: false,
+      );
+      return;
+    }
+
+    final PdfPageFormat format = termico
+        ? const PdfPageFormat(
+            80 * PdfPageFormat.mm,
+            double.infinity,
+            marginAll: 0,
+          )
+        : PdfPageFormat.a4;
+
+    try {
+      // 1. Tenta a impressora indicada pelo nome (ex.: "Cozinha")
+      Printer? printer = await _resolverImpressora(nomeImpressora);
+      // 2. Se não achou, usa a padrão do sistema
+      printer ??= await _resolverImpressora(null);
+      if (printer != null) {
+        debugPrint('[Impressao] Ticket de produção → ${printer.name}');
+        final ok = await Printing.directPrintPdf(
+          printer: printer,
+          onLayout: (_) async => bytes,
+          name: name,
+          format: format,
+          usePrinterSettings: true,
+          dynamicLayout: false,
+        );
+        if (ok) return;
+      }
+    } catch (e) {
+      debugPrint('[Impressao] Falha na impressão em "$nomeImpressora": $e — fallback');
+    }
+
+    // 3. Fallback: diálogo nativo de impressão
+    await Printing.layoutPdf(
+      onLayout: (_) async => bytes,
+      name: name,
+      format: format,
+      usePrinterSettings: true,
+      dynamicLayout: false,
+    );
+  }
+
   /// Lista impressoras do sistema (vazio na web).
   static Future<List<Printer>> listarImpressoras() async {
     if (kIsWeb) return [];
