@@ -69,6 +69,7 @@ import 'package:sistema_exodo_novo/models/pergunta_selecao.dart';
 import '../models/taxa_entrega.dart';
 import 'package:sistema_exodo_novo/widgets/popup_perguntas_combo.dart';
 import 'package:sistema_exodo_novo/models/motorista.dart';
+import '../services/producao_pdf_service.dart';
 
 /// Item no carrinho da venda direta
 class ItemCarrinho {
@@ -229,6 +230,8 @@ class VendaDiretaPage extends StatefulWidget {
   final List<ItemPedido>? itensParaRepetir; // Itens para repetir venda
   final List<ItemServico>? servicosParaRepetir; // Serviços para repetir venda
   final MesaComanda? mesaComanda; // Mesa/Comanda para receber
+  final bool iniciarDelivery; // Abrir direto com delivery ativo
+  final double? pagamentoValorLivre; // Valor livre para pagamento direto da mesa/comanda
 
   VendaDiretaPage({
     super.key,
@@ -238,6 +241,8 @@ class VendaDiretaPage extends StatefulWidget {
     this.itensParaRepetir,
     this.servicosParaRepetir,
     this.mesaComanda,
+    this.iniciarDelivery = false,
+    this.pagamentoValorLivre,
   });
 
   @override
@@ -373,6 +378,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   double _limiteGavetaValor = 1000.0;
   bool _mostrarBarraLegenda = false; // Controle de visibilidade da legenda (hover)
   Timer? _debounce; // Timer para suavizar a busca e evitar lag na digitação do PDV
+  bool _habilitarMesasComandas = true;
+  bool _habilitarCozinha = true;
 
   // Getters para facilitar identificação de Mesa/Comanda
   String get tipoNome {
@@ -501,6 +508,21 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
               _limiteGavetaValor = valDouble;
             });
           }
+        }
+      });
+      // Carregar config local de comandas/mesa/cozinha
+      _storage.carregar(_chavePDV('habilitarMesasComandas')).then((value) {
+        if (value != null) {
+          setState(() {
+            _habilitarMesasComandas = value == true || value == 'true';
+          });
+        }
+      });
+      _storage.carregar(_chavePDV('habilitarCozinha')).then((value) {
+        if (value != null) {
+          setState(() {
+            _habilitarCozinha = value == true || value == 'true';
+          });
         }
       });
       if (empresa != null && empresa.configuracoes?['venda_direta_view_mode'] != null) {
@@ -645,6 +667,28 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           _carregarCarrinhoSalvo();
         });
       }
+    }
+
+    // Se veio com iniciarDelivery, ativar modo delivery e abrir dialog
+    if (widget.iniciarDelivery) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        setState(() => _isDelivery = true);
+        // Aguardar um frame para garantir que a UI está pronta
+        Future.delayed(const Duration(milliseconds: 300), () {
+          if (mounted) _abrirDialogDelivery();
+        });
+      });
+    }
+
+    // Se veio com pagamentoValorLivre, abrir o dialog de pagamento com valor pré-preenchido
+    if (widget.pagamentoValorLivre != null && widget.pagamentoValorLivre! > 0) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        Future.delayed(const Duration(milliseconds: 300), () {
+          if (mounted) {
+            _abrirDialogPagamentoValorLivre(widget.pagamentoValorLivre!);
+          }
+        });
+      });
     }
 
     // Registrar handler global na inicialização
@@ -3967,6 +4011,54 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     }
   }
 
+  /// Abre o diálogo de pagamento com valor pré-preenchido (pagamento por valor livre da mesa/comanda)
+  void _abrirDialogPagamentoValorLivre(double valor) {
+    final dataService = Provider.of<DataService>(context, listen: false);
+    
+    setState(() {
+      _gridSelectedIndex = -1;
+      _cartSelectedIndex = -1;
+      _focoNoCarrinho = false;
+      _focoNasCategorias = false;
+    });
+
+    final pagamentosIniciais = [
+      PagamentoPedido(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        tipo: TipoPagamento.dinheiro,
+        valor: valor,
+        recebido: false,
+      ),
+    ];
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => _DialogPagamentoPDV(
+        subtotal: _totalCarrinhoSemDesconto,
+        descontoTotal: _totalCarrinhoSemDesconto - _totalCarrinho,
+        totalCarrinho: _totalCarrinho,
+        pagamentosIniciais: pagamentosIniciais,
+        cliente: _clienteSelecionado,
+        cpfCnpjInicial: _cpfNfce,
+        nomeInicial: _nomeNfce,
+        onDadosConsumidorChanged: (cpf, nome) {
+          _cpfNfce = cpf;
+          _nomeNfce = nome;
+        },
+        onConfirmar: (listaPagamentos, desc, acres) {
+          Navigator.pop(context);
+          _concluirVendaComPagamentos(dataService, listaPagamentos);
+        },
+        onSalvarPendente: (listaPagamentos) {
+          Navigator.pop(context);
+          _salvarVendaPendente(dataService, listaPagamentos);
+        },
+      ),
+    );
+  }
+
   void _finalizarVenda(DataService dataService) {
     if (_estaFinalizando) return; // Proteção contra múltiplos cliques
     
@@ -6678,6 +6770,47 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         await dataService.addVendaBalcao(vendaBalcao);
       }
 
+      // IMPRIMIR TICKETS DE PRODUÇÃO (SEMPRE, para qualquer venda direta)
+      // Criar itens de produção a partir do carrinho para impressão
+      {
+        final produtosParaImprimir = <ItemPedido>[];
+        for (final item in itensVenda) {
+          if (!item.isServico) {
+            produtosParaImprimir.add(ItemPedido(
+              id: item.id,
+              nome: item.nome,
+              preco: item.precoUnitario,
+              quantidade: item.quantidade,
+              observacao: item.observacao,
+              fornecedorNome: item.fornecedorNome,
+              adicionais: item.adicionais,
+              unidadeVenda: item.unidadeVenda,
+              quantidadeBaixa: item.quantidadeBaixa,
+              precoSemPromocao: item.precoSemPromocao,
+            ));
+          }
+        }
+        final pedidoParaImpressao = Pedido(
+          id: vendaId,
+          numero: numero,
+          clienteId: clienteSelecionadoCapturado?.id,
+          clienteNome: clienteNomeFinal,
+          clienteTelefone: clienteSelecionadoCapturado?.telefone ?? vendaBalcao.clienteTelefone,
+          dataPedido: vendaBalcao.dataVenda,
+          status: 'Pago',
+          total: totalVendaCapturado,
+          produtos: produtosParaImprimir,
+          servicos: [],
+          pagamentos: pagamentosAtualizados,
+          observacoes: observacaoIdentificadora,
+          deliveryInfo: vendaBalcao.deliveryInfo,
+          vendedorId: vendedorSelecionadoCapturado?.id,
+          vendedorNome: vendedorSelecionadoCapturado?.nome,
+          operador: vendaBalcao.operador,
+        );
+        await _imprimirTicketsProducaoVendaDireta(pedidoParaImpressao);
+      }
+
       final temPagamentosPendentes = pagamentosAtualizados.any((p) => !p.recebido);
       final temFiadoOuCrediario = pagamentosAtualizados.any(
         (p) => p.tipo == TipoPagamento.fiado || p.tipo == TipoPagamento.crediario,
@@ -6777,11 +6910,31 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         ));
       }
 
+      // Registrar pagamentos no historicoPagamentos da mesa/comanda
+      // ANTES de fechar, para que o totalPago fique correto.
+      if (mesaParaLimparId != null && mesaComandaOriginal != null) {
+        final pagamentosExistentes = List<RegistroPagamento>.from(mesaComandaOriginal.historicoPagamentos);
+        final idsExistentes = pagamentosExistentes.map((p) => p.id).toSet();
+        for (final p in pagamentosAtualizados) {
+          if (p.recebido && p.valor > 0 && !idsExistentes.contains(p.id)) {
+            pagamentosExistentes.add(RegistroPagamento(
+              id: p.id,
+              valor: p.valor,
+              dataPagamento: p.dataRecebimento ?? DateTime.now(),
+              formaPagamento: p.tipo.nome,
+              observacao: p.observacao,
+              pessoaPagou: vendedorSelecionadoCapturado?.nome,
+            ));
+          }
+        }
+        final mesaAtualizada = mesaComandaOriginal.copyWith(
+          historicoPagamentos: pagamentosExistentes,
+          status: 'Fechada',
+        );
+        dataService.updateMesaComanda(mesaAtualizada);
+      }
       // Limpar mesa/comanda vinculada
       if (mesaParaLimparId != null) {
-          if (mesaComandaOriginal != null) {
-            dataService.updateMesaComanda(mesaComandaOriginal.copyWith(status: 'Fechada'));
-          }
           await dataService.deleteMesaComanda(mesaParaLimparId);
       }
 
@@ -7196,6 +7349,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       // 1. DELIVERY: Salvar como Pedido para aparecer na Central de Pedidos
       await dataService.addPedido(pedidoVendaSalva);
 
+      // IMPRIMIR TICKETS DE PRODUÇÃO
+      await _imprimirTicketsProducaoVendaDireta(pedidoVendaSalva);
+
       // 2. CRIAR REGISTRO DE ENTREGA
       final registroEntrega = Entrega(
         id: uuid.v4(),
@@ -7248,9 +7404,25 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     widget.onVendaFinalizada?.call();
 
     // Marcar como fechada e aguardar liberação
-    if (mesaParaLimparId != null) {
-        // Ativando filtro para sumir da tela
-        final tempMc = _mesaComandaVinculada!.copyWith(status: 'Fechada');
+    if (mesaParaLimparId != null && _mesaComandaVinculada != null) {
+        // Registrar pagamentos antes de fechar a mesa
+        final pagamentosExistentes = List<RegistroPagamento>.from(_mesaComandaVinculada!.historicoPagamentos);
+        final idsExistentes = pagamentosExistentes.map((p) => p.id).toSet();
+        for (final p in pagamentosDoDialog) {
+          if (p.recebido && p.valor > 0 && !idsExistentes.contains(p.id)) {
+            pagamentosExistentes.add(RegistroPagamento(
+              id: p.id,
+              valor: p.valor,
+              dataPagamento: p.dataRecebimento ?? DateTime.now(),
+              formaPagamento: p.tipo.nome,
+              observacao: p.observacao,
+            ));
+          }
+        }
+        final tempMc = _mesaComandaVinculada!.copyWith(
+          historicoPagamentos: pagamentosExistentes,
+          status: 'Fechada',
+        );
         dataService.updateMesaComanda(tempMc);
         
         await dataService.deleteMesaComanda(mesaParaLimparId);
@@ -7301,6 +7473,10 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       selecionados[i] = 0.0;
     }
 
+    // Estado para modo de pagamento: 'itens' ou 'valor'
+    String modoPagamento = 'itens';
+    final valorLivreController = TextEditingController();
+
     showDialog(
       context: context,
       builder: (context) {
@@ -7328,14 +7504,76 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
             }
             double totalFinalPagar = totalSelecionado - descontoProporcional;
 
+            // No modo valor livre, usar o valor digitado
+            double valorLivre = double.tryParse(valorLivreController.text.replaceAll(',', '.')) ?? 0.0;
+            bool isModoValor = modoPagamento == 'valor';
+            double totalFinal = isModoValor ? valorLivre : totalFinalPagar;
+
             return AlertDialog(
               backgroundColor: const Color(0xFF1E1E2E),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-              title: Row(
-                children: const [
-                  Icon(Icons.call_split_rounded, color: Colors.blueAccent),
-                  SizedBox(width: 8),
-                  Text('Dividir por Itens', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+              title: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: const [
+                      Icon(Icons.call_split_rounded, color: Colors.blueAccent),
+                      SizedBox(width: 8),
+                      Text('Receber / Dividir', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  // Toggle: Itens / Valor
+                  Container(
+                    decoration: BoxDecoration(
+                      color: Colors.black26,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () => setDialogState(() => modoPagamento = 'itens'),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              decoration: BoxDecoration(
+                                color: !isModoValor ? Colors.blueAccent.withOpacity(0.3) : Colors.transparent,
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.shopping_cart, size: 14, color: !isModoValor ? Colors.blueAccent : Colors.white54),
+                                  const SizedBox(width: 6),
+                                  Text('Selecionar Itens', style: TextStyle(color: !isModoValor ? Colors.blueAccent : Colors.white54, fontSize: 11, fontWeight: FontWeight.bold)),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () => setDialogState(() => modoPagamento = 'valor'),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              decoration: BoxDecoration(
+                                color: isModoValor ? Colors.greenAccent.withOpacity(0.3) : Colors.transparent,
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.attach_money, size: 14, color: isModoValor ? Colors.greenAccent : Colors.white54),
+                                  const SizedBox(width: 6),
+                                  Text('Pagar por Valor', style: TextStyle(color: isModoValor ? Colors.greenAccent : Colors.white54, fontSize: 11, fontWeight: FontWeight.bold)),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ],
               ),
               content: SizedBox(
@@ -7344,11 +7582,61 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Text(
-                      'Selecione a quantidade de cada produto que esta pessoa vai pagar agora:',
-                      style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 13),
-                    ),
-                    const SizedBox(height: 16),
+                    if (!isModoValor) ...[
+                      Text(
+                        'Selecione a quantidade de cada produto que esta pessoa vai pagar agora:',
+                        style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 13),
+                      ),
+                      const SizedBox(height: 16),
+                    ],
+                    if (isModoValor) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        'Digite o valor que o cliente vai pagar (ex: R\$ 100,00):',
+                        style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 13),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: valorLivreController,
+                        autofocus: true,
+                        style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        onChanged: (_) => setDialogState(() {}),
+                        decoration: InputDecoration(
+                          prefixText: 'R\$ ',
+                          prefixStyle: const TextStyle(color: Colors.greenAccent, fontSize: 22),
+                          hintText: '0,00',
+                          hintStyle: TextStyle(color: Colors.white.withOpacity(0.2)),
+                          filled: true,
+                          fillColor: Colors.black26,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide.none,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      // Valores rápidos
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [10, 20, 50, 100, 150, 200].map((v) {
+                          return GestureDetector(
+                            onTap: () => setDialogState(() => valorLivreController.text = v.toStringAsFixed(2)),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.08),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(color: Colors.white10),
+                              ),
+                              child: Text('R\$ $v', style: const TextStyle(color: Colors.white70, fontSize: 13)),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ],
+                    if (!isModoValor) ...[
                     Flexible(
                       child: Container(
                         constraints: const BoxConstraints(maxHeight: 300),
@@ -7429,9 +7717,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                               ),
                             );
                           },
-                        ),
-                      ),
+                        ),                      ),
                     ),
+                    ], // fim do if (!isModoValor)
                     const SizedBox(height: 16),
                     // Resumo Financeiro
                     Container(
@@ -7442,30 +7730,35 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                       ),
                       child: Column(
                         children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text('Subtotal selecionado:', style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 12)),
-                              Text('R\$ ${totalSelecionado.toStringAsFixed(2)}', style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
-                            ],
-                          ),
-                          if (descontoProporcional > 0) ...[
-                            const SizedBox(height: 4),
+                          if (!isModoValor) ...[
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                Text('Desconto proporcional:', style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 12)),
-                                Text('- R\$ ${descontoProporcional.toStringAsFixed(2)}', style: const TextStyle(color: Colors.orangeAccent, fontSize: 12, fontWeight: FontWeight.bold)),
+                                Text('Subtotal selecionado:', style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 12)),
+                                Text('R\$ ${totalSelecionado.toStringAsFixed(2)}', style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
                               ],
                             ),
+                            if (descontoProporcional > 0) ...[
+                              const SizedBox(height: 4),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text('Desconto proporcional:', style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 12)),
+                                  Text('- R\$ ${descontoProporcional.toStringAsFixed(2)}', style: const TextStyle(color: Colors.orangeAccent, fontSize: 12, fontWeight: FontWeight.bold)),
+                                ],
+                              ),
+                            ],
                           ],
                           const Divider(color: Colors.white10, height: 16),
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              const Text('Total desta parte:', style: TextStyle(color: Colors.greenAccent, fontSize: 14, fontWeight: FontWeight.bold)),
                               Text(
-                                'R\$ ${totalFinalPagar.toStringAsFixed(2)}',
+                                isModoValor ? 'Valor informado:' : 'Total desta parte:',
+                                style: TextStyle(color: isModoValor ? Colors.greenAccent : Colors.greenAccent, fontSize: 14, fontWeight: FontWeight.bold),
+                              ),
+                              Text(
+                                'R\$ ${totalFinal.toStringAsFixed(2)}',
                                 style: const TextStyle(color: Colors.greenAccent, fontSize: 16, fontWeight: FontWeight.w900),
                               ),
                             ],
@@ -7481,44 +7774,144 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                   onPressed: () => Navigator.pop(context),
                   child: const Text('CANCELAR', style: TextStyle(color: Colors.white54)),
                 ),
-                ElevatedButton(
-                  onPressed: totalFinalPagar > 0.0
-                      ? () async {
-                          Navigator.pop(context);
-                          await _processarDivisaoItens(dataService, selecionados, totalFinalPagar, descontoProporcional);
-                        }
-                      : null,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blueGrey.shade800,
-                    disabledBackgroundColor: Colors.white.withOpacity(0.05),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                if (isModoValor) ...[
+                  ElevatedButton(
+                    onPressed: valorLivre > 0.0
+                        ? () async {
+                            Navigator.pop(context);
+                            // Registrar pagamento direto no historicoPagamentos da comanda
+                            if (_mesaComandaVinculada != null) {
+                              final authService = Provider.of<AuthService>(context, listen: false);
+                              final usuarioLogado = authService.usuarioAtual?.nome ?? 'Sistema';
+                              final pagamento = RegistroPagamento(
+                                id: DateTime.now().millisecondsSinceEpoch.toString(),
+                                valor: valorLivre,
+                                dataPagamento: DateTime.now(),
+                                formaPagamento: 'Valor Informado',
+                                observacao: 'Pagamento parcial via dividir conta',
+                                pessoaPagou: usuarioLogado,
+                              );
+                              final pagamentosExistentes = List<RegistroPagamento>.from(_mesaComandaVinculada!.historicoPagamentos);
+                              pagamentosExistentes.add(pagamento);
+                              final mesaAtualizada = _mesaComandaVinculada!.copyWith(
+                                historicoPagamentos: pagamentosExistentes,
+                              );
+                              await dataService.updateMesaComanda(mesaAtualizada);
+                              _mesaComandaVinculada = mesaAtualizada;
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('R\$ ${valorLivre.toStringAsFixed(2)} registrado na comanda!'),
+                                    backgroundColor: Colors.green,
+                                  ),
+                                );
+                                // Voltar para a comanda/mesa
+                                Navigator.pop(context);
+                              }
+                            }
+                          }
+                        : null,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green.shade700,
+                      disabledBackgroundColor: Colors.white.withOpacity(0.05),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    ),
+                    child: const Text(
+                      'PAGAR ESTE VALOR',
+                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
+                    ),
                   ),
-                  child: const Text(
-                    'ABRIR VENDA (DEIXAR VALOR)',
-                    style: TextStyle(color: Colors.white70, fontWeight: FontWeight.bold, fontSize: 12),
+                ],
+                if (!isModoValor) ...[
+                  ElevatedButton(
+                    onPressed: totalFinalPagar > 0.0
+                        ? () async {
+                            Navigator.pop(context);
+                            await _processarDivisaoItens(dataService, selecionados, totalFinalPagar, descontoProporcional);
+                          }
+                        : null,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.blueGrey.shade800,
+                      disabledBackgroundColor: Colors.white.withOpacity(0.05),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    ),
+                    child: const Text(
+                      'ABRIR VENDA (DEIXAR VALOR)',
+                      style: TextStyle(color: Colors.white70, fontWeight: FontWeight.bold, fontSize: 12),
+                    ),
                   ),
-                ),
-                ElevatedButton(
-                  onPressed: totalFinalPagar > 0.0
-                      ? () => _pagarParteAgora(dataService, selecionados, totalFinalPagar, descontoProporcional)
-                      : null,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green.shade700,
-                    disabledBackgroundColor: Colors.white.withOpacity(0.05),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  ElevatedButton(
+                    onPressed: totalFinalPagar > 0.0
+                        ? () => _pagarParteAgora(dataService, selecionados, totalFinalPagar, descontoProporcional)
+                        : null,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green.shade700,
+                      disabledBackgroundColor: Colors.white.withOpacity(0.05),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    ),
+                    child: const Text(
+                      'PAGAR AGORA (FINALIZAR)',
+                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
+                    ),
                   ),
-                  child: const Text(
-                    'PAGAR AGORA (FINALIZAR)',
-                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
-                  ),
-                ),
+                ],
               ],
             );
           },
         );
       },
+    );
+  }
+
+  /// Pagamento por valor livre (cliente informa valor, sem selecionar itens)
+  void _pagarValorLivre(DataService dataService, double valor) {
+    // Abrir o diálogo de pagamento com o valor sugerido
+    setState(() {
+      _gridSelectedIndex = -1;
+      _cartSelectedIndex = -1;
+      _focoNoCarrinho = false;
+      _focoNasCategorias = false;
+    });
+
+    // Incluir pagamentos já existentes (ex: pagamentos parciais feitos na comanda)
+    final pagamentosIniciais = <PagamentoPedido>[
+      ..._pagamentosSalvos.where((p) => p.recebido && p.valor > 0),
+      PagamentoPedido(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        tipo: TipoPagamento.dinheiro,
+        valor: valor,
+        recebido: false,
+      ),
+    ];
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _DialogPagamentoPDV(
+        subtotal: _totalCarrinhoSemDesconto,
+        descontoTotal: _totalCarrinhoSemDesconto - _totalCarrinho,
+        totalCarrinho: _totalCarrinho,
+        pagamentosIniciais: pagamentosIniciais,
+        cliente: _clienteSelecionado,
+        cpfCnpjInicial: _cpfNfce,
+        nomeInicial: _nomeNfce,
+        onDadosConsumidorChanged: (cpf, nome) {
+          _cpfNfce = cpf;
+          _nomeNfce = nome;
+        },
+        onConfirmar: (listaPagamentos, desc, acres) {
+          Navigator.pop(context);
+          _concluirVendaComPagamentos(dataService, listaPagamentos);
+        },
+        onSalvarPendente: (listaPagamentos) {
+          Navigator.pop(context);
+          _salvarVendaPendente(dataService, listaPagamentos);
+        },
+      ),
     );
   }
 
@@ -7968,10 +8361,25 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         _carrinho.removeWhere((item) => item.quantidade <= 0.0);
         _descontoTotal = (_descontoTotal - descontoProporcional).clamp(0.0, double.infinity);
 
-        if (_carrinho.isEmpty && mesaParaLimparId != null) {
-          if (mesaComandaOriginal != null) {
-            dataService.updateMesaComanda(mesaComandaOriginal.copyWith(status: 'Fechada'));
+        if (_carrinho.isEmpty && mesaParaLimparId != null && mesaComandaOriginal != null) {
+          // Registrar pagamentos antes de fechar a mesa
+          final pagamentosExistentes = List<RegistroPagamento>.from(mesaComandaOriginal.historicoPagamentos);
+          final idsExistentes = pagamentosExistentes.map((p) => p.id).toSet();
+          for (final p in pagamentosAtualizados) {
+            if (p.recebido && p.valor > 0 && !idsExistentes.contains(p.id)) {
+              pagamentosExistentes.add(RegistroPagamento(
+                id: p.id,
+                valor: p.valor,
+                dataPagamento: p.dataRecebimento ?? DateTime.now(),
+                formaPagamento: p.tipo.nome,
+                observacao: p.observacao,
+              ));
+            }
           }
+          dataService.updateMesaComanda(mesaComandaOriginal.copyWith(
+            historicoPagamentos: pagamentosExistentes,
+            status: 'Fechada',
+          ));
           dataService.deleteMesaComanda(mesaParaLimparId);
         }
       });
@@ -8060,18 +8468,26 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           ),
           TextButton.icon(
             onPressed: () async {
+              // Salvar referência ao contexto da página ANTES de fechar o diálogo
+              final pageContext = this.context;
               Navigator.pop(context);
-              await _imprimirPDFPedido(context, pedido, termico: false, forcarPreview: true);
-              _navegarParaReceber();
+              await _imprimirPDFPedido(pageContext, pedido, termico: false, forcarPreview: true);
+              if (pageContext.mounted) {
+                _navegarParaReceber();
+              }
             },
             icon: const Icon(Icons.visibility, color: Colors.white70),
             label: const Text('VER PDF (A4) ANTES', style: TextStyle(color: Colors.white70)),
           ),
           TextButton.icon(
             onPressed: () async {
+              // Salvar referência ao contexto da página ANTES de fechar o diálogo
+              final pageContext = this.context;
               Navigator.pop(context);
-              await _imprimirPDFPedido(context, pedido, termico: true, forcarPreview: true);
-              _navegarParaReceber();
+              await _imprimirPDFPedido(pageContext, pedido, termico: true, forcarPreview: true);
+              if (pageContext.mounted) {
+                _navegarParaReceber();
+              }
             },
             icon: const Icon(Icons.receipt_long, color: Colors.orangeAccent),
             label: const Text('VER TÉRMICO ANTES', style: TextStyle(color: Colors.orangeAccent)),
@@ -8443,6 +8859,13 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                 }
                 if ((configLocal['perfis_preco'] as List?)?.isNotEmpty == true) {
                   configMerged['perfis_preco'] = configLocal['perfis_preco'];
+                }
+                // Configs de UI/UX do PDV local sempre têm prioridade
+                if (configLocal.containsKey('habilitarMesasComandas')) {
+                  configMerged['habilitarMesasComandas'] = configLocal['habilitarMesasComandas'];
+                }
+                if (configLocal.containsKey('habilitarCozinha')) {
+                  configMerged['habilitarCozinha'] = configLocal['habilitarCozinha'];
                 }
                 final empresaComConfig = empresaSupabase.copyWith(configuracoes: configMerged);
                 empresa = empresaComConfig;
@@ -9377,6 +9800,58 @@ recusando a emissão de NFC-e (erro 403).
     }
   }
 
+  /// Imprime tickets de produção nas impressoras dos setores (Cozinha, Bar, etc.)
+  Future<void> _imprimirTicketsProducaoVendaDireta(Pedido pedido) async {
+    try {
+      final dataService = Provider.of<DataService>(context, listen: false);
+      final empresa = dataService.empresaAtual;
+      if (empresa == null) return;
+
+      // Usar itens do carrinho (produtos com departamento/setor)
+      final inputs = _carrinho
+          .where((item) => !item.isServico)
+          .map((item) => ItemProducaoInput(
+                id: item.id,
+                nome: item.nome,
+                quantidade: item.quantidade,
+                observacao: item.observacao,
+                adicionais: item.adicionais.map((a) => a.nome).toList(),
+              ))
+          .toList();
+
+      if (inputs.isEmpty) return;
+
+      final qtd = await ProducaoPdfService.imprimirTicketsProducao(
+        itens: inputs,
+        dataService: dataService,
+        empresa: empresa,
+        numeroDocumento: pedido.numero,
+        clienteNome: pedido.clienteNome,
+        isDelivery: pedido.deliveryInfo != null,
+        detalhes: DetalhesTicketProducao(
+          mesaComanda: pedido.origem,
+          clienteTelefone: pedido.clienteTelefone,
+          enderecoEntrega: pedido.clienteEndereco,
+          motorista: pedido.deliveryInfo?.motoristaNome,
+          previsaoEntrega: pedido.deliveryInfo?.previsaoEntrega,
+          formasPagamento: pedido.pagamentos
+              .where((p) => p.valor > 0)
+              .map((p) => p.tipo.nome)
+              .toList(),
+          pagamentoConcluido: pedido.totalmenteRecebido,
+          observacoesGerais: pedido.observacoes,
+          dataPedido: pedido.dataPedido,
+          usuarioCriou: pedido.operador,
+        ),
+      );
+      if (qtd > 0) {
+        debugPrint('>>> [Producao] ✓ $qtd ticket(s) de produção impressos (pedido ${pedido.numero})');
+      }
+    } catch (e) {
+      debugPrint('>>> [Producao] ⚠️ Erro ao imprimir tickets de produção: $e');
+    }
+  }
+
   Future<void> _finalizarPedidoDelivery() async {
     if (_carrinho.isEmpty) {
       _mostrarErro('Carrinho está vazio.');
@@ -9511,6 +9986,9 @@ recusando a emissão de NFC-e (erro 403).
 
       // SALVAR TUDO
       await dataService.addPedido(pedido);
+
+      // IMPRIMIR TICKETS DE PRODUÇÃO
+      await _imprimirTicketsProducaoVendaDireta(pedido);
 
       await _registrarComissaoVendedorSeAplicavel(
         dataService: dataService,
@@ -10372,6 +10850,10 @@ recusando a emissão de NFC-e (erro 403).
                   final novaEmpresa = empresa.copyWith(configuracoes: config);
                   await authService.atualizarEmpresa(novaEmpresa);
                   dataService.setEmpresaAtual(novaEmpresa);
+                  
+                  // Salvar também como config LOCAL do terminal (não depende do Supabase)
+                  await _storage.salvar(_chavePDV('habilitarMesasComandas'), habilitarMesasComandasLocal);
+                  await _storage.salvar(_chavePDV('habilitarCozinha'), habilitarCozinhaLocal);
 
                   // 2. Salvar configurações locais da balança
                   final depto = deptoToledoController.text.trim().isEmpty ? '01' : deptoToledoController.text.trim();
@@ -10408,6 +10890,8 @@ recusando a emissão de NFC-e (erro 403).
                         _somFinalizarHabilitado = somFinalizarLocal;
                         _alertarLimiteGaveta = alertarLimiteLocal;
                         _limiteGavetaValor = limiteValorLocal;
+                        _habilitarMesasComandas = habilitarMesasComandasLocal;
+                        _habilitarCozinha = habilitarCozinhaLocal;
                       });
                     }
                   
@@ -13332,8 +13816,8 @@ recusando a emissão de NFC-e (erro 403).
       ),
     );
 
-    final habilitarMesasComandas = dataService.empresaAtual?.configuracoes?['habilitarMesasComandas'] != false;
-    final habilitarCozinha = dataService.empresaAtual?.configuracoes?['habilitarCozinha'] != false;
+    final habilitarMesasComandas = _habilitarMesasComandas;
+    final habilitarCozinha = _habilitarCozinha;
 
     return Container(
       padding: EdgeInsets.fromLTRB(16, isSmallHeight ? 4 : 8, 16, isSmallHeight ? 4 : 8),
@@ -17501,6 +17985,8 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
   final _formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
   final _formatoData = DateFormat('dd/MM/yyyy');
   final FocusNode _focusNode = FocusNode();
+  final FocusNode _cpfFocusNode = FocusNode();
+  final FocusNode _nomeFocusNode = FocusNode();
   int _selectedPaymentIndex = -1;
   double _descontoAutomatico = 0.0;
   double _acrescimoAutomatico = 0.0; // índice do pagamento selecionado na lista
@@ -17547,6 +18033,8 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
   void dispose() {
     _cpfController.dispose();
     _nomeController.dispose();
+    _cpfFocusNode.dispose();
+    _nomeFocusNode.dispose();
     HardwareKeyboard.instance.removeHandler(_dialogKeyHandler);
     super.dispose();
   }
@@ -19065,77 +19553,84 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
         
 
         // Teclas 1 a 8 para formas de pagamento
-        final types = TipoPagamento.values;
-        if (key == LogicalKeyboardKey.digit1 || key == LogicalKeyboardKey.numpad1) {
-          _adicionarPagamento(types[0]);
-          return KeyEventResult.handled;
-        }
-        if (key == LogicalKeyboardKey.digit2 || key == LogicalKeyboardKey.numpad2) {
-          _adicionarPagamento(types[1]);
-          return KeyEventResult.handled;
-        }
-        if (key == LogicalKeyboardKey.digit3 || key == LogicalKeyboardKey.numpad3) {
-          _adicionarPagamento(types[2]);
-          return KeyEventResult.handled;
-        }
-        if (key == LogicalKeyboardKey.digit4 || key == LogicalKeyboardKey.numpad4) {
-          _adicionarPagamento(types[3]);
-          return KeyEventResult.handled;
-        }
-        if (key == LogicalKeyboardKey.digit5 || key == LogicalKeyboardKey.numpad5) {
-          _adicionarPagamento(types[4]);
-          return KeyEventResult.handled;
-        }
-        if (key == LogicalKeyboardKey.digit6 || key == LogicalKeyboardKey.numpad6) {
-          _adicionarPagamento(types[5]);
-          return KeyEventResult.handled;
-        }
-        if (key == LogicalKeyboardKey.digit7 || key == LogicalKeyboardKey.numpad7) {
-          _adicionarPagamento(types[6]);
-          return KeyEventResult.handled;
-        }
-        if (key == LogicalKeyboardKey.digit8 || key == LogicalKeyboardKey.numpad8) {
-          _adicionarPagamento(types[7]);
-          return KeyEventResult.handled;
+        // NÃO interceptar se o cursor estiver num campo de texto (CPF ou Nome)
+        final bool campoTextoFocado = _cpfFocusNode.hasFocus || _nomeFocusNode.hasFocus;
+        if (!campoTextoFocado) {
+          final types = TipoPagamento.values;
+          if (key == LogicalKeyboardKey.digit1 || key == LogicalKeyboardKey.numpad1) {
+            _adicionarPagamento(types[0]);
+            return KeyEventResult.handled;
+          }
+          if (key == LogicalKeyboardKey.digit2 || key == LogicalKeyboardKey.numpad2) {
+            _adicionarPagamento(types[1]);
+            return KeyEventResult.handled;
+          }
+          if (key == LogicalKeyboardKey.digit3 || key == LogicalKeyboardKey.numpad3) {
+            _adicionarPagamento(types[2]);
+            return KeyEventResult.handled;
+          }
+          if (key == LogicalKeyboardKey.digit4 || key == LogicalKeyboardKey.numpad4) {
+            _adicionarPagamento(types[3]);
+            return KeyEventResult.handled;
+          }
+          if (key == LogicalKeyboardKey.digit5 || key == LogicalKeyboardKey.numpad5) {
+            _adicionarPagamento(types[4]);
+            return KeyEventResult.handled;
+          }
+          if (key == LogicalKeyboardKey.digit6 || key == LogicalKeyboardKey.numpad6) {
+            _adicionarPagamento(types[5]);
+            return KeyEventResult.handled;
+          }
+          if (key == LogicalKeyboardKey.digit7 || key == LogicalKeyboardKey.numpad7) {
+            _adicionarPagamento(types[6]);
+            return KeyEventResult.handled;
+          }
+          if (key == LogicalKeyboardKey.digit8 || key == LogicalKeyboardKey.numpad8) {
+            _adicionarPagamento(types[7]);
+            return KeyEventResult.handled;
+          }
         }
 
-        // Navegar lista de pagamentos com ↑/↓
-        if (key == LogicalKeyboardKey.arrowDown) {
-          if (_pagamentos.isNotEmpty) {
-            setState(() {
-              _selectedPaymentIndex =
-                  (_selectedPaymentIndex + 1).clamp(0, _pagamentos.length - 1);
-            });
-          }
-          return KeyEventResult.handled;
-        }
-        if (key == LogicalKeyboardKey.arrowUp) {
-          if (_pagamentos.isNotEmpty) {
-            setState(() {
-              if (_selectedPaymentIndex <= 0) {
-                _selectedPaymentIndex = -1; // volta ao estado sem seleção
-              } else {
-                _selectedPaymentIndex--;
-              }
-            });
-          }
-          return KeyEventResult.handled;
-        }
-
-        // DEL: remove o pagamento selecionado
-        if (key == LogicalKeyboardKey.delete) {
-          if (_selectedPaymentIndex >= 0 && _selectedPaymentIndex < _pagamentos.length) {
-            _removerPagamento(_selectedPaymentIndex);
-            setState(() {
-              if (_pagamentos.isEmpty) {
-                _selectedPaymentIndex = -1;
-              } else {
+        // Navegar lista de pagamentos com ↑/↓ e DEL/ENTER
+        // Só usar atalhos quando NENHUM campo de texto estiver focado
+        if (!campoTextoFocado) {
+          if (key == LogicalKeyboardKey.arrowDown) {
+            if (_pagamentos.isNotEmpty) {
+              setState(() {
                 _selectedPaymentIndex =
-                    _selectedPaymentIndex.clamp(0, _pagamentos.length - 1);
-              }
-            });
+                    (_selectedPaymentIndex + 1).clamp(0, _pagamentos.length - 1);
+              });
+            }
+            return KeyEventResult.handled;
           }
-          return KeyEventResult.handled;
+          if (key == LogicalKeyboardKey.arrowUp) {
+            if (_pagamentos.isNotEmpty) {
+              setState(() {
+                if (_selectedPaymentIndex <= 0) {
+                  _selectedPaymentIndex = -1; // volta ao estado sem seleção
+                } else {
+                  _selectedPaymentIndex--;
+                }
+              });
+            }
+            return KeyEventResult.handled;
+          }
+
+          // DEL: remove o pagamento selecionado
+          if (key == LogicalKeyboardKey.delete) {
+            if (_selectedPaymentIndex >= 0 && _selectedPaymentIndex < _pagamentos.length) {
+              _removerPagamento(_selectedPaymentIndex);
+              setState(() {
+                if (_pagamentos.isEmpty) {
+                  _selectedPaymentIndex = -1;
+                } else {
+                  _selectedPaymentIndex =
+                      _selectedPaymentIndex.clamp(0, _pagamentos.length - 1);
+                }
+              });
+            }
+            return KeyEventResult.handled;
+          }
         }
 
         // ENTER para finalizar se houver pagamentos E valor completo
@@ -19350,6 +19845,7 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
                           flex: 2,
                           child: TextField(
                             controller: _cpfController,
+                            focusNode: _cpfFocusNode,
                             style: const TextStyle(color: Colors.white, fontSize: 13),
                             decoration: InputDecoration(
                               hintText: 'CPF/CNPJ na Nota',
@@ -19385,6 +19881,7 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
                           flex: 3,
                           child: TextField(
                             controller: _nomeController,
+                            focusNode: _nomeFocusNode,
                             style: const TextStyle(color: Colors.white, fontSize: 13),
                             decoration: InputDecoration(
                               hintText: 'Nome do Consumidor',

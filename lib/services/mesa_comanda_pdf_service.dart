@@ -1,5 +1,4 @@
 import 'dart:typed_data';
-import 'package:flutter/material.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
@@ -7,7 +6,6 @@ import 'package:intl/intl.dart';
 import '../models/mesa_comanda.dart';
 import '../models/empresa.dart';
 import '../models/conta_pagar.dart';
-import '../services/impressao_service.dart';
 
 /// Serviço para geração de PDF térmico (80mm) de Mesa/Comanda
 class MesaComandaPdfService {
@@ -69,9 +67,7 @@ class MesaComandaPdfService {
                 pw.SizedBox(height: 8),
                 _buildTotalTermico(mesaComanda, comandasVinculadas, formatoMoeda, fontSizeCorpo, usarNegrito),
                 pw.SizedBox(height: 8),
-                _buildPagamentosTermico(mesaComanda, comandasVinculadas, formatoMoeda, formatoData, fontSizeCorpo, usarNegrito),
-                pw.SizedBox(height: 8),
-                _buildResumoTermico(mesaComanda, comandasVinculadas, formatoMoeda, fontSizeCorpo, usarNegrito),
+                _buildResumoPagamentoSimplificado(mesaComanda, comandasVinculadas, formatoMoeda, fontSizeCorpo, usarNegrito),
                 if (mesaComanda.observacao != null && mesaComanda.observacao!.isNotEmpty) ...[
                   pw.SizedBox(height: 8),
                   _buildObservacoesTermico(mesaComanda, fontSizeCorpo, usarNegrito),
@@ -284,8 +280,10 @@ class MesaComandaPdfService {
         pw.SizedBox(height: 4),
         ...mesaComanda.itens.map((item) {
           final indexStr = (itemIndex++).toString().padLeft(2, '0');
-          final itemTotal = item.subtotal; // Subtotal inclui adicionais
+          final isCancelado = item.status == StatusItem.cancelado;
+          final itemTotal = isCancelado ? 0.0 : item.subtotal;
           final qtdFormatted = _formatarQtdItem(item.quantidade);
+          final corItem = isCancelado ? PdfColors.grey500 : PdfColors.black;
 
           return pw.Container(
             margin: const pw.EdgeInsets.only(bottom: 4),
@@ -307,14 +305,16 @@ class MesaComandaPdfService {
                       style: pw.TextStyle(
                         fontSize: fontSizeCorpo + 0.5,
                         fontWeight: pw.FontWeight.bold,
+                        color: corItem,
                       ),
                     ),
                     pw.Expanded(
                       child: pw.Text(
-                        item.nome,
+                        '${item.nome}${isCancelado ? ' [CANCELADO]' : ''}',
                         style: pw.TextStyle(
                           fontSize: fontSizeCorpo + 0.5,
                           fontWeight: pw.FontWeight.bold,
+                          color: corItem,
                         ),
                       ),
                     ),
@@ -333,14 +333,16 @@ class MesaComandaPdfService {
                         style: pw.TextStyle(
                           fontSize: fontSizeCorpo,
                           fontWeight: pw.FontWeight.bold,
+                          color: corItem,
                         ),
                       ),
                     ),
                     pw.Text(
-                      formatoMoeda.format(itemTotal),
+                      isCancelado ? '- ${formatoMoeda.format(item.subtotal)}' : formatoMoeda.format(itemTotal),
                       style: pw.TextStyle(
                         fontSize: fontSizeCorpo + 0.5,
                         fontWeight: pw.FontWeight.bold,
+                        color: isCancelado ? PdfColors.red : PdfColors.black,
                       ),
                     ),
                   ],
@@ -860,8 +862,8 @@ class MesaComandaPdfService {
     );
   }
 
-  /// Constrói resumo (pago e pendente)
-  static pw.Widget _buildResumoTermico(
+  /// Resumo de pagamento simplificado (substitui a seção detalhada de pagamentos)
+  static pw.Widget _buildResumoPagamentoSimplificado(
     MesaComanda mesaComanda,
     List<MesaComanda>? comandasVinculadas,
     NumberFormat formatoMoeda,
@@ -871,66 +873,77 @@ class MesaComandaPdfService {
     double totalPagoMesa = mesaComanda.totalPago;
     double totalPagoComandas = 0.0;
     double totalGeral = mesaComanda.totalCalculado;
-    
+    final Map<String, double> formasPagamento = {};
+
+    // Consolidar pagamentos por forma
+    for (final pg in mesaComanda.historicoPagamentos) {
+      final forma = pg.formaPagamento ?? 'Não informado';
+      formasPagamento[forma] = (formasPagamento[forma] ?? 0.0) + pg.valor;
+    }
+
     if (comandasVinculadas != null) {
       for (final comanda in comandasVinculadas) {
         totalPagoComandas += comanda.totalPago;
         totalGeral += comanda.totalCalculado;
+        for (final pg in comanda.historicoPagamentos) {
+          final forma = pg.formaPagamento ?? 'Não informado';
+          formasPagamento[forma] = (formasPagamento[forma] ?? 0.0) + pg.valor;
+        }
       }
     }
-    
+
     final totalPagoGeral = totalPagoMesa + totalPagoComandas;
     final totalPendente = totalGeral - totalPagoGeral;
 
-    return pw.Container(
-      padding: const pw.EdgeInsets.all(4),
-      decoration: pw.BoxDecoration(
-        border: pw.Border.all(color: PdfColors.black, width: 2),
-      ),
-      child: pw.Column(
-        crossAxisAlignment: pw.CrossAxisAlignment.start,
-        children: [
-          pw.Row(
+    return pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.start,
+      children: [
+        pw.Text(
+          'RESUMO',
+          style: pw.TextStyle(
+            fontSize: fontSizeCorpo,
+            fontWeight: pw.FontWeight.bold,
+          ),
+        ),
+        pw.Divider(),
+        pw.Row(
+          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+          children: [
+            pw.Text('Total:', style: pw.TextStyle(fontSize: fontSizeCorpo)),
+            pw.Text(formatoMoeda.format(totalGeral), style: pw.TextStyle(fontSize: fontSizeCorpo, fontWeight: pw.FontWeight.bold)),
+          ],
+        ),
+        if (formasPagamento.isNotEmpty)
+          ...formasPagamento.entries.map((e) => pw.Row(
             mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
             children: [
-              pw.Text(
-                'TOTAL PAGO:',
-                style: pw.TextStyle(
-                  fontSize: fontSizeCorpo + 1,
-                  fontWeight: pw.FontWeight.bold,
-                ),
-              ),
-              pw.Text(
-                formatoMoeda.format(totalPagoGeral),
-                style: pw.TextStyle(
-                  fontSize: fontSizeCorpo + 1,
-                  fontWeight: pw.FontWeight.bold,
-                ),
-              ),
+              pw.Text('  ${e.key}:', style: pw.TextStyle(fontSize: fontSizeCorpo - 1)),
+              pw.Text(formatoMoeda.format(e.value), style: pw.TextStyle(fontSize: fontSizeCorpo - 1)),
             ],
-          ),
-          pw.SizedBox(height: 4),
-          pw.Row(
-            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-            children: [
-              pw.Text(
-                'TOTAL PENDENTE:',
-                style: pw.TextStyle(
-                  fontSize: fontSizeCorpo + 1,
-                  fontWeight: pw.FontWeight.bold,
-                ),
+          )),
+        pw.SizedBox(height: 2),
+        pw.Row(
+          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+          children: [
+            pw.Text('Pago:', style: pw.TextStyle(fontSize: fontSizeCorpo)),
+            pw.Text(formatoMoeda.format(totalPagoGeral), style: pw.TextStyle(fontSize: fontSizeCorpo, fontWeight: pw.FontWeight.bold, color: PdfColors.green)),
+          ],
+        ),
+        pw.Row(
+          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+          children: [
+            pw.Text('Pendente:', style: pw.TextStyle(fontSize: fontSizeCorpo)),
+            pw.Text(
+              formatoMoeda.format(totalPendente > 0 ? totalPendente : 0),
+              style: pw.TextStyle(
+                fontSize: fontSizeCorpo,
+                fontWeight: pw.FontWeight.bold,
+                color: totalPendente > 0 ? PdfColors.red : PdfColors.green,
               ),
-              pw.Text(
-                formatoMoeda.format(totalPendente),
-                style: pw.TextStyle(
-                  fontSize: fontSizeCorpo + 1,
-                  fontWeight: pw.FontWeight.bold,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 
@@ -996,22 +1009,6 @@ class MesaComandaPdfService {
         ),
       ],
     );
-  }
-
-  /// Retorna texto do status
-  static String _getStatusTexto(StatusItem status) {
-    switch (status) {
-      case StatusItem.pendente:
-        return 'Pendente';
-      case StatusItem.emPreparo:
-        return 'Em Preparo';
-      case StatusItem.pronto:
-        return 'Pronto';
-      case StatusItem.entregue:
-        return 'Entregue';
-      case StatusItem.cancelado:
-        return 'Cancelado';
-    }
   }
 
   /// Formata CPF ou CNPJ

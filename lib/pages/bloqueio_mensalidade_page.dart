@@ -5,6 +5,7 @@ import 'package:sistema_exodo_novo/models/empresa.dart';
 import 'package:sistema_exodo_novo/services/auth_service.dart';
 import 'package:sistema_exodo_novo/services/data_service.dart';
 import 'package:sistema_exodo_novo/pages/login_page.dart';
+import 'package:sistema_exodo_novo/pages/selecionar_empresa_page.dart';
 import 'package:sistema_exodo_novo/theme.dart';
 import 'package:sistema_exodo_novo/widgets/exodo_logo.dart';
 import 'package:intl/intl.dart';
@@ -98,6 +99,12 @@ class _BloqueioMensalidadePageState extends State<BloqueioMensalidadePage> {
               content: Text('✅ OK de pagamento do mês $mesAtualStr confirmado com sucesso! Licença liberada.'),
               backgroundColor: Colors.green,
             ),
+          );
+          // Navegar para a seleção de empresas após sucesso
+          Navigator.pushAndRemoveUntil(
+            context,
+            MaterialPageRoute(builder: (context) => const SelecionarEmpresaPage()),
+            (route) => false,
           );
         }
       }

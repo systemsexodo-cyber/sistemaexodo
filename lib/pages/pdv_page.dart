@@ -21,11 +21,12 @@ import 'venda_direta_page.dart';
 import 'cliente_detalhes_page.dart';
 import 'cozinha_bar_page.dart';
 import '../services/pedido_pdf_service.dart';
+import '../services/producao_pdf_service.dart';
 import '../services/whatsapp_service.dart';
-import '../widgets/perifericos_terminal_dialog.dart';
 import 'painel_motoboys_page.dart';
 import 'dart:convert';
 import 'package:printing/printing.dart';
+import 'package:collection/collection.dart';
 
 import '../services/auth_service.dart';
 import '../models/empresa.dart';
@@ -114,21 +115,6 @@ class _PdvPageState extends State<PdvPage> {
     } catch (e) {
       debugPrint('Erro ao alternar tela cheia: $e');
     }
-  }
-
-  /// Abre a configuração de periféricos DESTE terminal (impressora e balança).
-  ///
-  /// Tudo aqui é salvo APENAS na máquina local (SharedPreferences da máquina)
-  /// e não altera as configurações da empresa no banco — cada PDV guarda a
-  /// sua própria impressora padrão.
-  Future<void> _configurarImpressora(DataService dataService) async {
-    final authService = Provider.of<AuthService>(context, listen: false);
-    final empresa = dataService.empresaAtual ?? authService.empresaAtual;
-
-    await showDialog<void>(
-      context: context,
-      builder: (context) => PerifericosTerminalDialog(empresa: empresa),
-    );
   }
 
   @override
@@ -854,12 +840,7 @@ class _PdvPageState extends State<PdvPage> {
                 ),
                 tooltip: 'Tela Cheia',
               ),
-            if (!kIsWeb)
-              IconButton(
-                onPressed: () => _configurarImpressora(dataService),
-                icon: const Icon(Icons.print, color: Colors.blueAccent),
-                tooltip: 'Periféricos deste terminal (impressora e balança)',
-              ),
+
             IconButton(
               onPressed: () {
                 Navigator.push(
@@ -869,6 +850,16 @@ class _PdvPageState extends State<PdvPage> {
               },
               icon: const Icon(Icons.two_wheeler, color: Colors.orangeAccent),
               tooltip: 'Painel de Motoboys',
+            ),
+            IconButton(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => VendaDiretaPage(iniciarDelivery: true)),
+                );
+              },
+              icon: const Icon(Icons.delivery_dining, color: Colors.orangeAccent),
+              tooltip: 'Novo Delivery',
             ),
             const SyncStatusWidget(),
           ],
@@ -2687,7 +2678,7 @@ class _PdvPageState extends State<PdvPage> {
                         ],
                       ),
                       Text(
-                        'Pedido ${pedido.numero.isNotEmpty ? pedido.numero : 'Sem número'}',
+                        'Pedido ${pedido.numero.isNotEmpty ? pedido.numero : 'Sem número'} • ${DateFormat('dd/MM HH:mm').format(pedido.dataPedido)}',
                         style: TextStyle(
                           color: Colors.white.withOpacity(0.5),
                           fontSize: 12,
@@ -4265,7 +4256,7 @@ class _PdvPageState extends State<PdvPage> {
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                pedido.clienteNome ?? 'Sem cliente',
+                '${pedido.clienteNome ?? 'Sem cliente'} • ${DateFormat('dd/MM HH:mm').format(pedido.dataPedido)}',
                 style: TextStyle(
                   color: Colors.white.withOpacity(0.7),
                   fontSize: 12,
@@ -4992,10 +4983,9 @@ class _PdvPageState extends State<PdvPage> {
                 color: Colors.white.withOpacity(0.5),
                 fontSize: 11,
               ),
+            ),              ],
             ),
-          ],
-        ),
-        actions: [
+          actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: Text(
@@ -6602,6 +6592,21 @@ class _PdvPageState extends State<PdvPage> {
                               ],
                             ),
                           ),
+                          // Data e hora do pedido
+                          const SizedBox(height: 4),
+                          Row(
+                            children: [
+                              const Icon(Icons.access_time, size: 11, color: Colors.white38),
+                              const SizedBox(width: 4),
+                              Text(
+                                DateFormat('dd/MM HH:mm').format(pedido.dataPedido),
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.4),
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ],
+                          ),
                           if (textoVencimento.isNotEmpty) ...[
                             const SizedBox(height: 6),
                             Row(
@@ -6858,10 +6863,9 @@ class _PdvPageState extends State<PdvPage> {
                 color: Colors.white.withOpacity(0.5),
                 fontSize: 11,
               ),
+            ),              ],
             ),
-          ],
-        ),
-        actions: [
+          actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: Text(
@@ -8015,6 +8019,21 @@ class _PdvPageState extends State<PdvPage> {
                         );
                       },
                     ),
+                    // Data e hora do pedido
+                    Row(
+                      children: [
+                        const Icon(Icons.access_time, size: 11, color: Colors.white38),
+                        const SizedBox(width: 4),
+                        Text(
+                          DateFormat('dd/MM HH:mm').format(pedido.dataPedido),
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.4),
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
                     Text(
                       '${pedido.quantidadeItens} itens',
                       style: TextStyle(
@@ -8232,9 +8251,22 @@ class _PdvPageState extends State<PdvPage> {
                                     size: 15,
                                     color: Colors.orangeAccent.withOpacity(0.7),
                                   ),
-                                ],
-                              ],
+                                ],                                ],
                             ),
+                          ),
+                          // Data e hora do pedido
+                          Row(
+                            children: [
+                              const Icon(Icons.access_time, size: 12, color: Colors.white38),
+                              const SizedBox(width: 4),
+                              Text(
+                                DateFormat('dd/MM/yyyy HH:mm').format(pedido.dataPedido),
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.5),
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ],
                           ),
                         ],
                       ),
@@ -8509,10 +8541,9 @@ class _PdvPageState extends State<PdvPage> {
                 Navigator.pop(context);
                 _enviarWhatsAppPedido(pedido);
               },
+            ),              ],
             ),
-          ],
-        ),
-        actions: [
+          actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('Cancelar'),
@@ -8622,7 +8653,84 @@ class _PdvPageState extends State<PdvPage> {
       }
     }
   }
-  
+
+  /// Imprime tickets de produção nas impressoras dos setores (Cozinha, Bar, etc.)
+  Future<void> _imprimirTicketsProducaoPDV(Pedido pedido) async {
+    try {
+      final dataService = Provider.of<DataService>(context, listen: false);
+      final authService = Provider.of<AuthService>(context, listen: false);
+      final empresa = authService.empresaAtual ?? dataService.empresaAtual;
+      if (empresa == null) {
+        debugPrint('>>> [Producao PDV] ❌ Empresa é null, abortando impressão');
+        return;
+      }
+
+      // Usar itens do pedido (produtos com departamento/setor)
+      final inputs = pedido.produtos
+          .map((i) => ItemProducaoInput(
+                id: i.id,
+                nome: i.nome,
+                quantidade: i.quantidade.toDouble(),
+                observacao: i.observacao,
+                adicionais: i.adicionais.map((a) => a.nome).toList(),
+              ))
+          .toList();
+
+      if (inputs.isEmpty) {
+        debugPrint('>>> [Producao PDV] ⚠️ Nenhum item para imprimir');
+        return;
+      }
+
+      debugPrint('>>> [Producao PDV] 📋 ${inputs.length} itens para imprimir (${pedido.numero})');
+
+      // Agrupar por setor (local) para imprimir na impressora do departamento
+      final porSetor = <String, List<ItemProducaoInput>>{};
+      for (final i in inputs) {
+        final produto = dataService.produtos.firstWhereOrNull(
+          (p) => p.id == i.id,
+        );
+        final setor = produto?.departamentoId;
+        porSetor.putIfAbsent(setor ?? 'Outros', () => []).add(i);
+      }
+
+      var totalImpressos = 0;
+      for (final entry in porSetor.entries) {
+        final qtd = await ProducaoPdfService.imprimirTicketsProducao(
+          itens: entry.value,
+          dataService: dataService,
+          empresa: empresa,
+          numeroDocumento: pedido.numero,
+          clienteNome: pedido.clienteNome,
+          isDelivery: pedido.deliveryInfo != null,
+          detalhes: DetalhesTicketProducao(
+            mesaComanda: pedido.origem,
+            clienteTelefone: pedido.clienteTelefone,
+            enderecoEntrega: pedido.clienteEndereco,
+            motorista: pedido.deliveryInfo?.motoristaNome,
+            previsaoEntrega: pedido.deliveryInfo?.previsaoEntrega,
+            formasPagamento: pedido.pagamentos
+                .where((p) => p.valor > 0)
+                .map((p) => p.tipo.nome)
+                .toList(),
+            pagamentoConcluido: pedido.totalmenteRecebido,
+            observacoesGerais: pedido.observacoes,
+            dataPedido: pedido.dataPedido,
+            usuarioCriou: pedido.operador,
+          ),
+          setorForcado: entry.key == 'Outros' ? null : entry.key,
+        );
+        totalImpressos += qtd;
+      }
+      if (totalImpressos > 0) {
+        debugPrint('>>> [Producao PDV] ✓ $totalImpressos ticket(s) impresso(s) (${pedido.numero})');
+      } else {
+        debugPrint('>>> [Producao PDV] ⚠️ NENHUM ticket impresso! Verifique configuração de impressoras.');
+      }
+    } catch (e) {
+      debugPrint('>>> [Producao PDV] ❌ Erro ao imprimir tickets de produção: $e');
+    }
+  }
+
   /// Envia o pedido via WhatsApp
   Future<void> _enviarWhatsAppPedido(Pedido pedido) async {
     final authService = Provider.of<AuthService>(context, listen: false);
@@ -9580,6 +9688,13 @@ class _PdvPageState extends State<PdvPage> {
     String statusAtual = pedido.deliveryInfo!.status;
     final motoristaC = TextEditingController(text: pedido.deliveryInfo!.motoristaNome);
     final taxaC = TextEditingController(text: pedido.deliveryInfo!.taxaEntrega.toStringAsFixed(2));
+    // Controllers para edicao de endereco
+    final logradouroC = TextEditingController(text: pedido.deliveryInfo!.logradouro);
+    final numeroC = TextEditingController(text: pedido.deliveryInfo!.numero);
+    final bairroC = TextEditingController(text: pedido.deliveryInfo!.bairro);
+    final cidadeC = TextEditingController(text: pedido.deliveryInfo!.cidade);
+    final ufC = TextEditingController(text: pedido.deliveryInfo!.uf);
+    final cepC = TextEditingController(text: pedido.deliveryInfo?.cep ?? '');
 
     showDialog(
       context: context,
@@ -9587,9 +9702,10 @@ class _PdvPageState extends State<PdvPage> {
         builder: (context, setDialogState) => AlertDialog(
           backgroundColor: const Color(0xFF1E1E2E),
           title: const Text('Atualizar Entrega', style: TextStyle(color: Colors.white)),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
               DropdownButtonFormField<String>(
                 value: statusAtual,
                 dropdownColor: const Color(0xFF1E1E2E),
@@ -9612,7 +9728,70 @@ class _PdvPageState extends State<PdvPage> {
                 style: const TextStyle(color: Colors.white),
                 decoration: const InputDecoration(labelText: 'Taxa de Entrega', labelStyle: TextStyle(color: Colors.white54), prefixText: 'R\$ '),
               ),
+              const SizedBox(height: 16),
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: Text('ENDERECO DE ENTREGA', style: TextStyle(color: Colors.orangeAccent, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: logradouroC,
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(labelText: 'Logradouro', labelStyle: TextStyle(color: Colors.white54)),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    flex: 2,
+                    child: TextField(
+                      controller: numeroC,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: const InputDecoration(labelText: 'Numero', labelStyle: TextStyle(color: Colors.white54)),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    flex: 3,
+                    child: TextField(
+                      controller: bairroC,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: const InputDecoration(labelText: 'Bairro', labelStyle: TextStyle(color: Colors.white54)),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    flex: 3,
+                    child: TextField(
+                      controller: cidadeC,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: const InputDecoration(labelText: 'Cidade', labelStyle: TextStyle(color: Colors.white54)),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    flex: 1,
+                    child: TextField(
+                      controller: ufC,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: const InputDecoration(labelText: 'UF', labelStyle: TextStyle(color: Colors.white54)),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: cepC,
+                keyboardType: TextInputType.number,
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(labelText: 'CEP', labelStyle: TextStyle(color: Colors.white54)),
+              ),
             ],
+            ),
           ),
           actions: [
             TextButton(onPressed: () => Navigator.pop(context), child: const Text('CANCELAR', style: TextStyle(color: Colors.white54))),
@@ -9623,6 +9802,12 @@ class _PdvPageState extends State<PdvPage> {
                   status: statusAtual,
                   motoristaNome: motoristaC.text,
                   taxaEntrega: novaTaxa,
+                  logradouro: logradouroC.text.trim(),
+                  numero: numeroC.text.trim(),
+                  bairro: bairroC.text.trim(),
+                  cidade: cidadeC.text.trim(),
+                  uf: ufC.text.trim().toUpperCase(),
+                  cep: cepC.text.trim(),
                 );
                 
                 // O total do pedido muda se a taxa mudar
@@ -10444,6 +10629,11 @@ class _PdvPageState extends State<PdvPage> {
 
     // Sincronizar Historia (VendaBalcao)
     _syncVendaBalcao(pedidoAtualizado, dataService, novoTipo);
+
+    // IMPRIMIR TICKETS DE PRODUÇÃO quando o pedido fica totalmente pago
+    if (ficaTotalmentePago && estavaPendente) {
+      _imprimirTicketsProducaoPDV(pedidoAtualizado);
+    }
 
     setState(() => _pedidoSelecionado = pedidoAtualizado);
 
@@ -11371,6 +11561,12 @@ class _PdvPageState extends State<PdvPage> {
 
     dataService.updatePedido(pedidoAtualizado);
     _syncVendaBalcao(pedidoAtualizado, dataService, novoTipo);
+
+    // IMPRIMIR TICKETS DE PRODUÇÃO quando o pedido fica totalmente pago
+    if (ficaTotalmentePago && pedido.status != 'Pago') {
+      _imprimirTicketsProducaoPDV(pedidoAtualizado);
+    }
+
     setState(() => _pedidoSelecionado = pedidoAtualizado);
 
     if (ficaTotalmentePago) {
@@ -11561,6 +11757,12 @@ class _PdvPageState extends State<PdvPage> {
 
     dataService.updatePedido(pedidoAtualizado);
     _syncVendaBalcao(pedidoAtualizado, dataService, pedidoAtualizado.pagamentos.isNotEmpty ? pedidoAtualizado.pagamentos.first.tipo : null);
+
+    // IMPRIMIR TICKETS DE PRODUÇÃO quando o pedido fica totalmente pago
+    if (recebido && pedidoAtualizado.totalmenteRecebido && pedido.status != 'Pago') {
+      _imprimirTicketsProducaoPDV(pedidoAtualizado);
+    }
+
     setState(() => _pedidoSelecionado = pedidoAtualizado);
 
     // Se agora está totalmente recebido, mostrar sucesso
@@ -11733,10 +11935,9 @@ class _PdvPageState extends State<PdvPage> {
                 Navigator.pop(context);
                 _imprimirPDFPedido(context, pedido, termico: true, forcarPreview: true);
               },
+            ),              ],
             ),
-          ],
-        ),
-        actions: [
+          actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('Cancelar'),

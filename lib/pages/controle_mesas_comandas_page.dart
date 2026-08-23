@@ -6,6 +6,7 @@ import 'package:sistema_exodo_novo/services/data_service.dart';
 import 'package:sistema_exodo_novo/services/auth_service.dart';
 import 'package:sistema_exodo_novo/models/mesa_comanda.dart';
 import 'package:sistema_exodo_novo/models/produto.dart';
+import 'package:sistema_exodo_novo/models/conta_pagar.dart';
 import 'package:sistema_exodo_novo/pages/venda_direta_page.dart';
 import 'package:uuid/uuid.dart';
 
@@ -811,7 +812,24 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
                   ),
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 8),
+              // Botão: Registrar Pagamento por Valor
+              SizedBox(
+                width: 56,
+                child: ElevatedButton(
+                  onPressed: () => _registrarPagamentoComanda(context, mesaComanda),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.teal.shade700,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 20),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: const Icon(Icons.attach_money, size: 22),
+                ),
+              ),
+              const SizedBox(width: 8),
               Expanded(
                 flex: 1,
                 child: ElevatedButton.icon(
@@ -1065,10 +1083,69 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
                   ),
               ],
             ),
+            // Botão Cancelar Item
+            if (item.status != StatusItem.cancelado) ...[
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: () => _cancelarItem(item, mesaComanda, dataService),
+                  icon: const Icon(Icons.cancel, size: 16),
+                  label: const Text('Cancelar Item'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.red,
+                    side: const BorderSide(color: Colors.red),
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _cancelarItem(ItemMesaComanda item, MesaComanda mesaComanda, DataService dataService) async {
+    final confirmar = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        title: const Text('Cancelar Item', style: TextStyle(color: Colors.red)),
+        content: Text(
+          'Deseja cancelar "${item.nome}"? Esta ação não pode ser desfeita.',
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Não', style: TextStyle(color: Colors.grey))),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            child: const Text('Sim, Cancelar'),
+          ),
+        ],
+      ),
+    );
+    if (confirmar != true) return;
+    try {
+      final authService = Provider.of<AuthService>(context, listen: false);
+      final usuarioLogado = authService.usuarioAtual?.nome ?? 'Sistema';
+      await dataService.atualizarStatusItemMesaComanda(
+        mesaComanda.id,
+        item.id,
+        StatusItem.cancelado,
+        usuarioModificou: usuarioLogado,
+        acaoRealizada: 'Item cancelado',
+      );
+      setState(() {
+        _mesaComandaSelecionada = dataService.mesasComandas.firstWhere((m) => m.id == mesaComanda.id);
+      });
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erro ao cancelar item: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
   }
 
   Future<void> _marcarEmPreparo(ItemMesaComanda item, MesaComanda mesaComanda, DataService dataService) async {
@@ -1779,11 +1856,505 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
   }
 
   void _navegarParaReceber(BuildContext context, MesaComanda mesaComanda) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => VendaDiretaPage(mesaComanda: mesaComanda),
-      ),
+    // Mostrar dialog com opções: Selecionar Itens ou Pagar por Valor
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        final valorController = TextEditingController();
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) {
+            final totalPendente = mesaComanda.totalCalculado - mesaComanda.totalPago;
+            return AlertDialog(
+              backgroundColor: const Color(0xFF1E1E2E),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              title: Row(
+                children: [
+                  const Icon(Icons.monetization_on, color: Colors.greenAccent, size: 24),
+                  const SizedBox(width: 10),
+                  Text(
+                    'Receber - ${mesaComanda.numero}',
+                    style: const TextStyle(color: Colors.white, fontSize: 16),
+                  ),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Resumo do pendente
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.05),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text('Pendente:', style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 13)),
+                        Text(
+                          'R\$ ${totalPendente.toStringAsFixed(2)}',
+                          style: const TextStyle(color: Colors.greenAccent, fontSize: 16, fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  // Botão 1: Selecionar Itens
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => VendaDiretaPage(mesaComanda: mesaComanda),
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.shopping_cart, size: 20),
+                      label: const Text('Selecionar Itens', style: TextStyle(fontSize: 14)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.blueAccent,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  // Botão 2: Pagar por Valor
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.greenAccent.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.greenAccent.withOpacity(0.3)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Pagar por Valor (ex: cliente deixa R\$ 100,00)',
+                          style: TextStyle(color: Colors.greenAccent.withOpacity(0.8), fontSize: 12, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: valorController,
+                                autofocus: true,
+                                style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                decoration: InputDecoration(
+                                  prefixText: 'R\$ ',
+                                  prefixStyle: const TextStyle(color: Colors.greenAccent, fontSize: 18),
+                                  hintText: '0,00',
+                                  hintStyle: TextStyle(color: Colors.white.withOpacity(0.2)),
+                                  filled: true,
+                                  fillColor: Colors.black26,
+                                  isDense: true,
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                    borderSide: BorderSide.none,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            ElevatedButton(
+                              onPressed: () {
+                                final valor = double.tryParse(valorController.text.replaceAll(',', '.')) ?? 0;
+                                if (valor <= 0) return;
+                                Navigator.pop(ctx);
+                                _processarPagamentoValor(context, mesaComanda, valor);
+                              },
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.greenAccent,
+                                foregroundColor: Colors.black,
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              ),
+                              child: const Text('PAGAR', style: TextStyle(fontWeight: FontWeight.bold)),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        // Valores rápidos
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: [20, 50, 100, 150, 200].map((v) {
+                            return GestureDetector(
+                              onTap: () => setDialogState(() => valorController.text = v.toStringAsFixed(2)),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withOpacity(0.08),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Text('R\$ $v', style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('CANCELAR', style: TextStyle(color: Colors.white54)),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  /// Processa pagamento por valor livre para mesa/comanda
+  void _processarPagamentoValor(BuildContext context, MesaComanda mesaComanda, double valor) {
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final usuarioLogado = authService.usuarioAtual?.nome ?? 'Sistema';
+    final totalPendente = mesaComanda.totalCalculado - mesaComanda.totalPago;
+    final valorFinal = valor > totalPendente ? totalPendente : valor;
+
+    // Dialog de seleção de forma de pagamento
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        String formaSelecionada = 'Dinheiro';
+        final List<Map<String, dynamic>> formas = [
+          {'nome': 'Dinheiro', 'icone': Icons.money, 'cor': Colors.green},
+          {'nome': 'PIX', 'icone': Icons.qr_code, 'cor': Colors.teal},
+          {'nome': 'Cartão de Crédito', 'icone': Icons.credit_card, 'cor': Colors.blue},
+          {'nome': 'Cartão de Débito', 'icone': Icons.credit_card, 'cor': Colors.orange},
+          {'nome': 'Boleto', 'icone': Icons.receipt, 'cor': Colors.purple},
+          {'nome': 'Crediário', 'icone': Icons.store, 'cor': Colors.amber},
+          {'nome': 'Fiado', 'icone': Icons.pending, 'cor': Colors.redAccent},
+          {'nome': 'Alimentação', 'icone': Icons.restaurant, 'cor': Colors.lightGreen},
+          {'nome': 'Transferência', 'icone': Icons.account_balance, 'cor': Colors.cyan},
+        ];
+
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF1E1E2E),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              title: Row(
+                children: [
+                  const Icon(Icons.monetization_on, color: Colors.greenAccent, size: 24),
+                  const SizedBox(width: 10),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Registrar Pagamento', style: TextStyle(color: Colors.white, fontSize: 16)),
+                      Text(
+                        'R\$ ${valorFinal.toStringAsFixed(2)}',
+                        style: const TextStyle(color: Colors.greenAccent, fontSize: 20, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    'Como o cliente vai pagar?',
+                    style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 13),
+                  ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: formas.map((f) {
+                      final isSelected = formaSelecionada == f['nome'];
+                      return GestureDetector(
+                        onTap: () => setDialogState(() => formaSelecionada = f['nome']),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: isSelected ? (f['cor'] as Color).withOpacity(0.3) : Colors.white.withOpacity(0.05),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: isSelected ? (f['cor'] as Color) : Colors.white10,
+                              width: isSelected ? 2 : 1,
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(f['icone'] as IconData, color: isSelected ? (f['cor'] as Color) : Colors.white54, size: 18),
+                              const SizedBox(width: 6),
+                              Text(
+                                f['nome'] as String,
+                                style: TextStyle(
+                                  color: isSelected ? Colors.white : Colors.white70,
+                                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('CANCELAR', style: TextStyle(color: Colors.white54)),
+                ),
+                ElevatedButton(
+                  onPressed: () async {
+                    Navigator.pop(ctx);
+                    // Registrar pagamento direto na comanda
+                    final pagamento = RegistroPagamento(
+                      id: uuid.v4(),
+                      valor: valorFinal,
+                      dataPagamento: DateTime.now(),
+                      formaPagamento: formaSelecionada,
+                      observacao: 'Pagamento por valor - $formaSelecionada',
+                      pessoaPagou: usuarioLogado,
+                    );
+                    final novosPagamentos = List<RegistroPagamento>.from(mesaComanda.historicoPagamentos)..add(pagamento);
+                    final mesaAtualizada = mesaComanda.copyWith(
+                      historicoPagamentos: novosPagamentos,
+                    );
+                    await dataService.updateMesaComanda(mesaAtualizada);
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Pagamento de R\$ ${valorFinal.toStringAsFixed(2)} registrado ($formaSelecionada)'),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                    }
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.greenAccent,
+                    foregroundColor: Colors.black,
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  child: const Text('CONFIRMAR PAGAMENTO', style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  /// Dialog direto para registrar pagamento na comanda (botão $ no rodapé)
+  void _registrarPagamentoComanda(BuildContext context, MesaComanda mesaComanda) {
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final usuarioLogado = authService.usuarioAtual?.nome ?? 'Sistema';
+    final totalPendente = mesaComanda.totalCalculado - mesaComanda.totalPago;
+    final valorController = TextEditingController(text: totalPendente.toStringAsFixed(2));
+    String formaSelecionada = 'Dinheiro';
+
+    final List<Map<String, dynamic>> formas = [
+      {'nome': 'Dinheiro', 'icone': Icons.money, 'cor': Colors.green},
+      {'nome': 'PIX', 'icone': Icons.qr_code, 'cor': Colors.teal},
+      {'nome': 'Cartão de Crédito', 'icone': Icons.credit_card, 'cor': Colors.blue},
+      {'nome': 'Cartão de Débito', 'icone': Icons.credit_card, 'cor': Colors.orange},
+      {'nome': 'Boleto', 'icone': Icons.receipt, 'cor': Colors.purple},
+      {'nome': 'Crediário', 'icone': Icons.store, 'cor': Colors.amber},
+      {'nome': 'Fiado', 'icone': Icons.pending, 'cor': Colors.redAccent},
+      {'nome': 'Alimentação', 'icone': Icons.restaurant, 'cor': Colors.lightGreen},
+      {'nome': 'Transferência', 'icone': Icons.account_balance, 'cor': Colors.cyan},
+    ];
+
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) {
+            final valor = double.tryParse(valorController.text.replaceAll(',', '.')) ?? 0;
+            return AlertDialog(
+              backgroundColor: const Color(0xFF1E1E2E),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              title: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.attach_money, color: Colors.tealAccent, size: 24),
+                      const SizedBox(width: 10),
+                      const Text('Registrar Pagamento', style: TextStyle(color: Colors.white, fontSize: 16)),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.05),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text('Pendente:', style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 13)),
+                        Text(
+                          'R\$ ${totalPendente.toStringAsFixed(2)}',
+                          style: const TextStyle(color: Colors.greenAccent, fontSize: 16, fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // Campo de valor
+                    Text('Valor a pagar:', style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 13)),
+                    const SizedBox(height: 6),
+                    TextField(
+                      controller: valorController,
+                      autofocus: true,
+                      style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      onChanged: (_) => setDialogState(() {}),
+                      decoration: InputDecoration(
+                        prefixText: 'R\$ ',
+                        prefixStyle: const TextStyle(color: Colors.tealAccent, fontSize: 22),
+                        hintText: '0,00',
+                        hintStyle: TextStyle(color: Colors.white.withOpacity(0.2)),
+                        filled: true,
+                        fillColor: Colors.black26,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide.none,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    // Valores rápidos
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [20, 50, 100, 150, 200, totalPendente].map((v) {
+                        final isTotal = v == totalPendente;
+                        return GestureDetector(
+                          onTap: () => setDialogState(() => valorController.text = v.toStringAsFixed(2)),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: isTotal ? Colors.tealAccent.withOpacity(0.2) : Colors.white.withOpacity(0.08),
+                              borderRadius: BorderRadius.circular(8),
+                              border: isTotal ? Border.all(color: Colors.tealAccent.withOpacity(0.5)) : null,
+                            ),
+                            child: Text(
+                              isTotal ? 'TOTAL' : 'R\$ $v',
+                              style: TextStyle(
+                                color: isTotal ? Colors.tealAccent : Colors.white70,
+                                fontSize: 12,
+                                fontWeight: isTotal ? FontWeight.bold : FontWeight.normal,
+                              ),
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                    const SizedBox(height: 16),
+                    // Forma de pagamento
+                    Text('Forma de pagamento:', style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 13)),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: formas.map((f) {
+                        final isSelected = formaSelecionada == f['nome'];
+                        return GestureDetector(
+                          onTap: () => setDialogState(() => formaSelecionada = f['nome']),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: isSelected ? (f['cor'] as Color).withOpacity(0.3) : Colors.white.withOpacity(0.05),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: isSelected ? (f['cor'] as Color) : Colors.white10,
+                                width: isSelected ? 2 : 1,
+                              ),
+                            ),
+                            child: Text(
+                              f['nome'] as String,
+                              style: TextStyle(
+                                color: isSelected ? Colors.white : Colors.white60,
+                                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('CANCELAR', style: TextStyle(color: Colors.white54)),
+                ),
+                ElevatedButton(
+                  onPressed: valor > 0
+                      ? () async {
+                          Navigator.pop(ctx);
+                          final pagamento = RegistroPagamento(
+                            id: uuid.v4(),
+                            valor: valor,
+                            dataPagamento: DateTime.now(),
+                            formaPagamento: formaSelecionada,
+                            observacao: 'Pagamento por valor - $formaSelecionada',
+                            pessoaPagou: usuarioLogado,
+                          );
+                          final novosPagamentos = List<RegistroPagamento>.from(mesaComanda.historicoPagamentos)..add(pagamento);
+                          final mesaAtualizada = mesaComanda.copyWith(
+                            historicoPagamentos: novosPagamentos,
+                          );
+                          await dataService.updateMesaComanda(mesaAtualizada);
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Pagamento de R\$ ${valor.toStringAsFixed(2)} registrado ($formaSelecionada)'),
+                                backgroundColor: Colors.green,
+                              ),
+                            );
+                          }
+                        }
+                      : null,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.tealAccent,
+                    foregroundColor: Colors.black,
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  child: const Text('CONFIRMAR', style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 

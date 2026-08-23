@@ -246,6 +246,13 @@ class AuthService extends ChangeNotifier {
                       if (configLocal.containsKey('perfis_tributarios') && (configLocal['perfis_tributarios'] as List?)?.isNotEmpty == true) {
                         configMerged['perfis_tributarios'] = configLocal['perfis_tributarios'];
                       }
+                      // Configs de UI/UX do PDV local sempre têm prioridade
+                      if (configLocal.containsKey('habilitarMesasComandas')) {
+                        configMerged['habilitarMesasComandas'] = configLocal['habilitarMesasComandas'];
+                      }
+                      if (configLocal.containsKey('habilitarCozinha')) {
+                        configMerged['habilitarCozinha'] = configLocal['habilitarCozinha'];
+                      }
                       
                       _empresaAtual = empresaSupabase.copyWith(configuracoes: configMerged);
                       await _storage.salvar('empresa_atual', _empresaAtual!.toMap());
@@ -654,6 +661,13 @@ class AuthService extends ChangeNotifier {
             }
             if ((configLocal['perfis_preco'] as List?)?.isNotEmpty == true) {
               configMerged['perfis_preco'] = configLocal['perfis_preco'];
+            }
+            // Configs de UI/UX do PDV local sempre têm prioridade
+            if (configLocal.containsKey('habilitarMesasComandas')) {
+              configMerged['habilitarMesasComandas'] = configLocal['habilitarMesasComandas'];
+            }
+            if (configLocal.containsKey('habilitarCozinha')) {
+              configMerged['habilitarCozinha'] = configLocal['habilitarCozinha'];
             }
             final empresaComConfig = empresaSupabase.copyWith(configuracoes: configMerged);
             _empresaAtual = empresaComConfig;

@@ -39,6 +39,12 @@ class _CaixaPageState extends State<CaixaPage> {
   DateTime? _filtroDataFim;
   String _filtroNumeroCaixa = 'Todos';
 
+  // Filtros do Fluxo de Caixa (Movimentações do Dia)
+  final TextEditingController _buscaFluxoController = TextEditingController();
+  String _termoBuscaFluxo = '';
+  String _filtroTipoFluxo = 'Todos';
+  bool _mostrarTodosCaixas = false;
+
   @override
   Widget build(BuildContext context) {
     final dataService = Provider.of<DataService>(context, listen: false);
@@ -220,11 +226,20 @@ class _CaixaPageState extends State<CaixaPage> {
                     ),
                   ),
 
-                // 3. Título do Fluxo de Caixa Atual
+                // 3. Filtros do Fluxo de Caixa (tipos + busca)
                 if (caixaAberto && aberturaAtual != null)
                   SliverToBoxAdapter(
                     child: Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 24, 16, 12),
+                      padding: const EdgeInsets.fromLTRB(16, 24, 16, 0),
+                      child: _buildFiltrosFluxo(),
+                    ),
+                  ),
+
+                // 4. Título do Fluxo de Caixa Atual
+                if (caixaAberto && aberturaAtual != null)
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
@@ -252,7 +267,7 @@ class _CaixaPageState extends State<CaixaPage> {
                     ),
                   ),
 
-                // 4. Lista do Fluxo de Caixa Atual
+                // 5. Lista do Fluxo de Caixa Atual
                 if (caixaAberto && aberturaAtual != null)
                   _buildSliverFluxoLista(dataService, aberturaAtual),
 
@@ -756,6 +771,7 @@ class _CaixaPageState extends State<CaixaPage> {
 
   @override
   void dispose() {
+    _buscaFluxoController.dispose();
     super.dispose();
   }
 
@@ -927,9 +943,53 @@ class _CaixaPageState extends State<CaixaPage> {
   }
 
   Widget _buildSliverFluxoLista(DataService ds, AberturaCaixa abertura) {
-    final movs = _getMovimentacoesExt(ds, abertura);
+    // Se "Apenas Meu Caixa" está DESMARCADO, buscar de TODOS os caixas abertos;
+    // caso contrário, apenas do caixa selecionado.
+    List<Map<String, dynamic>> movs;
+    if (_mostrarTodosCaixas) {
+      // Modo global: juntar movimentações de todos os caixas abertos
+      movs = [];
+      for (final caixa in ds.aberturasCaixaAbertas) {
+        movs.addAll(_getMovimentacoesExt(ds, caixa));
+      }
+      // Remover duplicatas por combinação data+descricao+valor
+      final seen = <String>{};
+      movs = movs.where((m) {
+        final key = '${m['data']}_${m['descricao']}_${m['valor']}';
+        if (seen.contains(key)) return false;
+        seen.add(key);
+        return true;
+      }).toList();
+    } else {
+      movs = _getMovimentacoesExt(ds, abertura);
+    }
+
+    // Aplicar filtro por tipo
+    if (_filtroTipoFluxo != 'Todos') {
+      movs = movs.where((m) {
+        final tipo = (m['tipo'] ?? '').toString();
+        switch (_filtroTipoFluxo) {
+          case 'Vendas': return tipo == 'Venda';
+          case 'Pagamento': return tipo == 'Pagamento';
+          case 'Suprimento': return tipo == 'Suprimento';
+          case 'Mesa/Comanda': return tipo == 'Mesa' || tipo == 'Comanda';
+          default: return true;
+        }
+      }).toList();
+    }
+
+    // Aplicar busca por texto (número da venda, descrição)
+    if (_termoBuscaFluxo.isNotEmpty) {
+      final t = _termoBuscaFluxo.toLowerCase();
+      movs = movs.where((m) {
+        final desc = (m['descricao'] ?? '').toString().toLowerCase();
+        final num = (m['numero'] ?? '').toString().toLowerCase();
+        return desc.contains(t) || num.contains(t);
+      }).toList();
+    }
 
     if (movs.isEmpty) {
+      final temFiltro = _filtroTipoFluxo != 'Todos' || _termoBuscaFluxo.isNotEmpty || _mostrarTodosCaixas;
       return SliverToBoxAdapter(
         child: Padding(
           padding: const EdgeInsets.all(40.0),
@@ -937,7 +997,12 @@ class _CaixaPageState extends State<CaixaPage> {
             children: [
               Icon(Icons.inventory_2_outlined, color: Colors.white.withOpacity(0.1), size: 48),
               const SizedBox(height: 12),
-              Text('Nenhuma movimentação registrada', style: TextStyle(color: Colors.white.withOpacity(0.3))),
+              Text(
+                temFiltro
+                    ? 'Nenhuma movimentação encontrada com os filtros'
+                    : 'Nenhuma movimentação registrada',
+                style: TextStyle(color: Colors.white.withOpacity(0.3)),
+              ),
             ],
           ),
         ),
@@ -987,6 +1052,123 @@ class _CaixaPageState extends State<CaixaPage> {
           },
           childCount: movs.length,
         ),
+      ),
+    );
+  }
+
+  /// Barra de filtros do Fluxo de Caixa (Movimentações do Dia)
+  Widget _buildFiltrosFluxo() {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.filter_alt_rounded, color: Colors.blueAccent, size: 20),
+              const SizedBox(width: 8),
+              const Text('Filtrar Movimentações',
+                  style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w600)),
+              const Spacer(),
+              if (_filtroTipoFluxo != 'Todos' || _termoBuscaFluxo.isNotEmpty || _mostrarTodosCaixas)
+                TextButton.icon(
+                  onPressed: () => setState(() {
+                    _filtroTipoFluxo = 'Todos';
+                    _termoBuscaFluxo = '';
+                    _mostrarTodosCaixas = false;
+                    _buscaFluxoController.clear();
+                  }),
+                  icon: const Icon(Icons.close, size: 16, color: Colors.white54),
+                  label: const Text('Limpar',
+                      style: TextStyle(color: Colors.white54, fontSize: 12)),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          // Barra de busca
+          TextField(
+            controller: _buscaFluxoController,
+            onChanged: (v) => setState(() => _termoBuscaFluxo = v),
+            style: const TextStyle(color: Colors.white, fontSize: 13),
+            decoration: InputDecoration(
+              hintText: 'Buscar por número da venda, descrição...',
+              hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
+              prefixIcon: const Icon(Icons.search, color: Colors.white24, size: 20),
+              filled: true,
+              fillColor: const Color(0xFF2D2D44),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide.none,
+              ),
+              contentPadding: EdgeInsets.zero,
+              isDense: true,
+            ),
+          ),
+          const SizedBox(height: 10),
+          // Filtros por tipo (ChoiceChips)
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                'Todos', 'Vendas', 'Pagamento', 'Suprimento', 'Mesa/Comanda',
+              ].map((tipo) {
+                final isSelected = _filtroTipoFluxo == tipo;
+                return Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ChoiceChip(
+                    label: Text(tipo),
+                    selected: isSelected,
+                    onSelected: (val) => setState(() => _filtroTipoFluxo = tipo),
+                    backgroundColor: const Color(0xFF2D2D44),
+                    selectedColor: Colors.blueAccent.withOpacity(0.3),
+                    labelStyle: TextStyle(
+                      color: isSelected ? Colors.blueAccent : Colors.white60,
+                      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                      fontSize: 12,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    side: BorderSide(
+                      color: isSelected ? Colors.blueAccent : Colors.transparent,
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              Checkbox(
+                value: _mostrarTodosCaixas,
+                activeColor: Colors.blueAccent,
+                onChanged: (val) {
+                  if (val != null) {
+                    setState(() {
+                      _mostrarTodosCaixas = val;
+                    });
+                  }
+                },
+              ),
+              const Text(
+                'Ver todos os caixas abertos',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -1224,9 +1406,19 @@ class _CaixaPageState extends State<CaixaPage> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                DateFormat('dd MMM').format(ab.dataAbertura.toLocal()),
-                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '${ab.numero}  •  ${DateFormat('dd MMM').format(ab.dataAbertura.toLocal())}',
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                  ),
+                  if (ab.responsavel != null && ab.responsavel!.isNotEmpty)
+                    Text(
+                      ab.responsavel!,
+                      style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 11),
+                    ),
+                ],
               ),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
@@ -1305,6 +1497,29 @@ class _CaixaPageState extends State<CaixaPage> {
           'forma': _formatForma(v.tipoPagamento),
           'icone': Icons.shopping_basket_rounded,
           'cor': Colors.greenAccent,
+          'numero': v.numero,
+          'tipo': 'Venda',
+        });
+      }
+    }
+
+    // Mesas / Comandas (itens em preparo/pendentes)
+    for (final mc in ds.mesasComandas) {
+      final itensValidos = mc.itens.where((i) =>
+          i.status != StatusItem.cancelado &&
+          i.status != StatusItem.entregue).toList();
+      if (itensValidos.isNotEmpty) {
+        final totalMc = itensValidos.fold<double>(0.0, (sum, i) => sum + i.subtotal);
+        final label = mc.tipo == TipoControle.comanda ? 'Comanda' : 'Mesa';
+        list.add({
+          'data': itensValidos.last.dataModificacao ?? mc.dataAbertura,
+          'descricao': '$label ${mc.numero}',
+          'valor': totalMc,
+          'forma': 'A Receber',
+          'icone': mc.tipo == TipoControle.comanda ? Icons.receipt_long : Icons.table_restaurant,
+          'cor': Colors.tealAccent,
+          'numero': mc.numero,
+          'tipo': label,
         });
       }
     }
@@ -1318,6 +1533,8 @@ class _CaixaPageState extends State<CaixaPage> {
         'forma': 'Dinheiro',
         'icone': Icons.outbox_rounded,
         'cor': Colors.orangeAccent,
+        'numero': '',
+        'tipo': 'Pagamento',
       });
     }
 
@@ -1330,6 +1547,8 @@ class _CaixaPageState extends State<CaixaPage> {
         'forma': 'Dinheiro',
         'icone': Icons.move_to_inbox_rounded,
         'cor': Colors.blueAccent,
+        'numero': '',
+        'tipo': 'Suprimento',
       });
     }
 

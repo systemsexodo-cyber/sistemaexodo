@@ -548,9 +548,11 @@ class ProducaoPdfService {
 
     // Setor forçado: usa a impressora do DEPARTAMENTO com esse nome
     final nomeSetor = _limpar(setorForcado);
+    debugPrint('[Producao] imprimirTicketsProducao: setorForcado="$setorForcado" nomeSetor="$nomeSetor" itens=${itens.length}');
     if (nomeSetor != null) {
       final impressorasSetor =
           _impressorasDoDepartamentoPorNome(nomeSetor, dataService);
+      debugPrint('[Producao] _impressorasDoDepartamentoPorNome("$nomeSetor") → $impressorasSetor');
       if (impressorasSetor.isNotEmpty) {
         for (final item in itens) {
           for (final imp in impressorasSetor) {
@@ -570,11 +572,13 @@ class ProducaoPdfService {
     // Fallback (sem setor forçado ou departamento sem impressora):
     // resolução normal por produto
     if (porImpressora.isEmpty) {
+      debugPrint('[Producao] Fallback: resolução por produto');
       for (final item in itens) {
         final impressoras = _impressorasDoItem(
           produtoId: item.id,
           dataService: dataService,
         );
+        debugPrint('[Producao] Fallback item "${item.nome}" (id: ${item.id}) → $impressoras');
         if (impressoras.isEmpty) continue;
         for (final imp in impressoras) {
           porImpressora.putIfAbsent(imp, () => []).add(item);
@@ -582,7 +586,11 @@ class ProducaoPdfService {
       }
     }
 
-    if (porImpressora.isEmpty) return 0;
+    if (porImpressora.isEmpty) {
+      debugPrint('[Producao] ⚠️ porImpressora VAZIO - nenhuma impressora encontrada para ${itens.length} itens');
+      return 0;
+    }
+    debugPrint('[Producao] porImpressora: ${porImpressora.keys.toList()}');
 
     final tipoDocumento = isDelivery ? 'PEDIDO DELIVERY' : 'PEDIDO DE PRODUÇÃO';
     var impressos = 0;

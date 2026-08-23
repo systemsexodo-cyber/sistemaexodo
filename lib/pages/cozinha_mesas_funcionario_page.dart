@@ -3522,9 +3522,10 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
         couvertPago: novoCouvertPago,
         garcomRetirado: garcomFoiRetirado || comandaAtual.garcomRetirado,
       );
-      // Atualizar _mesaSelecionada ANTES de updateMesaComanda para que o
-      // rebuild do notifyListeners já mostre dados atualizados.
-      if (mounted && _mesaSelecionada != null && comanda.mesaId == _mesaSelecionada!.id) {
+      await dataService.updateMesaComanda(comandaAtualizada);
+      // Atualizar _mesaSelecionada DEPOIS de updateMesaComanda para que
+      // reflita os dados já atualizados no dataService.
+      if (mounted && _mesaSelecionada != null) {
         setState(() {
           _mesaSelecionada = dataService.mesasComandas.firstWhere(
             (m) => m.id == _mesaSelecionada!.id,
@@ -3532,7 +3533,6 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
           );
         });
       }
-      await dataService.updateMesaComanda(comandaAtualizada);
 
       // Verificar se está totalmente paga
       final novoTotalPago = comandaAtualizada.totalPago;
@@ -5773,7 +5773,15 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
     try {
       final authService = Provider.of<AuthService>(context, listen: false);
       final empresa = authService.empresaAtual ?? dataService.empresaAtual;
-      if (empresa == null) return;
+      if (empresa == null) {
+        debugPrint('>>> [Producao] ❌ Empresa é null, abortando impressão');
+        return;
+      }
+
+      debugPrint('>>> [Producao] 📋 ${novosItens.length} itens para imprimir (${mesa.numero})');
+      for (final i in novosItens) {
+        debugPrint('>>> [Producao]   → ${i.nome} (itemId: ${i.itemId}, local: ${i.local}, isServico: ${i.isServico})');
+      }
 
       // Agrupar por setor (local) para imprimir na impressora do departamento
       final porSetor = <String, List<ItemMesaComanda>>{};
@@ -5783,8 +5791,12 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
         porSetor.putIfAbsent(setor ?? 'Outros', () => []).add(i);
       }
 
+      debugPrint('>>> [Producao] 🗂️ Setores: ${porSetor.keys.toList()}');
+      debugPrint('>>> [Producao] 🏭 Departamentos disponíveis: ${dataService.departamentos.map((d) => '${d.nome} (imp: ${d.impressoraProducao})').toList()}');
+
       var totalImpressos = 0;
       for (final entry in porSetor.entries) {
+        debugPrint('>>> [Producao] Imprimindo setor "${entry.key}" com ${entry.value.length} itens...');
         final inputs = entry.value
             .map((i) => ItemProducaoInput(
                   id: i.itemId,
@@ -5798,7 +5810,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                 ))
             .toList();
 
-        totalImpressos += await ProducaoPdfService.imprimirTicketsProducao(
+        final qtd = await ProducaoPdfService.imprimirTicketsProducao(
           itens: inputs,
           dataService: dataService,
           empresa: empresa,
@@ -5815,12 +5827,16 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
           // Impressora do DEPARTAMENTO correspondente ao setor escolhido
           setorForcado: entry.key == 'Outros' ? null : entry.key,
         );
+        debugPrint('>>> [Producao] Setor "${entry.key}": $qtd impresso(s)');
+        totalImpressos += qtd;
       }
       if (totalImpressos > 0) {
         debugPrint('>>> [Producao] ✓ $totalImpressos ticket(s) de produção impressos (${mesa.numero})');
+      } else {
+        debugPrint('>>> [Producao] ⚠️ NENHUM ticket impresso! Verifique a configuração de impressoras nos departamentos.');
       }
     } catch (e) {
-      debugPrint('>>> [Producao] ⚠️ Erro ao imprimir tickets de produção: $e');
+      debugPrint('>>> [Producao] ❌ Erro ao imprimir tickets de produção: $e');
     }
   }
 

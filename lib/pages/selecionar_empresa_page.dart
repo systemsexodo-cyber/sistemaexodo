@@ -1361,18 +1361,47 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                               estaEmDia ? 'RECONFIRMAR OK DESTE MÊS ($mesAtualStr)' : '✅ DAR OK - CONFIRMAR PAGAMENTO DESTE MÊS ($mesAtualStr)',
                               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
                             ),
-                            onPressed: () {
+                            onPressed: () async {
                               setState(() {
                                 statusPagamento = 'pago';
                                 bloqueadoManual = false;
                                 ultimoMesPago = mesAtualStr;
                               });
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text('OK de pagamento ativado para $mesAtualStr! Clique em "Salvar Alterações" para gravar no banco local.'),
-                                  backgroundColor: Colors.green,
-                                ),
-                              );
+                              // Salvar automaticamente no banco ao DAR OK
+                              try {
+                                final novasConfigs = Map<String, dynamic>.from(configs);
+                                novasConfigs['data_inicio'] = dataInicioCtrl.text.trim().isEmpty ? null : dataInicioCtrl.text.trim();
+                                novasConfigs['data_cobranca'] = dataCobrancaCtrl.text.trim().isEmpty ? null : dataCobrancaCtrl.text.trim();
+                                novasConfigs['link_pagamento'] = linkPagamentoCtrl.text.trim().isEmpty ? null : linkPagamentoCtrl.text.trim();
+                                novasConfigs['status_pagamento'] = 'pago';
+                                novasConfigs['bloqueado'] = false;
+                                novasConfigs['ultimo_mes_pago'] = mesAtualStr;
+
+                                final empresaAtualizada = empresa.copyWith(configuracoes: novasConfigs);
+                                await authService.atualizarEmpresa(empresaAtualizada);
+                                final dataService = Provider.of<DataService>(context, listen: false);
+                                if (dataService.empresaAtual?.id == empresaAtualizada.id) {
+                                  dataService.setEmpresaAtual(empresaAtualizada);
+                                }
+                                authService.notificarMudancas();
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('✅ OK de pagamento do mês $mesAtualStr confirmado e salvo com sucesso!'),
+                                      backgroundColor: Colors.green,
+                                    ),
+                                  );
+                                }
+                              } catch (e) {
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('Erro ao salvar OK: $e'),
+                                      backgroundColor: Colors.red,
+                                    ),
+                                  );
+                                }
+                              }
                             },
                           ),
                         ],

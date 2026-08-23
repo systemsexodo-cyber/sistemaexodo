@@ -409,6 +409,16 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
               _icmsCstController.text = perfil.icmsCst ?? '';
               _ncm = perfil.ncm ?? _ncm;
               _ncmController.text = _ncm ?? '';
+              _pisCst = perfil.pisCst;
+              _pisCstController.text = perfil.pisCst ?? '';
+              _cofinsCst = perfil.cofinsCst;
+              _cofinsCstController.text = perfil.cofinsCst ?? '';
+              _icmsAliquota = perfil.aliquotaIcms;
+              _icmsAliquotaController.text = perfil.aliquotaIcms?.toString() ?? '';
+              _pisAliquota = perfil.aliquotaPis;
+              _pisAliquotaController.text = perfil.aliquotaPis?.toString() ?? '';
+              _cofinsAliquota = perfil.aliquotaCofins;
+              _cofinsAliquotaController.text = perfil.aliquotaCofins?.toString() ?? '';
             });
           }
         } catch (_) {}
@@ -4137,7 +4147,7 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
                       if (p.id == v) { perfil = p; break; }
                     }
                     if (perfil != null) {
-                      // Preenche automaticamente os campos fiscais a partir do perfil
+                      // Preenche automaticamente todos os campos fiscais a partir do perfil
                       _cfop = perfil.cfop;
                       _cfopController.text = perfil.cfop;
                       _csosn = perfil.csosn;
@@ -4152,6 +4162,10 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
                       _cofinsCstController.text = perfil.cofinsCst ?? '';
                       _icmsAliquota = perfil.aliquotaIcms;
                       _icmsAliquotaController.text = perfil.aliquotaIcms?.toString() ?? '';
+                      _pisAliquota = perfil.aliquotaPis;
+                      _pisAliquotaController.text = perfil.aliquotaPis?.toString() ?? '';
+                      _cofinsAliquota = perfil.aliquotaCofins;
+                      _cofinsAliquotaController.text = perfil.aliquotaCofins?.toString() ?? '';
                     }
                   }
                 });

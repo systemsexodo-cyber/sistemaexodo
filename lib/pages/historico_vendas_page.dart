@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:collection/collection.dart';
 import '../services/data_service.dart';
+import '../services/auth_service.dart';
 import '../models/venda_balcao.dart';
 import '../models/pedido.dart';
 import '../models/forma_pagamento.dart';
@@ -22,7 +22,6 @@ import 'home_page.dart';
 import 'package:printing/printing.dart';
 import '../widgets/sync_status_widget.dart';
 import '../widgets/historico_nfce_pdv_dialog.dart';
-import '../services/auth_service.dart';
 import '../widgets/permission_widget.dart';
 import '../services/caixa_pdf_service.dart';
 import '../services/venda_pdf_service.dart';
@@ -369,27 +368,61 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
   String _filtroTipo = 'Todos';
   String _filtroProdutoBusca = '';
   int _limiteLocal = 100;
-  bool _filtrarApenasMeuCaixa = false;
+  bool _filtrarApenasMeuCaixa = true;
+  DateTime? _dataInicioAntesMeuCaixa;
+  DateTime? _dataFimAntesMeuCaixa;
+
 
   @override
   void initState() {
     super.initState();
-    _loadFiltroMeuCaixa();
+    // Salvar backup das datas do dia inteiro imediatamente
+    _dataInicioAntesMeuCaixa = DateTime.now().copyWith(
+      hour: 0, minute: 0, second: 0, millisecond: 0, microsecond: 0,
+    );
+    _dataFimAntesMeuCaixa = DateTime.now().copyWith(
+      hour: 23, minute: 59, second: 59, millisecond: 999, microsecond: 999,
+    );
+    // Sempre começa mostrando TODAS as vendas (padrão)
+    // O usuário pode alternar para "Meu Caixa" no toggle da UI
   }
 
-  void _loadFiltroMeuCaixa() async {
-    final prefs = await SharedPreferences.getInstance();
-    if (mounted) {
-      setState(() {
-        _filtrarApenasMeuCaixa =
-            prefs.getBool('filtrar_apenas_meu_caixa') ?? false;
-      });
+  /// Sempre abre mostrando TODAS as vendas por padrão.
+  /// O usuário pode alternar para "Meu Caixa" manualmente no toggle.
+
+  /// Compara dois nomes/email de operador de forma tolerante (normaliza,
+  /// remove caracteres especiais e compara o prefixo do email).
+  /// DIFERENTE de vendaPertenceAoOperador: retorna false quando algum
+  /// dos operandos é vazio/nulo (nunca assume que "vazio == qualquer").
+  static bool _operadorBate(String? a, String? b) {
+    if (a == null || b == null) return false;
+    String normalizar(String s) => s
+        .toLowerCase()
+        .trim()
+        .replaceAll(RegExp(r'[^a-z0-9@]'), '');
+    final na = normalizar(a);
+    final nb = normalizar(b);
+    if (na.isEmpty || nb.isEmpty) return false;
+    // Match exato primeiro
+    if (na == nb) return true;
+    // Só comparar local part (antes do @) se AMBOS tiverem @.
+    // Se um é nome (sem @) e o outro é email, NÃO comparar pelo prefixo
+    // — isso causava cruzamento entre usuários diferentes.
+    if (na.contains('@') && nb.contains('@')) {
+      final localA = na.split('@').first;
+      final localB = nb.split('@').first;
+      return localA == localB && localA.isNotEmpty;
     }
+    return false;
   }
 
   void _saveFiltroMeuCaixa(bool value) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('filtrar_apenas_meu_caixa', value);
+    try {
+      final dataService = Provider.of<DataService>(context, listen: false);
+      await dataService.storage.salvar('filtro_apenas_meu_caixa', value.toString());
+    } catch (e) {
+      debugPrint('>>> Erro ao salvar filtro meu caixa: $e');
+    }
   }
 
   @override
@@ -406,20 +439,31 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
     DateTime inicio,
     DateTime fim, {
     bool apenasMeuCaixa = false,
+    String? emailUsuarioLogado,
   }) {
     final Map<String, ItemHistorico> mapItens = {};
 
-    // Determinar TODOS os caixas do OPERADOR atual (abertos e fechados) para o
-    // filtro "Apenas Meu Caixa". ANTES usava só a última sessão do operador:
-    // se o operador não fosse encontrado (nome/email divergente) ou tivesse
-    // mais de um caixa no período, TODAS as vendas sumiam do histórico.
+    // Determinar os caixas ABERTOS do OPERADOR atual para o
+    // filtro "Apenas Meu Caixa". Só inclui caixas sem fechamento
+    // (sessão atual), para evitar que vendas de caixas antigos apareçam.
     String? operadorAtual;
     final List<AberturaCaixa> caixasDoOperador = [];
     if (apenasMeuCaixa) {
-      operadorAtual = dataService.responsavelAtivo ?? dataService.usuarioAtualEmail;
+      // SEMPRE usar o email do usuário LOGADO (passado via AuthService).
+      // NÃO usar dataService.usuarioAtualEmail que pode ser null se
+      // setUsuarioAtual ainda não foi chamado, e NÃO usar responsavelAtivo
+      // que pode ter sido alterado pelo dropdown do caixa para outro operador.
+      operadorAtual = emailUsuarioLogado ?? dataService.usuarioAtualEmail ?? dataService.responsavelAtivo;
       if (operadorAtual != null && operadorAtual.trim().isNotEmpty) {
         for (final ab in dataService.aberturasCaixa) {
-          if (dataService.vendaPertenceAoOperador(operadorAtual, ab.responsavel)) {
+          // Ignorar caixas já fechados — só a sessão atual importa
+          final temFechamento = dataService.fechamentosCaixa
+              .any((f) => f.aberturaCaixaId == ab.id);
+          if (temFechamento) continue;
+          // Comparação EXATA: só incluir caixas cujo responsavel bate
+          // com o operador logado.
+          final resp = (ab.responsavel ?? '').trim();
+          if (resp.isNotEmpty && _operadorBate(operadorAtual, resp)) {
             caixasDoOperador.add(ab);
           }
         }
@@ -430,25 +474,33 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
     final _dataInicio = inicio;
     final _dataFim = fim;
 
-    bool pertenceAoCaixa(DateTime data, {String? operador}) {
+    // IDs dos caixas do operador atual (usado para fechamento/sangria/suprimento)
+    final Set<String> idsCaixasDoOperador = caixasDoOperador.map((ab) => ab.id).toSet();
+
+    bool pertenceAoCaixa(DateTime data, {String? operador, String? aberturaCaixaId}) {
       if (!apenasMeuCaixa) return true;
+      // 0. Se o item tem aberturaCaixaId (fechamento, sangria, suprimento),
+      //    verificar direto se essa abertura pertence ao operador atual.
+      if (aberturaCaixaId != null && aberturaCaixaId.isNotEmpty) {
+        return idsCaixasDoOperador.contains(aberturaCaixaId);
+      }
       final op = (operador ?? '').trim();
-      // 1. Venda identificada: pertence se o operador da venda é o operador
-      //    atual. Se NÃO bate, NÃO descarta — cai para Branch 2 para checar
-      //    se a data está dentro da janela do caixa (evita sumiço de vendas
-      //    quando o campo operador diverge levemente do responsável).
+
+      // 1. REGRAS ESTRTAS POR OPERADOR:
+      //    a) Se a venda TEM um operador definido:
+      //       - Se bate com o operador atual → PERTENCE.
+      //       - Se NÃO bate → NÃO pertence (rejeitar imediatamente).
+      //    b) Se a venda NÃO tem operador (legada/vazia):
+      //       - Pertence apenas se cai dentro da janela de algum caixa
+      //         do operador atual (fallback por tempo).
       if (op.isNotEmpty &&
           operadorAtual != null &&
           operadorAtual.trim().isNotEmpty) {
-        if (dataService.vendaPertenceAoOperador(op, operadorAtual)) {
-          return true;
-        }
-        // Operador não bateu — verificar se a data cai dentro da janela de
-        // QUALQUER caixa do operador atual (fallback).
+        // Venda com operador definido: comparacao estrita
+        return _operadorBate(op, operadorAtual);
       }
-      // 2. Venda sem operador (legada) ou item genérico (fechamento, sangria,
-      //    troca, conta paga): pertence se está dentro da janela de QUALQUER
-      //    caixa do operador atual (aberto ou fechado).
+      // 2. Venda sem operador (legada): só incluir se estiver dentro da
+      //    janela de tempo de algum caixa do operador atual.
       if (caixasDoOperador.isEmpty) return false;
       for (final ab in caixasDoOperador) {
         if (data.isBefore(ab.dataAbertura)) continue;
@@ -489,12 +541,10 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
 
       // Só incluir no histórico se foi recebida ou cancelada (não incluir pendentes)
       if (!foiRecebida && !isCancelada) continue;
-
       bool isNfce =
           mapNfces.containsKey(v.id) || mapNfces.containsKey(v.numero);
       mapItens[v.id] = ItemHistorico.fromVendaBalcao(v, isNfce: isNfce);
     }
-
     // 2. Pedidos (Mesclar com VendaBalcao se existir, senão adicionar novo)
     for (var p in dataService.pedidos.where(
       (p) =>
@@ -520,20 +570,12 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
       }
     }
 
-    // 3. Demais itens operacionais (Caixa, Sangrias, Suprimentos)
-    for (var f in dataService.fechamentosCaixa.where(
-      (f) =>
-          f.dataFechamento.isAfter(_dataInicio) &&
-          f.dataFechamento.isBefore(_dataFim) &&
-          pertenceAoCaixa(f.dataFechamento),
-    )) {
-      mapItens['FECH-${f.id}'] = ItemHistorico.fromFechamentoCaixa(f);
-    }
+    // 3. Demais itens operacionais (Sangrias, Suprimentos)
     for (var s in dataService.sangrias.where(
       (s) =>
           s.data.isAfter(_dataInicio) &&
           s.data.isBefore(_dataFim) &&
-          pertenceAoCaixa(s.data),
+          pertenceAoCaixa(s.data, aberturaCaixaId: s.aberturaCaixaId),
     )) {
       mapItens['SANG-${s.id}'] = ItemHistorico.fromSangria(s);
     }
@@ -541,7 +583,7 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
       (s) =>
           s.data.isAfter(_dataInicio) &&
           s.data.isBefore(_dataFim) &&
-          pertenceAoCaixa(s.data),
+          pertenceAoCaixa(s.data, aberturaCaixaId: s.aberturaCaixaId),
     )) {
       mapItens['SUPR-${s.id}'] = ItemHistorico.fromSuprimento(s);
     }
@@ -682,7 +724,7 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
       final op = (operador ?? '').trim();
       if (op.isNotEmpty &&
           respAb.isNotEmpty &&
-          !ds.vendaPertenceAoOperador(op, respAb)) {
+          !_operadorBate(op, respAb)) {
         continue;
       }
       if (melhor == null || ab.dataAbertura.isAfter(melhor.dataAbertura)) {
@@ -695,11 +737,14 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
   @override
   Widget build(BuildContext context) {
     final dataService = Provider.of<DataService>(context);
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final emailLogado = authService.usuarioAtual?.email;
     List<ItemHistorico> itens = _montarItensHistorico(
       dataService,
       _dataInicio,
       _dataFim,
       apenasMeuCaixa: _filtrarApenasMeuCaixa,
+      emailUsuarioLogado: emailLogado,
     );
 
     // Filtro por Tipo
@@ -1153,19 +1198,27 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
 
   Widget _buildFiltros() {
     final dataService = Provider.of<DataService>(context, listen: false);
+    final authService = Provider.of<AuthService>(context, listen: false);
     DateTime? inicioCaixa;
     DateTime? fimCaixa;
+    // Pegar a última abertura do OPERADOR ATUAL (não global).
+    // SEMPRE usar o email do usuário LOGADO do AuthService (mais confiável).
+    final operadorAtual = authService.usuarioAtual?.email ?? dataService.usuarioAtualEmail ?? dataService.responsavelAtivo;
     final aberturas = dataService.aberturasCaixa;
-    if (aberturas.isNotEmpty) {
-      final sorted = List<AberturaCaixa>.from(aberturas)
+    if (aberturas.isNotEmpty && operadorAtual != null && operadorAtual.trim().isNotEmpty) {
+      final aberturasDoOperador = aberturas.where(
+        (ab) => _operadorBate(operadorAtual, ab.responsavel),
+      ).toList()
         ..sort((a, b) => b.dataAbertura.compareTo(a.dataAbertura));
-      final ultimaAbertura = sorted.first;
-      inicioCaixa = ultimaAbertura.dataAbertura;
-      final fechamento = dataService.fechamentosCaixa.firstWhereOrNull(
-        (f) => f.aberturaCaixaId == ultimaAbertura.id,
-      );
-      if (fechamento != null) {
-        fimCaixa = fechamento.dataFechamento;
+      if (aberturasDoOperador.isNotEmpty) {
+        final ultimaAbertura = aberturasDoOperador.first;
+        inicioCaixa = ultimaAbertura.dataAbertura;
+        final fechamento = dataService.fechamentosCaixa.firstWhereOrNull(
+          (f) => f.aberturaCaixaId == ultimaAbertura.id,
+        );
+        if (fechamento != null) {
+          fimCaixa = fechamento.dataFechamento;
+        }
       }
     }
     return Container(
@@ -1246,36 +1299,107 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
             ),
           ),
           const SizedBox(height: 8),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              Checkbox(
-                value: _filtrarApenasMeuCaixa,
-                activeColor: Colors.blueAccent,
-                onChanged: (val) {
-                  if (val != null) {
-                    setState(() {
-                      _filtrarApenasMeuCaixa = val;
-                      if (!val) {
-                        if (inicioCaixa != null) {
-                          _dataInicio = inicioCaixa!;
-                          _dataFim = fimCaixa ?? DateTime.now().copyWith(hour: 23, minute: 59, second: 59);
-                        }
+          // Toggle: Todas as Vendas vs Apenas Meu Caixa
+          Container(
+            decoration: BoxDecoration(
+              color: const Color(0xFF2D2D44),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: _filtrarApenasMeuCaixa ? Colors.blueAccent : Colors.white10,
+              ),
+            ),
+            child: Row(
+              children: [
+                // Botão: Todas as Vendas
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () {
+                      if (_filtrarApenasMeuCaixa) {
+                        setState(() {
+                          _filtrarApenasMeuCaixa = false;
+                          if (_dataInicioAntesMeuCaixa != null) {
+                            _dataInicio = _dataInicioAntesMeuCaixa!;
+                            _dataFim = _dataFimAntesMeuCaixa!;
+                          }
+                        });
+                        _saveFiltroMeuCaixa(false);
                       }
-                    });
-                    _saveFiltroMeuCaixa(val);
-                  }
-                },
-              ),
-              const Text(
-                'Apenas Meu Caixa (Sessão)',
-                style: TextStyle(
-                  color: Colors.white70,
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      decoration: BoxDecoration(
+                        color: !_filtrarApenasMeuCaixa ? Colors.blueAccent.withOpacity(0.2) : Colors.transparent,
+                        borderRadius: BorderRadius.circular(11),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.people,
+                            size: 16,
+                            color: !_filtrarApenasMeuCaixa ? Colors.blueAccent : Colors.white54,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Todas',
+                            style: TextStyle(
+                              color: !_filtrarApenasMeuCaixa ? Colors.blueAccent : Colors.white54,
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                 ),
-              ),
-            ],
+                // Botão: Apenas Meu Caixa
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () {
+                      if (!_filtrarApenasMeuCaixa) {
+                        setState(() {
+                          _filtrarApenasMeuCaixa = true;
+                          _dataInicioAntesMeuCaixa = _dataInicio;
+                          _dataFimAntesMeuCaixa = _dataFim;
+                          if (inicioCaixa != null) {
+                            _dataInicio = inicioCaixa!;
+                            _dataFim = fimCaixa ?? DateTime.now().copyWith(hour: 23, minute: 59, second: 59);
+                          }
+                        });
+                        _saveFiltroMeuCaixa(true);
+                      }
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      decoration: BoxDecoration(
+                        color: _filtrarApenasMeuCaixa ? Colors.blueAccent.withOpacity(0.2) : Colors.transparent,
+                        borderRadius: BorderRadius.circular(11),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.person,
+                            size: 16,
+                            color: _filtrarApenasMeuCaixa ? Colors.blueAccent : Colors.white54,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Meu Caixa',
+                            style: TextStyle(
+                              color: _filtrarApenasMeuCaixa ? Colors.blueAccent : Colors.white54,
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -1693,6 +1817,49 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                               ),
                             ),
                           ),
+                          // Badge do número do caixa (fechamento/sangria/suprimento)
+                          if (item.caixaNumero != null && item.caixaNumero!.isNotEmpty) ...[
+                            const SizedBox(width: 4),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: Colors.teal.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(color: Colors.teal.withOpacity(0.3)),
+                              ),
+                              child: Text(
+                                'CAIXA: ${item.caixaNumero}',
+                                style: const TextStyle(
+                                  color: Colors.tealAccent,
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.bold,
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
+                            ),
+                          ],
+                          // Badge do responsável (caixa)
+                          if (item.responsavel != null && item.responsavel!.isNotEmpty &&
+                              item.fechamentoCaixa != null) ...[
+                            const SizedBox(width: 4),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: Colors.deepPurple.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(color: Colors.deepPurple.withOpacity(0.3)),
+                              ),
+                              child: Text(
+                                'OP: ${item.responsavel}',
+                                style: const TextStyle(
+                                  color: Colors.deepPurpleAccent,
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.bold,
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
+                            ),
+                          ],
                           if (formaPagamentoStr.isNotEmpty)
                             Container(
                               padding: const EdgeInsets.symmetric(
@@ -2511,37 +2678,54 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                           ),
                         ),
                       ),
-                      ...item.pedido!.pagamentos.map(
-                        (pg) => ListTile(
-                          dense: true,
-                          leading: Icon(
-                            pg.tipo.icone,
-                            color: pg.tipo.cor,
-                            size: 18,
-                          ),
-                          title: Text(
-                            pg.tipo.nome,
-                            style: const TextStyle(color: Colors.white),
-                          ),
-                          subtitle: Text(
-                            pg.recebido
-                                ? 'Recebido'
-                                : 'Pendente',
-                            style: TextStyle(
-                              color: pg.recebido
-                                  ? Colors.greenAccent
-                                  : Colors.orangeAccent,
-                              fontSize: 11,
+                      ...item.pedido!.pagamentos.asMap().entries.map(
+                        (entry) {
+                          final pgIdx = entry.key;
+                          final pg = entry.value;
+                          return ListTile(
+                            dense: true,
+                            leading: Icon(
+                              pg.tipo.icone,
+                              color: pg.tipo.cor,
+                              size: 18,
                             ),
-                          ),
-                          trailing: Text(
-                            _formatoMoeda.format(pg.valor),
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
+                            title: Text(
+                              pg.tipo.nome,
+                              style: const TextStyle(color: Colors.white),
                             ),
-                          ),
-                        ),
+                            subtitle: Text(
+                              pg.recebido
+                                  ? 'Recebido'
+                                  : 'Pendente',
+                              style: TextStyle(
+                                color: pg.recebido
+                                    ? Colors.greenAccent
+                                    : Colors.orangeAccent,
+                                fontSize: 11,
+                              ),
+                            ),
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  _formatoMoeda.format(pg.valor),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                if (pg.recebido && !item.isCancelada) ...[
+                                  const SizedBox(width: 8),
+                                  IconButton(
+                                    icon: const Icon(Icons.undo, color: Colors.redAccent, size: 18),
+                                    tooltip: 'Estornar este pagamento',
+                                    onPressed: () => _estornarPagamentoPedido(item, pgIdx, context),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          );
+                        },
                       ),
                     ],
                     if (item.responsavel != null &&
@@ -3266,6 +3450,99 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
             style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
             child: const Text(
               'SIM, CANCELAR',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _estornarPagamentoPedido(ItemHistorico item, int pgIdx, BuildContext context) {
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final pg = item.pedido!.pagamentos[pgIdx];
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(Icons.undo, color: Colors.orangeAccent),
+            SizedBox(width: 12),
+            Text(
+              'Estornar Pagamento',
+              style: TextStyle(color: Colors.white),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Deseja estornar o pagamento de ${_formatoMoeda.format(pg.valor)} via ${pg.tipo.nome}?',
+              style: const TextStyle(color: Colors.white70),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'O pagamento será marcado como pendente novamente.',
+              style: TextStyle(
+                color: Colors.orangeAccent,
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text(
+              'CANCELAR',
+              style: TextStyle(color: Colors.grey),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(dialogContext);
+
+              try {
+                final pedido = item.pedido!;
+                final novosPagamentos = List<PagamentoPedido>.from(pedido.pagamentos);
+                novosPagamentos[pgIdx] = novosPagamentos[pgIdx].copyWith(recebido: false);
+                final pedidoAtualizado = pedido.copyWith(
+                  pagamentos: novosPagamentos,
+                  updatedAt: DateTime.now(),
+                );
+                await dataService.updatePedido(pedidoAtualizado);
+
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Pagamento de ${_formatoMoeda.format(pg.valor)} estornado com sucesso!'),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Erro ao estornar pagamento: $e'),
+                      backgroundColor: Colors.redAccent,
+                    ),
+                  );
+                }
+              }
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.orangeAccent),
+            child: const Text(
+              'SIM, ESTORNAR',
               style: TextStyle(
                 color: Colors.white,
                 fontWeight: FontWeight.bold,
