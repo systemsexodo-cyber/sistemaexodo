@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:sistema_exodo_novo/models/cliente.dart';
 import 'package:sistema_exodo_novo/utils/date_parser.dart';
 
@@ -241,7 +242,11 @@ class AgendamentoServico {
       'servicosIds': servicosIds,
       'clienteId': clienteId,
       'petId': petId,
-      'dataAgendamento': dataAgendamento.toIso8601String(),
+      // Serializar em UTC (sufixo Z) para manter consistência com os outros
+      // modelos do projeto (VendaBalcao, AberturaCaixa, etc.) e evitar
+      // deslocamento de fuso no round-trip do Supabase. O DateParser.parse já
+      // converte de UTC para hora local na leitura.
+      'dataAgendamento': dataAgendamento.toUtc().toIso8601String(),
       'duracaoMinutos': duracaoMinutos,
       'intervaloMinutos': intervaloMinutos,
       'observacoes': observacoes,
@@ -252,7 +257,7 @@ class AgendamentoServico {
       'pedidoId': pedidoId,
       'numeroPedido': numeroPedido,
       'recebido': recebido,
-      'dataRecebimento': dataRecebimento?.toIso8601String(),
+      'dataRecebimento': dataRecebimento != null ? dataRecebimento!.toUtc().toIso8601String() : null,
       'clienteNome': clienteNome,
       'clienteTelefone': clienteTelefone,
       'petNome': petNome,
@@ -271,16 +276,47 @@ class AgendamentoServico {
       'servico': servico?.toMap(),
       'servicos': servicos.map((s) => s.toMap()).toList(),
       'materiais': materiais.map((m) => m.toMap()).toList(),
-      'createdAt': createdAt.toIso8601String(),
-      'updatedAt': updatedAt.toIso8601String(),
+      'createdAt': createdAt.toUtc().toIso8601String(),
+      'updatedAt': updatedAt.toUtc().toIso8601String(),
     };
+  }
+
+  /// Tenta converter um valor que pode ser List ou String JSON em List<dynamic>
+  static List<dynamic> _ensureList(dynamic value) {
+    if (value == null) return [];
+    if (value is List) return value;
+    if (value is String) {
+      try {
+        if (value.startsWith('[')) {
+          final decoded = json.decode(value);
+          if (decoded is List) return decoded;
+        }
+      } catch (_) {}
+    }
+    return [];
+  }
+
+  /// Tenta converter um valor que pode ser Map ou String JSON em Map<String, dynamic>
+  static Map<String, dynamic>? _ensureMap(dynamic value) {
+    if (value == null) return null;
+    if (value is Map) return Map<String, dynamic>.from(value);
+    if (value is String) {
+      try {
+        if (value.startsWith('{')) {
+          final decoded = json.decode(value);
+          if (decoded is Map) return Map<String, dynamic>.from(decoded);
+        }
+      } catch (_) {}
+    }
+    return null;
   }
 
   factory AgendamentoServico.fromMap(Map<String, dynamic> map) {
     String? sId = map['servicoId']?.toString();
     List<String> sIds = [];
-    if (map['servicosIds'] != null && map['servicosIds'] is List) {
-      sIds = List<String>.from(map['servicosIds']);
+    final rawServicosIds = _ensureList(map['servicosIds']);
+    if (rawServicosIds.isNotEmpty) {
+      sIds = rawServicosIds.map((e) => e.toString()).toList();
     } else if (sId != null) {
       sIds = [sId];
     }
@@ -306,9 +342,10 @@ class AgendamentoServico {
       dataRecebimento: map['dataRecebimento'] != null 
           ? DateParser.parse(map['dataRecebimento']) 
           : null,
-      materiais: map['materiais'] != null && map['materiais'] is List
-          ? (map['materiais'] as List).map((m) => ItemMaterial.fromMap(m as Map<String, dynamic>)).toList()
-          : <ItemMaterial>[],
+      materiais: _ensureList(map['materiais']).map((m) {
+        if (m is Map) return ItemMaterial.fromMap(Map<String, dynamic>.from(m));
+        return null;
+      }).whereType<ItemMaterial>().toList(),
       createdAt: DateParser.parse(map['createdAt']),
       updatedAt: DateParser.parse(map['updatedAt']),
       clienteNome: map['clienteNome']?.toString(),
@@ -325,11 +362,12 @@ class AgendamentoServico {
       recorrente: (map['recorrente'] as bool?) ?? false,
       isPago: (map['isPago'] as bool?) ?? false,
       pagamentoInfo: map['pagamentoInfo']?.toString(),
-      pet: map['pet'] != null ? Pet.fromMap(Map<String, dynamic>.from(map['pet'])) : null,
-      servico: map['servico'] != null ? Servico.fromMap(Map<String, dynamic>.from(map['servico'])) : null,
-      servicos: map['servicos'] != null 
-          ? (map['servicos'] as List).map((s) => Servico.fromMap(Map<String, dynamic>.from(s))).toList()
-          : [],
+      pet: _ensureMap(map['pet']) != null ? Pet.fromMap(_ensureMap(map['pet'])!) : null,
+      servico: _ensureMap(map['servico']) != null ? Servico.fromMap(_ensureMap(map['servico'])!) : null,
+      servicos: _ensureList(map['servicos']).map((s) {
+        if (s is Map) return Servico.fromMap(Map<String, dynamic>.from(s));
+        return null;
+      }).whereType<Servico>().toList(),
     );
   }
 }

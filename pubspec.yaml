@@ -74,6 +74,7 @@ dependencies:
   connectivity_plus: ^7.0.0
   hive: ^2.2.3
   hive_flutter: ^1.1.0
+  ffi: ^2.1.0              # Win32 API para processos ocultos
 
   # Banco de Dados Local Nativo (Windows/Mobile)
 

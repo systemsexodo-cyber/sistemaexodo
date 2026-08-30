@@ -2,6 +2,8 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'local_bridge_detector.dart';
+import 'process_utils.dart';
+import 'win32_process_helper.dart';
 
 /// Gerencia o bridge NFC-e local (instalação, verificação, inicialização)
 class BridgeManagerService {
@@ -11,8 +13,8 @@ class BridgeManagerService {
   /// Encerra processos do bridge que possam estar travando o arquivo
   static Future<void> _encerrarBridgeSeRodando() async {
     try {
-      await Process.run('taskkill', ['/F', '/IM', _bridgeExecutable]);
-      await Process.run('taskkill', ['/F', '/IM', 'ExodoNfceBridgeWatchdog.exe']);
+      await runProcessDetached('taskkill', ['/F', '/IM', _bridgeExecutable]);
+      await runProcessDetached('taskkill', ['/F', '/IM', 'ExodoNfceBridgeWatchdog.exe']);
       // Aguardar um segundo para liberar o lock do arquivo
       await Future.delayed(const Duration(seconds: 1));
     } catch (_) {}
@@ -179,12 +181,21 @@ class BridgeManagerService {
       final execDir = execFile.parent.path.isEmpty ? Directory.current.path : execFile.parent.path;
       debugPrint('>>> [BridgeManager] 🚀 Iniciando bridge em: $bridgePath (Diretório: $execDir)');
       
-      await Process.start(
+      // Usar Win32 API para iniciar sem janela CMD
+      final pid = Win32ProcessHelper.startProcessHidden(
         bridgePath,
-        [],
-        mode: ProcessStartMode.detached,
         workingDirectory: execDir,
       );
+      if (pid == null) {
+        debugPrint('>>> [BridgeManager] ❌ Win32 CreateProcess falhou, tentando fallback...');
+        // Fallback: Process.start com detached
+        await Process.start(
+          bridgePath,
+          [],
+          mode: ProcessStartMode.detached,
+          workingDirectory: execDir,
+        );
+      }
       
       // Aguardar alguns segundos para o bridge iniciar
       await Future.delayed(const Duration(seconds: 3));

@@ -303,6 +303,7 @@ class DataService extends ChangeNotifier {
     _sangrias.clear();
     _suprimentos.clear();
     _nfces.clear();
+    _nfes.clear();
     _mesasComandas.clear();
     _linksVendedores.clear();
     _comissoesVendedores.clear();
@@ -710,6 +711,16 @@ class DataService extends ChangeNotifier {
           break;
 
         case 'agendamentos_servico':
+          // ⚠️ Ignorar eventos REALTIME de agendamentos criados localmente há <5s.
+          // O REALTIME dispara INSERT de volta ao mesmo PC.
+          if (id != null && _agendamentosCriadosLocalmente.containsKey(id)) {
+            final criadoEm = _agendamentosCriadosLocalmente[id]!;
+            if (DateTime.now().difference(criadoEm).inSeconds < 5) {
+              debugPrint('>>> [Realtime] ⏭️ Agendamento $id ignorado (criado localmente há ${DateTime.now().difference(criadoEm).inSeconds}s)');
+              break;
+            }
+            _agendamentosCriadosLocalmente.remove(id);
+          }
           _aplicarEmLista<AgendamentoServico>(_agendamentosServico, evento, dados, AgendamentoServico.fromMap);
           // Som de notificação para novos agendamentos recebidos de outro PC
           if (evento == 'INSERT') {
@@ -761,16 +772,26 @@ class DataService extends ChangeNotifier {
     final id = dados['id'] as String?;
     if (id == null) return;
 
-    // Remover versão anterior (para UPDATE e DELETE)
-    lista.removeWhere((item) => (item as dynamic).id == id);
-
-    // Adicionar nova versão (apenas para INSERT e UPDATE)
-    if (evento != 'DELETE') {
+    // ⚠️ SEGURANÇA: Parsear NOVO item ANTES de remover o antigo.
+    // Se o parse falhar, o item original permanece intacto na lista.
+    if (evento == 'DELETE') {
+      // DELETE: remover diretamente
+      lista.removeWhere((item) => (item as dynamic).id == id);
+    } else {
+      // INSERT/UPDATE: parsear primeiro, depois swap seguro
+      T? novoItem;
       try {
-        lista.add(fromMap(dados));
+        novoItem = fromMap(dados);
       } catch (e) {
         debugPrint('>>> [Realtime] ⚠️ Erro ao parsear item de ${T.toString()}: $e');
         debugPrint('>>> [Realtime] Dados recebidos: $dados');
+        return; // NÃO remove o item existente!
+      }
+
+      if (novoItem != null) {
+        // Agora é seguro remover e adicionar
+        lista.removeWhere((item) => (item as dynamic).id == id);
+        lista.add(novoItem);
       }
     }
   }
@@ -860,7 +881,10 @@ class DataService extends ChangeNotifier {
   
   // Cache de IDs removidos recentemente para evitar que o Supabase os restaure 
   // durante a latência de sincronização
-  final Set<String> _idsMesaRemovidosRecentemente = {};
+  final Set<String> _idsMesaRemovidosRecentemente = {};    // ⚠️ IDs de agendamentos criados localmente há <5s.
+    // O REALTIME do Supabase dispara um INSERT de volta ao mesmo PC;
+    // ignoramos esses eventos para não sobrescrever a versão local correta.
+    final Map<String, DateTime> _agendamentosCriadosLocalmente = {};
 
   void _resetTimerParaAtivo() {
     _lastSyncActivityTime = DateTime.now();
@@ -1202,6 +1226,7 @@ class DataService extends ChangeNotifier {
     _sangrias.clear();
     _suprimentos.clear();
     _nfces.clear();
+    _nfes.clear();
     _mesasComandas.clear();
     _linksVendedores.clear();
     _comissoesVendedores.clear();
@@ -4535,6 +4560,17 @@ class DataService extends ChangeNotifier {
       novosCompletos.add(completo);
     }
 
+    // ⚠️ Registrar IDs como criados localmente (ignorar REALTIME por 5s)
+    final agora = DateTime.now();
+    for (final c in novosCompletos) {
+      _agendamentosCriadosLocalmente[c.id] = agora;
+    }
+    _agendamentosCriadosLocalmente.removeWhere((id, t) => agora.difference(t).inSeconds > 5);
+
+    debugPrint('>>> [Batch] ✅ ${novosCompletos.length} agendamento(s) adicionado(s) na memória. Total: ${_agendamentosServico.length}');
+    for (final c in novosCompletos) {
+      debugPrint('>>> [Batch]   → ID=${c.id} data=${c.dataAgendamento} status=${c.status} servico=${c.servico?.nome ?? c.servicoNome}');
+    }
     notifyListeners();
 
     // Salvar localmente (UMA SÓ VEZ)
@@ -4619,6 +4655,8 @@ class DataService extends ChangeNotifier {
     // Evitar duplicatas em memória antes de adicionar
     _agendamentosServico.removeWhere((a) => a.id == agendamentoCompleto.id);
     _agendamentosServico.add(agendamentoCompleto);
+    _agendamentosCriadosLocalmente[agendamentoCompleto.id] = DateTime.now();
+    debugPrint('>>> [Agendamento] ✅ Adicionado ID=${agendamentoCompleto.id} data=${agendamentoCompleto.dataAgendamento} status=${agendamentoCompleto.status} total=${_agendamentosServico.length}');
     notifyListeners();
     
     // Salvar localmente IMEDIATAMENTE (sem debounce para agendamentos)
@@ -4783,9 +4821,13 @@ class DataService extends ChangeNotifier {
     DateTime inicio,
     DateTime fim,
   ) {
+    // Normalizar para comparar APENAS por data (ano/mes/dia), ignorando horario.
+    final inicioDia = DateTime(inicio.year, inicio.month, inicio.day);
+    final fimDia = DateTime(fim.year, fim.month, fim.day);
     return _agendamentosServico.where((a) {
-      return a.dataAgendamento.compareTo(inicio) >= 0 &&
-             a.dataAgendamento.compareTo(fim) <= 0;
+      final dataLocal = a.dataAgendamento.toLocal();
+      final aDia = DateTime(dataLocal.year, dataLocal.month, dataLocal.day);
+      return !aDia.isBefore(inicioDia) && aDia.isBefore(fimDia);
     }).toList();
   }
 
@@ -5112,6 +5154,26 @@ class DataService extends ChangeNotifier {
       _marcarSujo(LocalStorageService.keyPedidos);
       // Sincronizar cancelamento com Supabase imediatamente
       await enviarMudancaParaSupabase(SupabaseService.tablePedidos, pedidoCancelado.toMap());
+      
+      // Cancelar NFC-e associada ao pedido (se existir)
+      try {
+        final nfcesVinculadas = _nfces.where((n) =>
+          n.vendaId == pedido.id || n.vendaNumero == pedido.numero).toList();
+        for (final nfce in nfcesVinculadas) {
+          if (nfce.status == 'autorizada' || nfce.status == 'sucesso') {
+            final nfceCancelada = nfce.copyWith(
+              status: 'cancelada',
+              updatedAt: DateTime.now(),
+            );
+            await atualizarNFCe(nfceCancelada);
+            print('✓ NFC-e ${nfce.numero} vinculada ao pedido ${pedido.numero} marcada como cancelada');
+            // Sincronizar cancelamento da NFC-e com Supabase
+            await enviarMudancaParaSupabase(SupabaseService.tableNFCes, nfceCancelada.toMap());
+          }
+        }
+      } catch (e) {
+        print('>>> ⚠ Erro ao cancelar NFC-e vinculada: $e');
+      }
     }
   }
 
@@ -5558,6 +5620,26 @@ class DataService extends ChangeNotifier {
       _marcarSujo(LocalStorageService.keyVendasBalcao);
       // Sincronizar cancelamento com Supabase imediatamente
       await enviarMudancaParaSupabase(SupabaseService.tableVendasBalcao, vendaCancelada.toMap());
+      
+      // Cancelar NFC-e associada à venda (se existir)
+      try {
+        final nfcesVinculadas = _nfces.where((n) =>
+          n.vendaId == venda.id || n.vendaNumero == venda.numero).toList();
+        for (final nfce in nfcesVinculadas) {
+          if (nfce.status == 'autorizada' || nfce.status == 'sucesso') {
+            final nfceCancelada = nfce.copyWith(
+              status: 'cancelada',
+              updatedAt: DateTime.now(),
+            );
+            await atualizarNFCe(nfceCancelada);
+            print('✓ NFC-e ${nfce.numero} vinculada à venda ${venda.numero} marcada como cancelada');
+            // Sincronizar cancelamento da NFC-e com Supabase
+            await enviarMudancaParaSupabase(SupabaseService.tableNFCes, nfceCancelada.toMap());
+          }
+        }
+      } catch (e) {
+        print('>>> ⚠ Erro ao cancelar NFC-e vinculada à venda: $e');
+      }
     }
   }
 
@@ -6529,8 +6611,18 @@ class DataService extends ChangeNotifier {
           final a = AgendamentoServico.fromMap(map);
           return _vincularReferenciasAgendamento(a);
         }).toList();
-        _agendamentosServico.clear();
-        _agendamentosServico.addAll(novos);
+        // PROTEÇÃO: Se a memória tem mais dados que o PostgreSQL, mesclar ao invés de sobrescrever
+        if (novos.length >= _agendamentosServico.length) {
+          _agendamentosServico.clear();
+          _agendamentosServico.addAll(novos);
+        } else {
+          debugPrint('>>> ⚠️ PostgreSQL tem menos agendamentos (${novos.length}) que memória (${_agendamentosServico.length}). Mesclando.');
+          for (final n in novos) {
+            if (!_agendamentosServico.any((a) => a.id == n.id)) {
+              _agendamentosServico.add(n);
+            }
+          }
+        }
         print('>>> ✓ ${_agendamentosServico.length} agendamentos carregados em ${stopwatch.elapsedMilliseconds}ms');
       }
 
@@ -7205,6 +7297,7 @@ class DataService extends ChangeNotifier {
     _taxasEntrega.clear();
     _contasPagar.clear();
     _nfces.clear();
+    _nfes.clear();
     _mesasComandas.clear();
     _linksVendedores.clear();
     _comissoesVendedores.clear();
@@ -7690,6 +7783,8 @@ class DataService extends ChangeNotifier {
           await _supabaseService.deleteFiltered(SupabaseService.tableServicos, filter);
           await _supabaseService.deleteFiltered(SupabaseService.tableClientes, filter);
           await _supabaseService.deleteFiltered(SupabaseService.tableAgendamentosServico, filter);
+          await _supabaseService.deleteFiltered(SupabaseService.tableNFCes, filter);
+          await _supabaseService.deleteFiltered(SupabaseService.tableNFEs, filter);
           print('>>> ✓ Dados deletados do Supabase');
         } catch (e) {
           print('>>> ⚠️ Erro ao deletar do Supabase: $e');
@@ -8446,6 +8541,16 @@ class DataService extends ChangeNotifier {
 
   /// Adiciona ou atualiza um agendamento na lista local
   void _upsertAgendamentoLocal(AgendamentoServico agendamento, {bool prioritario = false}) {
+    // ⚠️ Ignorar upsert de agendamentos criados localmente há <10s.
+    // O REALTIME pode disparar INSERT de volta ao mesmo PC antes da UI atualizar.
+    if (_agendamentosCriadosLocalmente.containsKey(agendamento.id)) {
+      final criadoEm = _agendamentosCriadosLocalmente[agendamento.id]!;
+      if (DateTime.now().difference(criadoEm).inSeconds < 10) {
+        return; // Não sobrescrever versão local
+      }
+      _agendamentosCriadosLocalmente.remove(agendamento.id);
+    }
+
     final index = _agendamentosServico.indexWhere((a) => a.id == agendamento.id);
     if (index != -1) {
       _agendamentosServico[index] = agendamento;

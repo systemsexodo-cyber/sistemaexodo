@@ -1,5 +1,7 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'process_utils.dart';
+import 'win32_process_helper.dart';
 
 /// Gerencia o executável SincronizadorNuvem.exe
 class SincronizadorManagerService {
@@ -9,7 +11,7 @@ class SincronizadorManagerService {
   static Future<bool> isSincronizadorRunning() async {
     if (kIsWeb || !Platform.isWindows) return false;
     try {
-      final result = await Process.run('tasklist', ['/FI', 'IMAGENAME eq $_syncExecutable']);
+      final result = await runProcessHidden('tasklist', ['/FI', 'IMAGENAME eq $_syncExecutable']);
       return result.stdout.toString().contains(_syncExecutable);
     } catch (e) {
       debugPrint('>>> [SincronizadorManager] Erro ao checar processos: $e');
@@ -33,7 +35,12 @@ class SincronizadorManagerService {
         final path = localFile.absolute.path;
         final dir = localFile.absolute.parent.path;
         debugPrint('>>> [SincronizadorManager] 🚀 Iniciando Sincronizador em: $path');
-        await Process.start(path, [], mode: ProcessStartMode.detached, workingDirectory: dir);
+        // Usar Win32 API para iniciar sem janela CMD
+        final pid = Win32ProcessHelper.startProcessHidden(path, workingDirectory: dir);
+        if (pid == null) {
+          debugPrint('>>> [SincronizadorManager] ⚠️ Win32 falhou, tentando fallback...');
+          await Process.start(path, [], mode: ProcessStartMode.detached, workingDirectory: dir);
+        }
         return true;
       }
       
