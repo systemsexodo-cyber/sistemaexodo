@@ -13,6 +13,14 @@ class NfceContingenciaService extends ChangeNotifier {
 
   static const String _pastaBase = r'C:\ExodoNFCe';
   static const String _arquivoFila = r'C:\ExodoNFCe\contingencia_queue.json';
+  
+  /// Limite máximo de tentativas antes de marcar nota como FALHA definitiva.
+  /// Após atingir este limite, a nota é removida da fila e registrada como erro.
+  static const int _maxTentativas = 100;
+  
+  /// Intervalo entre logs de tentativa para notas com muitas falhas
+  /// (evita poluição do console — só loga a cada 10 tentativas após o 20º)
+  static const int _logIntervalo = 10;
 
   final List<Map<String, dynamic>> _fila = [];
   Timer? _timerRetry;
@@ -33,8 +41,31 @@ class NfceContingenciaService extends ChangeNotifier {
   Future<void> inicializar() async {
     if (kIsWeb || !Platform.isWindows) return;
     await _carregarFilaDoDisco();
+    _limparFilaInvalida();
     _iniciarTimerRetry();
     debugPrint('[Contingência] Inicializado. ${_fila.length} nota(s) na fila.');
+  }
+
+  /// Remove da fila notas com número inválido ("0"), vazias ou que já excederam o limite de tentativas.
+  void _limparFilaInvalida() {
+    final antes = _fila.length;
+    _fila.removeWhere((entry) {
+      final numero = entry['numero']?.toString() ?? '';
+      final tentativas = (entry['tentativas'] as int?) ?? 0;
+      if (numero == '0' || numero.isEmpty) {
+        debugPrint('[Contingência] 🧹 Removendo nota inválida (número: "$numero") da fila');
+        return true;
+      }
+      if (tentativas >= _maxTentativas) {
+        debugPrint('[Contingência] 🧹 Removendo nota $numero (esgotou $_maxTentativas tentativas)');
+        return true;
+      }
+      return false;
+    });
+    if (_fila.length != antes) {
+      debugPrint('[Contingência] 🧹 Limpeza: $antes → ${_fila.length} notas');
+      _salvarFilaNoDisco();
+    }
   }
 
   @override
@@ -104,6 +135,24 @@ class NfceContingenciaService extends ChangeNotifier {
       try {
         final payload = entry['payload'] as Map<String, dynamic>;
         final numero = entry['numero']?.toString() ?? '?';
+        final tentativas = (entry['tentativas'] as int?) ?? 0;
+
+        // ═══ LIMITE DE TENTATIVAS ═══
+        if (tentativas >= _maxTentativas) {
+          debugPrint('[Contingência] ❌ Nota $numero removida após $_maxTentativas tentativas (FALHA DEFINITIVA)');
+          removidos.add(entry['id'] as String);
+          if (onErro != null) {
+            onErro(numero, 'FALHA DEFINITIVA após $_maxTentativas tentativas');
+          }
+          continue;
+        }
+
+        // ═══ NOTA INVÁLIDA (número = 0) ═══
+        if (numero == '0' || numero.isEmpty) {
+          debugPrint('[Contingência] ❌ Nota com número inválida ("$numero") removida da fila');
+          removidos.add(entry['id'] as String);
+          continue;
+        }
 
         // Tentar emitir via bridge
         final result = await _enviarParaBridge(payload);
@@ -115,22 +164,28 @@ class NfceContingenciaService extends ChangeNotifier {
 
           // Notificar callback
           if (onSucesso != null) {
-            // Construir NFCe básico com o retorno
             final nfce = _construirNFCeDoRetorno(result, entry);
             onSucesso(nfce);
           }
         } else {
           // Incrementar contador de tentativas
-          entry['tentativas'] = (entry['tentativas'] as int) + 1;
-          debugPrint('[Contingência] ⚠️ Nota $numero ainda pendente (tentativa ${entry['tentativas']})');
+          entry['tentativas'] = tentativas + 1;
+          // Log otimizado: só imprime a cada N tentativas após o 20º
+          final t = entry['tentativas'] as int;
+          if (t <= 20 || t % _logIntervalo == 0) {
+            debugPrint('[Contingência] ⚠️ Nota $numero ainda pendente (tentativa $t/$_maxTentativas)');
+          }
           if (onErro != null) {
             onErro(numero, result['mensagem']?.toString() ?? 'Sem resposta');
           }
         }
       } catch (e) {
-        // Bridge ainda offline - tentar na próxima rodada
-        entry['tentativas'] = (entry['tentativas'] as int? ?? 0) + 1;
-        debugPrint('[Contingência] 🔴 Bridge offline, aguardando. Erro: $e');
+        // Bridge offline - incrementar e tentar na próxima rodada
+        entry['tentativas'] = ((entry['tentativas'] as int?) ?? 0) + 1;
+        final t = entry['tentativas'] as int;
+        if (t <= 20 || t % _logIntervalo == 0) {
+          debugPrint('[Contingência] 🔴 Bridge offline, aguardando (tentativa $t/$_maxTentativas)');
+        }
       }
     }
 

@@ -1503,8 +1503,15 @@ class _CaixaPageState extends State<CaixaPage> {
       }
     }
 
-    // Mesas / Comandas (itens em preparo/pendentes)
+    // Mesas / Comandas (itens em preparo/pendentes vinculados ao operador do caixa)
+    final respAb = (ab.responsavel ?? '').trim();
     for (final mc in ds.mesasComandas) {
+      if (respAb.isNotEmpty) {
+        final criador = (mc.usuarioCriou ?? mc.usuarioModificou ?? '').trim();
+        if (criador.isNotEmpty && !ds.vendaPertenceAoOperador(criador, respAb)) {
+          continue;
+        }
+      }
       final itensValidos = mc.itens.where((i) =>
           i.status != StatusItem.cancelado &&
           i.status != StatusItem.entregue).toList();

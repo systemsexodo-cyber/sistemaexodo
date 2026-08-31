@@ -90,6 +90,11 @@ class _BloqueioMensalidadePageState extends State<BloqueioMensalidadePage> {
         final empAtualizada = emp.copyWith(configuracoes: novasConfigs);
         await authService.atualizarEmpresa(empAtualizada);
         dataService.setEmpresaAtual(empAtualizada);
+        // Salvar backup dedicado de mensalidade para proteger contra sobrescrever
+        await dataService.storage.salvarConfiguracoesMensalidadeLocal(
+          empAtualizada.id,
+          novasConfigs,
+        );
         await dataService.resetarSimulacoesLicenca();
         authService.notificarMudancas();
 

@@ -2,6 +2,7 @@ import 'package:sistema_exodo_novo/models/forma_pagamento.dart';
 import 'package:sistema_exodo_novo/models/adicional_produto.dart';
 import 'package:sistema_exodo_novo/models/delivery_info.dart';
 import 'package:sistema_exodo_novo/models/pergunta_selecao.dart';
+import 'package:sistema_exodo_novo/models/variacao_produto.dart';
 import 'package:sistema_exodo_novo/utils/date_parser.dart';
 
 /// Item de uma venda de balcão
@@ -21,6 +22,7 @@ class ItemVendaBalcao {
   final double? precoTabela; // Preço de tabela SEM o desconto do perfil de preços (para exibir o desconto no cupom/NFC-e)
   final List<AdicionalProduto> adicionais;
   final List<OpcaoPerguntaSelecao> opcoesCombo;
+  final List<VariacaoProduto> variacoesSelecionadas; // Variações escolhidas (Tamanho P, Cor Azul, etc)
   final bool baixaProporcional; // true = baixa pela conversão do saco; false = baixa a quantidade inteira no ingrediente
   // Forma de venda escolhida no PDV (unidade/caixa/pacote/saco) e sua baixa
   final String? unidadeVenda;
@@ -42,11 +44,13 @@ class ItemVendaBalcao {
     this.precoTabela,
     List<AdicionalProduto>? adicionais,
     List<OpcaoPerguntaSelecao>? opcoesCombo,
+    List<VariacaoProduto>? variacoesSelecionadas,
     this.baixaProporcional = true,
     this.unidadeVenda,
     this.quantidadeBaixa,
   }) : adicionais = adicionais ?? [],
-       opcoesCombo = opcoesCombo ?? [];
+       opcoesCombo = opcoesCombo ?? [],
+       variacoesSelecionadas = variacoesSelecionadas ?? [];
 
   /// Verifica se o preço do item foi alterado no momento da venda
   bool get tevePrecoAlterado => precoOriginal != null && (precoUnitario - precoOriginal!).abs() > 0.001;
@@ -97,14 +101,16 @@ class ItemVendaBalcao {
   double get subtotal {
     final totalAdicionais = adicionais.fold(0.0, (sum, a) => sum + a.preco);
     final totalCombo = opcoesCombo.fold(0.0, (sum, o) => sum + o.precoAdicional);
-    return (precoUnitario + totalAdicionais + totalCombo) * quantidade;
+    final totalVariacoes = variacoesSelecionadas.fold(0.0, (sum, v) => sum + (v.precoAdicional ?? 0.0));
+    return (precoUnitario + totalAdicionais + totalCombo + totalVariacoes) * quantidade;
   }
 
   /// Subtotal efetivo (descontando devoluções)
   double get subtotalEfetivo {
     final totalAdicionais = adicionais.fold(0.0, (sum, a) => sum + a.preco);
     final totalCombo = opcoesCombo.fold(0.0, (sum, o) => sum + o.precoAdicional);
-    return (precoUnitario + totalAdicionais + totalCombo) * quantidadeEfetiva;
+    final totalVariacoes = variacoesSelecionadas.fold(0.0, (sum, v) => sum + (v.precoAdicional ?? 0.0));
+    return (precoUnitario + totalAdicionais + totalCombo + totalVariacoes) * quantidadeEfetiva;
   }
 
   factory ItemVendaBalcao.fromMap(Map<String, dynamic> map) {
@@ -137,6 +143,9 @@ class ItemVendaBalcao {
       opcoesCombo: (getList('opcoesCombo', 'opcoes_combo', map) as List<dynamic>?)
           ?.map((o) => OpcaoPerguntaSelecao.fromMap(o as Map<String, dynamic>))
           .toList() ?? [],
+      variacoesSelecionadas: (getList('variacoesSelecionadas', 'variacoes_selecionadas', map) as List<dynamic>?)
+          ?.map((v) => VariacaoProduto.fromMap(v as Map<String, dynamic>))
+          .toList() ?? [],
       baixaProporcional: (get('baixaProporcional', 'baixa_proporcional') ?? true) == true,
       unidadeVenda: get('unidadeVenda', 'unidade_venda'),
       quantidadeBaixa: parseDouble(get('quantidadeBaixa', 'quantidade_baixa')),
@@ -162,6 +171,7 @@ class ItemVendaBalcao {
       'preco_tabela': precoTabela,
       'adicionais': adicionais.map((a) => a.toMap()).toList(),
       'opcoes_combo': opcoesCombo.map((o) => o.toMap()).toList(),
+      'variacoes_selecionadas': variacoesSelecionadas.map((v) => v.toMap()).toList(),
       'baixa_proporcional': baixaProporcional,
       'unidade_venda': unidadeVenda,
       'quantidade_baixa': quantidadeBaixa,
@@ -185,6 +195,7 @@ class ItemVendaBalcao {
     double? precoTabela,
     List<AdicionalProduto>? adicionais,
     List<OpcaoPerguntaSelecao>? opcoesCombo,
+    List<VariacaoProduto>? variacoesSelecionadas,
   }) {
     return ItemVendaBalcao(
       id: id ?? this.id,
@@ -202,6 +213,7 @@ class ItemVendaBalcao {
       precoTabela: precoTabela ?? this.precoTabela,
       adicionais: adicionais ?? this.adicionais,
       opcoesCombo: opcoesCombo ?? this.opcoesCombo,
+      variacoesSelecionadas: variacoesSelecionadas ?? this.variacoesSelecionadas,
     );
   }
 }

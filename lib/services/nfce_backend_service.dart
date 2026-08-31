@@ -110,6 +110,52 @@ class NFCeBackendService extends NFCeServiceBase {
   // PREPARAÇÃO DOS DADOS
   // ------------------------------------------------------------
 
+  /// Valida e corrige combinações CFOP × CSOSN incompatíveis.
+  ///
+  /// Regras SEFAZ (Rejeição 386):
+  /// - CSOSN 101/102/103/201/202/203 → CFOP deve ser 5102, 1102, 6102, 7102
+  /// - CSOSN 500 → CFOP deve ser 5405, 1551, 5551, etc.
+  /// - CSOSN 900 → aceita qualquer CFOP
+  /// - CFOP 5949 → só aceita CSOSN 900
+  static Map<String, String> _corrigirCfopCsosn(String cfop, String csosn) {
+    String cfopCorrigido = cfop;
+    String csosnCorrigido = csosn;
+
+    // CFOPs aceitos para CSOSNs de tributação / imune / não-tributada
+    final cfopsTributados = {'5102', '1102', '6102', '7102', '5101', '1101', '6101', '7101'};
+    // CFOPs aceitos para CSOSN 500 (substituição tributária)
+    final cfopsSt = {'5405', '1551', '5551', '6551', '7551', '5403', '1403', '6403'};
+    // CSOSNs que usam CFOPs de tributação (inclui imune 300 e não-tributada 400)
+    final csosnsTributados = {'101', '102', '103', '201', '202', '203', '300', '400', '600'};
+
+    if (csosnsTributados.contains(csosn)) {
+      // CSOSN tributado/imune/não-tributado → CFOP precisa ser da lista de tributados
+      if (!cfopsTributados.contains(cfop)) {
+        cfopCorrigido = '5102'; // Padrão para venda interna
+      }
+    } else if (csosn == '500') {
+      // CSOSN ST → CFOP precisa ser da lista de ST
+      if (!cfopsSt.contains(cfop) && !cfopsTributados.contains(cfop)) {
+        cfopCorrigido = '5405'; // Padrão para ST interna
+      }
+    } else if (csosn == '900') {
+      // CSOSN Outros → aceita qualquer CFOP
+      // Manter CFOP original
+    } else if (csosn.isEmpty) {
+      // Sem CSOSN definido → padrão 102 com CFOP 5102
+      if (!cfopsTributados.contains(cfop)) {
+        cfopCorrigido = '5102';
+      }
+    }
+
+    // Regra reversa: se CFOP é 5949, CSOSN deve ser 900
+    if (cfop == '5949' && csosn != '900') {
+      csosnCorrigido = '900';
+    }
+
+    return {'cfop': cfopCorrigido, 'csosn': csosnCorrigido};
+  }
+
   Map<String, dynamic> _prepararPayload({
     required Empresa empresa,
     required List<Produto> produtos,
@@ -239,9 +285,23 @@ class NFCeBackendService extends NFCeServiceBase {
         }
 
         // Definir regras tributárias com base no perfil ou nos campos individuais do produto
-        final cfop = perfil?.cfop ?? p.cfop ?? '5102';
+        var cfop = perfil?.cfop ?? p.cfop ?? '5102';
         final ncm = perfil?.ncm ?? p.ncm ?? '00000000';
-        final csosn = perfil?.csosn ?? p.csosn;
+        var csosn = perfil?.csosn ?? p.csosn;
+        
+        // ═══ VALIDAÇÃO AUTOMÁTICA CFOP × CSOSN ═══
+        // Corrigir incompatibilidades que causam Rejeição 386 da SEFAZ
+        if (!regimeNormal && csosn != null && csosn.isNotEmpty) {
+          final correcao = _corrigirCfopCsosn(cfop, csosn.trim());
+          if (correcao['cfop'] != cfop) {
+            print('[NFCe Backend] ⚠️ CFOP corrigido: $cfop → ${correcao['cfop']} (CSOSN: $csosn)');
+            cfop = correcao['cfop']!;
+          }
+          if (correcao['csosn'] != csosn) {
+            print('[NFCe Backend] ⚠️ CSOSN corrigido: $csosn → ${correcao['csosn']} (CFOP: $cfop)');
+            csosn = correcao['csosn'];
+          }
+        }
         final icmsCst = perfil?.icmsCst ?? p.icmsCst;
         final pisCst = perfil?.pisCst ?? p.pisCst;
         final cofinsCst = perfil?.cofinsCst ?? p.cofinsCst;
@@ -275,7 +335,7 @@ class NFCeBackendService extends NFCeServiceBase {
           'quantidade': qty,
           'valor_unitario': p.preco,
           'valor_total': p.preco * qty,
-          if (csosnEnviado != null && csosnEnviado.isNotEmpty) 'csosn': csosnEnviado,
+          if (csosnEnviado != null && csosnEnviado.isNotEmpty) 'icms_csosn': csosnEnviado,
           if (icmsCstEnviado != null && icmsCstEnviado.isNotEmpty) 'icms_cst': icmsCstEnviado,
           if (pisCst != null && pisCst.isNotEmpty) 'pis_cst': pisCst,
           if (cofinsCst != null && cofinsCst.isNotEmpty) 'cofins_cst': cofinsCst,

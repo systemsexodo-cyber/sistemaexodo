@@ -59,6 +59,7 @@ import 'package:sistema_exodo_novo/services/whatsapp_service.dart';
 import 'package:sistema_exodo_novo/widgets/sync_status_widget.dart';
 import 'package:sistema_exodo_novo/pages/cozinha_mesas_funcionario_page.dart';
 import 'package:sistema_exodo_novo/pages/cozinha_bar_page.dart';
+import 'package:sistema_exodo_novo/pages/controle_mesas_comandas_page.dart';
 import 'package:sistema_exodo_novo/models/adicional_produto.dart';
 import 'package:sistema_exodo_novo/services/venda_pdf_service.dart';
 import 'package:printing/printing.dart';
@@ -66,6 +67,7 @@ import 'package:printing/printing.dart';
 import 'package:sistema_exodo_novo/services/pedido_pdf_service.dart';
 import '../models/funcionario.dart';
 import 'package:sistema_exodo_novo/models/pergunta_selecao.dart';
+import 'package:sistema_exodo_novo/models/variacao_produto.dart';
 import '../models/taxa_entrega.dart';
 import 'package:sistema_exodo_novo/widgets/popup_perguntas_combo.dart';
 import 'package:sistema_exodo_novo/models/motorista.dart';
@@ -86,6 +88,7 @@ class ItemCarrinho {
   String? observacao;
   final List<AdicionalProduto> adicionais;
   final List<OpcaoPerguntaSelecao> opcoesCombo;
+  final List<VariacaoProduto>? variacoesSelecionadas; // Variações escolhidas (Tamanho P, Cor Azul, etc)
   bool isBrinde; // Identifica se o produto é vendido como brinde (grátis)
   bool baixaProporcional; // true = baixa pela conversão do saco (15 kg = 1); false = baixa a quantidade inteira no ingrediente
   // Forma de venda escolhida no PDV (unidade/caixa/pacote/saco) e sua baixa
@@ -112,6 +115,7 @@ class ItemCarrinho {
     this.observacao,
     List<AdicionalProduto>? adicionais,
     List<OpcaoPerguntaSelecao>? opcoesCombo,
+    List<VariacaoProduto>? variacoesSelecionadas,
     this.isBrinde = false,
     this.baixaProporcional = true,
     this.unidadeVenda,
@@ -120,7 +124,8 @@ class ItemCarrinho {
     this.precoTabela,
   })  : precoOriginal = precoOriginal ?? preco,
         adicionais = adicionais ?? [],
-        opcoesCombo = opcoesCombo ?? [];
+        opcoesCombo = opcoesCombo ?? [],
+        variacoesSelecionadas = variacoesSelecionadas ?? [];
 
   /// Indica se o preço unitário foi alterado no PDV em relação ao valor original
   bool get tevePrecoAlterado => (preco - precoOriginal).abs() > 0.001;
@@ -138,13 +143,15 @@ class ItemCarrinho {
     if (isBrinde) return 0.0;
     final totalAdicionais = adicionais.fold(0.0, (sum, a) => sum + a.preco);
     final totalCombo = opcoesCombo.fold(0.0, (sum, o) => sum + o.precoAdicional);
-    return ((preco + totalAdicionais + totalCombo) * quantidade) - desconto;
+    final totalVariacoes = (variacoesSelecionadas ?? []).fold(0.0, (sum, v) => sum + (v.precoAdicional ?? 0.0));
+    return ((preco + totalAdicionais + totalCombo + totalVariacoes) * quantidade) - desconto;
   }
   double get subtotalSemDesconto {
     if (isBrinde) return 0.0;
     final totalAdicionais = adicionais.fold(0.0, (sum, a) => sum + a.preco);
     final totalCombo = opcoesCombo.fold(0.0, (sum, o) => sum + o.precoAdicional);
-    return (preco + totalAdicionais + totalCombo) * quantidade;
+    final totalVariacoes = (variacoesSelecionadas ?? []).fold(0.0, (sum, v) => sum + (v.precoAdicional ?? 0.0));
+    return (preco + totalAdicionais + totalCombo + totalVariacoes) * quantidade;
   }
 
   /// Percentual do desconto promocional aplicado no item (null se não houver).
@@ -177,6 +184,7 @@ class ItemCarrinho {
       'observacao': observacao,
       'adicionais': adicionais.map((a) => a.toMap()).toList(),
       'opcoesCombo': opcoesCombo.map((o) => o.toMap()).toList(),
+      'variacoesSelecionadas': (variacoesSelecionadas ?? []).map((v) => v.toMap()).toList(),
       'isBrinde': isBrinde,
       'baixaProporcional': baixaProporcional,
       'unidadeVenda': unidadeVenda,
@@ -206,6 +214,9 @@ class ItemCarrinho {
       opcoesCombo: (map['opcoesCombo'] as List<dynamic>?)
           ?.map((o) => OpcaoPerguntaSelecao.fromMap(o as Map<String, dynamic>))
           .toList() ?? [],
+      variacoesSelecionadas: (map['variacoesSelecionadas'] as List<dynamic>?)
+          ?.map((v) => VariacaoProduto.fromMap(v as Map<String, dynamic>))
+          .toList(),
       isBrinde: map['isBrinde'] ?? false,
       baixaProporcional: (map['baixaProporcional'] ?? true) == true,
       unidadeVenda: map['unidadeVenda'],
@@ -1493,7 +1504,224 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     );
   }
 
-  void _efetivarAdicaoAoCarrinho(dynamic item, {String? fornecedorNome, bool manterFoco = false, List<OpcaoPerguntaSelecao>? opcoesCombo, double quantidade = 1}) {
+  /// Exibe diálogo para selecionar variações do produto (Tamanho, Cor, Sabor, etc)
+  void _exibirSelecaoVariacoes(Produto produto, {bool manterFoco = false}) {
+    // Agrupar variações por atributo (Tamanho, Cor, Sabor, etc.)
+    final Map<String, List<VariacaoProduto>> variacoesPorAtributo = {};
+    for (var variacao in produto.variacoes.where((v) => v.ativo)) {
+      if (!variacoesPorAtributo.containsKey(variacao.nomeAtributo)) {
+        variacoesPorAtributo[variacao.nomeAtributo] = [];
+      }
+      variacoesPorAtributo[variacao.nomeAtributo]!.add(variacao);
+    }
+
+    if (variacoesPorAtributo.isEmpty) {
+      _efetivarAdicaoAoCarrinho(produto, manterFoco: manterFoco);
+      return;
+    }
+
+    // Estado para armazenar seleções
+    Map<String, VariacaoProduto?> selecoes = {};
+    for (var atributo in variacoesPorAtributo.keys) {
+      selecoes[atributo] = null;
+    }
+
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: const Color(0xFF0F172A),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: const BorderSide(color: Colors.white10),
+          ),
+          title: Row(
+            children: [
+              const Icon(Icons.tune, color: Colors.tealAccent, size: 22),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Selecione as Opções',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  produto.nome,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white70,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                ...variacoesPorAtributo.entries.map((entry) {
+                  final nomeAtributo = entry.key;
+                  final opcoes = entry.value;
+
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        nomeAtributo,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.tealAccent,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: opcoes.map((variacao) {
+                          final isSelected = selecoes[nomeAtributo]?.id == variacao.id;
+                          final temEstoque = variacao.estoque > 0;
+
+                          return InkWell(
+                            onTap: temEstoque
+                                ? () {
+                                    setDialogState(() {
+                                      selecoes[nomeAtributo] = isSelected ? null : variacao;
+                                    });
+                                  }
+                                : null,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                              decoration: BoxDecoration(
+                                color: isSelected
+                                    ? Colors.tealAccent
+                                    : (temEstoque ? Colors.white10 : Colors.white.withValues(alpha: 0.05)),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(
+                                  color: isSelected
+                                      ? Colors.tealAccent
+                                      : (temEstoque ? Colors.white24 : Colors.white10),
+                                  width: isSelected ? 2 : 1,
+                                ),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        variacao.valor,
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600,
+                                          color: isSelected
+                                              ? const Color(0xFF0F172A)
+                                              : (temEstoque ? Colors.white : Colors.white30),
+                                        ),
+                                      ),
+                                      if (isSelected) ...[
+                                        const SizedBox(width: 6),
+                                        const Icon(
+                                          Icons.check_circle,
+                                          size: 16,
+                                          color: Color(0xFF0F172A),
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                  if (variacao.precoAdicional != null && variacao.precoAdicional != 0)
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 2),
+                                      child: Text(
+                                        variacao.precoAdicional! > 0
+                                            ? '+ R\$ ${variacao.precoAdicional!.toStringAsFixed(2)}'
+                                            : '- R\$ ${variacao.precoAdicional!.abs().toStringAsFixed(2)}',
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          color: isSelected
+                                              ? const Color(0xFF0F172A).withOpacity(0.7)
+                                              : Colors.tealAccent.withOpacity(0.7),
+                                        ),
+                                      ),
+                                    ),
+                                  if (!temEstoque)
+                                    const Padding(
+                                      padding: EdgeInsets.only(top: 2),
+                                      child: Text(
+                                        'Esgotado',
+                                        style: TextStyle(
+                                          fontSize: 9,
+                                          color: Colors.redAccent,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                      const SizedBox(height: 14),
+                    ],
+                  );
+                }).toList(),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text(
+                'Cancelar',
+                style: TextStyle(color: Colors.white.withOpacity(0.5)),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                final variacoesSelecionadas = selecoes.values
+                    .where((v) => v != null)
+                    .cast<VariacaoProduto>()
+                    .toList();
+
+                if (variacoesSelecionadas.isEmpty && produto.temVariacoes) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Selecione pelo menos uma opção'),
+                      backgroundColor: Colors.orange,
+                    ),
+                  );
+                  return;
+                }
+
+                Navigator.pop(context);
+                _efetivarAdicaoAoCarrinho(
+                  produto,
+                  manterFoco: manterFoco,
+                  variacoesSelecionadas: variacoesSelecionadas,
+                );
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.tealAccent),
+              child: const Text(
+                'Confirmar',
+                style: TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _efetivarAdicaoAoCarrinho(dynamic item, {String? fornecedorNome, bool manterFoco = false, List<OpcaoPerguntaSelecao>? opcoesCombo, List<VariacaoProduto>? variacoesSelecionadas, double quantidade = 1}) {
     final isServico = item is Servico;
     final id = item.id;
     final nome = item.nome;
@@ -1552,6 +1780,17 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         subtotalItem: preco * qtdPromo,
       );
     }
+    // Aplica preço adicional das variações (tamanho G = +R$2, cor especial = +R$5, etc)
+    double totalVariacoes = 0.0;
+    if (variacoesSelecionadas != null && variacoesSelecionadas.isNotEmpty) {
+      for (final v in variacoesSelecionadas) {
+        if (v.precoAdicional != null) {
+          totalVariacoes += v.precoAdicional!;
+        }
+      }
+      preco += totalVariacoes;
+    }
+
     // Guarda o preço base (sem promoção) para exibir o desconto na conferência.
     final double? precoSemPromocao = (preco < precoBase - 0.001) ? precoBase : null;
     final descricao = isServico ? null : (item as Produto).descricao;
@@ -1587,11 +1826,12 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       }
     }
 
-    // Verificar se já existe no carrinho com MESMO fornecedor
-    // Não agrupa itens de combo para manter as seleções separadas no carrinho
-    final index = (finalOpcoesCombo != null && finalOpcoesCombo.isNotEmpty) 
+    // Verificar se já existe no carrinho com MESMO fornecedor E MESMAS variações
+    // Não agrupa itens de combo/variação para manter as seleções separadas no carrinho
+    final temVariacoes = variacoesSelecionadas != null && variacoesSelecionadas.isNotEmpty;
+    final index = (finalOpcoesCombo != null && finalOpcoesCombo.isNotEmpty) || temVariacoes
         ? -1 
-        : _carrinho.indexWhere((c) => c.id == id && c.adicionais.isEmpty && c.opcoesCombo.isEmpty && c.fornecedorNome == fNome);
+        : _carrinho.indexWhere((c) => c.id == id && c.adicionais.isEmpty && c.opcoesCombo.isEmpty && (c.variacoesSelecionadas ?? []).isEmpty && c.fornecedorNome == fNome);
     final bool jaExistia = index >= 0;
 
     if (jaExistia) {
@@ -1618,6 +1858,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
             fornecedorId: fornecedorId,
             observacao: observacao,
             opcoesCombo: finalOpcoesCombo,
+            variacoesSelecionadas: variacoesSelecionadas,
             unidadeVenda: formaSelecionada?.tipo,
             quantidadeBaixa: formaSelecionada?.quantidadeBaixa,
             precoSemPromocao: precoSemPromocao,
@@ -1901,6 +2142,14 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           );
         }
       });
+      return;
+    }
+
+    // INTERCEPTADOR DE VARIAÇÕES (TAMANHO, COR, SABOR, ETC)
+    // Se o produto tem variações cadastradas, abre diálogo para o usuário
+    // escolher antes de adicionar ao carrinho.
+    if (produto.temVariacoes && produto.variacoes.isNotEmpty) {
+      _exibirSelecaoVariacoes(produto, manterFoco: manterFoco);
       return;
     }
 
@@ -2381,6 +2630,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                           observacao: itemAtual.observacao,
                           adicionais: itemAtual.adicionais,
                           opcoesCombo: itemAtual.opcoesCombo,
+                          variacoesSelecionadas: itemAtual.variacoesSelecionadas,
                           isBrinde: itemAtual.isBrinde,
                           baixaProporcional: itemAtual.baixaProporcional,
                           unidadeVenda: forma.tipo,
@@ -6677,6 +6927,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                   : item.observacao,
               adicionais: item.adicionais,
               opcoesCombo: item.opcoesCombo,
+              variacoesSelecionadas: item.variacoesSelecionadas,
               precoTabela: item.precoTabela,
             baixaProporcional: item.baixaProporcional,
             unidadeVenda: item.unidadeVenda,
@@ -7187,6 +7438,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
             observacao: item.observacao,
             adicionais: item.adicionais,
             opcoesCombo: item.opcoesCombo,
+          variacoesSelecionadas: item.variacoesSelecionadas,
           baixaProporcional: item.baixaProporcional,
           unidadeVenda: item.unidadeVenda,
           quantidadeBaixa: item.quantidadeBaixa,
@@ -7464,6 +7716,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     if (_carrinho.isEmpty) return;
 
     final dataService = Provider.of<DataService>(context, listen: false);
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final pageContext = context; // Salvar context da pagina antes do dialog
     
     // Map local para armazenar as quantidades selecionadas para dividir (index -> qty)
     final Map<int, double> selecionados = {};
@@ -7779,10 +8033,57 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                     onPressed: valorLivre > 0.0
                         ? () async {
                             Navigator.pop(context);
-                            // Registrar pagamento direto no historicoPagamentos da comanda
+                            final usuarioLogado = authService.usuarioAtual?.nome ?? 'Sistema';
+
+                            // Solicitar identificação / nome se não houver cliente selecionado
+                            String? nomeIdentificacao = _nomeNfce;
+                            if (_clienteSelecionado == null && (nomeIdentificacao == null || nomeIdentificacao.trim().isEmpty)) {
+                              if (pageContext.mounted) {
+                                final nameController = TextEditingController();
+                                nomeIdentificacao = await showDialog<String>(
+                                  context: pageContext,
+                                  builder: (ctx) => AlertDialog(
+                                    backgroundColor: const Color(0xFF1E1E2E),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                                    title: const Text('Identificar Venda / Cliente', style: TextStyle(color: Colors.white, fontSize: 16)),
+                                    content: TextField(
+                                      controller: nameController,
+                                      autofocus: true,
+                                      style: const TextStyle(color: Colors.white),
+                                      decoration: InputDecoration(
+                                        labelText: 'Nome do Cliente ou Mesa',
+                                        labelStyle: const TextStyle(color: Colors.white70),
+                                        hintText: 'Ex: João, Mesa 05, Balcão...',
+                                        hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
+                                        filled: true,
+                                        fillColor: Colors.black26,
+                                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                                      ),
+                                    ),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () => Navigator.pop(ctx, null),
+                                        child: const Text('IGNORAR', style: TextStyle(color: Colors.white54)),
+                                      ),
+                                      ElevatedButton(
+                                        onPressed: () => Navigator.pop(ctx, nameController.text.trim()),
+                                        style: ElevatedButton.styleFrom(backgroundColor: Colors.green.shade700),
+                                        child: const Text('SALVAR', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                                if (nomeIdentificacao != null && nomeIdentificacao.isNotEmpty) {
+                                  _nomeNfce = nomeIdentificacao;
+                                }
+                              }
+                            }
+
+                            final nomeClienteFinal = _clienteSelecionado?.nome ??
+                                (nomeIdentificacao != null && nomeIdentificacao.trim().isNotEmpty ? nomeIdentificacao.trim() : null);
+
                             if (_mesaComandaVinculada != null) {
-                              final authService = Provider.of<AuthService>(context, listen: false);
-                              final usuarioLogado = authService.usuarioAtual?.nome ?? 'Sistema';
+                              // === COMANDA/MESA: registrar pagamento parcial na comanda ===
                               final pagamento = RegistroPagamento(
                                 id: DateTime.now().millisecondsSinceEpoch.toString(),
                                 valor: valorLivre,
@@ -7798,16 +8099,231 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                               );
                               await dataService.updateMesaComanda(mesaAtualizada);
                               _mesaComandaVinculada = mesaAtualizada;
-                              if (mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
+                              dataService.salvarImediatamente();
+
+                              final pendente = mesaAtualizada.totalPendente;
+                              if (pageContext.mounted) {
+                                ScaffoldMessenger.of(pageContext).showSnackBar(
                                   SnackBar(
-                                    content: Text('R\$ ${valorLivre.toStringAsFixed(2)} registrado na comanda!'),
+                                    content: Text(
+                                      pendente <= 0.01
+                                          ? 'Mesa/Comanda totalmente paga!'
+                                          : 'Pagamento de R\$ ${valorLivre.toStringAsFixed(2)} registrado. Falta R\$ ${pendente.toStringAsFixed(2)}',
+                                    ),
                                     backgroundColor: Colors.green,
                                   ),
                                 );
-                                // Voltar para a comanda/mesa
-                                Navigator.pop(context);
                               }
+                              // Voltar para a comanda/mesa com saldo atualizado
+                              _resetarTodaVenda();
+                              if (pageContext.mounted) {
+                                Navigator.pushReplacement(
+                                  pageContext,
+                                  MaterialPageRoute(
+                                    builder: (_) => ControleMesasComandasPage(),
+                                  ),
+                                );
+                              }
+                            } else {
+                              // === PDV DIRETO: salvar UMA venda com pagamento parcial ===
+                              final uuid = const Uuid();
+                              final totalCarrinho = _totalCarrinho;
+                              final restante = totalCarrinho - valorLivre;
+
+                              final ratioPago = totalCarrinho > 0 ? (valorLivre / totalCarrinho).clamp(0.0, 1.0) : 1.0;
+                              final ratioRestante = totalCarrinho > 0 ? (restante / totalCarrinho).clamp(0.0, 1.0) : 0.0;
+
+                              final pagamentoRecebido = PagamentoPedido(
+                                id: uuid.v4(),
+                                tipo: TipoPagamento.dinheiro,
+                                valor: valorLivre,
+                                recebido: true,
+                                dataRecebimento: DateTime.now(),
+                                valorRecebido: valorLivre,
+                                observacao: 'Pagamento via dividir conta',
+                              );
+
+                              final itensPago = _carrinho.map((item) => ItemVendaBalcao(
+                                id: item.id,
+                                nome: item.nome,
+                                precoUnitario: item.isBrinde ? 0.0 : item.preco * ratioPago,
+                                precoOriginal: item.precoOriginal != null ? item.precoOriginal! * ratioPago : null,
+                                precoSemPromocao: item.precoSemPromocao != null ? item.precoSemPromocao! * ratioPago : null,
+                                quantidade: item.quantidade,
+                                isServico: item.isServico,
+                                fornecedorNome: item.fornecedorNome,
+                                observacao: item.observacao,
+                                adicionais: item.adicionais,
+                                opcoesCombo: item.opcoesCombo,
+                                variacoesSelecionadas: item.variacoesSelecionadas,
+                                precoTabela: item.precoTabela != null ? item.precoTabela! * ratioPago : null,
+                                baixaProporcional: item.baixaProporcional,
+                                unidadeVenda: item.unidadeVenda,
+                                quantidadeBaixa: item.quantidadeBaixa,
+                              )).toList();
+
+                              final itensRestante = _carrinho.map((item) => ItemVendaBalcao(
+                                id: item.id,
+                                nome: item.nome,
+                                precoUnitario: item.isBrinde ? 0.0 : item.preco * ratioRestante,
+                                precoOriginal: item.precoOriginal != null ? item.precoOriginal! * ratioRestante : null,
+                                precoSemPromocao: item.precoSemPromocao != null ? item.precoSemPromocao! * ratioRestante : null,
+                                quantidade: item.quantidade,
+                                isServico: item.isServico,
+                                fornecedorNome: item.fornecedorNome,
+                                observacao: item.observacao,
+                                adicionais: item.adicionais,
+                                opcoesCombo: item.opcoesCombo,
+                                variacoesSelecionadas: item.variacoesSelecionadas,
+                                precoTabela: item.precoTabela != null ? item.precoTabela! * ratioRestante : null,
+                                baixaProporcional: item.baixaProporcional,
+                                unidadeVenda: item.unidadeVenda,
+                                quantidadeBaixa: item.quantidadeBaixa,
+                              )).toList();
+
+                              if (_pedidoOriginal != null) {
+                                final vendaOrig = dataService.vendasBalcao
+                                    .where((v) => v.id == _pedidoOriginal!.id || v.numero == _pedidoOriginal!.numero)
+                                    .firstOrNull;
+                                if (vendaOrig != null) {
+                                  await dataService.deleteVendaBalcao(vendaOrig.id);
+                                }
+                                final pedOrig = dataService.pedidos
+                                    .where((p) => p.id == _pedidoOriginal!.id || p.numero == _pedidoOriginal!.numero)
+                                    .firstOrNull;
+                                if (pedOrig != null) {
+                                  dataService.deletePedido(pedOrig.id);
+                                }
+                              }
+
+                              final numero = dataService.getProximoNumeroVenda();
+                              final vendaBalcao = VendaBalcao(
+                                id: uuid.v4(),
+                                numero: numero,
+                                dataVenda: DateTime.now(),
+                                clienteId: _clienteSelecionado?.id,
+                                clienteNome: nomeClienteFinal,
+                                clienteTelefone: _clienteSelecionado?.telefone,
+                                clienteCpfCnpj: _clienteSelecionado?.cpfCnpj ?? _cpfNfce,
+                                itens: itensPago,
+                                tipoPagamento: TipoPagamento.dinheiro,
+                                pagamentos: [pagamentoRecebido],
+                                valorTotal: valorLivre,
+                                valorRecebido: valorLivre,
+                                observacoes: 'Pagamento via dividir conta: R\$ ${valorLivre.toStringAsFixed(2)}',
+                                operador: dataService.responsavelAtivo ?? 'PDV',
+                                vendedorId: _vendedorSelecionado?.id,
+                                vendedorNome: _vendedorSelecionado?.nome,
+                                origem: 'Venda Direta',
+                              );
+                              await dataService.addVendaBalcao(vendaBalcao);
+                              debugPrint('>>> [Dividir PDV] Venda $numero criada: R\$ ${valorLivre.toStringAsFixed(2)} pago');
+
+                              // Se tem restante, criar venda pendente e pedido pendente para o que falta
+                              if (restante > 0.01) {
+                                final idRestante = uuid.v4();
+                                final numeroRestante = dataService.getProximoNumeroVenda();
+                                final vendaRestante = VendaBalcao(
+                                  id: idRestante,
+                                  numero: numeroRestante,
+                                  dataVenda: DateTime.now(),
+                                  clienteId: _clienteSelecionado?.id,
+                                  clienteNome: nomeClienteFinal,
+                                  clienteTelefone: _clienteSelecionado?.telefone,
+                                  clienteCpfCnpj: _clienteSelecionado?.cpfCnpj ?? _cpfNfce,
+                                  itens: itensRestante,
+                                  tipoPagamento: TipoPagamento.outro,
+                                  pagamentos: [],
+                                  valorTotal: restante,
+                                  valorRecebido: 0,
+                                  observacoes: 'Restante da venda $numero: R\$ ${restante.toStringAsFixed(2)} pendente',
+                                  operador: dataService.responsavelAtivo ?? 'PDV',
+                                  vendedorId: _vendedorSelecionado?.id,
+                                  vendedorNome: _vendedorSelecionado?.nome,
+                                  origem: 'Venda Direta',
+                                );
+                                await dataService.addVendaBalcao(vendaRestante);
+
+                                final produtosPedido = <ItemPedido>[];
+                                final servicosPedido = <ItemServico>[];
+                                for (final item in itensRestante) {
+                                  if (item.isServico) {
+                                    servicosPedido.add(
+                                      ItemServico(
+                                        id: item.id,
+                                        descricao: item.nome,
+                                        valor: item.precoUnitario,
+                                        valorAdicional: 0.0,
+                                        dataAgendamento: DateTime.now(),
+                                        observacao: item.observacao,
+                                      ),
+                                    );
+                                  } else {
+                                    produtosPedido.add(
+                                      ItemPedido(
+                                        id: item.id,
+                                        nome: item.nome,
+                                        preco: item.precoUnitario,
+                                        quantidade: item.quantidade,
+                                        observacao: item.observacao,
+                                        fornecedorNome: item.fornecedorNome,
+                                        adicionais: item.adicionais,
+                                        unidadeVenda: item.unidadeVenda,
+                                        quantidadeBaixa: item.quantidadeBaixa,
+                                        precoSemPromocao: item.precoSemPromocao,
+                                      ),
+                                    );
+                                  }
+                                }
+
+                                final pedidoRestante = Pedido(
+                                  id: idRestante,
+                                  numero: numeroRestante,
+                                  clienteId: _clienteSelecionado?.id,
+                                  clienteNome: nomeClienteFinal,
+                                  clienteTelefone: _clienteSelecionado?.telefone,
+                                  clienteCpfCnpj: _clienteSelecionado?.cpfCnpj ?? _cpfNfce,
+                                  dataPedido: DateTime.now(),
+                                  status: 'Pendente',
+                                  total: restante,
+                                  produtos: produtosPedido,
+                                  servicos: servicosPedido,
+                                  pagamentos: [
+                                    PagamentoPedido(
+                                      id: uuid.v4(),
+                                      tipo: TipoPagamento.outro,
+                                      valor: restante,
+                                      recebido: false,
+                                      observacao: 'Restante pendente: R\$ ${restante.toStringAsFixed(2)} (Dividir Conta)',
+                                    ),
+                                  ],
+                                  createdAt: DateTime.now(),
+                                  updatedAt: DateTime.now(),
+                                  observacoes: 'Restante da venda $numero: R\$ ${restante.toStringAsFixed(2)} pendente',
+                                  operador: dataService.responsavelAtivo ?? 'PDV',
+                                  vendedorId: _vendedorSelecionado?.id,
+                                  vendedorNome: _vendedorSelecionado?.nome,
+                                  origem: 'Venda Direta',
+                                );
+                                await dataService.addPedido(pedidoRestante);
+                                debugPrint('>>> [Dividir PDV] Venda/Pedido restante $numeroRestante criada: R\$ ${restante.toStringAsFixed(2)} pendente (Cliente: $nomeClienteFinal)');
+                              }
+
+                              dataService.salvarImediatamente();
+
+                              // Limpar o item pagado do carrinho
+                              _resetarTodaVenda();
+                              if (pageContext.mounted) {
+                                ScaffoldMessenger.of(pageContext).showSnackBar(
+                                  SnackBar(
+                                    content: Text(restante > 0.01
+                                        ? 'Venda $numero: R\$ ${valorLivre.toStringAsFixed(2)} pago | Restante R\$ ${restante.toStringAsFixed(2)} pendente'
+                                        : 'Venda $numero criada: R\$ ${valorLivre.toStringAsFixed(2)} pago'),
+                                    backgroundColor: Colors.green,
+                                  ),
+                                );
+                              }
+                              // PDV continua aberto para novo atendimento
                             }
                           }
                         : null,
@@ -8021,7 +8537,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           id: uuid.v4(),
           tipo: TipoPagamento.outro,
           valor: totalPagar,
-          recebido: false,
+          recebido: true,
+          dataRecebimento: DateTime.now(),
           observacao: 'Parte Dividida: ${DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now())}',
         ),
       ],
@@ -8176,6 +8693,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           fornecedorNome: item.fornecedorNome,
           observacao: item.observacao,
           adicionais: item.adicionais,
+          opcoesCombo: item.opcoesCombo,
+          variacoesSelecionadas: item.variacoesSelecionadas,
           precoTabela: item.precoTabela,
         ),
       );
@@ -8244,6 +8763,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
               fornecedorNome: item.fornecedorNome,
               observacao: item.observacao,            adicionais: item.adicionais,
             opcoesCombo: item.opcoesCombo,
+            variacoesSelecionadas: item.variacoesSelecionadas,
             baixaProporcional: item.baixaProporcional,
             unidadeVenda: item.unidadeVenda,
             quantidadeBaixa: item.quantidadeBaixa,
@@ -9883,6 +10403,7 @@ recusando a emissão de NFC-e (erro 403).
         observacao: item.observacao,
         adicionais: item.adicionais,
         opcoesCombo: item.opcoesCombo,
+        variacoesSelecionadas: item.variacoesSelecionadas,
       baixaProporcional: item.baixaProporcional,
       unidadeVenda: item.unidadeVenda,
       quantidadeBaixa: item.quantidadeBaixa,
@@ -17261,6 +17782,31 @@ class _ItemCarrinhoComHoverState extends State<_ItemCarrinhoComHover> {
                                     ),
                                   ),
                                 ],
+                              ),
+                            )).toList(),
+                          ),
+                        ),
+                      // Exibir variações selecionadas (Tamanho G, Cor Azul, etc)
+                      if (item.variacoesSelecionadas != null && item.variacoesSelecionadas!.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Wrap(
+                            spacing: 6,
+                            runSpacing: 2,
+                            children: item.variacoesSelecionadas!.map((v) => Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: Colors.tealAccent.withOpacity(0.15),
+                                borderRadius: BorderRadius.circular(4),
+                                border: Border.all(color: Colors.tealAccent.withOpacity(0.3)),
+                              ),
+                              child: Text(
+                                '${v.nomeAtributo}: ${v.valor}${v.precoAdicional != null && v.precoAdicional != 0 ? " (${v.precoAdicional! > 0 ? '+' : ''}R\$ ${v.precoAdicional!.toStringAsFixed(2)})" : ""}',
+                                style: TextStyle(
+                                  color: Colors.tealAccent,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w500,
+                                ),
                               ),
                             )).toList(),
                           ),

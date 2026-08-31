@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'process_utils.dart';
 
 /// Serviço para converter certificados PFX para PEM
 /// Usa OpenSSL através de processo externo
@@ -53,7 +54,7 @@ class CertificadoConverterService {
               if (await file.exists()) {
                 debugPrint('>>> [Converter] ✓ OpenSSL encontrado em: $caminho');
                 // Testar se funciona
-                final test = await Process.run(caminho, ['version'], runInShell: true);
+                final test = await runProcessHidden(caminho, ['version']);
                 if (test.exitCode == 0) {
                   debugPrint('>>> [Converter] ✓ OpenSSL funcionando!');
                   // Usar este caminho diretamente
@@ -100,7 +101,7 @@ class CertificadoConverterService {
         throw Exception('Arquivo PFX está vazio: $caminhoPFX');
       }
       
-      final resultadoCert = await Process.run(
+      final resultadoCert = await runProcessHidden(
         opensslPath,
         [
           'pkcs12',
@@ -110,7 +111,6 @@ class CertificadoConverterService {
           '-out', caminhoCert,
           '-passin', 'pass:$senha',
         ],
-        runInShell: Platform.isWindows, // Usar shell no Windows para melhor compatibilidade
       );
       
       if (resultadoCert.exitCode != 0) {
@@ -173,7 +173,7 @@ class CertificadoConverterService {
       debugPrint('>>> [Converter] NOTA: -nodes cria chave privada SEM senha adicional (mantenha seguro!)');
       debugPrint('>>> [Converter] ========================================');
       
-      final resultadoChave = await Process.run(
+      final resultadoChave = await runProcessHidden(
         opensslPath,
         [
           'pkcs12',
@@ -183,7 +183,6 @@ class CertificadoConverterService {
           '-out', caminhoChave,
           '-passin', 'pass:$senha',
         ],
-        runInShell: Platform.isWindows,
       );
       
       if (resultadoChave.exitCode != 0) {
@@ -317,7 +316,7 @@ class CertificadoConverterService {
     // Se já encontramos antes, usar cache
     if (_opensslPath != null) {
       try {
-        final test = await Process.run(_opensslPath!, ['version']);
+        final test = await runProcessHidden(_opensslPath!, ['version']);
         if (test.exitCode == 0) {
           return _opensslPath;
         }
@@ -376,10 +375,9 @@ class CertificadoConverterService {
         }
         
         // Tentar executar com runInShell no Windows
-        final resultado = await Process.run(
+        final resultado = await runProcessHidden(
           caminho,
           ['version'],
-          runInShell: Platform.isWindows,
         );
         
         if (resultado.exitCode == 0) {

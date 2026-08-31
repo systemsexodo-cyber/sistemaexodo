@@ -13,6 +13,7 @@ import '../services/google_drive_service.dart';
 import '../services/bridge_management_service.dart';
 import 'google_drive_backup_page.dart';
 import '../services/supabase_service.dart';
+import '../services/process_utils.dart';
 import '../services/app_update_service.dart';
 import 'bloqueio_mensalidade_page.dart';
 import 'monitor_page.dart';
@@ -603,11 +604,10 @@ class _EmpresasPageState extends State<EmpresasPage> {
     );
 
     try {
-      final result = await Process.run(
+      final result = await runProcessHidden(
         'python',
         ['publicar_para_empresa.py', 'global', versao],
         workingDirectory: Directory.current.path,
-        runInShell: true,
       );
 
       if (mounted) Navigator.pop(context);
@@ -2160,7 +2160,7 @@ class _EmpresasPageState extends State<EmpresasPage> {
 
     try {
       // Chamar o script Python: python publicar_para_empresa.py ID VERSAO
-      final result = await Process.run(
+      final result = await runProcessHidden(
         'python',
         [
           'publicar_para_empresa.py',
@@ -2168,7 +2168,6 @@ class _EmpresasPageState extends State<EmpresasPage> {
           versao,
         ],
         workingDirectory: Directory.current.path,
-        runInShell: true,
       );
 
       if (mounted) Navigator.pop(context); // Fechar loading

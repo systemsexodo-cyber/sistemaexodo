@@ -18,6 +18,8 @@ import 'estoque_relatorio_geral_page.dart';
 import 'estoque_reposicao_page.dart';
 import 'quebras_page.dart';
 import 'inventario_page.dart';
+import '../services/inventario_print_service.dart';
+import 'producao_page.dart';
 
 class ProdutosPage extends StatefulWidget {
   const ProdutosPage({super.key});
@@ -273,6 +275,150 @@ class _ProdutosPageState extends State<ProdutosPage> {
     _showForm(context, produto: clone, isClone: true);
   }
 
+  /// Abre diálogo de opções e imprime o inventário para contagem física.
+  void _imprimirInventarioContagem(BuildContext context, DataService service, List<Produto> produtos) async {
+    if (produtos.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Nenhum produto para imprimir')),
+      );
+      return;
+    }
+
+    final empresa = service.empresaAtual;
+    if (empresa == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Empresa não configurada')),
+      );
+      return;
+    }
+
+    // Obter grupos dos produtos filtrados
+    final grupos = produtos.map((p) => p.grupo).where((g) => g.isNotEmpty).toSet().toList()..sort();
+    String? grupoSelecionado;
+    bool mostrarEstoque = true;
+
+    final resultado = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: const Color(0xFF1E1E2E),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Row(
+            children: [
+              Icon(Icons.print, color: Colors.white, size: 24),
+              SizedBox(width: 10),
+              Text('Imprimir Inventário', style: TextStyle(color: Colors.white, fontSize: 18)),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Gerar lista de ${produtos.length} produto(s) para contagem física.',
+                style: const TextStyle(color: Colors.white70, fontSize: 13),
+              ),
+              const SizedBox(height: 16),
+              // Filtro de grupo
+              if (grupos.length > 1) ...[
+                const Text('Grupo:', style: TextStyle(color: Colors.white60, fontSize: 12)),
+                const SizedBox(height: 6),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.06),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.white12),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String?>(
+                      value: grupoSelecionado,
+                      isExpanded: true,
+                      dropdownColor: const Color(0xFF2A2D3E),
+                      icon: const Icon(Icons.keyboard_arrow_down, color: Colors.blueAccent),
+                      style: const TextStyle(color: Colors.white, fontSize: 13),
+                      hint: const Text('Todos os grupos', style: TextStyle(color: Colors.white54)),
+                      items: [
+                        const DropdownMenuItem<String?>(
+                          value: null,
+                          child: Text('Todos os grupos'),
+                        ),
+                        ...grupos.map((g) => DropdownMenuItem(
+                          value: g,
+                          child: Text(g),
+                        )),
+                      ],
+                      onChanged: (v) => setDialogState(() => grupoSelecionado = v),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
+              // Opção de mostrar estoque
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.03),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: CheckboxListTile(
+                  title: const Text('Mostrar estoque do sistema', style: TextStyle(color: Colors.white, fontSize: 13)),
+                  subtitle: const Text('Útil para conferência. Desmarque para lista em branco.', style: TextStyle(color: Colors.white54, fontSize: 11)),
+                  value: mostrarEstoque,
+                  activeColor: Colors.blueAccent,
+                  dense: true,
+                  onChanged: (v) => setDialogState(() => mostrarEstoque = v ?? true),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('CANCELAR', style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton.icon(
+              icon: const Icon(Icons.print, size: 18),
+              onPressed: () => Navigator.pop(context, {
+                'grupo': grupoSelecionado,
+                'mostrarEstoque': mostrarEstoque,
+              }),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
+              label: const Text('IMPRIMIR'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (resultado == null) return;
+
+    // Filtrar por grupo se necessário
+    var produtosImprimir = produtos;
+    if (resultado['grupo'] != null) {
+      produtosImprimir = produtos.where((p) => p.grupo == resultado['grupo']).toList();
+    }
+
+    try {
+      await InventarioPrintService.imprimirInventario(
+        produtos: produtosImprimir,
+        empresa: empresa,
+        context: context,
+        filtroGrupo: resultado['grupo'],
+        mostrarEstoque: resultado['mostrarEstoque'] ?? true,
+      );
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ Erro ao imprimir: $e'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    }
+  }
+
   void _showForm(BuildContext context, {Produto? produto, bool isClone = false}) {
     showModalBottomSheet(
       context: context,
@@ -405,6 +551,17 @@ class _ProdutosPageState extends State<ProdutosPage> {
         appBar: CustomAppBar(
           title: 'Produtos • ${service.empresaAtual?.nomeExibicao ?? 'Catálogo'}',
           actions: [
+            // Botão Produção/Manufatura
+            IconButton(
+              icon: const Icon(Icons.engineering, color: Colors.orangeAccent),
+              tooltip: 'Produção / Manufatura',
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const ProducaoPage()),
+                );
+              },
+            ),
             // Botão Sincronizar e Diagnóstico
             IconButton(
               icon: const Icon(Icons.sync_rounded, color: Colors.blueAccent),
@@ -527,6 +684,18 @@ class _ProdutosPageState extends State<ProdutosPage> {
                       ),
                     ),
                 ],
+              ),
+            ),
+            // Botão Imprimir Inventário para Contagem
+            PermissionWidget(
+              permissao: TipoPermissao.estoqueVisualizar,
+              child: IconButton(
+                icon: const Icon(
+                  Icons.print_outlined,
+                  color: Colors.white,
+                ),
+                tooltip: 'Imprimir Inventário p/ Contagem',
+                onPressed: () => _imprimirInventarioContagem(context, service, produtosFiltrados),
               ),
             ),
             // Botão Inventário da Loja (contagem de conferência)

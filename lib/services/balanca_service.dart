@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import '../models/produto.dart';
 import 'local_storage_service.dart';
+import 'process_utils.dart';
 
 class BalancaService {
   static final BalancaService _instance = BalancaService._internal();
@@ -84,10 +85,9 @@ class BalancaService {
     }
     try {
       // Executa comando powershell para listar as portas seriais registradas
-      final result = await Process.run(
+      final result = await runProcessHidden(
         'powershell',
         ['-Command', '[System.IO.Ports.SerialPort]::getportnames()'],
-        stdoutEncoding: utf8,
       );
 
       if (result.exitCode == 0) {
@@ -170,10 +170,9 @@ try {
 }
 ''';
 
-      final result = await Process.run(
+      final result = await runProcessHidden(
         'powershell',
         ['-Command', script],
-        stdoutEncoding: utf8,
       );
 
       if (result.exitCode == 0) {

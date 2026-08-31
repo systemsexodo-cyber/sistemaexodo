@@ -837,7 +837,44 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
     );
   }
 
+  // ═══ VALIDAÇÃO CFOP × CSOSN ═══
+  bool _validarCfopCsosn(String cfop, String csosn) {
+    if (csosn.isEmpty) return true;
+    final cfopsTributados = {'5102', '1102', '6102', '7102', '5101', '1101', '6101', '7101'};
+    final cfopsSt = {'5405', '1551', '5551', '6551', '7551', '5403', '1403', '6403'};
+    // 300=Imune, 400=Não tributada, 600=Exigibilidade suspensa → requer CFOPs de tributação
+    final csosnsTributados = {'101', '102', '103', '201', '202', '203', '300', '400', '600'};
+    if (csosnsTributados.contains(csosn)) return cfopsTributados.contains(cfop);
+    if (csosn == '500') return cfopsSt.contains(cfop) || cfopsTributados.contains(cfop);
+    if (csosn == '900') return true;
+    if (cfop == '5949' && csosn != '900') return false;
+    return true;
+  }
 
+  String _sugestaoCfopCsosn(String cfop, String csosn) {
+    final csosnsTributados = {'101', '102', '103', '201', '202', '203', '300', '400', '600'};
+    if (csosnsTributados.contains(csosn)) return 'CSOSN $csosn requer CFOP: 5102, 1102, 6102 ou 7102';
+    if (csosn == '500') return 'CSOSN 500 requer CFOP: 5405, 1551, 5551 ou similar de ST';
+    if (cfop == '5949') return 'CFOP 5949 só aceita CSOSN 900 (Outros)';
+    return 'Verifique a combinação CFOP/CSOSN no manual da SEFAZ';
+  }
+
+  Map<String, String> _corrigirCfopCsosnLocal(String cfop, String csosn) {
+    String cfopCorrigido = cfop;
+    String csosnCorrigido = csosn;
+    final cfopsTributados = {'5102', '1102', '6102', '7102', '5101', '1101', '6101', '7101'};
+    final cfopsSt = {'5405', '1551', '5551', '6551', '7551', '5403', '1403', '6403'};
+    // 300=Imune, 400=Não tributada, 600=Exigibilidade suspensa
+    final csosnsTributados = {'101', '102', '103', '201', '202', '203', '300', '400', '600'};
+    if (csosnsTributados.contains(csosn)) {
+      if (!cfopsTributados.contains(cfop)) cfopCorrigido = '5102';
+    } else if (csosn == '500') {
+      if (!cfopsSt.contains(cfop) && !cfopsTributados.contains(cfop)) cfopCorrigido = '5405';
+    } else if (cfop == '5949' && csosn != '900') {
+      csosnCorrigido = '900';
+    }
+    return {'cfop': cfopCorrigido, 'csosn': csosnCorrigido};
+  }
 
   void _salvarProduto() {
     // Verificar se já existe produto com o mesmo código
@@ -4232,6 +4269,60 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
               onChanged: (v) => _simplesNacionalAliquota = double.tryParse(v.replaceAll(',', '.')),
             ),
           ),
+          // ═══ AVISO DE INCOMPATIBILIDADE CFOP × CSOSN ═══
+          if (_cfop != null && _csosn != null && _cfop!.isNotEmpty && _csosn!.isNotEmpty)
+            Builder(
+              builder: (ctx) {
+                final cfop = _cfop!.replaceAll(RegExp(r'[^0-9]'), '');
+                final csosn = _csosn!.replaceAll(RegExp(r'[^0-9]'), '');
+                if (!_validarCfopCsosn(cfop, csosn)) {
+                  return Container(
+                    margin: const EdgeInsets.only(top: 8),
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.redAccent.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Colors.redAccent.withOpacity(0.4)),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.warning_amber_rounded, color: Colors.redAccent, size: 20),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                '⚠️ CFOP incompatível com o CSOSN!',
+                                style: TextStyle(color: Colors.redAccent, fontSize: 12, fontWeight: FontWeight.bold),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                _sugestaoCfopCsosn(cfop, csosn),
+                                style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 11),
+                              ),
+                            ],
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: () {
+                            final correcao = _corrigirCfopCsosnLocal(cfop, csosn);
+                            setState(() {
+                              _cfop = correcao['cfop'];
+                              _cfopController.text = correcao['cfop']!;
+                              _csosn = correcao['csosn'];
+                              _csosnController.text = correcao['csosn']!;
+                            });
+                          },
+                          child: const Text('CORRIGIR', style: TextStyle(color: Colors.greenAccent, fontSize: 11, fontWeight: FontWeight.bold)),
+                        ),
+                      ],
+                    ),
+                  );
+                }
+                return const SizedBox.shrink();
+              },
+            ),
         ]),
 
         _buildSection('ICMS Detalhado', [
@@ -5428,6 +5519,60 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
                   );
                 },
               ),
+            // Resumo de custo da composição
+            if (_composicao.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.green.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.green.withOpacity(0.25)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: const [
+                        Icon(Icons.attach_money, color: Colors.greenAccent, size: 18),
+                        SizedBox(width: 6),
+                        Text('Resumo de Custo', style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 13)),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    ..._composicao.map((item) {
+                      final p = Provider.of<DataService>(context, listen: false).produtos.cast<Produto?>().firstWhere((x) => x?.id == item.produtoId, orElse: () => null);
+                      final custoUnit = p?.precoCusto ?? 0;
+                      final custoItem = custoUnit * item.quantidade;
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 2),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Expanded(child: Text('${p?.nome ?? "?"} (${item.quantidade}x)', style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 11))),
+                            Text(custoUnit > 0 ? 'R\$ ${custoItem.toStringAsFixed(2)}' : 'Sem custo', style: TextStyle(color: custoUnit > 0 ? Colors.white70 : Colors.white30, fontSize: 11)),
+                          ],
+                        ),
+                      );
+                    }),
+                    const Divider(color: Colors.white10),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text('Custo Total da Composição:', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
+                        Text(
+                          'R\$ ${_composicao.fold<double>(0, (sum, item) {
+                            final p = Provider.of<DataService>(context, listen: false).produtos.cast<Produto?>().firstWhere((x) => x?.id == item.produtoId, orElse: () => null);
+                            return sum + ((p?.precoCusto ?? 0) * item.quantidade);
+                          }).toStringAsFixed(2)}',
+                          style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 14),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ],
         ]),
         const SizedBox(height: 24),

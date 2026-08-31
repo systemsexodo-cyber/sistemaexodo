@@ -183,6 +183,7 @@ class DatabaseService {
         await _garantirNfes(conn);
         await _garantirExodoConfig(conn);
         await _garantirLotesProduto(conn);
+        await _garantirAgendamentosServico(conn);
 
         // Histórico de estoque: preservar fornecedor/observação/usuario localmente
         await conn.execute('ALTER TABLE estoque_historico ADD COLUMN IF NOT EXISTS fornecedor_nome TEXT;');
@@ -423,6 +424,63 @@ class DatabaseService {
       ''');
     } catch (e) {
       debugPrint('>>> [PostgreSQL] ❌ Erro ao garantir nfes: $e');
+    }
+  }
+
+  Future<void> _garantirAgendamentosServico(Connection conn) async {
+    try {
+      await conn.execute('''
+        CREATE TABLE IF NOT EXISTS agendamentos_servico (
+          id TEXT PRIMARY KEY,
+          numero TEXT DEFAULT 'AGD-0000',
+          servico_id TEXT,
+          servicos_ids JSONB DEFAULT '[]',
+          cliente_id TEXT,
+          pet_id TEXT,
+          data_agendamento TIMESTAMPTZ,
+          duracao_minutos INT DEFAULT 60,
+          intervalo_minutos INT DEFAULT 0,
+          observacoes TEXT,
+          status TEXT DEFAULT 'Agendado',
+          tipo_entrega TEXT,
+          valor_taxi_dog NUMERIC,
+          bairro_entrega TEXT,
+          pedido_id TEXT,
+          numero_pedido TEXT,
+          recebido BOOLEAN DEFAULT FALSE,
+          data_recebimento TIMESTAMPTZ,
+          cliente_nome TEXT,
+          cliente_telefone TEXT,
+          pet_nome TEXT,
+          endereco TEXT,
+          numero_endereco TEXT,
+          complemento TEXT,
+          ponto_referencia TEXT,
+          excluido BOOLEAN DEFAULT FALSE,
+          travado BOOLEAN DEFAULT FALSE,
+          funcionario_id TEXT,
+          funcionario_nome TEXT,
+          recorrente BOOLEAN DEFAULT FALSE,
+          is_pago BOOLEAN DEFAULT FALSE,
+          pagamento_info TEXT,
+          empresa_id TEXT NOT NULL DEFAULT '',
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      ''');
+      await conn.execute('CREATE INDEX IF NOT EXISTS idx_agendamentos_empresa_id ON agendamentos_servico(empresa_id);');
+      await conn.execute('CREATE INDEX IF NOT EXISTS idx_agendamentos_data ON agendamentos_servico(data_agendamento);');
+      await conn.execute('CREATE INDEX IF NOT EXISTS idx_agendamentos_cliente ON agendamentos_servico(cliente_id);');
+      await conn.execute('CREATE INDEX IF NOT EXISTS idx_agendamentos_status ON agendamentos_servico(status);');
+
+      await conn.execute('DROP TRIGGER IF EXISTS trg_exodo_sync_log_agendamentos_servico ON agendamentos_servico;');
+      await conn.execute('''
+        CREATE TRIGGER trg_exodo_sync_log_agendamentos_servico
+        AFTER INSERT OR DELETE OR UPDATE ON public.agendamentos_servico
+        FOR EACH ROW EXECUTE FUNCTION public.log_sync_event();
+      ''');
+    } catch (e) {
+      debugPrint('>>> [PostgreSQL] ❌ Erro ao garantir agendamentos_servico: $e');
     }
   }
 
@@ -884,6 +942,14 @@ class DatabaseService {
             }
 
             var val = entry.value;
+
+            // Garantir que DateTime vindos do PostgreSQL sejam sempre local
+            // (TIMESTAMP sem tz pode voltar como UTC pelo driver)
+            if (val is DateTime && !val.isUtc) {
+              // Já é local, ok
+            } else if (val is DateTime && val.isUtc) {
+              val = val.toLocal();
+            }
 
             if (val is String && columns != null) {
               final colType = columns[entry.key]?.toUpperCase() ?? '';

@@ -197,17 +197,18 @@ class BridgeManagerService {
         );
       }
       
-      // Aguardar alguns segundos para o bridge iniciar
-      await Future.delayed(const Duration(seconds: 3));
-      
-      final isRunning = await isBridgeRunning();
-      if (isRunning) {
-        debugPrint('>>> [BridgeManager] ✅ Bridge iniciado com sucesso');
-      } else {
-        debugPrint('>>> [BridgeManager] ❌ Falha ao iniciar bridge');
+      // Aguardar o bridge iniciar o servidor HTTP (pode demorar)
+      // Verificar com retries a cada 2 segundos, até 15 segundos no total
+      for (int i = 0; i < 8; i++) {
+        await Future.delayed(const Duration(seconds: 2));
+        final isRunning = await isBridgeRunning();
+        if (isRunning) {
+          debugPrint('>>> [BridgeManager] ✅ Bridge iniciado com sucesso (tentativa ${i + 1})');
+          return true;
+        }
       }
-      
-      return isRunning;
+      debugPrint('>>> [BridgeManager] ❌ Bridge não respondeu após 16s de tentativas');
+      return false;
     } catch (e) {
       debugPrint('>>> [BridgeManager] ❌ Erro ao iniciar bridge: $e');
       return false;

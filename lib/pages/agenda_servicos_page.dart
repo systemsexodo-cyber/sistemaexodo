@@ -867,6 +867,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
   }
 
   List<AgendamentoServico> _getAgendamentosPeriodo(DataService dataService, {String? tipoFiltroOverride}) {
+    debugPrint('>>> [Agenda] 📊 Total em memória: ${dataService.agendamentosServico.length}');
     DateTime inicio, fim;
     
     if (_visualizacao == 'Dia') {
@@ -882,8 +883,15 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
     }
     
     var agendamentos = dataService.getAgendamentosPorPeriodo(inicio, fim);
+    debugPrint('>>> [Agenda] 🔍 Período: $inicio ~ $fim | Total antes dos filtros: ${agendamentos.length} | _dataSelecionada: $_dataSelecionada | Visualização: $_visualizacao');
+    if (agendamentos.isNotEmpty) {
+      for (final a in agendamentos) {
+        debugPrint('>>> [Agenda]   → ID=${a.id} data=${a.dataAgendamento} status=${a.status} servico=${a.servico?.nome ?? a.servicoNome} excluido=${a.excluido}');
+      }
+    }
     
     final isModuloPet = dataService.empresaAtual?.moduloPet ?? false;
+    debugPrint('>>> [Agenda] moduloPet=$isModuloPet');
 
     // Filtro Mestre: Ocultar agendamentos de pet se moduloPet estiver desativado
     if (!isModuloPet) {

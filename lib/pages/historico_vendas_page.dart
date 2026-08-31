@@ -376,6 +376,8 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
   @override
   void initState() {
     super.initState();
+    // Sempre começa com "Meu Caixa" ativo por padrão
+    _filtrarApenasMeuCaixa = true;
     // Salvar backup das datas do dia inteiro imediatamente
     _dataInicioAntesMeuCaixa = DateTime.now().copyWith(
       hour: 0, minute: 0, second: 0, millisecond: 0, microsecond: 0,
@@ -383,8 +385,43 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
     _dataFimAntesMeuCaixa = DateTime.now().copyWith(
       hour: 23, minute: 59, second: 59, millisecond: 999, microsecond: 999,
     );
-    // Sempre começa mostrando TODAS as vendas (padrão)
-    // O usuário pode alternar para "Meu Caixa" no toggle da UI
+    // Após o primeiro frame, ajustar as datas para a janela do caixa
+    // do operador atual (assim "Meu Caixa" funciona direto ao abrir)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _ajustarDatasParaMeuCaixa();
+    });
+  }
+
+  /// Ajusta _dataInicio/_dataFim para a janela do caixa do operador atual.
+  /// Chamado no initState (via addPostFrameCallback) e ao clicar em "Meu Caixa".
+  void _ajustarDatasParaMeuCaixa() {
+    if (!mounted) return;
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final operadorAtual = authService.usuarioAtual?.email ?? authService.usuarioAtual?.nome ?? dataService.usuarioAtualEmail ?? dataService.responsavelAtivo;
+    if (operadorAtual == null || operadorAtual.trim().isEmpty) return;
+    final aberturas = dataService.aberturasCaixa;
+    if (aberturas.isEmpty) return;
+    final aberturasDoOperador = aberturas.where(
+      (ab) => _operadorBate(operadorAtual, ab.responsavel),
+    ).toList()
+      ..sort((a, b) => b.dataAbertura.compareTo(a.dataAbertura));
+    if (aberturasDoOperador.isEmpty) return;
+    final ultimaAbertura = aberturasDoOperador.first;
+    final inicioCaixa = ultimaAbertura.dataAbertura;
+    final fechamento = dataService.fechamentosCaixa.firstWhereOrNull(
+      (f) => f.aberturaCaixaId == ultimaAbertura.id,
+    );
+    final fimCaixa = fechamento?.dataFechamento;
+    // IMPORTANTE: salvar backup das datas ANTES de estreitar.
+    // Senao, quando o usuario clicar em "Meu Caixa" depois "Todas",
+    // o backup fica com as datas estreitas e "Todas" nao mostra nada.
+    _dataInicioAntesMeuCaixa = _dataInicio;
+    _dataFimAntesMeuCaixa = _dataFim;
+    setState(() {
+      _dataInicio = inicioCaixa;
+      _dataFim = fimCaixa ?? DateTime.now().copyWith(hour: 23, minute: 59, second: 59, millisecond: 999, microsecond: 999);
+    });
   }
 
   /// Sempre abre mostrando TODAS as vendas por padrão.
@@ -405,13 +442,18 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
     if (na.isEmpty || nb.isEmpty) return false;
     // Match exato primeiro
     if (na == nb) return true;
-    // Só comparar local part (antes do @) se AMBOS tiverem @.
-    // Se um é nome (sem @) e o outro é email, NÃO comparar pelo prefixo
-    // — isso causava cruzamento entre usuários diferentes.
+    // Se ambos têm @
     if (na.contains('@') && nb.contains('@')) {
       final localA = na.split('@').first;
       final localB = nb.split('@').first;
       return localA == localB && localA.isNotEmpty;
+    }
+    // Se um é email e o outro é apenas o nome de usuário (ex: 'user' e 'user@gmail.com')
+    if (na.contains('@') && !nb.contains('@')) {
+      return na.split('@').first == nb && nb.isNotEmpty;
+    }
+    if (!na.contains('@') && nb.contains('@')) {
+      return na == nb.split('@').first && na.isNotEmpty;
     }
     return false;
   }
@@ -443,29 +485,29 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
   }) {
     final Map<String, ItemHistorico> mapItens = {};
 
-    // Determinar os caixas ABERTOS do OPERADOR atual para o
-    // filtro "Apenas Meu Caixa". Só inclui caixas sem fechamento
-    // (sessão atual), para evitar que vendas de caixas antigos apareçam.
+    // Determinar o caixa ABERTO mais recente do OPERADOR atual para o
+    // filtro "Meu Caixa". Se o operador tem mais de um caixa aberto
+    // (raro, mas possível), usa apenas o último.
     String? operadorAtual;
-    final List<AberturaCaixa> caixasDoOperador = [];
+    AberturaCaixa? caixaAtualOperador;
     if (apenasMeuCaixa) {
-      // SEMPRE usar o email do usuário LOGADO (passado via AuthService).
-      // NÃO usar dataService.usuarioAtualEmail que pode ser null se
-      // setUsuarioAtual ainda não foi chamado, e NÃO usar responsavelAtivo
-      // que pode ter sido alterado pelo dropdown do caixa para outro operador.
       operadorAtual = emailUsuarioLogado ?? dataService.usuarioAtualEmail ?? dataService.responsavelAtivo;
       if (operadorAtual != null && operadorAtual.trim().isNotEmpty) {
+        // Filtrar caixas abertos do operador
+        final List<AberturaCaixa> caixasAbertos = [];
         for (final ab in dataService.aberturasCaixa) {
-          // Ignorar caixas já fechados — só a sessão atual importa
           final temFechamento = dataService.fechamentosCaixa
               .any((f) => f.aberturaCaixaId == ab.id);
           if (temFechamento) continue;
-          // Comparação EXATA: só incluir caixas cujo responsavel bate
-          // com o operador logado.
           final resp = (ab.responsavel ?? '').trim();
           if (resp.isNotEmpty && _operadorBate(operadorAtual, resp)) {
-            caixasDoOperador.add(ab);
+            caixasAbertos.add(ab);
           }
+        }
+        // Pegar apenas o mais recente (último aberto)
+        if (caixasAbertos.isNotEmpty) {
+          caixasAbertos.sort((a, b) => b.dataAbertura.compareTo(a.dataAbertura));
+          caixaAtualOperador = caixasAbertos.first;
         }
       }
     }
@@ -474,43 +516,52 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
     final _dataInicio = inicio;
     final _dataFim = fim;
 
-    // IDs dos caixas do operador atual (usado para fechamento/sangria/suprimento)
-    final Set<String> idsCaixasDoOperador = caixasDoOperador.map((ab) => ab.id).toSet();
+    // ID do caixa atual do operador (usado para fechamento/sangria/suprimento)
+    final Set<String> idsCaixasDoOperador = caixaAtualOperador != null
+        ? {caixaAtualOperador!.id}
+        : <String>{};
 
     bool pertenceAoCaixa(DateTime data, {String? operador, String? aberturaCaixaId}) {
       if (!apenasMeuCaixa) return true;
+
       // 0. Se o item tem aberturaCaixaId (fechamento, sangria, suprimento),
       //    verificar direto se essa abertura pertence ao operador atual.
       if (aberturaCaixaId != null && aberturaCaixaId.isNotEmpty) {
         return idsCaixasDoOperador.contains(aberturaCaixaId);
       }
+
+      // 1. Identificar o caixa exato do item por tempo e operador
+      final caixa = _caixaDoItem(dataService, data, operador: operador, aberturaId: aberturaCaixaId);
+      if (caixa != null) {
+        final respCaixa = (caixa.responsavel ?? '').trim();
+        if (operadorAtual != null && operadorAtual.trim().isNotEmpty && respCaixa.isNotEmpty) {
+          return _operadorBate(operadorAtual, respCaixa);
+        }
+      }
+
       final op = (operador ?? '').trim();
 
-      // 1. REGRAS ESTRTAS POR OPERADOR:
+      // 2. REGRAS ESTRITAS POR OPERADOR:
       //    a) Se a venda TEM um operador definido:
       //       - Se bate com o operador atual → PERTENCE.
       //       - Se NÃO bate → NÃO pertence (rejeitar imediatamente).
-      //    b) Se a venda NÃO tem operador (legada/vazia):
-      //       - Pertence apenas se cai dentro da janela de algum caixa
-      //         do operador atual (fallback por tempo).
       if (op.isNotEmpty &&
           operadorAtual != null &&
           operadorAtual.trim().isNotEmpty) {
-        // Venda com operador definido: comparacao estrita
         return _operadorBate(op, operadorAtual);
       }
-      // 2. Venda sem operador (legada): só incluir se estiver dentro da
-      //    janela de tempo de algum caixa do operador atual.
-      if (caixasDoOperador.isEmpty) return false;
-      for (final ab in caixasDoOperador) {
-        if (data.isBefore(ab.dataAbertura)) continue;
-        final fechamento = dataService.fechamentosCaixa
-            .firstWhereOrNull((f) => f.aberturaCaixaId == ab.id);
-        final fimCaixa = fechamento?.dataFechamento;
-        if (fimCaixa != null && data.isAfter(fimCaixa)) continue;
-        return true;
-      }
-      return false;
+
+      // 3. Venda sem operador: se achou caixa de outro operador, rejeitar
+      if (caixa != null) return false;
+
+      // 4. Fallback se não achou caixa: só incluir se estiver dentro da janela do caixa atual
+      if (caixaAtualOperador == null) return false;
+      if (data.isBefore(caixaAtualOperador!.dataAbertura)) return false;
+      final fechamento = dataService.fechamentosCaixa
+          .firstWhereOrNull((f) => f.aberturaCaixaId == caixaAtualOperador!.id);
+      final fimCaixa = fechamento?.dataFechamento;
+      if (fimCaixa != null && data.isAfter(fimCaixa)) return false;
+      return true;
     }
 
     // 0. NFC-es e NF-es (Para identificar quais vendas possuem nota fiscal emitida)
@@ -533,14 +584,22 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
       (v) =>
           v.dataVenda.isAfter(_dataInicio) &&
           v.dataVenda.isBefore(_dataFim) &&
-          pertenceAoCaixa(v.dataVenda, operador: v.operador),
+          pertenceAoCaixa(v.dataVenda, operador: v.operador ?? v.vendedorNome),
     )) {
-      // Verificar se a venda já foi recebida (tem valor recebido > 0)
-      final foiRecebida = (v.valorRecebido ?? 0) > 0;
+      // Verificar se a venda já foi finalizada (não é "venda salva").
+      // ATENÇÃO: não podemos depender apenas de valorRecebido > 0, pois vendas
+      // pagas com cartão/pix (ex: delivery), fiado ou crediário podem ter
+      // valorRecebido null e MESMO ASSIM foram finalizadas. Convenção usada no
+      // restante do app (trocas_devolucoes_page, ItemHistorico.valorRecebido):
+      // "venda salva" = tipoPagamento "outro" sem nenhum recebimento.
+      final temPagamentoRecebido = v.pagamentos.any((p) => p.recebido);
+      final isVendaSalva = (v.valorRecebido ?? 0) <= 0 &&
+          v.tipoPagamento == TipoPagamento.outro &&
+          !temPagamentoRecebido;
       final isCancelada = v.isCancelada;
 
-      // Só incluir no histórico se foi recebida ou cancelada (não incluir pendentes)
-      if (!foiRecebida && !isCancelada) continue;
+      // Só excluir do histórico a venda salva/pendente (e não cancelada)
+      if (isVendaSalva && !isCancelada) continue;
       bool isNfce =
           mapNfces.containsKey(v.id) || mapNfces.containsKey(v.numero);
       mapItens[v.id] = ItemHistorico.fromVendaBalcao(v, isNfce: isNfce);
@@ -550,7 +609,7 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
       (p) =>
           p.dataPedido.isAfter(_dataInicio) &&
           p.dataPedido.isBefore(_dataFim) &&
-          pertenceAoCaixa(p.dataPedido),
+          pertenceAoCaixa(p.dataPedido, operador: p.operador ?? p.vendedorNome),
     )) {
       // Regra: Pedidos "Pendentes" (como Delivery que ainda não foi pago/entregue)
       // não devem aparecer no histórico ainda, apenas no PDV (aba Receber).
@@ -636,7 +695,7 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
           cp.dataPagamento != null &&
           cp.dataPagamento!.isAfter(_dataInicio) &&
           cp.dataPagamento!.isBefore(_dataFim) &&
-          pertenceAoCaixa(cp.dataPagamento!),
+          pertenceAoCaixa(cp.dataPagamento!, operador: cp.usuarioCriacao),
     )) {
       // Evitar duplicidade se já foi registrado como Sangria no PDV
       if (!mapItens.values.any(
@@ -670,7 +729,7 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
             pag.dataRecebimento != null &&
             pag.dataRecebimento!.isAfter(_dataInicio) &&
             pag.dataRecebimento!.isBefore(_dataFim) &&
-            pertenceAoCaixa(pag.dataRecebimento!),
+            pertenceAoCaixa(pag.dataRecebimento!, operador: p.operador ?? p.vendedorNome),
       )) {
         // Adicionamos como linha separada para o fluxo de caixa de HOJE ser real
         mapItens['PAG-${pag.id}'] = ItemHistorico(
@@ -703,6 +762,18 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
         );
       }
     }
+
+    // Filtro final rigoroso: em modo 'Meu Caixa', garantir que nenhum item de outro operador passe
+    if (apenasMeuCaixa && operadorAtual != null && operadorAtual.trim().isNotEmpty) {
+      return itens.where((item) {
+        final resp = (item.responsavel ?? '').trim();
+        if (resp.isNotEmpty) {
+          return _operadorBate(resp, operadorAtual);
+        }
+        return true;
+      }).toList();
+    }
+
     return itens;
   }
 
@@ -738,7 +809,7 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
   Widget build(BuildContext context) {
     final dataService = Provider.of<DataService>(context);
     final authService = Provider.of<AuthService>(context, listen: false);
-    final emailLogado = authService.usuarioAtual?.email;
+    final emailLogado = authService.usuarioAtual?.email ?? authService.usuarioAtual?.nome;
     List<ItemHistorico> itens = _montarItensHistorico(
       dataService,
       _dataInicio,
@@ -1203,7 +1274,7 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
     DateTime? fimCaixa;
     // Pegar a última abertura do OPERADOR ATUAL (não global).
     // SEMPRE usar o email do usuário LOGADO do AuthService (mais confiável).
-    final operadorAtual = authService.usuarioAtual?.email ?? dataService.usuarioAtualEmail ?? dataService.responsavelAtivo;
+    final operadorAtual = authService.usuarioAtual?.email ?? authService.usuarioAtual?.nome ?? dataService.usuarioAtualEmail ?? dataService.responsavelAtivo;
     final aberturas = dataService.aberturasCaixa;
     if (aberturas.isNotEmpty && operadorAtual != null && operadorAtual.trim().isNotEmpty) {
       final aberturasDoOperador = aberturas.where(
@@ -3659,9 +3730,15 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
       final vendasSessao = dataService.getVendasDoCaixa(aberturaCaixa);
 
       for (var v in vendasSessao) {
-        final foiRecebida = (v.valorRecebido ?? 0) > 0;
+        // Mesma regra do histórico: só excluir "venda salva" (tipo outro sem
+        // recebimento). Vendas pagas com cartão/pix, fiado ou crediário podem
+        // ter valorRecebido null e ainda assim foram finalizadas.
+        final temPagamentoRecebido = v.pagamentos.any((p) => p.recebido);
+        final isVendaSalva = (v.valorRecebido ?? 0) <= 0 &&
+            v.tipoPagamento == TipoPagamento.outro &&
+            !temPagamentoRecebido;
         final isCancelada = v.isCancelada;
-        if (!foiRecebida && !isCancelada) continue;
+        if (isVendaSalva && !isCancelada) continue;
         mapItensSessao[v.id] = ItemHistorico.fromVendaBalcao(v);
       }
 

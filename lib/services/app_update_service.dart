@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'package:sistema_exodo_novo/services/supabase_service.dart';
+import 'process_utils.dart';
 
 class AppUpdateService {
   static const String currentAppVersion = "1.0.35";
@@ -173,8 +174,8 @@ del "%~f0"
       await File(batPath).writeAsString(batContent);
 
       debugPrint('>>> [AppUpdateService] Executando script de swap e fechando...');
-      // Disparar o BAT
-      await Process.start('cmd.exe', ['/c', batPath], runInShell: true);
+      // Disparar o BAT sem janela CMD
+      await Process.start('cmd.exe', ['/c', batPath], mode: ProcessStartMode.detached);
       // Fechar a si mesmo imediatamente
       exit(0);
     } catch (e) {

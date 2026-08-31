@@ -583,7 +583,7 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
         }
       }
     }
-    return (maiorCodigo > 0 ? maiorCodigo + 1 : 1001).toString();
+    return (maiorCodigo > 0 ? maiorCodigo + 1 : 1).toString();
   }
 
   void _carregarDados() {

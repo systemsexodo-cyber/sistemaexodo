@@ -653,10 +653,23 @@ def adicionar_produto_com_icms(nota_fiscal, item, emp, descricao=None, cfop_suge
     if desconto_item > valor_total_bruto:
         desconto_item = valor_total_bruto
 
-    # Inteligência Fiscal: Auto-correção de CFOP para ST (Double Check no Backend)
+    # Inteligência Fiscal: Auto-correção de CFOP × CSOSN (Double Check no Backend)
+    cfops_tributados = ['5101', '5102', '1101', '1102', '6101', '6102', '7101', '7102']
+    cfops_st = ['5405', '1551', '5551', '6551', '7551', '5403', '1403', '6403']
+    csosns_tributados = ['101', '102', '103', '201', '202', '203', '300', '400', '600']
+    
     if (csosn_atual == '500' or cst_atual == '60') and (cfop_atual in ['5101', '5102']):
         cfop_final = '5405'
         print(f">>> [FISCAL] Corrigindo CFOP item {item.codigo}: {cfop_atual} -> {cfop_final} (ST detectada)")
+    elif csosn_atual in csosns_tributados and cfop_atual not in cfops_tributados:
+        cfop_final = '5102'
+        print(f">>> [FISCAL] Corrigindo CFOP item {item.codigo}: {cfop_atual} -> {cfop_final} (CSOSN {csosn_atual} exige CFOP tributado)")
+    elif csosn_atual == '500' and cfop_atual not in cfops_st and cfop_atual not in cfops_tributados:
+        cfop_final = '5405'
+        print(f">>> [FISCAL] Corrigindo CFOP item {item.codigo}: {cfop_atual} -> {cfop_final} (CSOSN 500 exige CFOP ST)")
+    elif cfop_atual == '5949' and csosn_atual != '900':
+        cfop_final = '5102'
+        print(f">>> [FISCAL] Corrigindo CFOP item {item.codigo}: {cfop_atual} -> {cfop_final} (CFOP 5949 exige CSOSN 900)")
     else:
         cfop_final = cfop_atual
 

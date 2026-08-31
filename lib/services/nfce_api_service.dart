@@ -156,10 +156,15 @@ class NFCeApiService {
       final valorTotalItem = valorUnitario * quantidade;
 
       String cfopFinal = produto.cfop?.replaceAll(RegExp(r'[^0-9]'), '') ?? '5102';
-      final csosnRaw = produto.csosn?.replaceAll(RegExp(r'[^0-9]'), '') ?? '';
+      String csosnFinal = produto.csosn?.replaceAll(RegExp(r'[^0-9]'), '') ?? '';
       final cstRaw = produto.icmsCst?.replaceAll(RegExp(r'[^0-9]'), '') ?? '';
       
-      if ((csosnRaw == '500' || cstRaw == '60') && (cfopFinal == '5102' || cfopFinal == '5101')) {
+      // ═══ VALIDAÇÃO CFOP × CSOSN (Rejeição SEFAZ 386) ═══
+      if (empresa.crt != 3 && csosnFinal.isNotEmpty) {
+        final correcao = _corrigirCfopCsosn(cfopFinal, csosnFinal);
+        cfopFinal = correcao['cfop']!;
+        csosnFinal = correcao['csosn']!;
+      } else if ((csosnFinal == '500' || cstRaw == '60') && (cfopFinal == '5102' || cfopFinal == '5101')) {
         cfopFinal = '5405';
       }
 
@@ -309,6 +314,35 @@ class NFCeApiService {
       debugPrint('>>> [NFCeApi] Erro ao cancelar: $e');
       rethrow;
     }
+  }
+
+  /// Valida e corrige combinações CFOP × CSOSN incompatíveis (Rejeição 386).
+  static Map<String, String> _corrigirCfopCsosn(String cfop, String csosn) {
+    String cfopCorrigido = cfop;
+    String csosnCorrigido = csosn;
+
+    // CFOPs aceitos para CSOSNs de tributação / imune / não-tributada
+    final cfopsTributados = {'5102', '1102', '6102', '7102', '5101', '1101', '6101', '7101'};
+    // CFOPs aceitos para CSOSN 500 (substituição tributária)
+    final cfopsSt = {'5405', '1551', '5551', '6551', '7551', '5403', '1403', '6403'};
+    // CSOSNs que usam CFOPs de tributação (inclui imune 300 e não-tributada 400)
+    final csosnsTributados = {'101', '102', '103', '201', '202', '203', '300', '400', '600'};
+
+    if (csosnsTributados.contains(csosn)) {
+      if (!cfopsTributados.contains(cfop)) {
+        cfopCorrigido = '5102';
+      }
+    } else if (csosn == '500') {
+      if (!cfopsSt.contains(cfop) && !cfopsTributados.contains(cfop)) {
+        cfopCorrigido = '5405';
+      }
+    } else if (csosn == '900') {
+      // CSOSN Outros → aceita qualquer CFOP
+    } else if (cfop == '5949' && csosn != '900') {
+      csosnCorrigido = '900';
+    }
+
+    return {'cfop': cfopCorrigido, 'csosn': csosnCorrigido};
   }
 }
 

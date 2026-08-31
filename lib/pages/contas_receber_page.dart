@@ -16,10 +16,13 @@ import 'dart:typed_data';
 import 'package:printing/printing.dart';
 
 import '../services/whatsapp_service.dart';
+import '../services/pedido_pdf_service.dart';
 import '../models/forma_pagamento.dart';
 import '../theme.dart';
 import 'conta_receber_form_page.dart';
+import 'conta_receber_extrato_page.dart';
 import '../widgets/sync_status_widget.dart';
+import '../models/empresa.dart';
 
 class ContasReceberPage extends StatefulWidget {
   const ContasReceberPage({super.key});
@@ -28,7 +31,7 @@ class ContasReceberPage extends StatefulWidget {
   State<ContasReceberPage> createState() => _ContasReceberPageState();
 }
 
-class _ContasReceberPageState extends State<ContasReceberPage> {
+class _ContasReceberPageState extends State<ContasReceberPage> with SingleTickerProviderStateMixin {
   String _filtroStatus = 'Todos';
   String _filtroTipo = 'Todos';
   String? _clienteFiltro;
@@ -38,7 +41,9 @@ class _ContasReceberPageState extends State<ContasReceberPage> {
   Set<String> _selecionadas = {};
   DateTime? _dataInicioFiltro;
   DateTime? _dataFimFiltro;
-    bool _gerarRecebivelAuto = true;
+  bool _gerarRecebivelAuto = true;
+  late TabController _abaController;
+  Set<String> _itensExpandidos = {}; // IDs das contas com itens expandidos
 
   final List<String> _statusDisponiveis = [
     'Todos',
@@ -50,8 +55,8 @@ class _ContasReceberPageState extends State<ContasReceberPage> {
 
   final List<String> _tiposDisponiveis = [
     'Todos',
-    'Vendas PDV',
-    'Pedidos',
+    'Fiado',
+    'Crediário',
     'Avulsas',
   ];
 
@@ -59,6 +64,7 @@ class _ContasReceberPageState extends State<ContasReceberPage> {
   @override
   void initState() {
     super.initState();
+    _abaController = TabController(length: 3, vsync: this);
     _loadConfig();
   }
 
@@ -82,6 +88,7 @@ class _ContasReceberPageState extends State<ContasReceberPage> {
   @override
   void dispose() {
     _buscaController.dispose();
+    _abaController.dispose();
     super.dispose();
   }
 
@@ -95,7 +102,7 @@ class _ContasReceberPageState extends State<ContasReceberPage> {
     return null;
   }
 
-  List<ContaPagar> _filtrarContas(List<ContaPagar> contas) {
+  List<ContaPagar> _filtrarContas(List<ContaPagar> contas, DataService dataService) {
     var resultado = contas.where((c) => c.ativo && c.categoria == 'Recebível').toList();
 
     // Filtro por status
@@ -121,10 +128,38 @@ class _ContasReceberPageState extends State<ContasReceberPage> {
     if (_filtroTipo != 'Todos') {
       resultado = resultado.where((c) {
         switch (_filtroTipo) {
-          case 'Vendas PDV':
-            return c.id.startsWith('venda_');
-          case 'Pedidos':
-            return c.id.startsWith('pedido_');
+          case 'Fiado':
+            // Vendas fiado ou pedidos com pagamento fiado
+            if (c.id.startsWith('venda_')) {
+              final idReal = c.id.replaceFirst('venda_', '');
+              try {
+                final venda = dataService.vendasBalcao.firstWhere((v) => v.id == idReal);
+                return venda.tipoPagamento == TipoPagamento.fiado;
+              } catch (_) {}
+            } else if (c.id.startsWith('pedido_')) {
+              final idReal = c.id.replaceFirst('pedido_', '');
+              try {
+                final pedido = dataService.pedidos.firstWhere((p) => p.id == idReal);
+                return pedido.pagamentos.any((pag) => pag.tipo == TipoPagamento.fiado);
+              } catch (_) {}
+            }
+            return false;
+          case 'Crediário':
+            // Vendas crediário ou pedidos com pagamento crediário
+            if (c.id.startsWith('venda_')) {
+              final idReal = c.id.replaceFirst('venda_', '');
+              try {
+                final venda = dataService.vendasBalcao.firstWhere((v) => v.id == idReal);
+                return venda.tipoPagamento == TipoPagamento.crediario;
+              } catch (_) {}
+            } else if (c.id.startsWith('pedido_')) {
+              final idReal = c.id.replaceFirst('pedido_', '');
+              try {
+                final pedido = dataService.pedidos.firstWhere((p) => p.id == idReal);
+                return pedido.pagamentos.any((pag) => pag.tipo == TipoPagamento.crediario);
+              } catch (_) {}
+            }
+            return false;
           case 'Avulsas':
             return !c.id.startsWith('venda_') && !c.id.startsWith('pedido_');
           default:
@@ -204,24 +239,24 @@ class _ContasReceberPageState extends State<ContasReceberPage> {
     // Obter contas a receber do banco
     final contasBase = dataService.contasPagar.where((c) => c.categoria == 'Recebível').toList();
     
-    // Obter vendas (todas as não canceladas para aparecerem no extrato do cliente)
+    // Obter vendas (fiado/crediário — inclui pagas para manter histórico)
     final vendasPrazo = dataService.vendasBalcao.where((v) {
       if (v.cancelado) return false;
-      return true;
+      return v.tipoPagamento == TipoPagamento.fiado || v.tipoPagamento == TipoPagamento.crediario;
     }).map((v) {
       final valPago = v.valorRecebido ?? 0.0;
-      final status = valPago >= v.valorTotal ? StatusContaPagar.pago : StatusContaPagar.pendente;
+      final status = valPago >= v.valorTotal - 0.01 ? StatusContaPagar.pago : StatusContaPagar.pendente;
       return ContaPagar(
         id: 'venda_${v.id}',
         numero: v.numero,
-        tipo: TipoContaPagar.despesaVariavel, // Fictício
+        tipo: TipoContaPagar.despesaVariavel,
         categoria: 'Recebível',
         descricao: 'Venda PDV - ${v.numero}',
         observacoes: v.observacoes,
         valor: v.valorTotal,
         valorPago: valPago,
         dataVencimento: _extractDueDate(v.observacoes) ?? v.dataVenda.add(const Duration(days: 30)),
-        dataPagamento: valPago >= v.valorTotal ? v.updatedAt : null,
+        dataPagamento: valPago >= v.valorTotal - 0.01 ? v.updatedAt : null,
         dataCriacao: v.createdAt,
         updatedAt: v.updatedAt,
         createdAt: v.createdAt,
@@ -231,21 +266,20 @@ class _ContasReceberPageState extends State<ContasReceberPage> {
       );
     }).toList();
     
-    // Obter pedidos (todos os não cancelados para aparecerem no extrato do cliente)
+    // Obter pedidos (fiado/crediário — inclui pagos para manter histórico)
     final pedidosPrazo = dataService.pedidos.where((p) {
       if (p.status == 'Cancelado') return false;
-      return true;
+      final temFiadoOuCrediario = p.pagamentos.any(
+        (pag) => pag.tipo == TipoPagamento.fiado || pag.tipo == TipoPagamento.crediario
+      );
+      return temFiadoOuCrediario;
     }).map((p) {
-      // IMPORTANTE: usar totalmenteRecebido (só pagamentos com recebido=true), NÃO
-      // pagamentoCompleto. Venda FIADO lança o pagamento (recebido=false), então
-      // pagamentoCompleto daria true e a conta apareceria como PAGO — mas deve
-      // ficar EM ABERTO até o caixa confirmar o recebimento.
       final valPago = p.totalRecebido;
       final status = p.totalmenteRecebido ? StatusContaPagar.pago : StatusContaPagar.pendente;
       return ContaPagar(
         id: 'pedido_${p.id}',
         numero: p.numero,
-        tipo: TipoContaPagar.despesaVariavel, // Fictício
+        tipo: TipoContaPagar.despesaVariavel,
         categoria: 'Recebível',
         descricao: 'Pedido - ${p.numero}',
         observacoes: p.observacoes,
@@ -272,7 +306,7 @@ class _ContasReceberPageState extends State<ContasReceberPage> {
         .toList();
     final todasContas = [...contasBase, ...vendasPrazo, ...pedidosSemDuplicar];
 
-    final contas = _filtrarContas(todasContas);
+    final contas = _filtrarContas(todasContas, dataService);
     final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
     final formatoData = DateFormat('dd/MM/yyyy');
 
@@ -421,6 +455,17 @@ class _ContasReceberPageState extends State<ContasReceberPage> {
               ],
             ),
           ],
+          bottom: TabBar(
+            controller: _abaController,
+            indicatorColor: Colors.orangeAccent,
+            labelColor: Colors.orangeAccent,
+            unselectedLabelColor: Colors.white54,
+            tabs: const [
+              Tab(icon: Icon(Icons.list, size: 18), text: 'Geral'),
+              Tab(icon: Icon(Icons.warning_amber, size: 18), text: 'Atrasados'),
+              Tab(icon: Icon(Icons.assessment, size: 18), text: 'Relatório'),
+            ],
+          ),
         ),
         body: Column(
           children: [
@@ -480,6 +525,13 @@ class _ContasReceberPageState extends State<ContasReceberPage> {
                   ],
                 ),
               ),
+            Expanded(
+              child: TabBarView(
+                controller: _abaController,
+                children: [
+                  // === ABA GERAL ===
+                  Column(
+                    children: [
             // Dashboard de resumo
             Container(
               margin: const EdgeInsets.all(16),
@@ -582,6 +634,15 @@ class _ContasReceberPageState extends State<ContasReceberPage> {
                       },
                     ),
             ),
+                  ],
+                ),
+                  // === ABA ATRASADOS ===
+                  _buildAbaAtrasados(contas, formatoMoeda, formatoData),
+                  // === ABA RELATORIO ===
+                  _buildAbaRelatorio(contas, formatoMoeda, formatoData, totalPendente, totalVencido, totalRecebido),
+                ],
+              ),
+            ),
           ],
         ),
         bottomNavigationBar: _selecionadas.isNotEmpty
@@ -667,6 +728,63 @@ class _ContasReceberPageState extends State<ContasReceberPage> {
     final contasLote = contasNaTela.where((c) => _selecionadas.contains(c.id)).toList();
     if (contasLote.isEmpty) return;
 
+    // Coletar pedidos/vendas originais para usar o PedidoPDFService
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final pedidosOriginais = <Pedido>[];
+    for (final c in contasLote) {
+      if (c.id.startsWith('pedido_')) {
+        final idReal = c.id.replaceFirst('pedido_', '');
+        try {
+          final p = dataService.pedidos.firstWhere((p) => p.id == idReal);
+          if (!pedidosOriginais.any((x) => x.id == p.id)) pedidosOriginais.add(p);
+        } catch (_) {}
+      }
+    }
+
+    final temPedidos = pedidosOriginais.isNotEmpty;
+    final empresa = dataService.empresaAtual;
+
+    // Nome do cliente
+    String clienteNome = '';
+    for (final c in contasLote) {
+      if (c.fornecedorNome != null && c.fornecedorNome!.isNotEmpty && c.fornecedorNome != 'Cliente não informado') {
+        clienteNome = c.fornecedorNome!;
+        break;
+      }
+    }
+
+    // Código do cliente
+    String? clienteCodigo;
+    if (contasLote.isNotEmpty) {
+      for (final c in contasLote) {
+        if (c.id.startsWith('venda_')) {
+          final idReal = c.id.replaceFirst('venda_', '');
+          try {
+            final v = dataService.vendasBalcao.firstWhere((v) => v.id == idReal);
+            if (v.clienteId != null) {
+              final cli = dataService.clientes.firstWhere(
+                (c) => c.id == v.clienteId,
+                orElse: () => Cliente(id: '', nome: '', telefone: '', createdAt: DateTime.now(), updatedAt: DateTime.now()),
+              );
+              if (cli.id.isNotEmpty) { clienteCodigo = cli.dadosExtras?['codigo']?.toString(); break; }
+            }
+          } catch (_) {}
+        } else if (c.id.startsWith('pedido_')) {
+          final idReal = c.id.replaceFirst('pedido_', '');
+          try {
+            final p = dataService.pedidos.firstWhere((p) => p.id == idReal);
+            if (p.clienteId != null) {
+              final cli = dataService.clientes.firstWhere(
+                (c) => c.id == p.clienteId,
+                orElse: () => Cliente(id: '', nome: '', telefone: '', createdAt: DateTime.now(), updatedAt: DateTime.now()),
+              );
+              if (cli.id.isNotEmpty) { clienteCodigo = cli.dadosExtras?['codigo']?.toString(); break; }
+            }
+          } catch (_) {}
+        }
+      }
+    }
+
     bool incluirItens = false;
 
     showDialog(
@@ -678,6 +796,41 @@ class _ContasReceberPageState extends State<ContasReceberPage> {
             content: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                if (temPedidos && empresa != null) ...[
+                  ListTile(
+                    leading: const Icon(Icons.picture_as_pdf, color: Colors.redAccent),
+                    title: const Text('Extrato A4 (PedidoPDF)', style: TextStyle(fontSize: 14)),
+                    subtitle: const Text('PDF profissional formato A4', style: TextStyle(fontSize: 11)),
+                    onTap: () async {
+                      Navigator.pop(ctx);
+                      await PedidoPDFService.imprimirExtratoFiado(
+                        context: context,
+                        pedidos: pedidosOriginais,
+                        clienteNome: clienteNome,
+                        clienteCodigo: clienteCodigo,
+                        empresa: empresa,
+                        mostrarItens: incluirItens,
+                      );
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.receipt_long, color: Colors.blueAccent),
+                    title: const Text('Extrato Térmica (80mm)', style: TextStyle(fontSize: 14)),
+                    subtitle: const Text('Impressora térmica', style: TextStyle(fontSize: 11)),
+                    onTap: () async {
+                      Navigator.pop(ctx);
+                      await PedidoPDFService.imprimirExtratoFiadoTermico(
+                        context: context,
+                        pedidos: pedidosOriginais,
+                        clienteNome: clienteNome,
+                        clienteCodigo: clienteCodigo,
+                        empresa: empresa,
+                        mostrarItens: incluirItens,
+                      );
+                    },
+                  ),
+                  const Divider(color: Colors.white12),
+                ],
                 CheckboxListTile(
                   title: const Text('Incluir itens das vendas'),
                   value: incluirItens,
@@ -700,15 +853,6 @@ class _ContasReceberPageState extends State<ContasReceberPage> {
                   _compartilharPDF(contasLote, incluirItens);
                 },
                 style: ElevatedButton.styleFrom(backgroundColor: Colors.orange, foregroundColor: Colors.white),
-              ),
-              ElevatedButton.icon(
-                icon: const Icon(Icons.picture_as_pdf, size: 18),
-                label: const Text('Ver / Imprimir PDF'),
-                onPressed: () {
-                  Navigator.pop(ctx);
-                  _gerarEVisualizarPDF(contasLote, incluirItens);
-                },
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white),
               ),
               ElevatedButton.icon(
                 icon: const Icon(Icons.chat_bubble_outline, size: 18),
@@ -1294,9 +1438,11 @@ class _ContasReceberPageState extends State<ContasReceberPage> {
 
     double saldo1 = valor1;
     double saldo2 = usarDuas ? valor2 : 0.0;
+    double totalRecebido = 0.0;
+    String nomeCliente = '';
 
     for (final conta in contasLote) {
-      if (saldo1 <= 0.001 && saldo2 <= 0.001) break; // Terminou o dinheiro
+      if (saldo1 <= 0.001 && saldo2 <= 0.001) break;
 
       double pendente = conta.valorPendente;
       if (pendente <= 0.001) continue;
@@ -1315,22 +1461,172 @@ class _ContasReceberPageState extends State<ContasReceberPage> {
         pendente -= aplicado2;
       }
       
-      if (aplicado1 <= 0.001 && aplicado2 <= 0.001) continue;
+      final valorAplicado = aplicado1 + aplicado2;
+      if (valorAplicado <= 0.001) continue;
+
+      totalRecebido += valorAplicado;
+      if (nomeCliente.isEmpty && conta.fornecedorNome != null) {
+        nomeCliente = conta.fornecedorNome!;
+      }
 
       if (conta.id.startsWith('venda_')) {
         final idReal = conta.id.replaceFirst('venda_', '');
         try {
             final vendaOriginal = dataService.vendasBalcao.firstWhere((v) => v.id == idReal);
-            final novoRecebido = (vendaOriginal.valorRecebido ?? 0.0) + aplicado1 + aplicado2;
+            final novoRecebido = (vendaOriginal.valorRecebido ?? 0.0) + valorAplicado;
             
             final vendaAtualizada = vendaOriginal.copyWith(
-              tipoPagamento: (vendaOriginal.valorRecebido != null && vendaOriginal.valorRecebido! > 0) ? vendaOriginal.tipoPagamento : forma1,
+              // NÃO altera tipoPagamento — mantém fiado/crediário para a conta continuar aparecendo
               valorRecebido: novoRecebido,
               updatedAt: hoje,
             );
             await dataService.updateVendaBalcao(vendaAtualizada);
+
+            // Atualizar saldo devedor do cliente (fiado E crediário)
+            if ((vendaOriginal.tipoPagamento == TipoPagamento.fiado || vendaOriginal.tipoPagamento == TipoPagamento.crediario) && vendaOriginal.clienteId != null) {
+              final cliente = dataService.clientes.firstWhere(
+                (c) => c.id == vendaOriginal.clienteId,
+                orElse: () => Cliente(id: '', nome: '', telefone: '', createdAt: hoje, updatedAt: hoje),
+              );
+              if (cliente.id.isNotEmpty) {
+                final novoSaldo = (cliente.saldoDevedor - valorAplicado).clamp(0.0, double.infinity);
+                await dataService.updateCliente(cliente.copyWith(saldoDevedor: novoSaldo, updatedAt: hoje));
+              }
+            }
+            // Sincronizar Pedido vinculado à VendaBalcao
+            try {
+              final pedidoVinculado = dataService.pedidos.firstWhere((p) => p.id == vendaOriginal.id);
+              final novosPagamentosPedido = <PagamentoPedido>[];
+              double valorRestanteSync = valorAplicado;
+              for (final pag in pedidoVinculado.pagamentos) {
+                if (!pag.recebido && valorRestanteSync > 0.001 && (pag.tipo == TipoPagamento.fiado || pag.tipo == TipoPagamento.crediario || pag.tipoOriginal == TipoPagamento.fiado || pag.tipoOriginal == TipoPagamento.crediario)) {
+                  if (valorRestanteSync >= pag.valor) {
+                    novosPagamentosPedido.add(PagamentoPedido(id: pag.id, tipo: forma1, tipoOriginal: pag.tipo, valor: pag.valor, recebido: true, dataRecebimento: hoje, dataVencimento: pag.dataVencimento, observacao: 'Recebido via Contas a Receber'));
+                    valorRestanteSync -= pag.valor;
+                  } else {
+                    novosPagamentosPedido.add(PagamentoPedido(id: '${pag.id}_pago', tipo: forma1, tipoOriginal: pag.tipo, valor: valorRestanteSync, recebido: true, dataRecebimento: hoje, observacao: 'Recebimento parcial via Contas a Receber'));
+                    novosPagamentosPedido.add(PagamentoPedido(id: '${pag.id}_resto', tipo: pag.tipo, valor: pag.valor - valorRestanteSync, recebido: false, dataVencimento: pag.dataVencimento, observacao: 'Restante'));
+                    valorRestanteSync = 0;
+                  }
+                } else {
+                  novosPagamentosPedido.add(pag);
+                }
+              }
+              final todosRecebidosSync = novosPagamentosPedido.every((p) => p.recebido);
+              await dataService.updatePedido(pedidoVinculado.copyWith(
+                status: todosRecebidosSync ? 'Pago' : pedidoVinculado.status,
+                pagamentos: novosPagamentosPedido,
+                updatedAt: hoje,
+              ));
+            } catch (_) {}
+        } catch(e) {}
+      } else if (conta.id.startsWith('pedido_')) {
+        // Processar pedido — atualizar pagamentos fiado/crediário (igual ao PDV)
+        final idReal = conta.id.replaceFirst('pedido_', '');
+        try {
+          final pedido = dataService.pedidos.firstWhere((p) => p.id == idReal);
+          
+          // Determinar o tipo de crédito original (fiado ou crediario)
+          TipoPagamento? tipoCredito;
+          for (final pag in pedido.pagamentos) {
+            if (pag.tipo == TipoPagamento.fiado || pag.tipo == TipoPagamento.crediario) {
+              tipoCredito = pag.tipo;
+              break;
+            }
+          }
+          if (tipoCredito == null) {
+            // Sem fiado/crediário — usar o fluxo antigo
+            List<RegistroPagamento> novosRegistros = [];
+            if (aplicado1 > 0.001) {
+              novosRegistros.add(RegistroPagamento(
+                id: const Uuid().v4(), dataPagamento: hoje, valor: aplicado1, formaPagamento: forma1.nome,
+              ));
+            }
+            if (aplicado2 > 0.001) {
+              novosRegistros.add(RegistroPagamento(
+                id: const Uuid().v4(), dataPagamento: hoje, valor: aplicado2, formaPagamento: forma2.nome,
+              ));
+            }
+            final novoHistorico = [...conta.historicoPagamentos, ...novosRegistros];
+            final novoValorPago = (conta.valorPago ?? 0.0) + valorAplicado;
+            final novoStatus = novoValorPago >= (conta.valor - 0.001) ? StatusContaPagar.pago : StatusContaPagar.pendente;
+            await dataService.updateContaPagar(conta.copyWith(
+              valorPago: novoValorPago,
+              status: novoStatus,
+              dataPagamento: novoStatus == StatusContaPagar.pago ? hoje : conta.dataPagamento,
+              formaPagamento: forma1.nome,
+              historicoPagamentos: novoHistorico,
+              updatedAt: hoje,
+            ));
+            continue;
+          }
+
+          // Fluxo PDV: atualizar pagamentos do pedido diretamente
+          final valorRestante = valorAplicado;
+          double valorAProcessar = valorRestante;
+          final novosPagamentos = <PagamentoPedido>[];
+
+          for (final pag in pedido.pagamentos) {
+            if (pag.tipo == tipoCredito && !pag.recebido && valorAProcessar > 0) {
+              if (valorAProcessar >= pag.valor) {
+                novosPagamentos.add(PagamentoPedido(
+                  id: pag.id,
+                  tipo: forma1,
+                  tipoOriginal: tipoCredito,
+                  valor: pag.valor,
+                  recebido: true,
+                  dataRecebimento: hoje,
+                  dataVencimento: pag.dataVencimento,
+                  observacao: 'Recebido do ${tipoCredito == TipoPagamento.fiado ? "fiado" : "crediário"}',
+                ));
+                valorAProcessar -= pag.valor;
+              } else {
+                novosPagamentos.add(PagamentoPedido(
+                  id: '${pag.id}_pago',
+                  tipo: forma1,
+                  tipoOriginal: tipoCredito,
+                  valor: valorAProcessar,
+                  recebido: true,
+                  dataRecebimento: hoje,
+                  observacao: 'Recebimento parcial',
+                ));
+                novosPagamentos.add(PagamentoPedido(
+                  id: '${pag.id}_resto',
+                  tipo: tipoCredito,
+                  valor: pag.valor - valorAProcessar,
+                  recebido: false,
+                  dataVencimento: pag.dataVencimento,
+                  observacao: 'Restante do ${tipoCredito == TipoPagamento.fiado ? "fiado" : "crediário"}',
+                ));
+                valorAProcessar = 0;
+              }
+            } else {
+              novosPagamentos.add(pag);
+            }
+          }
+
+          final todosRecebidos = novosPagamentos.every((p) => p.recebido);
+          final pedidoAtualizado = pedido.copyWith(
+            status: todosRecebidos ? 'Pago' : pedido.status,
+            pagamentos: novosPagamentos,
+            updatedAt: hoje,
+          );
+          await dataService.updatePedido(pedidoAtualizado);
+
+          // Atualizar saldo devedor do cliente (fiado E crediário)
+          if ((tipoCredito == TipoPagamento.fiado || tipoCredito == TipoPagamento.crediario) && pedido.clienteId != null) {
+            final cliente = dataService.clientes.firstWhere(
+              (c) => c.id == pedido.clienteId,
+              orElse: () => Cliente(id: '', nome: '', telefone: '', createdAt: hoje, updatedAt: hoje),
+            );
+            if (cliente.id.isNotEmpty) {
+              final novoSaldo = (cliente.saldoDevedor - valorAplicado).clamp(0.0, double.infinity);
+              await dataService.updateCliente(cliente.copyWith(saldoDevedor: novoSaldo, updatedAt: hoje));
+            }
+          }
         } catch(e) {}
       } else {
+        // Conta avulsa — fluxo antigo
         List<RegistroPagamento> novosPagamentos = [];
         if (aplicado1 > 0.001) {
           novosPagamentos.add(RegistroPagamento(
@@ -1350,47 +1646,116 @@ class _ContasReceberPageState extends State<ContasReceberPage> {
         }
         
         final novoHistorico = [...conta.historicoPagamentos, ...novosPagamentos];
-        final novoValorPago = (conta.valorPago ?? 0.0) + aplicado1 + aplicado2;
+        final novoValorPago = (conta.valorPago ?? 0.0) + valorAplicado;
         final novoStatus = novoValorPago >= (conta.valor - 0.001) ? StatusContaPagar.pago : StatusContaPagar.pendente;
         
-        final contaAtualizada = ContaPagar(
-          id: conta.id,
-          numero: conta.numero,
-          tipo: conta.tipo,
-          categoria: conta.categoria,
-          descricao: conta.descricao,
-          observacoes: conta.observacoes,
-          valor: conta.valor,
+        await dataService.updateContaPagar(conta.copyWith(
           valorPago: novoValorPago,
-          dataVencimento: conta.dataVencimento,
           dataPagamento: novoStatus == StatusContaPagar.pago ? hoje : conta.dataPagamento,
           status: novoStatus,
           formaPagamento: forma1.nome,
           historicoPagamentos: novoHistorico,
-          recorrente: conta.recorrente,
-          intervaloRecorrencia: conta.intervaloRecorrencia,
-          proximaDataRecorrencia: conta.proximaDataRecorrencia,
-          ativo: conta.ativo,
-          usuarioCriacao: conta.usuarioCriacao,
-          usuarioPagamento: conta.usuarioPagamento,
-          notaEntradaId: conta.notaEntradaId,
-          notaEntradaNumero: conta.notaEntradaNumero,
-          fornecedorId: conta.fornecedorId,
-          fornecedorNome: conta.fornecedorNome,
           updatedAt: hoje,
-        );
-        await dataService.updateContaPagar(contaAtualizada);
+        ));
       }
     }
     
     setState(() {
       _selecionadas.clear();
     });
-    if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Baixa realizada com sucesso!'), backgroundColor: Colors.green)
-        );
+
+    if (mounted && totalRecebido > 0) {
+      final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+      final clienteLabel = nomeCliente.isNotEmpty ? nomeCliente : '';
+
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: const Color(0xFF1E1E2E),
+          title: const Text('Recebimento Concluído', style: TextStyle(color: Colors.white)),
+          content: Text(
+            'Deseja imprimir o recibo de ${formatoMoeda.format(totalRecebido)}${clienteLabel.isNotEmpty ? ' para $clienteLabel' : ''}?',
+            style: const TextStyle(color: Colors.white70),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Não', style: TextStyle(color: Colors.white54)),
+            ),
+            ElevatedButton.icon(
+              onPressed: () {
+                Navigator.pop(ctx);
+                _imprimirReciboBaixa(contasLote, totalRecebido, forma1, nomeCliente);
+              },
+              icon: const Icon(Icons.print, size: 18),
+              label: const Text('Imprimir Recibo'),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+            ),
+          ],
+        ),
+      );
     }
+  }
+
+  void _imprimirReciboBaixa(List<ContaPagar> contasLote, double totalRecebido, TipoPagamento forma, String nomeCliente) async {
+    final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+    final formatoData = DateFormat('dd/MM/yyyy HH:mm');
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final empresa = dataService.empresaAtual;
+
+    final doc = pw.Document();
+    doc.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        margin: const pw.EdgeInsets.all(30),
+        build: (pw.Context ctx) {
+          return [
+            pw.Header(
+              level: 0,
+              child: pw.Text('RECIBO DE RECEBIMENTO', style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold)),
+            ),
+            if (empresa != null) pw.Text(empresa.razaoSocial, style: pw.TextStyle(fontSize: 12)),
+            pw.SizedBox(height: 8),
+            pw.Text('Data: ${formatoData.format(DateTime.now())}'),
+            if (nomeCliente.isNotEmpty) pw.Text('Cliente: $nomeCliente'),
+            pw.SizedBox(height: 16),
+            pw.Divider(),
+            pw.SizedBox(height: 8),
+            ...contasLote.where((c) => c.statusAtualizado != StatusContaPagar.pago).map((c) =>
+              pw.Container(
+                margin: const pw.EdgeInsets.only(bottom: 6),
+                child: pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Expanded(child: pw.Text(c.descricao, style: const pw.TextStyle(fontSize: 10))),
+                    pw.Text(formatoMoeda.format(c.valorPendente), style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
+                  ],
+                ),
+              ),
+            ),
+            pw.SizedBox(height: 8),
+            pw.Divider(),
+            pw.SizedBox(height: 8),
+            pw.Row(
+              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+              children: [
+                pw.Text('Total Recebido:', style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold)),
+                pw.Text(formatoMoeda.format(totalRecebido), style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold, color: PdfColors.green800)),
+              ],
+            ),
+            pw.Text('Forma: ${forma.nome}', style: const pw.TextStyle(fontSize: 10)),
+            pw.SizedBox(height: 30),
+            pw.Text('_______________________________', style: const pw.TextStyle(fontSize: 10)),
+            pw.Text('Assinatura', style: const pw.TextStyle(fontSize: 10)),
+          ];
+        },
+      ),
+    );
+
+    await Printing.layoutPdf(
+      onLayout: (PdfPageFormat format) async => doc.save(),
+      name: 'Recibo_${nomeCliente.replaceAll(' ', '_')}_${DateFormat('yyyyMMdd').format(DateTime.now())}.pdf',
+    );
   }
 
   Widget _buildCardResumo(String titulo, String valor, Color cor, IconData icone) {
@@ -1435,432 +1800,376 @@ class _ContasReceberPageState extends State<ContasReceberPage> {
     final statusAtual = conta.statusAtualizado;
     final isVencida = conta.isVencida;
     final isProximoVenc = conta.isProximoVencimento;
-    
-    Color corCard;
-    Color corBorda;
-    IconData iconeStatus;
-    
-    if (statusAtual == StatusContaPagar.pago) {
-      corCard = Colors.green.withOpacity(0.2);
-      corBorda = Colors.green;
-      iconeStatus = Icons.check_circle;
-    } else if (isVencida) {
-      corCard = Colors.red.withOpacity(0.2);
-      corBorda = Colors.red;
-      iconeStatus = Icons.error;
-    } else if (isProximoVenc) {
-      corCard = Colors.orange.withOpacity(0.2);
-      corBorda = Colors.orange;
-      iconeStatus = Icons.warning;
+    final isPago = statusAtual == StatusContaPagar.pago;
+    final isCancelado = statusAtual == StatusContaPagar.cancelado;
+    final isSelecionado = _selecionadas.contains(conta.id);
+    final podeReceber = !isPago && !isCancelado;
+
+    // Corresponde ao estilo do PDV/Pedidos
+    final gradient = isSelecionado
+        ? [Colors.blue.shade700.withOpacity(0.4), Colors.blue.shade900.withOpacity(0.3)]
+        : isCancelado
+        ? [Colors.red.shade900, Colors.red.shade800]
+        : isPago
+        ? [const Color(0xFF1B5E20), const Color(0xFF2E7D32)]
+        : isVencida
+        ? [const Color(0xFF8B0000), const Color(0xFFB71C1C)]
+        : isProximoVenc
+        ? [const Color(0xFFE65100), const Color(0xFFEF6C00)]
+        : [const Color(0xFF2C3E50), const Color(0xFF34495E)];
+
+    final Color corBorda = isSelecionado
+        ? Colors.blueAccent
+        : isCancelado
+        ? Colors.redAccent
+        : isPago
+        ? Colors.greenAccent
+        : isVencida
+        ? Colors.redAccent
+        : isProximoVenc
+        ? Colors.orangeAccent
+        : Colors.blueAccent;
+
+    final borderWidth = isSelecionado ? 3.0 : 2.0;
+
+    // Texto do tipo de crédito
+    String tipoTexto = '';
+    if (conta.id.startsWith('venda_')) {
+      final idReal = conta.id.replaceFirst('venda_', '');
+      try {
+        final v = Provider.of<DataService>(context, listen: false).vendasBalcao.firstWhere((v) => v.id == idReal);
+        tipoTexto = v.tipoPagamento == TipoPagamento.fiado ? 'Fiado' : v.tipoPagamento == TipoPagamento.crediario ? 'Crediário' : v.tipoPagamento.nome;
+      } catch (_) {
+        tipoTexto = 'Venda';
+      }
+    } else if (conta.id.startsWith('pedido_')) {
+      tipoTexto = 'Fiado';
     } else {
-      corCard = Colors.blue.withOpacity(0.2);
-      corBorda = Colors.blue;
-      iconeStatus = Icons.pending;
+      tipoTexto = 'Avulsa';
     }
 
-    bool podeReceber = statusAtual != StatusContaPagar.pago && statusAtual != StatusContaPagar.cancelado;
-
-    return GestureDetector(
-      onTap: () {
-        if (conta.id.startsWith('venda_')) {
-          _mostrarDetalhesVendaPrazo(context, conta);
-        } else {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => ContaReceberFormPage(contaPagar: conta),
-            ),
-          ).then((_) => setState(() {}));
-        }
-      },
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: corCard,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: corBorda.withOpacity(0.5), width: 2),
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: gradient,
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
         ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-              Padding(
-                padding: const EdgeInsets.only(right: 12.0),
-                child: Checkbox(
-                  value: _selecionadas.contains(conta.id),
-                  activeColor: Colors.green,
-                  onChanged: (val) {
-                    setState(() {
-                      if (val == true) _selecionadas.add(conta.id);
-                      else _selecionadas.remove(conta.id);
-                    });
-                  },
-                ),
-              ),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: corBorda, width: borderWidth),
+      ),
+      child: InkWell(                    onTap: podeReceber
+            ? () => _mostrarDialogoPagamento(context, conta)
+            : (conta.id.startsWith('venda_') ? () => _mostrarDetalhesVendaPrazo(context, conta) : (conta.id.startsWith('pedido_') ? () => _mostrarDetalhesPedidoPrazo(context, conta) : null)),
+        onLongPress: () {
+          setState(() {
+            if (isSelecionado) _selecionadas.remove(conta.id);
+            else _selecionadas.add(conta.id);
+          });
+        },
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Linha 1: Checkbox + Descrição + Badge + Valor
+              Row(
                 children: [
-            Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: corBorda.withOpacity(0.3),
-                    borderRadius: BorderRadius.circular(8),
+                  Checkbox(
+                    value: isSelecionado,
+                    activeColor: Colors.green,
+                    side: BorderSide(color: Colors.white.withOpacity(0.4)),
+                    onChanged: (val) {
+                      setState(() {
+                        if (val == true) _selecionadas.add(conta.id);
+                        else _selecionadas.remove(conta.id);
+                      });
+                    },
                   ),
-                  child: Icon(iconeStatus, color: corBorda, size: 20),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Flexible(
-                            child: Text(
-                              conta.descricao,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
+                  // Ícone de status
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: corBorda.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(
+                      isPago ? Icons.check_circle : isVencida ? Icons.error : isProximoVenc ? Icons.warning : Icons.pending,
+                      color: corBorda,
+                      size: 18,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  // Descrição + Badge tipo
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                conta.descricao,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                                overflow: TextOverflow.ellipsis,
                               ),
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Text(
-                              conta.id.startsWith('venda_')
-                                  ? 'Venda'
-                                  : conta.id.startsWith('pedido_')
-                                      ? 'Pedido'
-                                      : 'Avulsa',
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(0.6),
-                                fontSize: 10,
-                                fontWeight: FontWeight.w600,
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: isPago ? Colors.green.withOpacity(0.3) : isVencida ? Colors.red.withOpacity(0.3) : Colors.blue.withOpacity(0.3),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Text(
+                                tipoTexto,
+                                style: TextStyle(
+                                  color: isPago ? Colors.greenAccent : isVencida ? Colors.redAccent : Colors.blueAccent,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 10,
+                                ),
                               ),
                             ),
-                          ),
-                        ],
-                      ),
-                      if (conta.categoria != null) ...[
-                        const SizedBox(height: 4),
+                          ],
+                        ),
+                        const SizedBox(height: 2),
                         Text(
-                          conta.categoria!,
+                          'Recebível',
                           style: TextStyle(
-                            color: Colors.white.withOpacity(0.7),
-                            fontSize: 12,
+                            color: Colors.white.withOpacity(0.5),
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  // Valor
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                        'R\$ ${conta.valor.toStringAsFixed(2)}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 17,
+                        ),
+                      ),
+                      if (podeReceber && conta.valorPago != null && conta.valorPago! > 0) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          'Falta: R\$ ${conta.valorPendente.toStringAsFixed(2)}',
+                          style: const TextStyle(
+                            color: Colors.orangeAccent,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
                           ),
                         ),
                       ],
                     ],
                   ),
+                ],
+              ),
+              // Barra de progresso (parcialmente pago)
+              if (podeReceber && conta.valorPago != null && conta.valorPago! > 0 && !isPago) ...[
+                const SizedBox(height: 8),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: LinearProgressIndicator(
+                    value: ((conta.valorPago! / conta.valor).clamp(0.0, 1.0)),
+                    backgroundColor: Colors.white10,
+                    valueColor: const AlwaysStoppedAnimation<Color>(Colors.orangeAccent),
+                    minHeight: 4,
+                  ),
                 ),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
+                const SizedBox(height: 4),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      formatoMoeda.format(conta.valor),
+                      'Recebido: R\$ ${conta.valorPago!.toStringAsFixed(2)}',
+                      style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 10),
+                    ),
+                    Text(
+                      '${((conta.valorPago! / conta.valor) * 100).toStringAsFixed(0)}%',
+                      style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 10),
+                    ),
+                  ],
+                ),
+              ],
+              const SizedBox(height: 8),
+              // Linha 2: Cliente
+              if (conta.fornecedorNome != null && conta.fornecedorNome!.isNotEmpty) ...[
+                Row(
+                  children: [
+                    Icon(Icons.person, color: Colors.white.withOpacity(0.6), size: 14),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        conta.fornecedorNome!,
+                        style: TextStyle(color: Colors.white.withOpacity(0.9), fontSize: 13),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+              const SizedBox(height: 8),
+              // Linha 3: Data + Status + Botão receber
+              Row(
+                children: [
+                  // Data vencimento
+                  Icon(Icons.calendar_today, size: 12, color: Colors.white.withOpacity(0.5)),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Venc: ${formatoData.format(conta.dataVencimento)}',
+                    style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 11),
+                  ),
+                  const SizedBox(width: 12),
+                  // Status badge
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: corBorda.withOpacity(0.3),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      statusAtual.nome,
                       style: TextStyle(
                         color: corBorda,
-                        fontSize: 18,
+                        fontSize: 10,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
-                    if (statusAtual != StatusContaPagar.pago && conta.valorPendente < conta.valor)
-                      Text(
-                        'Pendente: ${formatoMoeda.format(conta.valorPendente)}',
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.7),
-                          fontSize: 12,
-                        ),
-                      ),
-                  ],
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Icon(
-                  Icons.calendar_today,
-                  size: 14,
-                  color: Colors.white.withOpacity(0.7),
-                ),
-                const SizedBox(width: 4),
-                Text(
-                  'Vencimento: ${formatoData.format(conta.dataVencimento)}',
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.7),
-                    fontSize: 12,
                   ),
-                ),
-                const Spacer(),
+                  const Spacer(),
+                  // Botão receber (se pendente/vencida)
+                  if (podeReceber)
+                    ElevatedButton.icon(
+                      onPressed: () => _mostrarDialogoPagamento(context, conta),
+                      icon: const Icon(Icons.payment, size: 14),
+                      label: Text(
+                        'Receber R\$ ${conta.valorPendente.toStringAsFixed(2)}',
+                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.green,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                    ),
+                  // Botão ver extrato do cliente
+                  if (conta.fornecedorNome != null && conta.fornecedorNome!.isNotEmpty && conta.fornecedorNome != 'Cliente não informado') ...[
+                    const SizedBox(width: 6),
+                    IconButton(
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                      icon: const Icon(Icons.receipt_long, size: 18),
+                      color: Colors.blueAccent,
+                      tooltip: 'Extrato do Cliente',
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => ContaReceberExtratoPage(
+                              clienteNome: conta.fornecedorNome!,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ],
+                ],
+              ),
+              // Histórico de pagamentos (se houver)
+              if (conta.historicoPagamentos.isNotEmpty) ...[
+                const SizedBox(height: 8),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
-                    color: corBorda.withOpacity(0.3),
+                    color: Colors.blue.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.blue.withOpacity(0.2)),
                   ),
-                  child: Text(
-                    statusAtual.nome,
-                    style: TextStyle(
-                      color: corBorda,
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            if (conta.fornecedorNome != null) ...[
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Icon(
-                    conta.id.startsWith('venda_') || conta.id.startsWith('pedido_')
-                        ? Icons.person_outline
-                        : Icons.business,
-                    size: 14,
-                    color: Colors.white.withOpacity(0.7),
-                  ),
-                  const SizedBox(width: 4),
-                  Expanded(
-                    child: Text(
-                      conta.fornecedorNome!,
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.7),
-                        fontSize: 12,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-            if (conta.notaEntradaNumero != null) ...[
-              const SizedBox(height: 4),
-              Row(
-                children: [
-                  Icon(
-                    Icons.receipt,
-                    size: 14,
-                    color: Colors.white.withOpacity(0.7),
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    'Nota: ${conta.notaEntradaNumero}',
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.7),
-                      fontSize: 12,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-            // Botão de pagar (se pendente ou vencida)
-            if (statusAtual != StatusContaPagar.pago && statusAtual != StatusContaPagar.cancelado) ...[
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: () => _mostrarDialogoPagamento(context, conta),
-                  icon: const Icon(Icons.payment, size: 18),
-                  label: Text(
-                    conta.valorPendente < conta.valor 
-                      ? 'Receber R\$ ${formatoMoeda.format(conta.valorPendente)}'
-                      : 'Receber (pode ser parcial)',
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 14,
-                    ),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-            // Histórico de pagamentos
-            if (conta.historicoPagamentos.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.blue.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.blue.withOpacity(0.3)),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Icon(Icons.history, color: Colors.blue, size: 18),
-                        const SizedBox(width: 6),
-                        Text(
-                          'Histórico de Pagamentos (${conta.historicoPagamentos.length})',
-                          style: const TextStyle(
-                            color: Colors.blue,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    ...conta.historicoPagamentos.reversed.map((pagamento) {
-                      return Container(
-                        margin: const EdgeInsets.only(bottom: 6),
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(
-                              Icons.payment,
-                              size: 16,
-                              color: Colors.white.withOpacity(0.8),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(
-                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                    children: [
-                                      Text(
-                                        formatoData.format(pagamento.dataPagamento),
-                                        style: TextStyle(
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 11,
-                                        ),
-                                      ),
-                                      Text(
-                                        formatoMoeda.format(pagamento.valor),
-                                        style: TextStyle(
-                                          color: Colors.green[300],
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 11,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  if (pagamento.formaPagamento != null) ...[
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      'Forma: ${pagamento.formaPagamento}',
-                                      style: TextStyle(
-                                        color: Colors.white.withOpacity(0.7),
-                                        fontSize: 10,
-                                      ),
-                                    ),
-                                  ],
-                                  if (pagamento.observacao != null && pagamento.observacao!.isNotEmpty) ...[
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      pagamento.observacao!,
-                                      style: TextStyle(
-                                        color: Colors.white.withOpacity(0.6),
-                                        fontSize: 9,
-                                        fontStyle: FontStyle.italic,
-                                      ),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ],
-                                ],
-                              ),
-                            ),
-                            IconButton(
-                              icon: const Icon(
-                                Icons.undo,
-                                size: 18,
-                                color: Colors.orange,
-                              ),
-                              tooltip: 'Estornar pagamento',
-                              onPressed: () => _estornarPagamento(context, conta, pagamento),
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(),
-                            ),
-                          ],
-                        ),
-                      );
-                    }).toList(),
-                  ],
-                ),
-              ),
-            ],
-            // Informação de pagamento (se já pago totalmente - para compatibilidade)
-            if (statusAtual == StatusContaPagar.pago && 
-                conta.dataPagamento != null && 
-                conta.historicoPagamentos.isEmpty) ...[
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.green.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.green.withOpacity(0.5)),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.check_circle, color: Colors.green, size: 20),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
                         children: [
+                          const Icon(Icons.history, color: Colors.blue, size: 14),
+                          const SizedBox(width: 4),
                           Text(
-                            'Pago em ${formatoData.format(conta.dataPagamento!)}',
-                            style: const TextStyle(
-                              color: Colors.green,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 12,
-                            ),
+                            'Pagamentos (${conta.historicoPagamentos.length})',
+                            style: const TextStyle(color: Colors.blue, fontWeight: FontWeight.bold, fontSize: 11),
                           ),
-                          if (conta.formaPagamento != null) ...[
-                            const SizedBox(height: 2),
-                            Text(
-                              'Forma: ${conta.formaPagamento}',
-                              style: TextStyle(
-                                color: Colors.green.withOpacity(0.8),
-                                fontSize: 11,
-                              ),
-                            ),
-                          ],
                         ],
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 4),
+                      ...conta.historicoPagamentos.reversed.take(3).map((pag) =>
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Row(
+                            children: [
+                              Text(
+                                '${formatoData.format(pag.dataPagamento)} - ${pag.formaPagamento ?? ""}',
+                                style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 10),
+                              ),
+                              const Spacer(),
+                              Text(
+                                formatoMoeda.format(pag.valor),
+                                style: TextStyle(color: Colors.green[300], fontWeight: FontWeight.bold, fontSize: 10),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            ], // closes spread
-          ], // closes Column children
-        ), // closes Column
-      ), // closes Expanded
-    ], // closes Row children
-  ), // closes Row
-), // closes Container
-); // closes GestureDetector
-}
+              ],
+              // Pago em (se pago)
+              if (isPago && conta.dataPagamento != null && conta.historicoPagamentos.isEmpty) ...[
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.green.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.green.withOpacity(0.4)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.check_circle, color: Colors.green, size: 18),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Pago em ${formatoData.format(conta.dataPagamento!)}',
+                        style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 12),
+                      ),
+                      if (conta.formaPagamento != null) ...[
+                        const SizedBox(width: 8),
+                        Text(
+                          '(${conta.formaPagamento})',
+                          style: TextStyle(color: Colors.green.withOpacity(0.7), fontSize: 11),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
   Future<void> _selecionarPeriodo() async {
     final DateTime? dataInicio = await showDatePicker(
@@ -2097,456 +2406,1100 @@ class _ContasReceberPageState extends State<ContasReceberPage> {
     );
   }
 
+
+  void _mostrarDetalhesPedidoPrazo(BuildContext context, ContaPagar conta) {
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final pedidoId = conta.id.replaceAll('pedido_', '');
+    Pedido? pedido;
+    try {
+      pedido = dataService.pedidos.firstWhere((p) => p.id == pedidoId);
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Pedido não encontrado'), backgroundColor: Colors.red),
+        );
+      }
+      return;
+    }
+    // pedido é não-nulo a partir daqui
+    final p = pedido;
+    final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+    final formatoData = DateFormat('dd/MM/yyyy');
+
+    // Calcular valores do pedido
+    double valorCredito = 0;
+    double valorPago = 0;
+    for (final pag in p.pagamentos) {
+      if (pag.tipo == TipoPagamento.fiado || pag.tipo == TipoPagamento.crediario ||
+          pag.tipoOriginal == TipoPagamento.fiado || pag.tipoOriginal == TipoPagamento.crediario) {
+        valorCredito += pag.valor;
+        if (pag.recebido) valorPago += pag.valor;
+      }
+    }
+    final valorPendente = valorCredito - valorPago;
+    final isFiado = p.pagamentos.any((pg) => pg.tipo == TipoPagamento.fiado);
+    final tipoLabel = isFiado ? 'Fiado' : 'Crediário';
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Icon(isFiado ? Icons.handshake : Icons.credit_score, color: isFiado ? Colors.deepOrange : Colors.pink),
+            const SizedBox(width: 8),
+            Expanded(child: Text('Detalhes - ${p.numero}', style: const TextStyle(fontSize: 16))),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('Tipo: $tipoLabel', style: const TextStyle(fontWeight: FontWeight.bold)),
+              Text('Cliente: ${p.clienteNome ?? "Não informado"}'),
+              Text('Data: ${formatoData.format(p.dataPedido)}'),
+              const Divider(),
+              Text('Total do Pedido: ${formatoMoeda.format(p.totalGeral)}'),
+              Text('Valor Pago: ${formatoMoeda.format(valorPago)}', style: const TextStyle(color: Colors.green)),
+              Text('Pendente: ${formatoMoeda.format(valorPendente)}', style: const TextStyle(color: Colors.orange)),
+              const SizedBox(height: 12),
+              const Text('Itens:', style: TextStyle(fontWeight: FontWeight.bold)),
+              ...p.produtos.map((i) => Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Text('- ${i.quantidade}x ${i.nome} (${formatoMoeda.format(i.quantidade * i.preco)})'),
+              )),
+              if (p.servicos.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                const Text('Serviços:', style: TextStyle(fontWeight: FontWeight.bold)),
+                ...p.servicos.map((s) => Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: Text('- ${s.descricao} (${formatoMoeda.format(s.valor)})'),
+                )),
+              ],
+              if (p.observacoes != null && p.observacoes!.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text('Obs: ${p.observacoes}', style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 12)),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          // Botão Extrato
+          TextButton.icon(
+            icon: const Icon(Icons.receipt, size: 18),
+            label: const Text('Extrato'),
+            onPressed: () async {
+              Navigator.pop(ctx);
+              final empresa = dataService.empresaAtual;
+              if (empresa == null) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Empresa não configurada.'), backgroundColor: Colors.red),
+                  );
+                }
+                return;
+              }
+              String? clienteCodigo;
+              if (p.clienteId != null) {
+                final cli = dataService.clientes.firstWhere(
+                  (c) => c.id == p.clienteId,
+                  orElse: () => Cliente(id: '', nome: '', telefone: '', createdAt: DateTime.now(), updatedAt: DateTime.now()),
+                );
+                if (cli.id.isNotEmpty) {
+                  clienteCodigo = cli.dadosExtras?['codigo']?.toString();
+                }
+              }
+              await _mostrarDialogoTipoImpressaoExtratoPedido(
+                pedidos: [p],
+                clienteNome: p.clienteNome ?? 'Cliente',
+                clienteCodigo: clienteCodigo,
+                empresa: empresa,
+              );
+            },
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Fechar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _mostrarDialogoTipoImpressaoExtratoPedido({
+    required List<Pedido> pedidos,
+    required String clienteNome,
+    required String? clienteCodigo,
+    required Empresa empresa,
+  }) async {
+    bool mostrarItens = false;
+
+    await showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: const Color(0xFF1E1E2E),
+          title: const Text('Imprimir Extrato', style: TextStyle(color: Colors.white)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CheckboxListTile(
+                title: const Text('Mostrar itens de cada venda', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                value: mostrarItens,
+                activeColor: Colors.deepOrange,
+                checkColor: Colors.white,
+                onChanged: (val) => setDialogState(() => mostrarItens = val ?? false),
+                controlAffinity: ListTileControlAffinity.leading,
+                contentPadding: EdgeInsets.zero,
+              ),
+              const SizedBox(height: 10),
+              ListTile(
+                leading: const Icon(Icons.picture_as_pdf, color: Colors.redAccent),
+                title: const Text('A4 / Compartilhar', style: TextStyle(color: Colors.white)),
+                onTap: () async {
+                  Navigator.pop(context);
+                  await PedidoPDFService.imprimirExtratoFiado(
+                    context: context,
+                    pedidos: pedidos,
+                    clienteNome: clienteNome,
+                    clienteCodigo: clienteCodigo,
+                    empresa: empresa,
+                    mostrarItens: mostrarItens,
+                  );
+                },
+              ),
+              const Divider(color: Colors.white12),
+              ListTile(
+                leading: const Icon(Icons.receipt_long, color: Colors.blueAccent),
+                title: const Text('Impressora Térmica (80mm)', style: TextStyle(color: Colors.white)),
+                onTap: () async {
+                  Navigator.pop(context);
+                  await PedidoPDFService.imprimirExtratoFiadoTermico(
+                    context: context,
+                    pedidos: pedidos,
+                    clienteNome: clienteNome,
+                    clienteCodigo: clienteCodigo,
+                    empresa: empresa,
+                    mostrarItens: mostrarItens,
+                  );
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   void _mostrarDialogoPagamento(BuildContext context, ContaPagar conta) {
     final dataService = Provider.of<DataService>(context, listen: false);
     final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
     final formatoData = DateFormat('dd/MM/yyyy');
-    
+
     final valorPendente = conta.valorPendente;
+    final acrescimoController = TextEditingController(text: '0,00');
+    final descontoController = TextEditingController(text: '0,00');
     final valorController = TextEditingController(
       text: valorPendente.toStringAsFixed(2).replaceAll('.', ','),
     );
-    final observacaoController = TextEditingController();
-    DateTime dataPagamento = DateTime.now();
-    TipoPagamento? formaPagamento;
-    
+    TipoPagamento? formaSelecionada;
+
+    // Determine if fiado or crediario
+    String tipoCreditoLabel = 'Fiado';
+    if (conta.id.startsWith('pedido_')) {
+      final idReal = conta.id.replaceFirst('pedido_', '');
+      try {
+        final pedido = dataService.pedidos.firstWhere((p) => p.id == idReal);
+        for (final pag in pedido.pagamentos) {
+          if (pag.tipo == TipoPagamento.crediario) {
+            tipoCreditoLabel = 'Credito';
+            break;
+          }
+        }
+      } catch (_) {}
+    } else if (conta.id.contains('crediario') || conta.id.contains('credito')) {
+      tipoCreditoLabel = 'Credito';
+    }
+
+    final corPrincipal = tipoCreditoLabel == 'Fiado' ? const Color(0xFFD84315) : const Color(0xFFE91E63);
+
+    // Formas de recebimento (sem fiado nem crediario)
+    final formasRecebimento = TipoPagamento.values
+        .where((t) => t != TipoPagamento.fiado && t != TipoPagamento.crediario)
+        .toList();
+
     showDialog(
       context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          title: const Row(
-            children: [
-              Icon(Icons.payment, color: Colors.green),
-              SizedBox(width: 8),
-              Text('Registrar Recebimento'),
-            ],
-          ),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final acrescimo = double.tryParse(acrescimoController.text.replaceAll(',', '.')) ?? 0.0;
+          final desconto = double.tryParse(descontoController.text.replaceAll(',', '.')) ?? 0.0;
+          final totalComAcerto = valorPendente + acrescimo - desconto;
+          final valorDigitado = double.tryParse(valorController.text.replaceAll(',', '.')) ?? 0.0;
+          final isParcial = valorDigitado > 0 && valorDigitado < totalComAcerto - 0.01;
+          final valorRestante = totalComAcerto - valorDigitado;
+
+          return AlertDialog(
+            backgroundColor: const Color(0xFF1E1E2E),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: Row(
               children: [
-                Text(
-                  conta.descricao,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: corPrincipal.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(12),
                   ),
+                  child: Icon(Icons.payments, color: corPrincipal, size: 24),
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  'Valor total: ${formatoMoeda.format(conta.valor)}',
-                  style: TextStyle(
-                    color: Colors.grey[600],
-                    fontSize: 14,
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Receber $tipoCreditoLabel', style: const TextStyle(color: Colors.white, fontSize: 18)),
+                      Text(
+                        conta.fornecedorNome ?? 'Cliente',
+                        style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 13),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
                   ),
-                ),
-                if (conta.valorPago != null && conta.valorPago! > 0) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    'Já pago: ${formatoMoeda.format(conta.valorPago!)}',
-                    style: TextStyle(
-                      color: Colors.orange[700],
-                      fontSize: 14,
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 16),
-                
-                // Valor a pagar
-                TextFormField(
-                  controller: valorController,
-                  decoration: InputDecoration(
-                    labelText: 'Valor a Receber (pode ser parcial)',
-                    prefixText: 'R\$ ',
-                    border: const OutlineInputBorder(),
-                    helperText: 'Valor pendente: ${formatoMoeda.format(valorPendente)}',
-                  ),
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  onChanged: (value) {
-                    // Remove formatação para validação
-                    String valorLimpo = value.replaceAll(RegExp(r'[^\d,.]'), '');
-                    // Garante que há apenas uma vírgula ou ponto
-                    if (valorLimpo.contains(',')) {
-                      valorLimpo = valorLimpo.replaceAll('.', '');
-                      valorLimpo = valorLimpo.replaceAll(',', '.');
-                    }
-                    final valor = double.tryParse(valorLimpo) ?? 0.0;
-                    if (valor > valorPendente) {
-                      valorController.text = valorPendente.toStringAsFixed(2).replaceAll('.', ',');
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('Valor máximo: ${formatoMoeda.format(valorPendente)}'),
-                          backgroundColor: Colors.orange,
-                          duration: const Duration(seconds: 2),
-                        ),
-                      );
-                    }
-                  },
-                ),
-                const SizedBox(height: 16),
-                
-                // Data de pagamento
-                InkWell(
-                  onTap: () async {
-                    final data = await showDatePicker(
-                      context: context,
-                      initialDate: dataPagamento,
-                      firstDate: DateTime(2020),
-                      lastDate: DateTime.now().add(const Duration(days: 365)),
-                    );
-                    if (data != null) {
-                      setState(() {
-                        dataPagamento = data;
-                      });
-                    }
-                  },
-                  child: InputDecorator(
-                    decoration: const InputDecoration(
-                      labelText: 'Data de Pagamento',
-                      border: OutlineInputBorder(),
-                      suffixIcon: Icon(Icons.calendar_today),
-                    ),
-                    child: Text(formatoData.format(dataPagamento)),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                
-                // Forma de pagamento
-                DropdownButtonFormField<TipoPagamento>(
-                  decoration: const InputDecoration(
-                    labelText: 'Forma de Pagamento',
-                    border: OutlineInputBorder(),
-                  ),
-                  value: formaPagamento,
-                  items: TipoPagamento.values.map((tipo) {
-                    return DropdownMenuItem(
-                      value: tipo,
-                      child: Text(tipo.nome),
-                    );
-                  }).toList(),
-                  onChanged: (value) {
-                    setState(() {
-                      formaPagamento = value;
-                    });
-                  },
-                  hint: const Text('Selecione a forma de pagamento'),
-                ),
-                const SizedBox(height: 16),
-                
-                // Observações
-                TextFormField(
-                  controller: observacaoController,
-                  decoration: const InputDecoration(
-                    labelText: 'Observações (opcional)',
-                    border: OutlineInputBorder(),
-                  ),
-                  maxLines: 2,
                 ),
               ],
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancelar'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                // Processar valor - melhor parsing
-                String valorTexto = valorController.text.trim();
-                // Remove espaços e caracteres especiais, mantendo apenas números, vírgula e ponto
-                valorTexto = valorTexto.replaceAll(RegExp(r'[^\d,.]'), '');
-                
-                // Trata vírgula como separador decimal
-                if (valorTexto.contains(',')) {
-                  valorTexto = valorTexto.replaceAll('.', ''); // Remove pontos
-                  valorTexto = valorTexto.replaceAll(',', '.'); // Converte vírgula para ponto
-                }
-                
-                // Se não tem ponto, adiciona .00
-                if (!valorTexto.contains('.')) {
-                  valorTexto = '$valorTexto.00';
-                }
-                
-                final valorPago = double.tryParse(valorTexto);
-                
-                if (valorPago == null || valorPago <= 0) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Por favor, informe um valor válido maior que zero'),
-                      backgroundColor: Colors.red,
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Total pendente
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: corPrincipal.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: corPrincipal.withOpacity(0.3)),
                     ),
-                  );
-                  return;
-                }
-                
-                if (valorPago > valorPendente + 0.01) { // +0.01 para tolerância de arredondamento
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('O valor não pode ser maior que o pendente (${formatoMoeda.format(valorPendente)})'),
-                      backgroundColor: Colors.red,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Total Pendente', style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 12)),
+                            Text('1 venda(s)', style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 11)),
+                          ],
+                        ),
+                        Text(formatoMoeda.format(valorPendente), style: TextStyle(color: corPrincipal, fontSize: 22, fontWeight: FontWeight.bold)),
+                      ],
                     ),
-                  );
-                  return;
-                }
-                
-                // Calcular novo valor pago
-                final novoValorPago = (conta.valorPago ?? 0.0) + valorPago;
-                final novoStatus = (novoValorPago >= conta.valor - 0.01) // Tolerância para arredondamento
-                  ? StatusContaPagar.pago 
-                  : conta.status;
-                
-                // Criar registro de pagamento
-                final novoRegistro = RegistroPagamento(
-                  id: DateTime.now().millisecondsSinceEpoch.toString(),
-                  valor: valorPago,
-                  dataPagamento: dataPagamento,
-                  formaPagamento: formaPagamento?.nome,
-                  observacao: observacaoController.text.isEmpty ? null : observacaoController.text,
-                );
-                
-                // Adicionar ao histórico
-                final novoHistorico = List<RegistroPagamento>.from(conta.historicoPagamentos)
-                  ..add(novoRegistro);
-                
-                // Criar conta atualizada
-                final contaAtualizada = ContaPagar(
-                  id: conta.id,
-                  numero: conta.numero,
-                  tipo: conta.tipo,
-                  categoria: conta.categoria,
-                  descricao: conta.descricao,
-                  observacoes: observacaoController.text.isEmpty 
-                    ? conta.observacoes 
-                    : '${conta.observacoes ?? ''}\n${observacaoController.text}'.trim(),
-                  valor: conta.valor,
-                  valorPago: novoValorPago,
-                  dataVencimento: conta.dataVencimento,
-                  dataPagamento: novoStatus == StatusContaPagar.pago ? dataPagamento : conta.dataPagamento,
-                  dataCriacao: conta.dataCriacao,
-                  updatedAt: DateTime.now(),
-                  notaEntradaId: conta.notaEntradaId,
-                  notaEntradaNumero: conta.notaEntradaNumero,
-                  fornecedorId: conta.fornecedorId,
-                  fornecedorNome: conta.fornecedorNome,
-                  status: novoStatus,
-                  formaPagamento: formaPagamento?.nome ?? conta.formaPagamento,
-                  historicoPagamentos: novoHistorico,
-                  recorrente: conta.recorrente,
-                  intervaloRecorrencia: conta.intervaloRecorrencia,
-                  proximaDataRecorrencia: conta.proximaDataRecorrencia,
-                  ativo: conta.ativo,
-                  usuarioCriacao: conta.usuarioCriacao,
-                  usuarioPagamento: conta.usuarioPagamento,
-                );
-                
-                // Salvar
-                dataService.updateContaPagar(contaAtualizada);
-                
-                Navigator.pop(context);
-                setState(() {});
-                
-                final valorRestante = conta.valor - novoValorPago;
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      novoStatus == StatusContaPagar.pago
-                        ? 'Conta paga com sucesso!'
-                        : 'Pagamento parcial de ${formatoMoeda.format(valorPago)} registrado! Restante: ${formatoMoeda.format(valorRestante)}',
-                    ),
-                    backgroundColor: Colors.green,
-                    duration: const Duration(seconds: 3),
                   ),
-                );
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.green,
-                foregroundColor: Colors.white,
+                  const SizedBox(height: 20),
+
+                  // Acrecimo e Desconto
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('Acréscimo', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w500)),
+                            const SizedBox(height: 8),
+                            TextField(
+                              controller: acrescimoController,
+                              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                              style: const TextStyle(color: Colors.white),
+                              decoration: InputDecoration(
+                                prefixText: 'R\$ ',
+                                filled: true,
+                                fillColor: Colors.white.withOpacity(0.05),
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+                              ),
+                              onChanged: (_) {
+                                final a = double.tryParse(acrescimoController.text.replaceAll(',', '.')) ?? 0.0;
+                                final d = double.tryParse(descontoController.text.replaceAll(',', '.')) ?? 0.0;
+                                valorController.text = (valorPendente + a - d).toStringAsFixed(2).replaceAll('.', ',');
+                                setDialogState(() {});
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('Desconto', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w500)),
+                            const SizedBox(height: 8),
+                            TextField(
+                              controller: descontoController,
+                              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                              style: const TextStyle(color: Colors.white),
+                              decoration: InputDecoration(
+                                prefixText: 'R\$ ',
+                                filled: true,
+                                fillColor: Colors.white.withOpacity(0.05),
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+                              ),
+                              onChanged: (_) {
+                                final a = double.tryParse(acrescimoController.text.replaceAll(',', '.')) ?? 0.0;
+                                final d = double.tryParse(descontoController.text.replaceAll(',', '.')) ?? 0.0;
+                                valorController.text = (valorPendente + a - d).toStringAsFixed(2).replaceAll('.', ',');
+                                setDialogState(() {});
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+
+                  // Valor a receber
+                  const Text('Valor a receber', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w500)),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: valorController,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold),
+                    textAlign: TextAlign.center,
+                    decoration: InputDecoration(
+                      prefixText: 'R\$ ',
+                      prefixStyle: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 24, fontWeight: FontWeight.bold),
+                      filled: true,
+                      fillColor: Colors.white.withOpacity(0.05),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: corPrincipal)),
+                    ),
+                    onChanged: (_) => setDialogState(() {}),
+                  ),
+
+                  if (isParcial) ...[
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: Colors.blue.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.info_outline, color: Colors.blue, size: 16),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Pagamento parcial: restará ${formatoMoeda.format(valorRestante)}',
+                              style: const TextStyle(color: Colors.blue, fontSize: 12),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+
+                  const SizedBox(height: 20),
+
+                  // Forma de recebimento
+                  const Text('Forma de recebimento', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w500)),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: formasRecebimento.map((tipo) {
+                      final isSelected = formaSelecionada == tipo;
+                      final cor = _getCorTipoRecebimento(tipo);
+                      return Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          onTap: () => setDialogState(() => formaSelecionada = tipo),
+                          borderRadius: BorderRadius.circular(10),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: isSelected ? cor.withOpacity(0.3) : Colors.white.withOpacity(0.05),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: isSelected ? cor : Colors.white.withOpacity(0.2), width: isSelected ? 2 : 1),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(_getIconeTipoRecebimento(tipo), color: isSelected ? cor : Colors.white54, size: 18),
+                                const SizedBox(width: 6),
+                                Text(tipo.nome, style: TextStyle(color: isSelected ? cor : Colors.white70, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal, fontSize: 12)),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ],
               ),
-              child: const Text('Confirmar Pagamento'),
             ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+              ),
+              ElevatedButton(
+                onPressed: (formaSelecionada == null || valorDigitado <= 0 || valorDigitado > totalComAcerto + 0.01)
+                    ? null
+                    : () async {
+                        final forma = formaSelecionada!;
+                        final acrescimoVal = double.tryParse(acrescimoController.text.replaceAll(',', '.')) ?? 0.0;
+                        final descontoVal = double.tryParse(descontoController.text.replaceAll(',', '.')) ?? 0.0;
+                        final hoje = DateTime.now();
+                        final totalReceber = valorDigitado - acrescimoVal + descontoVal;
+
+                        // ======== VENDA ========
+                        if (conta.id.startsWith('venda_')) {
+                          final idReal = conta.id.replaceFirst('venda_', '');
+                          try {
+                            final vendaOriginal = dataService.vendasBalcao.firstWhere((v) => v.id == idReal);
+                            final novoRecebido = (vendaOriginal.valorRecebido ?? 0.0) + totalReceber;
+                            await dataService.updateVendaBalcao(vendaOriginal.copyWith(
+                              // NÃO altera tipoPagamento — mantém fiado/crediário para a conta continuar aparecendo
+                              valorRecebido: novoRecebido,
+                              updatedAt: hoje,
+                            ));
+                            // Baixa saldo devedor do cliente (fiado E crediário)
+                            if ((vendaOriginal.tipoPagamento == TipoPagamento.fiado || vendaOriginal.tipoPagamento == TipoPagamento.crediario) && vendaOriginal.clienteId != null) {
+                              final cliente = dataService.clientes.firstWhere((c) => c.id == vendaOriginal.clienteId, orElse: () => Cliente(id: '', nome: '', telefone: '', createdAt: hoje, updatedAt: hoje));
+                              if (cliente.id.isNotEmpty) {
+                                final novoSaldo = (cliente.saldoDevedor - totalReceber).clamp(0.0, double.infinity);
+                                await dataService.updateCliente(cliente.copyWith(saldoDevedor: novoSaldo, updatedAt: hoje));
+                              }
+                            }
+                            // Sincronizar Pedido vinculado à VendaBalcao (para que a tela de Pedidos reflita o pagamento)
+                            try {
+                              final pedidoVinculado = dataService.pedidos.firstWhere((p) => p.id == vendaOriginal.id);
+                              final novoValorRecebidoPedido = (vendaOriginal.valorRecebido ?? 0.0);
+                              // Atualizar pagamentos do pedido: marcar como recebidos
+                              final novosPagamentosPedido = <PagamentoPedido>[];
+                              double valorRestanteSync = totalReceber;
+                              for (final pag in pedidoVinculado.pagamentos) {
+                                if (!pag.recebido && valorRestanteSync > 0 && (pag.tipo == TipoPagamento.fiado || pag.tipo == TipoPagamento.crediario || pag.tipoOriginal == TipoPagamento.fiado || pag.tipoOriginal == TipoPagamento.crediario)) {
+                                  if (valorRestanteSync >= pag.valor) {
+                                    novosPagamentosPedido.add(PagamentoPedido(id: pag.id, tipo: forma, tipoOriginal: pag.tipo, valor: pag.valor, recebido: true, dataRecebimento: hoje, dataVencimento: pag.dataVencimento, observacao: 'Recebido via Contas a Receber'));
+                                    valorRestanteSync -= pag.valor;
+                                  } else {
+                                    novosPagamentosPedido.add(PagamentoPedido(id: '${pag.id}_pago', tipo: forma, tipoOriginal: pag.tipo, valor: valorRestanteSync, recebido: true, dataRecebimento: hoje, observacao: 'Recebimento parcial via Contas a Receber'));
+                                    novosPagamentosPedido.add(PagamentoPedido(id: '${pag.id}_resto', tipo: pag.tipo, valor: pag.valor - valorRestanteSync, recebido: false, dataVencimento: pag.dataVencimento, observacao: 'Restante'));
+                                    valorRestanteSync = 0;
+                                  }
+                                } else {
+                                  novosPagamentosPedido.add(pag);
+                                }
+                              }
+                              final todosRecebidosSync = novosPagamentosPedido.every((p) => p.recebido);
+                              await dataService.updatePedido(pedidoVinculado.copyWith(
+                                status: todosRecebidosSync ? 'Pago' : pedidoVinculado.status,
+                                pagamentos: novosPagamentosPedido,
+                                updatedAt: hoje,
+                              ));
+                            } catch (_) {
+                              // Pedido não encontrado — pode ser venda direta sem pedido vinculado
+                            }
+                          } catch (e) { debugPrint('Erro ao atualizar venda: $e'); }
+                        }
+
+                        // ======== PEDIDO ========
+                        else if (conta.id.startsWith('pedido_')) {
+                          final idReal = conta.id.replaceFirst('pedido_', '');
+                          try {
+                            final pedido = dataService.pedidos.firstWhere((p) => p.id == idReal);
+                            TipoPagamento? tipoCredito;
+                            for (final pag in pedido.pagamentos) {
+                              if (pag.tipo == TipoPagamento.fiado || pag.tipo == TipoPagamento.crediario) {
+                                tipoCredito = pag.tipo;
+                                break;
+                              }
+                            }
+                            if (tipoCredito != null) {
+                              double valorRest = valorDigitado - acrescimoVal + descontoVal;
+                              final novosPagamentos = <PagamentoPedido>[];
+                              bool aplicouTaxas = false;
+                              for (final pag in pedido.pagamentos) {
+                                if (pag.tipo == tipoCredito && !pag.recebido && valorRest > 0) {
+                                  if (!aplicouTaxas) {
+                                    if (acrescimoVal > 0) { novosPagamentos.add(PagamentoPedido(id: 'acrescimo_${DateTime.now().millisecondsSinceEpoch}', tipo: forma, tipoOriginal: tipoCredito, valor: acrescimoVal, recebido: true, dataRecebimento: hoje, observacao: 'Acréscimo recebimento')); }
+                                    if (descontoVal > 0) { novosPagamentos.add(PagamentoPedido(id: 'desconto_${DateTime.now().millisecondsSinceEpoch}', tipo: forma, tipoOriginal: tipoCredito, valor: -descontoVal, recebido: true, dataRecebimento: hoje, observacao: 'Desconto recebimento')); }
+                                    aplicouTaxas = true;
+                                  }
+                                  if (valorRest >= pag.valor) {
+                                    novosPagamentos.add(PagamentoPedido(id: pag.id, tipo: forma, tipoOriginal: tipoCredito, valor: pag.valor, recebido: true, dataRecebimento: hoje, dataVencimento: pag.dataVencimento, observacao: 'Recebido do ${tipoCredito == TipoPagamento.fiado ? "fiado" : "credito"}'));
+                                    valorRest -= pag.valor;
+                                  } else {
+                                    novosPagamentos.add(PagamentoPedido(id: '${pag.id}_pago', tipo: forma, tipoOriginal: tipoCredito, valor: valorRest, recebido: true, dataRecebimento: hoje, observacao: 'Recebimento parcial'));
+                                    novosPagamentos.add(PagamentoPedido(id: '${pag.id}_resto', tipo: tipoCredito, valor: pag.valor - valorRest, recebido: false, dataVencimento: pag.dataVencimento, observacao: 'Restante do ${tipoCredito == TipoPagamento.fiado ? "fiado" : "credito"}'));
+                                    valorRest = 0;
+                                  }
+                                } else {
+                                  novosPagamentos.add(pag);
+                                }
+                              }
+                              final todosRecebidos = novosPagamentos.every((p) => p.recebido);
+                              await dataService.updatePedido(pedido.copyWith(
+                                total: aplicouTaxas ? (pedido.total + acrescimoVal - descontoVal) : pedido.total,
+                                status: todosRecebidos ? 'Pago' : pedido.status,
+                                pagamentos: novosPagamentos,
+                                updatedAt: hoje,
+                              ));
+                            }
+                            // Baixa saldo devedor do cliente (fiado E crediário)
+                            if ((tipoCredito == TipoPagamento.fiado || tipoCredito == TipoPagamento.crediario) && pedido.clienteId != null) {
+                              final cliente = dataService.clientes.firstWhere((c) => c.id == pedido.clienteId, orElse: () => Cliente(id: '', nome: '', telefone: '', createdAt: hoje, updatedAt: hoje));
+                              if (cliente.id.isNotEmpty) {
+                                final novoSaldo = (cliente.saldoDevedor - totalReceber).clamp(0.0, double.infinity);
+                                await dataService.updateCliente(cliente.copyWith(saldoDevedor: novoSaldo, updatedAt: hoje));
+                              }
+                            }
+                          } catch (e) { debugPrint('Erro ao atualizar pedido: $e'); }
+                        }
+
+                        // ======== AVULSA ========
+                        else {
+                          final novoValorPago = (conta.valorPago ?? 0.0) + totalReceber;
+                          final novoStatus = (novoValorPago >= conta.valor - 0.01) ? StatusContaPagar.pago : conta.status;
+                          final novoRegistro = RegistroPagamento(
+                            id: DateTime.now().millisecondsSinceEpoch.toString(),
+                            valor: totalReceber,
+                            dataPagamento: hoje,
+                            formaPagamento: forma.nome,
+                          );
+                          final novoHistorico = List<RegistroPagamento>.from(conta.historicoPagamentos)..add(novoRegistro);
+                          final contaAtualizada = conta.copyWith(
+                            valorPago: novoValorPago,
+                            dataPagamento: novoStatus == StatusContaPagar.pago ? hoje : conta.dataPagamento,
+                            status: novoStatus,
+                            formaPagamento: forma.nome,
+                            historicoPagamentos: novoHistorico,
+                            updatedAt: hoje,
+                          );
+                          await dataService.updateContaPagar(contaAtualizada);
+                        }
+
+                        if (ctx.mounted) Navigator.pop(ctx);
+                        setState(() {});
+
+                        final msg = (valorDigitado >= totalComAcerto - 0.01)
+                            ? 'Recebimento concluido com sucesso!'
+                            : 'Pagamento parcial de ${formatoMoeda.format(valorDigitado)} registrado. Restante: ${formatoMoeda.format(totalComAcerto - valorDigitado)}';
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.green, duration: const Duration(seconds: 3)));
+                        }
+                      },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: (formaSelecionada != null && valorDigitado > 0) ? corPrincipal : Colors.grey,
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                ),
+                child: const Text('Confirmar', style: TextStyle(fontWeight: FontWeight.bold)),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  IconData _getIconeTipoRecebimento(TipoPagamento tipo) {
+    switch (tipo) {
+      case TipoPagamento.dinheiro:
+        return Icons.money;
+      case TipoPagamento.pix:
+        return Icons.qr_code;
+      case TipoPagamento.cartaoCredito:
+        return Icons.credit_card;
+      case TipoPagamento.cartaoDebito:
+        return Icons.credit_card;
+      case TipoPagamento.boleto:
+        return Icons.receipt;
+      case TipoPagamento.crediario:
+        return Icons.calendar_today;
+      case TipoPagamento.fiado:
+        return Icons.handshake;
+      case TipoPagamento.outro:
+        return Icons.more_horiz;
+      case TipoPagamento.alimentacao:
+        return Icons.restaurant;
+      case TipoPagamento.transferencia:
+        return Icons.swap_horiz;
+    }
+  }
+
+  Color _getCorTipoRecebimento(TipoPagamento tipo) {
+    switch (tipo) {
+      case TipoPagamento.dinheiro:
+        return Colors.green;
+      case TipoPagamento.pix:
+        return const Color(0xFF00BFA5);
+      case TipoPagamento.cartaoCredito:
+        return Colors.deepPurple;
+      case TipoPagamento.cartaoDebito:
+        return Colors.blue;
+      case TipoPagamento.boleto:
+        return Colors.orange;
+      case TipoPagamento.crediario:
+        return const Color(0xFFE91E63);
+      case TipoPagamento.fiado:
+        return const Color(0xFFD84315);
+      case TipoPagamento.outro:
+        return Colors.grey;
+      case TipoPagamento.alimentacao:
+        return const Color(0xFF00897B);
+      case TipoPagamento.transferencia:
+        return const Color(0xFF42A5F5);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // ABA ATRASADOS — Relatório completo de contas vencidas
+  // ═══════════════════════════════════════════════════════════════════════
+
+  Widget _buildAbaAtrasados(List<ContaPagar> todasContas, NumberFormat formatoMoeda, DateFormat formatoData) {
+    final hoje = DateTime.now();
+    final atrasadas = todasContas.where((c) {
+      final st = c.statusAtualizado;
+      return st == StatusContaPagar.vencido;
+    }).toList()
+      ..sort((a, b) => a.dataVencimento.compareTo(b.dataVencimento));
+
+    final totalAtrasado = atrasadas.fold<double>(0.0, (s, c) => s + c.valorPendente);
+
+    // Faixas de atraso
+    final ate7 = atrasadas.where((c) => hoje.difference(c.dataVencimento).inDays <= 7).toList();
+    final de8a30 = atrasadas.where((c) {
+      final d = hoje.difference(c.dataVencimento).inDays;
+      return d > 7 && d <= 30;
+    }).toList();
+    final de31a60 = atrasadas.where((c) {
+      final d = hoje.difference(c.dataVencimento).inDays;
+      return d > 30 && d <= 60;
+    }).toList();
+    final mais60 = atrasadas.where((c) => hoje.difference(c.dataVencimento).inDays > 60).toList();
+
+    if (atrasadas.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.check_circle_outline, size: 80, color: Colors.greenAccent.withOpacity(0.5)),
+            const SizedBox(height: 16),
+            const Text('Nenhuma conta atrasada!', style: TextStyle(color: Colors.greenAccent, fontSize: 20, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Text('Todos os pagamentos estão em dia', style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 14)),
+          ],
+        ),
+      );
+    }
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Cabeçalho de risco
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [const Color(0xFF8B0000).withOpacity(0.9), const Color(0xFFB71C1C).withOpacity(0.9)],
+              ),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: Colors.redAccent.withOpacity(0.4)),
+            ),
+            child: Column(
+              children: [
+                const Icon(Icons.warning_amber_rounded, color: Colors.redAccent, size: 40),
+                const SizedBox(height: 10),
+                Text(formatoMoeda.format(totalAtrasado), style: const TextStyle(color: Colors.redAccent, fontSize: 32, fontWeight: FontWeight.bold)),
+                Text('${atrasadas.length} conta(s) atrasada(s)', style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 14)),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          // Resumo por faixa
+          _buildResumoFaixas(ate7.length, de8a30.length, de31a60.length, mais60.length),
+          const SizedBox(height: 20),
+
+          // Lista por faixa de atraso
+          if (ate7.isNotEmpty) ...[
+            _secaoAtraso('Até 7 dias', Colors.orangeAccent, ate7, formatoMoeda, formatoData),
+            const SizedBox(height: 16),
+          ],
+          if (de8a30.isNotEmpty) ...[
+            _secaoAtraso('8 a 30 dias', Colors.deepOrangeAccent, de8a30, formatoMoeda, formatoData),
+            const SizedBox(height: 16),
+          ],
+          if (de31a60.isNotEmpty) ...[
+            _secaoAtraso('31 a 60 dias', Colors.redAccent, de31a60, formatoMoeda, formatoData),
+            const SizedBox(height: 16),
+          ],
+          if (mais60.isNotEmpty) ...[
+            _secaoAtraso('Mais de 60 dias', Colors.deepPurpleAccent, mais60, formatoMoeda, formatoData),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildResumoFaixas(int ate7, int de8a30, int de31a60, int mais60) {
+    return Row(
+      children: [
+        _faixaResumo('1-7d', ate7, Colors.orangeAccent),
+        const SizedBox(width: 8),
+        _faixaResumo('8-30d', de8a30, Colors.deepOrangeAccent),
+        const SizedBox(width: 8),
+        _faixaResumo('31-60d', de31a60, Colors.redAccent),
+        const SizedBox(width: 8),
+        _faixaResumo('60d+', mais60, Colors.deepPurpleAccent),
+      ],
+    );
+  }
+
+  Widget _faixaResumo(String label, int qtd, Color cor) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        decoration: BoxDecoration(
+          color: cor.withOpacity(0.15),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: cor.withOpacity(0.3)),
+        ),
+        child: Column(
+          children: [
+            Text('$qtd', style: TextStyle(color: cor, fontSize: 22, fontWeight: FontWeight.bold)),
+            Text(label, style: TextStyle(color: cor.withOpacity(0.7), fontSize: 10, fontWeight: FontWeight.bold)),
           ],
         ),
       ),
     );
   }
 
-  void _estornarPagamento(BuildContext context, ContaPagar conta, RegistroPagamento pagamento) {
-    final dataService = Provider.of<DataService>(context, listen: false);
-    final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
-    final formatoData = DateFormat('dd/MM/yyyy');
-    
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Row(
+  Widget _secaoAtraso(String faixa, Color cor, List<ContaPagar> contas, NumberFormat formatoMoeda, DateFormat formatoData) {
+    final total = contas.fold<double>(0, (s, c) => s + c.valorPendente);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
           children: [
-            Icon(Icons.undo, color: Colors.orange),
-            SizedBox(width: 8),
-            Text('Estornar Pagamento'),
+            Container(width: 4, height: 22, decoration: BoxDecoration(color: cor, borderRadius: BorderRadius.circular(2))),
+            const SizedBox(width: 8),
+            Text(faixa, style: TextStyle(color: cor, fontSize: 15, fontWeight: FontWeight.bold)),
+            const Spacer(),
+            Text('${contas.length} — ${formatoMoeda.format(total)}', style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 12)),
           ],
         ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Deseja estornar este pagamento?',
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 16,
-              ),
-            ),
-            const SizedBox(height: 16),
-            Container(
+        const SizedBox(height: 8),
+        ...contas.map((c) => _buildCardAtrasado(c, cor, formatoMoeda, formatoData)),
+      ],
+    );
+  }
+
+  Widget _buildCardAtrasado(ContaPagar conta, Color cor, NumberFormat formatoMoeda, DateFormat formatoData) {
+    final hoje = DateTime.now();
+    final diasAtraso = hoje.difference(conta.dataVencimento).inDays;
+    // Buscar itens
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final itens = _buscarItensConta(conta, dataService);
+    final isExpandida = _itensExpandidos.contains('${conta.id}_atri');
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      decoration: BoxDecoration(
+        color: cor.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: cor.withOpacity(0.25)),
+      ),
+      child: Column(
+        children: [
+          InkWell(
+            onTap: itens.isNotEmpty ? () {
+              setState(() {
+                final key = '${conta.id}_atri';
+                if (_itensExpandidos.contains(key)) _itensExpandidos.remove(key);
+                else _itensExpandidos.add(key);
+              });
+            } : null,
+            borderRadius: BorderRadius.circular(12),
+            child: Padding(
               padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.orange.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.orange.withOpacity(0.3)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              child: Row(
                 children: [
-                  Text(
-                    'Conta: ${conta.descricao}',
-                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  // Badge de dias
+                  Container(
+                    width: 52, height: 52,
+                    decoration: BoxDecoration(color: cor.withOpacity(0.2), borderRadius: BorderRadius.circular(12)),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text('$diasAtraso', style: TextStyle(color: cor, fontSize: 20, fontWeight: FontWeight.bold)),
+                        Text('dias', style: TextStyle(color: cor.withOpacity(0.6), fontSize: 9)),
+                      ],
+                    ),
                   ),
-                  const SizedBox(height: 8),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(conta.descricao, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600), maxLines: 1, overflow: TextOverflow.ellipsis),
+                        const SizedBox(height: 2),
+                        Text('Venc: ${formatoData.format(conta.dataVencimento)}', style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 11)),
+                        if (conta.fornecedorNome != null) Text(conta.fornecedorNome!, style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 11)),
+                        if (itens.isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Row(children: [
+                            Icon(Icons.shopping_bag, size: 10, color: Colors.white.withOpacity(0.3)),
+                            const SizedBox(width: 4),
+                            Text('${itens.length} item(ns)', style: TextStyle(color: Colors.white.withOpacity(0.3), fontSize: 9)),
+                            if (!isExpandida) Icon(Icons.keyboard_arrow_down, size: 14, color: Colors.white.withOpacity(0.3)),
+                          ]),
+                        ],
+                      ],
+                    ),
+                  ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      Text('Data: ${formatoData.format(pagamento.dataPagamento)}'),
-                      Text(
-                        'Valor: ${formatoMoeda.format(pagamento.valor)}',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: Colors.orange[700],
-                        ),
-                      ),
+                      Text(formatoMoeda.format(conta.valorPendente), style: TextStyle(color: cor, fontSize: 16, fontWeight: FontWeight.bold)),
+                      if ((conta.valorPago ?? 0) > 0) Text('Pago: ${formatoMoeda.format(conta.valorPago)}', style: TextStyle(color: Colors.greenAccent.withOpacity(0.6), fontSize: 10)),
                     ],
                   ),
-                  if (pagamento.formaPagamento != null) ...[
-                    const SizedBox(height: 4),
-                    Text('Forma: ${pagamento.formaPagamento}'),
-                  ],
                 ],
               ),
             ),
-            const SizedBox(height: 16),
-            const Text(
-              'Ao estornar, o pagamento será removido do histórico e o valor será adicionado novamente ao pendente da conta.',
-              style: TextStyle(fontSize: 12),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancelar'),
           ),
-          ElevatedButton(
-            onPressed: () {
-              // Remover o pagamento do histórico
-              final novoHistorico = conta.historicoPagamentos
-                  .where((p) => p.id != pagamento.id)
-                  .toList();
-              
-              // Recalcular valor pago
-              final novoValorPago = novoHistorico.fold<double>(
-                0.0,
-                (sum, p) => sum + p.valor,
-              );
-              
-              // Atualizar status
-              final novoStatus = novoValorPago >= conta.valor - 0.01
-                  ? StatusContaPagar.pago
-                  : (conta.isVencida ? StatusContaPagar.vencido : StatusContaPagar.pendente);
-              
-              // Atualizar data de pagamento (se não houver mais pagamentos, remove)
-              final dataPagamentoAtualizada = novoHistorico.isNotEmpty
-                  ? novoHistorico.map((p) => p.dataPagamento).reduce((a, b) => a.isAfter(b) ? a : b)
-                  : null;
-              
-              // Criar conta atualizada
-              final contaAtualizada = ContaPagar(
-                id: conta.id,
-                numero: conta.numero,
-                tipo: conta.tipo,
-                categoria: conta.categoria,
-                descricao: conta.descricao,
-                observacoes: conta.observacoes,
-                valor: conta.valor,
-                valorPago: novoValorPago > 0 ? novoValorPago : null,
-                dataVencimento: conta.dataVencimento,
-                dataPagamento: dataPagamentoAtualizada,
-                dataCriacao: conta.dataCriacao,
-                updatedAt: DateTime.now(),
-                notaEntradaId: conta.notaEntradaId,
-                notaEntradaNumero: conta.notaEntradaNumero,
-                fornecedorId: conta.fornecedorId,
-                fornecedorNome: conta.fornecedorNome,
-                status: novoStatus,
-                formaPagamento: conta.formaPagamento,
-                historicoPagamentos: novoHistorico,
-                recorrente: conta.recorrente,
-                intervaloRecorrencia: conta.intervaloRecorrencia,
-                proximaDataRecorrencia: conta.proximaDataRecorrencia,
-                ativo: conta.ativo,
-                usuarioCriacao: conta.usuarioCriacao,
-                usuarioPagamento: conta.usuarioPagamento,
-              );
-              
-              // Salvar
-              dataService.updateContaPagar(contaAtualizada);
-              
-              Navigator.pop(context);
-              setState(() {});
-              
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        '✓ Pagamento estornado com sucesso!',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 14,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Valor estornado: ${formatoMoeda.format(pagamento.valor)}',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.white.withOpacity(0.9),
-                        ),
-                      ),
-                      Text(
-                        'Novo valor pendente: ${formatoMoeda.format(conta.valor - novoValorPago)}',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.white.withOpacity(0.9),
-                        ),
-                      ),
-                    ],
-                  ),
-                  backgroundColor: Colors.orange,
-                  duration: const Duration(seconds: 4),
-                ),
-              );
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.orange,
-              foregroundColor: Colors.white,
+          // Itens expandidos
+          if (isExpandida && itens.isNotEmpty)
+            Container(
+              padding: const EdgeInsets.only(left: 64, right: 12, bottom: 10),
+              child: Column(
+                children: itens.map((item) => Container(
+                  margin: const EdgeInsets.only(bottom: 4),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(color: Colors.white.withOpacity(0.04), borderRadius: BorderRadius.circular(8)),
+                  child: Row(children: [
+                    Expanded(child: Text('${item['qtd']}x ${item['nome']}', style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 11))),
+                    Text(formatoMoeda.format(item['subtotal']), style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 11, fontWeight: FontWeight.w600)),
+                  ]),
+                )).toList(),
+              ),
             ),
-            child: const Text('Confirmar Estorno'),
+        ],
+      ),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // ABA RELATÓRIO — Resumo financeiro completo
+  // ═══════════════════════════════════════════════════════════════════════
+
+  Widget _buildAbaRelatorio(List<ContaPagar> contas, NumberFormat formatoMoeda, DateFormat formatoData, double totalPendente, double totalVencido, double totalRecebido) {
+    final hoje = DateTime.now();
+    final totalGeral = contas.fold<double>(0, (s, c) => s + c.valor);
+    final qtdTotal = contas.length;
+    final qtdPendentes = contas.where((c) => c.statusAtualizado == StatusContaPagar.pendente).length;
+    final qtdVencidas = contas.where((c) => c.statusAtualizado == StatusContaPagar.vencido).length;
+    final qtdPagas = contas.where((c) => c.statusAtualizado == StatusContaPagar.pago).length;
+    final percentRecebido = totalGeral > 0 ? ((totalRecebido / totalGeral) * 100) : 0.0;
+
+    // Agrupar por tipo
+    final fiadoContas = contas.where((c) => c.id.contains('fiado') || _isFiado(c)).toList();
+    final crediarioContas = contas.where((c) => c.id.contains('crediario') || _isCrediario(c)).toList();
+    final avulsasContas = contas.where((c) => !fiadoContas.contains(c) && !crediarioContas.contains(c)).toList();
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Resumo Geral
+          _buildRelatorioCard(
+            'Resumo Geral', Icons.assessment, Colors.blueAccent,
+            [
+              _relatorioLinha('Total de Contas', '$qtdTotal', Colors.white),
+              _relatorioLinha('Pendentes', '$qtdPendentes', Colors.orangeAccent),
+              _relatorioLinha('Vencidas', '$qtdVencidas', Colors.redAccent),
+              _relatorioLinha('Pagas', '$qtdPagas', Colors.greenAccent),
+              const Divider(color: Colors.white12),
+              _relatorioLinha('Valor Total', formatoMoeda.format(totalGeral), Colors.white),
+              _relatorioLinha('Recebido', formatoMoeda.format(totalRecebido), Colors.greenAccent),
+              _relatorioLinha('Pendente', formatoMoeda.format(totalPendente), Colors.orangeAccent),
+              _relatorioLinha('Vencido', formatoMoeda.format(totalVencido), Colors.redAccent),
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          // Barra de progresso
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.05),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                  const Text('Taxa de Recebimento', style: TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.bold)),
+                  Text('${percentRecebido.toStringAsFixed(1)}%', style: TextStyle(color: percentRecebido >= 70 ? Colors.greenAccent : percentRecebido >= 40 ? Colors.orangeAccent : Colors.redAccent, fontSize: 18, fontWeight: FontWeight.bold)),
+                ]),
+                const SizedBox(height: 10),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: LinearProgressIndicator(
+                    value: percentRecebido / 100,
+                    backgroundColor: Colors.white10,
+                    valueColor: AlwaysStoppedAnimation<Color>(percentRecebido >= 70 ? Colors.greenAccent : percentRecebido >= 40 ? Colors.orangeAccent : Colors.redAccent),
+                    minHeight: 10,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // Por Tipo
+          if (fiadoContas.isNotEmpty) _buildRelatorioCard(
+            'Fiado', Icons.handshake, const Color(0xFFD84315),
+            [
+              _relatorioLinha('Quantidade', '${fiadoContas.length}', Colors.white),
+              _relatorioLinha('Total', formatoMoeda.format(fiadoContas.fold<double>(0, (s, c) => s + c.valor)), Colors.white),
+              _relatorioLinha('Pago', formatoMoeda.format(fiadoContas.fold<double>(0, (s, c) => s + (c.valorPago ?? 0))), Colors.greenAccent),
+              _relatorioLinha('Aberto', formatoMoeda.format(fiadoContas.fold<double>(0, (s, c) => s + c.valorPendente)), Colors.orangeAccent),
+            ],
+          ),
+          if (fiadoContas.isNotEmpty) const SizedBox(height: 12),
+
+          if (crediarioContas.isNotEmpty) _buildRelatorioCard(
+            'Crediário', Icons.credit_score, const Color(0xFFE91E63),
+            [
+              _relatorioLinha('Quantidade', '${crediarioContas.length}', Colors.white),
+              _relatorioLinha('Total', formatoMoeda.format(crediarioContas.fold<double>(0, (s, c) => s + c.valor)), Colors.white),
+              _relatorioLinha('Pago', formatoMoeda.format(crediarioContas.fold<double>(0, (s, c) => s + (c.valorPago ?? 0))), Colors.greenAccent),
+              _relatorioLinha('Aberto', formatoMoeda.format(crediarioContas.fold<double>(0, (s, c) => s + c.valorPendente)), Colors.orangeAccent),
+            ],
+          ),
+          if (crediarioContas.isNotEmpty) const SizedBox(height: 12),
+
+          if (avulsasContas.isNotEmpty) _buildRelatorioCard(
+            'Avulsas', Icons.receipt, Colors.blueAccent,
+            [
+              _relatorioLinha('Quantidade', '${avulsasContas.length}', Colors.white),
+              _relatorioLinha('Total', formatoMoeda.format(avulsasContas.fold<double>(0, (s, c) => s + c.valor)), Colors.white),
+              _relatorioLinha('Pago', formatoMoeda.format(avulsasContas.fold<double>(0, (s, c) => s + (c.valorPago ?? 0))), Colors.greenAccent),
+              _relatorioLinha('Aberto', formatoMoeda.format(avulsasContas.fold<double>(0, (s, c) => s + c.valorPendente)), Colors.orangeAccent),
+            ],
           ),
         ],
       ),
     );
+  }
+
+  Widget _buildRelatorioCard(String titulo, IconData icone, Color cor, List<Widget> linhas) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: cor.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: cor.withOpacity(0.25)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Icon(icone, color: cor, size: 20),
+            const SizedBox(width: 8),
+            Text(titulo, style: TextStyle(color: cor, fontSize: 16, fontWeight: FontWeight.bold)),
+          ]),
+          const SizedBox(height: 12),
+          ...linhas,
+        ],
+      ),
+    );
+  }
+
+  Widget _relatorioLinha(String label, String valor, Color cor) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 13)),
+          Text(valor, style: TextStyle(color: cor, fontSize: 13, fontWeight: FontWeight.bold)),
+        ],
+      ),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // HELPERS
+  // ═══════════════════════════════════════════════════════════════════════
+
+  bool _isFiado(ContaPagar c) {
+    final dataService = Provider.of<DataService>(context, listen: false);
+    if (c.id.startsWith('venda_')) {
+      try {
+        final v = dataService.vendasBalcao.firstWhere((v) => v.id == c.id.replaceFirst('venda_', ''));
+        return v.tipoPagamento == TipoPagamento.fiado;
+      } catch (_) {}
+    } else if (c.id.startsWith('pedido_')) {
+      try {
+        final p = dataService.pedidos.firstWhere((p) => p.id == c.id.replaceFirst('pedido_', ''));
+        return p.pagamentos.any((pag) => pag.tipo == TipoPagamento.fiado);
+      } catch (_) {}
+    }
+    return false;
+  }
+
+  bool _isCrediario(ContaPagar c) {
+    final dataService = Provider.of<DataService>(context, listen: false);
+    if (c.id.startsWith('venda_')) {
+      try {
+        final v = dataService.vendasBalcao.firstWhere((v) => v.id == c.id.replaceFirst('venda_', ''));
+        return v.tipoPagamento == TipoPagamento.crediario;
+      } catch (_) {}
+    } else if (c.id.startsWith('pedido_')) {
+      try {
+        final p = dataService.pedidos.firstWhere((p) => p.id == c.id.replaceFirst('pedido_', ''));
+        return p.pagamentos.any((pag) => pag.tipo == TipoPagamento.crediario);
+      } catch (_) {}
+    }
+    return false;
+  }
+
+  List<Map<String, dynamic>> _buscarItensConta(ContaPagar conta, DataService ds) {
+    if (conta.id.startsWith('venda_')) {
+      final idReal = conta.id.replaceFirst('venda_', '');
+      try {
+        final venda = ds.vendasBalcao.firstWhere((v) => v.id == idReal);
+        return venda.itens.map((i) => {'qtd': i.quantidade, 'nome': i.nome, 'subtotal': i.quantidade * i.precoUnitario}).toList();
+      } catch (_) {}
+    } else if (conta.id.startsWith('pedido_')) {
+      final idReal = conta.id.replaceFirst('pedido_', '');
+      try {
+        final pedido = ds.pedidos.firstWhere((p) => p.id == idReal);
+        final itens = <Map<String, dynamic>>[];
+        for (final p in pedido.produtos) {
+          itens.add({'qtd': p.quantidade, 'nome': p.nome, 'subtotal': p.quantidade * p.preco});
+        }
+        for (final s in pedido.servicos) {
+          itens.add({'qtd': 1, 'nome': s.descricao, 'subtotal': s.valor + s.valorAdicional});
+        }
+        return itens;
+      } catch (_) {}
+    }
+    return [];
   }
 }

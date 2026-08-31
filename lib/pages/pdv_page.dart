@@ -356,11 +356,11 @@ class _PdvPageState extends State<PdvPage> {
             valor: i.precoUnitario,
             observacao: i.observacao,
           )).toList(),
-          pagamentos: [],  // Vendas pendentes não têm pagamentos ainda
+          pagamentos: venda.pagamentos,  // Usar pagamentos reais da venda
           createdAt: venda.dataVenda,
           updatedAt: venda.dataVenda,
         );
-        
+
         resultados.add(pedidoTemp);
         idsAdicionados.add(venda.id);
       }
@@ -758,7 +758,7 @@ class _PdvPageState extends State<PdvPage> {
               valor: i.precoUnitario,
               observacao: i.observacao,
             )).toList(),
-            pagamentos: [],  // Vendas pendentes não têm pagamentos ainda
+            pagamentos: venda.pagamentos,  // Usar pagamentos reais da venda
             createdAt: venda.dataVenda,
             updatedAt: venda.dataVenda,
           );
