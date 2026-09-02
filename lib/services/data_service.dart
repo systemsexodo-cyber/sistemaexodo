@@ -1622,6 +1622,25 @@ class DataService extends ChangeNotifier {
       await _carregarDadosSalvos();
       print('>>> ✓ Cache local carregado (${_clientes.length} clientes)');
       
+      // DETECÇÃO DE BANCO INCOMPLETO: Se o banco local foi perdido (desinstalação,
+      // corrupção, etc.) mas o timestamp de última sync ainda existe no exodo_config,
+      // o delta sync puxaria apenas registros recentes e ignoraria os produtos
+      // que não foram alterados desde a última sync. Forçar sync full quando
+      // as coleções críticas estiverem vazias.
+      if (_ultimaSincronizacaoSucesso != null) {
+        final int totalLocal = _produtos.length + _clientes.length + _pedidos.length;
+        if (totalLocal == 0) {
+          debugPrint('>>> [Sync] ⚠️ Banco local INCOMPLETO (produtos=0, clientes=0, pedidos=0) mas timestamp de sync antigo existe. Resetando para FULL SYNC...');
+          _ultimaSincronizacaoSucesso = null;
+        } else if (_produtos.isEmpty) {
+          // Produtos vazios mas outros dados existem — pode ter sido
+          // apagado parcialmente (ex.: limpeza manual da tabela). Forçar
+          // full sync para recuperar os produtos do Supabase.
+          debugPrint('>>> [Sync] ⚠️ Produtos vazios mas outros dados presentes (${_clientes.length} clientes, ${_pedidos.length} pedidos). Resetando delta para FULL SYNC...');
+          _ultimaSincronizacaoSucesso = null;
+        }
+      }
+      
       // Carregar dados complementares do Supabase (Mesas/Comandas)
       if (_currentEmpresaId != null && SupabaseService.isAvailable && !_isOffline) {
          await _carregarDadosDoSupabase(modoLeve: modoLeve);
@@ -6085,10 +6104,20 @@ class DataService extends ChangeNotifier {
         _syncTimer != null &&
         _syncTimer!.isActive;
 
-    final isDeltaSync = _ultimaSincronizacaoSucesso != null;
-    final lastSyncBuffer = isDeltaSync
+    var isDeltaSync = _ultimaSincronizacaoSucesso != null;
+    var lastSyncBuffer = isDeltaSync
         ? _ultimaSincronizacaoSucesso!.subtract(const Duration(minutes: 1)).toUtc()
         : null;
+
+    // SAFEGUARD: Se o delta sync está habilitado mas a lista local de produtos
+    // está vazia (banco reconstruído / desinstalação parcial), forçar full sync.
+    // Sem isso, produtos antigos que não foram alterados desde o último sync
+    // nunca seriam baixados do Supabase.
+    if (isDeltaSync && _produtos.isEmpty) {
+      debugPrint('>>> [Supabase] ⚠️ Delta sync ativo mas 0 produtos locais. Forçando FULL SYNC...');
+      isDeltaSync = false;
+      lastSyncBuffer = null;
+    }
 
     debugPrint('>>> [Supabase] 🔄 Iniciando carga (Modo Leve: $finalModoLeve, SilentSync: $isSilentSync, 1aCarga=${_primeiraCargaAgendamentosRealizada}, DeltaSync: $isDeltaSync, LastSync: $lastSyncBuffer)');
     _syncEmAndamento = true;

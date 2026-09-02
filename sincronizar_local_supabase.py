@@ -535,10 +535,59 @@ def upload_tabela(conn, table_name, supabase_url, api_key):
 # DOWNLOAD: Supabase → Local
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _sanitizar_win1252(val):
+    """Substitui caracteres Unicode incompátíveis com WIN1252 para evitar erros de encoding.
+    
+    O banco local pode estar em codificação WIN1252, mas o Supabase retorna dados UTF-8
+    com caracteres como → (\u2192) e ❌ (\u274c) que não existem no WIN1252.
+    """
+    if isinstance(val, dict):
+        return {k: _sanitizar_win1252(v) for k, v in val.items()}
+    if isinstance(val, list):
+        return [_sanitizar_win1252(item) for item in val]
+    if not isinstance(val, str):
+        return val
+    try:
+        # Tentar codificar em latin-1; se funcionar, está ok
+        val.encode('latin-1')
+        return val
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        # Substituir caracteres problemáticos por equivalentes ASCII próximos
+        substituicoes = {
+            '\u2192': '->',    # → (seta)
+            '\u2190': '<-',    # ← (seta)
+            '\u2191': '^',     # ↑ (seta)
+            '\u2193': 'v',     # ↓ (seta)
+            '\u274c': 'X',     # ❌ (cross mark)
+            '\u2705': 'OK',    # ✅ (check mark)
+            '\u26a0': '!',     # ⚠ (warning)
+            '\u2139': 'i',     # ℹ (info)
+            '\u2022': '*',     # • (bullet)
+            '\u2026': '...',   # … (ellipsis)
+            '\u00a0': ' ',     # non-breaking space
+            '\u200b': '',      # zero-width space
+            '\u200d': '',      # zero-width joiner
+            '\u200e': '',      # LTR mark
+            '\u200f': '',      # RTL mark
+            '\ufeff': '',      # BOM
+        }
+        for orig, repl in substituicoes.items():
+            val = val.replace(orig, repl)
+        # Fallback: codificar em latin-1 com substituição de qualquer caractere restante
+        try:
+            return val.encode('latin-1', errors='replace').decode('latin-1')
+        except Exception:
+            return val
+
+
 def _serializar_valor_com_tipo(val, col_type):
     """Converte valores para tipos compatíveis com PostgreSQL com base no tipo da coluna."""
     if val is None:
         return None
+
+    # Sanitizar strings para encoding WIN1252 do banco local
+    if isinstance(val, str):
+        val = _sanitizar_win1252(val)
 
     # Strings vazias em colunas nao-textuais quebram o INSERT no PostgreSQL.
     # Converte para NULL, mantendo vazios em colunas de texto.
@@ -546,13 +595,14 @@ def _serializar_valor_com_tipo(val, col_type):
         return None
         
     if 'JSON' in col_type:
+        # Sanitizar recursivamente dict/list para remover chars WIN1252-incompativeis
+        val = _sanitizar_win1252(val)
         if isinstance(val, (dict, list)):
             return Json(val)
         if isinstance(val, str):
             try:
                 parsed = json.loads(val)
-                # Sempre retorna o valor envelopado com Json() para garantir
-                # que o psycopg2 envie com aspas de string de JSON corretas.
+                parsed = _sanitizar_win1252(parsed)
                 return Json(parsed)
             except Exception:
                 return Json(val)
@@ -597,19 +647,33 @@ def fetch_updates_tabela(table_name, desde_timestamp, supabase_url, api_key):
             col_ts = col
             break
 
-    if col_ts:
-        ts_encoded = urllib.parse.quote(desde_timestamp)
-        params = f"select=*&{col_ts}=gte.{ts_encoded}&order={col_ts}.asc&limit=1000"
-    else:
-        params = "select=*&limit=1000"
-
-    url = f"{supabase_url.rstrip('/')}/rest/v1/{urllib.parse.quote(table_name, safe='')}?{params}"
-    rows = fetch_json(url, api_key)
+    # Paginação: buscar todos os registros em blocos de 1000
+    all_rows = []
+    offset = 0
+    BATCH_SIZE = 1000
     
-    if rows is None:
-        return table_name, None, False
+    while True:
+        if col_ts:
+            ts_encoded = urllib.parse.quote(desde_timestamp)
+            params = f"select=*&{col_ts}=gte.{ts_encoded}&order={col_ts}.asc&limit={BATCH_SIZE}&offset={offset}"
+        else:
+            params = f"select=*&limit={BATCH_SIZE}&offset={offset}"
+
+        url = f"{supabase_url.rstrip('/')}/rest/v1/{urllib.parse.quote(table_name, safe='')}?{params}"
+        rows = fetch_json(url, api_key)
         
-    return table_name, rows, True
+        if rows is None:
+            if offset == 0:
+                return table_name, None, False
+            break
+        
+        all_rows.extend(rows)
+        
+        if len(rows) < BATCH_SIZE:
+            break
+        offset += BATCH_SIZE
+    
+    return table_name, all_rows, True
 
 
 def gravar_registros_locais(conn, table_name, rows):
@@ -1025,7 +1089,11 @@ def executar_ciclo_sincronizacao(conn, supabase_url, api_key, on_state_change=No
               AND LEFT(table_name, 3) <> 'vw_'
               AND LEFT(table_name, 5) <> 'view_'
               AND POSITION('_bkp_' IN table_name) = 0
-              AND table_name NOT IN ('cache_dados', 'bridge_status', 'bridge_commands', 'exodo_sync_conflitos', 'exodo_config')
+              AND table_name NOT LIKE '%_bkp_%'  -- segurança extra: exclui qualquer tabela de backup
+              AND table_name NOT IN ('cache_dados', 'bridge_status', 'bridge_commands', 'exodo_sync_conflitos', 'exodo_config', 'sync_status', 'configuracoes_locais', 'sync_logs', 'usuarios')
+              -- 'usuarios' excluido: senhas existem APENAS no banco local;
+              -- baixar do Supabase sobrescreveria as senhas com NULL/vazio
+              -- e quebraria o login. Upload continua funcionando normalmente.
             ORDER BY table_name
         """)
         tabelas = [r[0] for r in cur.fetchall()]
@@ -1041,7 +1109,28 @@ def executar_ciclo_sincronizacao(conn, supabase_url, api_key, on_state_change=No
         enviados = upload_tabela(conn, tabela, supabase_url, api_key)
         total_enviados += enviados
 
-    # 2. DOWNLOAD PARALELO: Executa as requisições HTTP na nuvem em paralelo
+    # 2. SAFEGUARD: Se tabelas críticas estão vazias mas _sync_controle tem
+    #    timestamp antigo (desinstalação/corrupção), forçar full download.
+    #    Sem isso, registros antigos nunca seriam baixados do Supabase.
+    _EPOCH = "1970-01-01T00:00:00+00:00"
+    for tabela in tabelas:
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f'SELECT COUNT(*) FROM "{tabela}"')
+                count = cur.fetchone()[0]
+            if count == 0:
+                ultima_salva = get_ultima_sync_tabela(conn, tabela)
+                if ultima_salva != _EPOCH:
+                    print_log(
+                        f"[SYNC] ⚠️ Tabela '{tabela}' vazia mas timestamp de sync existe "
+                        f"({ultima_salva}). Resetando para full download.",
+                        Colors.YELLOW
+                    )
+                    salvar_ultima_sync_tabela(conn, tabela, _EPOCH)
+        except Exception:
+            pass  # Tabela pode não existir ainda; sem problema
+
+    # 3. DOWNLOAD PARALELO: Executa as requisições HTTP na nuvem em paralelo
     futuros = []
     agora_iso = datetime.now(timezone.utc).isoformat()
     
