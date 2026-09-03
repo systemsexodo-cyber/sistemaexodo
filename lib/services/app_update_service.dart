@@ -200,21 +200,40 @@ del "%~f0"
       debugPrint('>>> [AppUpdateService] 📦 Publicando versão $dbVersion (${isGlobal ? "GLOBAL" : "EMPRESA: $empresaId"})');
       debugPrint('>>> [AppUpdateService] 📍 Executável atual: ${Platform.resolvedExecutable}');
 
-      // 1. Localizar executável compilado
+      // 1. Localizar executável compilado — procura em vários caminhos
       final currentExePath = Platform.resolvedExecutable;
       final exeDir = p.dirname(currentExePath);
+      final homeDir = Platform.environment['USERPROFILE'] ?? Platform.environment['HOME'] ?? '';
       
-      // Procurar o .exe na pasta de release do build
-      String localExe = p.join(exeDir, 'sistema_exodo_novo.exe');
-      debugPrint('>>> [AppUpdateService] 🔍 Tentando: $localExe (existe: ${await File(localExe).exists()})');
-      if (!await File(localExe).exists()) {
-        // Fallback: procurar no build directory relativo ao projeto
-        final projectDir = p.dirname(p.dirname(p.dirname(p.dirname(exeDir))));
-        localExe = p.join(projectDir, 'build', 'windows', 'x64', 'runner', 'Release', 'sistema_exodo_novo.exe');
-        debugPrint('>>> [AppUpdateService] 🔍 Tentando fallback: $localExe (existe: ${await File(localExe).exists()})');
+      // Lista de caminhos para procurar o .exe
+      final caminhosParaBuscar = [
+        // 1. Mesma pasta do executável atual
+        p.join(exeDir, 'sistema_exodo_novo.exe'),
+        // 2. Build directory padrão do Flutter
+        p.join(exeDir, '..', '..', '..', '..', 'build', 'windows', 'x64', 'runner', 'Release', 'sistema_exodo_novo.exe'),
+        // 3. Pasta .antigravity (instalador)
+        p.join(homeDir, '.antigravity', 'sistema_exodo_novo.exe'),
+        // 4. Pasta dist/instalador
+        p.join(homeDir, '.antigravity', 'dist', 'instalador', 'sistema_exodo_novo.exe'),
+        // 5. Desktop
+        p.join(homeDir, 'Desktop', 'sistema_exodo_novo.exe'),
+        // 6. Downloads
+        p.join(homeDir, 'Downloads', 'sistema_exodo_novo.exe'),
+      ];
+      
+      String localExe = '';
+      for (final caminho in caminhosParaBuscar) {
+        final normalizado = p.normalize(caminho);
+        debugPrint('>>> [AppUpdateService] 🔍 Tentando: $normalizado (existe: ${await File(normalizado).exists()})');
+        if (await File(normalizado).exists()) {
+          localExe = normalizado;
+          break;
+        }
       }
-      if (!await File(localExe).exists()) {
-        return (false, 'Executável não encontrado em nenhum local. Caminhos testados:\n1. ${p.join(exeDir, 'sistema_exodo_novo.exe')}\n2. build/windows/x64/runner/Release/sistema_exodo_novo.exe\n\nCompile com: flutter build windows --release');
+      
+      if (localExe.isEmpty) {
+        final caminhosTestados = caminhosParaBuscar.map((c) => '  - ${p.normalize(c)}').join('\n');
+        return (false, 'Executável não encontrado. Caminhos testados:\n$caminhosTestados\n\nCompile com: flutter build windows --release');
       }
 
       final fileSize = await File(localExe).length();
