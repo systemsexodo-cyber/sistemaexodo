@@ -38,6 +38,7 @@ import 'package:sistema_exodo_novo/services/whatsapp_service.dart';
 import 'package:sistema_exodo_novo/models/empresa.dart';
 import 'package:sistema_exodo_novo/services/google_drive_service.dart';
 import 'package:sistema_exodo_novo/services/database_service.dart';
+import 'package:sistema_exodo_novo/services/backup_restore_service.dart';
 import 'package:sistema_exodo_novo/services/connection_logger_service.dart';
 import 'package:sistema_exodo_novo/services/sync_monitor_service.dart';
 import 'package:uuid/uuid.dart';
@@ -950,8 +951,68 @@ class DataService extends ChangeNotifier {
     _lastSyncActivityTime = DateTime.now();
     debugPrint('>>> [Sync] ⏱️ Timer de Auto-Sync Adaptativo iniciado (10 seg inicial)');
     _programarProximoSync();
+    
+    // Iniciar backup diário automático
+    _iniciarBackupDiario();
   }
   
+  Timer? _backupDiarioTimer;
+  DateTime? _ultimoBackupDiario;
+  
+  /// Inicia o timer de backup diário automático para a nuvem.
+  /// Verifica a cada 30 minutos se já passou de 24 horas desde o último backup.
+  void _iniciarBackupDiario() {
+    _backupDiarioTimer?.cancel();
+    
+    // Carregar timestamp do último backup
+    _carregarUltimoBackupDiario().then((_) {
+      _backupDiarioTimer = Timer.periodic(const Duration(minutes: 30), (_) {
+        _verificarBackupDiario();
+      });
+      debugPrint('>>> [Backup] ⏱️ Timer de backup diário iniciado');
+    });
+  }
+  
+  Future<void> _carregarUltimoBackupDiario() async {
+    if (_currentEmpresaId == null) return;
+    try {
+      final key = _getEmpresaKey('exodo_ultimo_backup_diario');
+      final valor = await _storage.carregar(key);
+      if (valor != null) {
+        _ultimoBackupDiario = DateTime.tryParse(valor.toString());
+      }
+    } catch (e) {
+      debugPrint('>>> [Backup] ⚠️ Erro ao carregar último backup: $e');
+    }
+  }
+  
+  Future<void> _verificarBackupDiario() async {
+    if (_currentEmpresaId == null || !SupabaseService.isAvailable || _isOffline) return;
+    
+    final agora = DateTime.now();
+    final ultimoBackup = _ultimoBackupDiario;
+    
+    // Se nunca fez backup ou se passou mais de 24 horas
+    if (ultimoBackup == null || agora.difference(ultimoBackup).inHours >= 24) {
+      debugPrint('>>> [Backup] 🕐 Hora do backup diário automático...');
+      try {
+        // Usar BackupRestoreService diretamente
+        final backupService = BackupRestoreService(this);
+        final (sucesso, mensagem, _) = await backupService.uploadBackupNaNuvem();
+        if (sucesso) {
+          _ultimoBackupDiario = agora;
+          await _storage.salvar(_getEmpresaKey('exodo_ultimo_backup_diario'), agora.toIso8601String());
+          debugPrint('>>> [Backup] ✅ Backup diário concluído: $mensagem');
+          addSyncLog('☁️ Backup diário automático realizado com sucesso.');
+        } else {
+          debugPrint('>>> [Backup] ⚠️ Backup diário falhou: $mensagem');
+        }
+      } catch (e) {
+        debugPrint('>>> [Backup] ❌ Erro no backup diário: $e');
+      }
+    }
+  }
+
   // Empresa atual para isolamento de dados
   String? _currentEmpresaId;
   String? get currentEmpresaId => _currentEmpresaId;
@@ -7362,7 +7423,17 @@ class DataService extends ChangeNotifier {
       _ultimaSincronizacao = null;
       _ultimaSincronizacaoSucesso = null;
       
-      // 3. Enviar tudo para o Supabase
+      // 3. Limpar dados antigos no Supabase antes de enviar (garante dados limpos)
+      _mensagemLoading = 'Limpando dados antigos no Supabase...';
+      notifyListeners();
+      try {
+        await _supabaseService.limparDadosEmpresa(_currentEmpresaId!);
+        debugPrint('>>> [Sync] ✅ Dados antigos removidos do Supabase');
+      } catch (e) {
+        debugPrint('>>> [Sync] ⚠️ Aviso ao limpar Supabase: $e (continuando upload)');
+      }
+      
+      // 4. Enviar tudo para o Supabase
       _mensagemLoading = 'Enviando dados para a nuvem...';
       notifyListeners();
       debugPrint('>>> [Sync] 🚀 Enviando dados locais para Supabase...');

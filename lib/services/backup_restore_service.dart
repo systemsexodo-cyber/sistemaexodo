@@ -1,13 +1,16 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
+import 'package:supabase_flutter/supabase_flutter.dart' show FileOptions, BucketOptions;
 import 'data_service.dart';
 import 'database_service.dart';
 import 'env_config.dart';
+import 'supabase_service.dart';
 import '../pages/html_helper_stub.dart'
     if (dart.library.html) '../pages/html_helper_web.dart' as html_helper;
 
@@ -98,6 +101,139 @@ class BackupRestoreService {
   }
 
   // ============================================================
+  // BACKUP EM NUVEM (Supabase Storage)
+  // ============================================================
+
+  /// Faz upload do backup JSON para o Supabase Storage.
+  /// Nome do arquivo: backup_{empresa}_{data}.json
+  /// Retorna (sucesso, mensagem, caminho_do_arquivo)
+  Future<(bool, String, String?)> uploadBackupNaNuvem() async {
+    try {
+      final empresaId = _dataService.currentEmpresaId;
+      if (empresaId == null) return (false, 'Empresa não selecionada', null);
+
+      final empresaNome = _dataService.empresaAtual?.nomeExibicao?.replaceAll(RegExp(r'[^\w\s]'), '_') ?? 'empresa';
+      final now = DateTime.now();
+      final dataStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+      final horaStr = '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}';
+      final fileName = 'backup_${empresaNome}_${dataStr}_${horaStr}.json';
+      final storagePath = 'backups/$empresaId/$fileName';
+
+      debugPrint('>>> [BackupRestore] ☁️ Preparando backup para nuvem: $fileName');
+
+      // 1. Gerar backup
+      final backup = gerarBackup();
+      final json = const JsonEncoder.withIndent('  ').convert(backup);
+      final bytes = Uint8List.fromList(utf8.encode(json));
+
+      debugPrint('>>> [BackupRestore] 📏 Tamanho: ${(bytes.length / 1024 / 1024).toStringAsFixed(1)} MB');
+
+      // 2. Upload para Supabase Storage
+      const bucketName = 'backups';
+      try {
+        await SupabaseService.instance.client.storage
+            .from(bucketName)
+            .uploadBinary(storagePath, bytes,
+                fileOptions: const FileOptions(upsert: true));
+      } catch (e) {
+        // Se o bucket não existe, tentar criá-lo
+        debugPrint('>>> [BackupRestore] ⚠️ Erro no upload, tentando criar bucket...');
+        try {
+          await SupabaseService.instance.client.storage.createBucket(
+            bucketName,
+            const BucketOptions(public: false),
+          );
+          await SupabaseService.instance.client.storage
+              .from(bucketName)
+              .uploadBinary(storagePath, bytes,
+                  fileOptions: const FileOptions(upsert: true));
+        } catch (e2) {
+          return (false, 'Erro ao criar bucket ou fazer upload: $e2', null);
+        }
+      }
+
+      debugPrint('>>> [BackupRestore] ✅ Backup enviado para nuvem: $storagePath');
+
+      // 3. Registrar no histórico
+      await _registrarNoHistorico('☁️ $fileName', bytes.length);
+
+      return (true, 'Backup enviado para a nuvem com sucesso!', storagePath);
+    } catch (e) {
+      debugPrint('>>> [BackupRestore] ❌ Erro ao enviar backup para nuvem: $e');
+      return (false, 'Erro ao enviar backup: $e', null);
+    }
+  }
+
+  /// Lista backups salvos na nuvem para a empresa atual
+  Future<List<Map<String, dynamic>>> listarBackupsNuvem() async {
+    try {
+      final empresaId = _dataService.currentEmpresaId;
+      if (empresaId == null) return [];
+
+      const bucketName = 'backups';
+      final prefix = 'backups/$empresaId/';
+
+      final files = await SupabaseService.instance.client.storage
+          .from(bucketName)
+          .list(path: prefix);
+
+      return files.map((f) => {
+        'name': f.name,
+        'path': '$prefix${f.name}',
+        'size': (f.metadata?['size'] as num?)?.toInt() ?? 0,
+        'createdAt': f.createdAt ?? '',
+      }).toList();
+    } catch (e) {
+      debugPrint('>>> [BackupRestore] ⚠️ Erro ao listar backups da nuvem: $e');
+      return [];
+    }
+  }
+
+  /// Baixa um backup da nuvem e restaura os dados
+  Future<(bool, String)> restaurarBackupDaNuvem(String storagePath) async {
+    try {
+      const bucketName = 'backups';
+
+      debugPrint('>>> [BackupRestore] ☁️ Baixando backup da nuvem: $storagePath');
+
+      // 1. Baixar o arquivo
+      final bytes = await SupabaseService.instance.client.storage
+          .from(bucketName)
+          .download(storagePath);
+
+      if (bytes.isEmpty) return (false, 'Arquivo vazio ou não encontrado');
+
+      // 2. Decodificar JSON
+      final jsonStr = utf8.decode(bytes);
+      final backup = jsonDecode(jsonStr) as Map<String, dynamic>;
+
+      debugPrint('>>> [BackupRestore] 📥 Backup baixado: ${(bytes.length / 1024).toStringAsFixed(0)} KB');
+
+      // 3. Restaurar dados
+      await _dataService.importarBackup(backup);
+
+      debugPrint('>>> [BackupRestore] ✅ Backup da nuvem restaurado com sucesso!');
+      return (true, 'Backup restaurado da nuvem com sucesso!');
+    } catch (e) {
+      debugPrint('>>> [BackupRestore] ❌ Erro ao restaurar backup da nuvem: $e');
+      return (false, 'Erro ao restaurar backup da nuvem: $e');
+    }
+  }
+
+  /// Remove um backup da nuvem
+  Future<bool> removerBackupNuvem(String storagePath) async {
+    try {
+      await SupabaseService.instance.client.storage
+          .from('backups')
+          .remove([storagePath]);
+      return true;
+    } catch (e) {
+      debugPrint('>>> [BackupRestore] ❌ Erro ao remover backup: $e');
+      return false;
+    }
+  }
+
+  // ============================================================
   // RESTORE
   // ============================================================
 
@@ -167,6 +303,59 @@ class BackupRestoreService {
     } catch (e) {
       debugPrint('>>> [BackupRestore] ❌ Erro ao selecionar dump: $e');
       return null;
+    }
+  }
+
+  /// Remove todos os dados das tabelas do app no PostgreSQL local.
+  /// Usado antes de restaurar dump para evitar duplicatas.
+  Future<void> limparDadosLocais() async {
+    final env = EnvConfig.env;
+    final dbHost = env['DB_HOST'] ?? '127.0.0.1';
+    final dbPort = env['DB_PORT'] ?? '5432';
+    final dbName = env['DB_NAME'] ?? 'exodo_db';
+    final dbUser = env['DB_USER'] ?? 'exodo_user';
+    final dbPass = env['DB_PASSWORD'] ?? '';
+
+    final psqlPath = await _findExecutable('psql');
+    if (psqlPath == null) {
+      throw Exception('psql não encontrado. Não é possível limpar dados.');
+    }
+
+    // Lista de todas as tabelas do app
+    final tabelas = [
+      'produtos', 'clientes', 'pedidos', 'servicos',
+      'ordens_servico', 'entregas', 'motoristas',
+      'vendas_balcao', 'trocas_devolucoes', 'estoque_historico',
+      'lotes_produto', 'aberturas_caixa', 'fechamentos_caixa',
+      'agendamentos_servico', 'notas_entrada', 'funcionarios',
+      'taxas_entrega', 'contas_pagar', 'nfces', 'nfes',
+      'sangrias_caixa', 'suprimentos_caixa', 'links_vendedores',
+      'comissoes_vendedores', 'romaneios', 'mesas_comandas',
+      'sync_status', 'sync_logs', 'exodo_config',
+    ];
+
+    // Montar SQL TRUNCATE para todas as tabelas
+    final sql = tabelas.map((t) => 'TRUNCATE TABLE $t CASCADE;').join('\n');
+    final tempFile = File(p.join(Directory.systemTemp.path, 'limpar_dados.sql'));
+    await tempFile.writeAsString(sql);
+
+    try {
+      final environment = Map<String, String>.from(Platform.environment);
+      environment['PGPASSWORD'] = dbPass;
+
+      final result = await Process.run(
+        psqlPath,
+        ['-h', dbHost, '-p', dbPort, '-U', dbUser, '-d', dbName, '-f', tempFile.path],
+        environment: environment,
+      ).timeout(const Duration(seconds: 30));
+
+      if (result.exitCode != 0) {
+        debugPrint('>>> [BackupRestore] ⚠️ Aviso ao limpar: ${result.stderr}');
+      } else {
+        debugPrint('>>> [BackupRestore] ✅ Dados locais limpos com sucesso');
+      }
+    } finally {
+      await tempFile.delete();
     }
   }
 

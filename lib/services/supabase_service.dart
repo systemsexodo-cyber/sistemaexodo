@@ -1158,5 +1158,54 @@ class SupabaseService {
     if (onProgress != null) onProgress(1.0);
     return url;
   }
+
+  /// Remove TODOS os registros de uma empresa em todas as tabelas do Supabase.
+  /// Usado antes de enviar backup local para garantir dados limpos.
+  /// IMPORTANTE: Isso é destrutivo! Só usar com confirmação do usuário.
+  Future<void> limparDadosEmpresa(String empresaId) async {
+    if (!isAvailable) return;
+    
+    // Tabelas com empresa_id (ordem: filhas primeiro, depois pais)
+    final tabelas = [
+      tableComissoesVendedores,
+      tableLinksVendedores,
+      tableSangrias,
+      tableSuprimentos,
+      tableNFCes,
+      tableNFEs,
+      tableContasPagar,
+      tableRomaneios,
+      tableFuncionarios,
+      tableNotasEntrada,
+      tableAgendamentosServico,
+      tableLotesProdutos,
+      tableEstoqueHistorico,
+      tableTrocasDevolucoes,
+      tableVendasBalcao,
+      tableOrdensServico,
+      tableEntregas,
+      tablePedidos,
+      tableMesasComandas,
+      tableFechamentosCaixa,
+      tableAberturasCaixa,
+      tableMotoristas,
+      tableTaxasEntrega,
+      tableServicos,
+      tableProdutos,
+      tableClientes,
+    ];
+    
+    int totalRemovidos = 0;
+    for (final tabela in tabelas) {
+      try {
+        await _client.from(tabela).delete().eq('empresa_id', empresaId);
+        totalRemovidos++;
+      } catch (e) {
+        debugPrint('>>> [Supabase] ⚠️ Erro ao limpar $tabela: $e');
+      }
+    }
+    
+    debugPrint('>>> [Supabase] ✅ Dados da empresa $empresaId limpos de $totalRemovidos tabelas');
+  }
 }
 

@@ -25,6 +25,8 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
   bool _isRestoring = false;
   bool _isRestoringDump = false;
   bool _isSendingToCloud = false;
+  bool _isUploadingBackup = false;
+  List<Map<String, dynamic>> _backupsNuvem = [];
 
   @override
   void initState() {
@@ -40,11 +42,57 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
     if (_backupService == null) return;
     setState(() => _isLoading = true);
     final historico = await _backupService!.listarHistoricoBackups();
+    final backupsNuvem = await _backupService!.listarBackupsNuvem();
     if (mounted) {
       setState(() {
         _historicoBackups = historico;
+        _backupsNuvem = backupsNuvem;
         _isLoading = false;
       });
+    }
+  }
+
+  Future<void> _uploadBackupNuvem() async {
+    if (_backupService == null) return;
+    setState(() => _isUploadingBackup = true);
+    try {
+      final (sucesso, mensagem, _) = await _backupService!.uploadBackupNaNuvem();
+      if (mounted) {
+        _mostrarSnackBar(sucesso ? '✅ $mensagem' : '❌ $mensagem', sucesso ? Colors.green : Colors.red);
+        if (sucesso) _carregarHistorico();
+      }
+    } finally {
+      if (mounted) setState(() => _isUploadingBackup = false);
+    }
+  }
+
+  Future<void> _restaurarDaNuvem(String storagePath, String fileName) async {
+    if (_backupService == null) return;
+    final confirmar = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        title: const Text('Restaurar da Nuvem?', style: TextStyle(color: Colors.white)),
+        content: Text(
+          'Isso vai SUBSTITUIR todos os dados locais pelo backup:\n$fileName\n\nDeseja continuar?',
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar', style: TextStyle(color: Colors.white54))),
+          ElevatedButton(onPressed: () => Navigator.pop(ctx, true), style: ElevatedButton.styleFrom(backgroundColor: Colors.orange), child: const Text('Restaurar', style: TextStyle(color: Colors.white))),
+        ],
+      ),
+    );
+    if (confirmar != true) return;
+
+    setState(() => _isRestoring = true);
+    try {
+      final (sucesso, mensagem) = await _backupService!.restaurarBackupDaNuvem(storagePath);
+      if (mounted) {
+        _mostrarSnackBar(sucesso ? '✅ $mensagem' : '❌ $mensagem', sucesso ? Colors.green : Colors.red);
+      }
+    } finally {
+      if (mounted) setState(() => _isRestoring = false);
     }
   }
 
@@ -120,7 +168,11 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
           ],
         ),
         content: const Text(
-          'Irá recarregar os dados do PostgreSQL local e enviar TODOS para o Supabase.\n\nAs outras máquinas receberão os dados automaticamente na próxima sincronização.\n\nContinuar?',
+          '⚠️ ATENÇÃO: Isso vai:\n\n'
+          '1. LIMPAR todos os dados atuais desta empresa no Supabase\n'
+          '2. Enviar os dados do backup local para o Supabase\n'
+          '3. As outras máquinas receberão os dados na próxima sincronização\n\n'
+          'Os dados antigos no Supabase serão SUBSTITUÍDOS.\n\nContinuar?',
           style: TextStyle(color: Colors.white70),
         ),
         actions: [
@@ -188,7 +240,15 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
 
     // Restaurar
     setState(() => _isRestoringDump = true);
-    _mostrarSnackBar('🔄 Restaurando dump PostgreSQL... Isso pode demorar.', Colors.orange);
+    _mostrarSnackBar('🔄 Limpando dados antigos...', Colors.orange);
+
+    // Limpar dados existentes antes de restaurar para evitar duplicatas
+    try {
+      await _backupService!.limparDadosLocais();
+      _mostrarSnackBar('🔄 Restaurando dump PostgreSQL... Isso pode demorar.', Colors.orange);
+    } catch (e) {
+      debugPrint('>>> [BackupRestore] Aviso ao limpar dados: $e');
+    }
 
     final (sucesso, mensagem) = await _backupService!.restaurarDumpPostgres(dumpFile);
     if (!mounted) return;
@@ -289,6 +349,10 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
                   children: [
                     // === CARD PRINCIPAL: AÇÕES ===
                     _buildCardAcoes(),
+                    const SizedBox(height: 16),
+
+                    // === BACKUP EM NUVEM ===
+                    _buildCardBackupNuvem(),
                     const SizedBox(height: 16),
 
                     // === INFO BACKUP ===
@@ -433,6 +497,125 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
             Text(desc, style: TextStyle(color: cor.withOpacity(0.7), fontSize: 12)),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildCardBackupNuvem() {
+    return Card(
+      color: const Color(0xFF1E1E2E).withOpacity(0.8),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.cyanAccent.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.cloud, color: Colors.cyanAccent, size: 28),
+                ),
+                const SizedBox(width: 16),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Backup em Nuvem', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                      Text('Backup diário automático + manual', style: TextStyle(color: Colors.white54, fontSize: 12)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            // Botão upload manual
+            SizedBox(
+              width: double.infinity,
+              child: _buildBotaoAcao(
+                icon: Icons.cloud_upload,
+                label: 'Fazer Backup Agora',
+                desc: 'Enviar backup manual para a nuvem',
+                cor: Colors.cyanAccent,
+                onTap: _isUploadingBackup ? null : _uploadBackupNuvem,
+              ),
+            ),
+            if (_isUploadingBackup) ...[
+              const SizedBox(height: 12),
+              const Center(child: CircularProgressIndicator(color: Colors.cyanAccent)),
+            ],
+            // Lista de backups na nuvem
+            if (_backupsNuvem.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              const Text('Backups na Nuvem:', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              ..._backupsNuvem.map((b) => _buildBackupNuvemItem(b)),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBackupNuvemItem(Map<String, dynamic> backup) {
+    final name = backup['name'] ?? '';
+    final path = backup['path'] ?? '';
+    final size = backup['size'] as int? ?? 0;
+    final data = backup['createdAt'] ?? '';
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.cyanAccent.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.cyanAccent.withOpacity(0.2)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.cloud_done, color: Colors.cyanAccent, size: 20),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(name, style: const TextStyle(color: Colors.white, fontSize: 13), overflow: TextOverflow.ellipsis),
+                Text('${_formatarTamanho(size)} • ${_formatarData(data)}', style: const TextStyle(color: Colors.white54, fontSize: 11)),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.download, color: Colors.green, size: 20),
+            tooltip: 'Restaurar deste backup',
+            onPressed: () => _restaurarDaNuvem(path, name),
+          ),
+          IconButton(
+            icon: const Icon(Icons.delete, color: Colors.red, size: 20),
+            tooltip: 'Remover',
+            onPressed: () async {
+              final confirmar = await showDialog<bool>(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  backgroundColor: const Color(0xFF1E1E2E),
+                  title: const Text('Remover backup?', style: TextStyle(color: Colors.white)),
+                  content: Text('Remover $name da nuvem?', style: const TextStyle(color: Colors.white70)),
+                  actions: [
+                    TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Não', style: TextStyle(color: Colors.white54))),
+                    ElevatedButton(onPressed: () => Navigator.pop(ctx, true), style: ElevatedButton.styleFrom(backgroundColor: Colors.red), child: const Text('Remover')),
+                  ],
+                ),
+              );
+              if (confirmar == true) {
+                await _backupService!.removerBackupNuvem(path);
+                _carregarHistorico();
+              }
+            },
+          ),
+        ],
       ),
     );
   }
