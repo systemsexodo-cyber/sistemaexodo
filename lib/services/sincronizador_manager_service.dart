@@ -66,16 +66,26 @@ class SincronizadorManagerService {
     }
   }
 
+  /// Mutex para evitar múltiplas inicializações simultâneas
+  static bool _iniciando = false;
+  
   /// Inicia o SincronizadorNuvem.exe se ele não estiver rodando
   static Future<bool> startSincronizador() async {
     if (kIsWeb || !Platform.isWindows) return false;
-
-    if (await isSincronizadorRunning()) {
-      debugPrint('>>> [SincronizadorManager] ✅ Sincronizador já está rodando');
+    
+    // Evitar múltiplas inicializações simultâneas (race condition)
+    if (_iniciando) {
+      debugPrint('>>> [SincronizadorManager] ⏳ Inicialização já em andamento, ignorando...');
       return true;
     }
-
+    _iniciando = true;
+    
     try {
+      if (await isSincronizadorRunning()) {
+        debugPrint('>>> [SincronizadorManager] ✅ Sincronizador já está rodando');
+        return true;
+      }
+
       // 1. Procurar executável em múltiplos locais
       final execPath = await _findExecutable();
       if (execPath == null) return false;
@@ -87,11 +97,11 @@ class SincronizadorManagerService {
       final pid = Win32ProcessHelper.startProcessHidden(execPath, workingDirectory: dir);
       if (pid == null) {
         debugPrint('>>> [SincronizadorManager] ⚠️ Win32 falhou, tentando fallback...');
-        await Process.start(execPath, [], mode: ProcessStartMode.detached, workingDirectory: dir);
+        await Process.start(execPath, [], mode: ProcessStartMode.normal, workingDirectory: dir);
       }
 
-      // 3. Aguardar inicialização com retries
-      for (int i = 0; i < 8; i++) {
+      // 3. Aguardar inicialização com retries (máximo 10s)
+      for (int i = 0; i < 5; i++) {
         await Future.delayed(const Duration(seconds: 2));
         if (await isSincronizadorRunning()) {
           debugPrint('>>> [SincronizadorManager] ✅ Sincronizador iniciado com sucesso (tentativa ${i + 1})');
@@ -100,10 +110,12 @@ class SincronizadorManagerService {
       }
 
       debugPrint('>>> [SincronizadorManager] ⚠️ Sincronizador pode estar iniciando...');
-      return true; // Retornar true pois o processo pode estar iniciando
+      return true;
     } catch (e) {
       debugPrint('>>> [SincronizadorManager] ❌ Erro ao iniciar sincronizador: $e');
       return false;
+    } finally {
+      _iniciando = false;
     }
   }
 }
