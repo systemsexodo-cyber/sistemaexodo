@@ -1632,11 +1632,12 @@ class DataService extends ChangeNotifier {
         if (totalLocal == 0) {
           debugPrint('>>> [Sync] ⚠️ Banco local INCOMPLETO (produtos=0, clientes=0, pedidos=0) mas timestamp de sync antigo existe. Resetando para FULL SYNC...');
           _ultimaSincronizacaoSucesso = null;
-        } else if (_produtos.isEmpty) {
-          // Produtos vazios mas outros dados existem — pode ter sido
-          // apagado parcialmente (ex.: limpeza manual da tabela). Forçar
-          // full sync para recuperar os produtos do Supabase.
-          debugPrint('>>> [Sync] ⚠️ Produtos vazios mas outros dados presentes (${_clientes.length} clientes, ${_pedidos.length} pedidos). Resetando delta para FULL SYNC...');
+        } else if (_produtos.isEmpty || _clientes.isEmpty || _pedidos.isEmpty) {
+          // Uma ou mais coleções críticas vazias mas timestamp antigo existe —
+          // pode ter sido apagado parcialmente (desinstalação, limpeza manual, etc).
+          // Forçar full sync para recuperar os dados do Supabase.
+          final int vazios = (_produtos.isEmpty ? 1 : 0) + (_clientes.isEmpty ? 1 : 0) + (_pedidos.isEmpty ? 1 : 0);
+          debugPrint('>>> [Sync] ⚠️ Coleções incompletas ($vazios vazias: produtos=${_produtos.length}, clientes=${_clientes.length}, pedidos=${_pedidos.length}). Resetando delta para FULL SYNC...');
           _ultimaSincronizacaoSucesso = null;
         }
       }
@@ -6113,8 +6114,8 @@ class DataService extends ChangeNotifier {
     // está vazia (banco reconstruído / desinstalação parcial), forçar full sync.
     // Sem isso, produtos antigos que não foram alterados desde o último sync
     // nunca seriam baixados do Supabase.
-    if (isDeltaSync && _produtos.isEmpty) {
-      debugPrint('>>> [Supabase] ⚠️ Delta sync ativo mas 0 produtos locais. Forçando FULL SYNC...');
+    if (isDeltaSync && (_produtos.isEmpty || _clientes.isEmpty || _pedidos.isEmpty)) {
+      debugPrint('>>> [Supabase] ⚠️ Delta sync ativo mas coleção(ões) vazia(s): produtos=${_produtos.length}, clientes=${_clientes.length}, pedidos=${_pedidos.length}. Forçando FULL SYNC...');
       isDeltaSync = false;
       lastSyncBuffer = null;
     }
@@ -6179,11 +6180,22 @@ class DataService extends ChangeNotifier {
 
       // 2. Produtos
       if (dados['produtos'] != null && (!isSilentSync || _produtosSubscription == null)) {
-        final novos = (dados['produtos'] as List).map((map) => Produto.fromMap(map as Map<String, dynamic>)).toList();
+        final rawProdutos = dados['produtos'] as List;
+        final List<Produto> novos = [];
+        int parseErros = 0;
+        for (final map in rawProdutos) {
+          try {
+            novos.add(Produto.fromMap(map as Map<String, dynamic>));
+          } catch (e) {
+            parseErros++;
+            debugPrint('>>> [Sync] ⚠️ Produto com erro de parse ignorado: id=${(map as Map<String, dynamic>)['id']}, nome=${map['nome']}, erro=$e');
+          }
+        }
+        debugPrint('>>> [Supabase] 📦 Produtos baixados: ${rawProdutos.length}, parse OK: ${novos.length}, erros: $parseErros');
         if (novos.isNotEmpty) {
           _mesclarSemRemover(_produtos, novos);
           _marcarSujo(LocalStorageService.keyProdutos);
-          print('>>> ✓ ${novos.length} produtos sincronizados do Supabase');
+          print('>>> ✓ ${novos.length} produtos sincronizados do Supabase (${parseErros > 0 ? '$parseErros com erro de parse' : 'sem erros'})');
         }
       }
 
