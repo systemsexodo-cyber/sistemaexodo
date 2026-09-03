@@ -905,6 +905,8 @@ class DataService extends ChangeNotifier {
             await _carregarDadosDoSupabase(modoLeve: false);
             await _salvarTodosDados(aguardarSupabase: false, isSync: true);
             await atualizarConflitosCount();
+            // Verificar se outra máquina enviou dados novos para a nuvem
+            await _verificarAtualizacoesNuvem();
             notifyListeners();
           } catch (e) {
             debugPrint('>>> [Sync] ⚠️ Erro no pulso de sincronia: $e');
@@ -7367,10 +7369,95 @@ class DataService extends ChangeNotifier {
       
       await _sincronizarComSupabase();
       
+      // 4. Incrementar sync_version no Supabase para que outras máquinas detectem
+      try {
+        await _incrementarSyncVersion();
+        // Salvar versão local para não detectar nosso próprio push
+        final config = Map<String, dynamic>.from(_empresaAtual?.configuracoes ?? {});
+        final newVersion = (config['sync_version'] as int?) ?? 1;
+        await _storage.salvar(_getEmpresaKey('exodo_sync_version'), newVersion);
+      } catch (e) {
+        debugPrint('>>> [Sync] ⚠️ Erro ao incrementar sync_version: $e (não bloqueante)');
+      }
+      
       debugPrint('>>> [Sync] ✅ Dados enviados para a nuvem com sucesso!');
     } finally {
       _isLoading = false;
       notifyListeners();
+    }
+  }
+
+  /// Incrementa um contador sync_version na tabela empresas do Supabase.
+  /// Outras máquinas detectam a mudança e forçam full sync.
+  Future<void> _incrementarSyncVersion() async {
+    if (_currentEmpresaId == null || _empresaAtual == null) return;
+    try {
+      final config = Map<String, dynamic>.from(_empresaAtual!.configuracoes ?? {});
+      final currentVersion = (config['sync_version'] as int?) ?? 0;
+      config['sync_version'] = currentVersion + 1;
+      config['last_cloud_push'] = DateTime.now().toUtc().toIso8601String();
+      await _supabaseService.upsert(
+        SupabaseService.tableEmpresas,
+        {
+          'id': _currentEmpresaId!,
+          'configuracoes': config,
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
+        },
+      );
+      debugPrint('>>> [Sync] 🔄 sync_version incrementada para ${currentVersion + 1}');
+    } catch (e) {
+      debugPrint('>>> [Sync] ⚠️ Erro ao incrementar sync_version: $e');
+    }
+  }
+
+  /// Verifica se o Supabase tem dados mais recentes que o local.
+  /// Chamado periodicamente pelo auto-sync para detectar uploads de outras máquinas.
+  Future<void> _verificarAtualizacoesNuvem() async {
+    if (_currentEmpresaId == null || !SupabaseService.isAvailable || _isOffline) return;
+    if (_syncEmAndamento) return;
+    
+    try {
+      // Buscar sync_version remoto
+      final result = await _supabaseService.client
+          .from(SupabaseService.tableEmpresas)
+          .select('configuracoes')
+          .eq('id', _currentEmpresaId!)
+          .maybeSingle()
+          .timeout(const Duration(seconds: 5));
+      
+      if (result == null) return;
+      
+      final config = result['configuracoes'] as Map<String, dynamic>?;
+      if (config == null) return;
+      
+      final remoteVersion = (config['sync_version'] as int?) ?? 0;
+      final localVersion = (await _storage.carregar(_getEmpresaKey('exodo_sync_version'))) ?? 0;
+      
+      if (remoteVersion > localVersion) {
+        debugPrint('>>> [Sync] 🔄 Nova versão detectada! Remoto: $remoteVersion, Local: $localVersion. Forçando FULL SYNC...');
+        
+        // Salvar nova versão local
+        await _storage.salvar(_getEmpresaKey('exodo_sync_version'), remoteVersion);
+        
+        // Forçar full sync resetando o timestamp
+        _ultimaSincronizacaoSucesso = null;
+        _ultimaSincronizacao = null;
+        
+        // Trigger download
+        _syncEmAndamento = true;
+        try {
+          await _carregarDadosDoSupabase(modoLeve: false);
+          await _salvarTodosDados(aguardarSupabase: false, isSync: true);
+          _ultimaSincronizacaoSucesso = DateTime.now();
+          _ultimaSincronizacao = _ultimaSincronizacaoSucesso;
+          notifyListeners();
+          debugPrint('>>> [Sync] ✅ Full sync concluído após detectar atualização da nuvem');
+        } finally {
+          _syncEmAndamento = false;
+        }
+      }
+    } catch (e) {
+      debugPrint('>>> [Sync] ⚠️ Erro ao verificar atualizações da nuvem: $e');
     }
   }
 
