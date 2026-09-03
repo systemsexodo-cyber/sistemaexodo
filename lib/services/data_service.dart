@@ -7439,7 +7439,23 @@ class DataService extends ChangeNotifier {
       _ultimaSincronizacao = null;
       _ultimaSincronizacaoSucesso = null;
       
-      // 3. Limpar dados antigos no Supabase antes de enviar (garante dados limpos)
+      // 3. Backup de seguranca ANTES de deletar dados do Supabase
+      _mensagemLoading = 'Criando backup de seguranca...';
+      notifyListeners();
+      try {
+        final backupService = BackupRestoreService(this);
+        final (backupOk, backupMsg, _) = await backupService.uploadBackupNaNuvem();
+        if (backupOk) {
+          debugPrint('>>> [Sync] 🛡️ Backup de seguranca criado antes da limpeza: $backupMsg');
+          addSyncLog('🛡️ Backup de seguranca criado antes de enviar dados para nuvem.');
+        } else {
+          debugPrint('>>> [Sync] ⚠️ Backup de seguranca falhou: $backupMsg');
+        }
+      } catch (e) {
+        debugPrint('>>> [Sync] ⚠️ Erro no backup de seguranca: $e (continuando)');
+      }
+      
+      // 4. Limpar dados antigos no Supabase antes de enviar (garante dados limpos)
       _mensagemLoading = 'Limpando dados antigos no Supabase...';
       notifyListeners();
       try {
@@ -7449,7 +7465,7 @@ class DataService extends ChangeNotifier {
         debugPrint('>>> [Sync] ⚠️ Aviso ao limpar Supabase: $e (continuando upload)');
       }
       
-      // 4. Enviar tudo para o Supabase
+      // 5. Enviar tudo para o Supabase
       _mensagemLoading = 'Enviando dados para a nuvem...';
       notifyListeners();
       debugPrint('>>> [Sync] 🚀 Enviando dados locais para Supabase...');
@@ -7471,6 +7487,70 @@ class DataService extends ChangeNotifier {
     } finally {
       _isLoading = false;
       notifyListeners();
+    }
+  }
+
+  /// Verifica integridade dos dados comparando contagens locais com Supabase.
+  /// Retorna (ok, mensagem, detalhes).
+  Future<(bool, String, Map<String, dynamic>)> verificarIntegridade() async {
+    if (_currentEmpresaId == null || !SupabaseService.isAvailable) {
+      return (false, 'Empresa não selecionada ou Supabase indisponível', <String, dynamic>{});
+    }
+    
+    try {
+      // Contagens locais
+      final local = {
+        'produtos': _produtos.length,
+        'clientes': _clientes.length,
+        'pedidos': _pedidos.length,
+        'servicos': _tiposServico.length,
+        'funcionarios': _funcionarios.length,
+      };
+      
+      // Contagens do Supabase
+      final remoto = <String, int>{};
+      final tabelas = {
+        'produtos': SupabaseService.tableProdutos,
+        'clientes': SupabaseService.tableClientes,
+        'pedidos': SupabaseService.tablePedidos,
+        'servicos': SupabaseService.tableServicos,
+        'funcionarios': SupabaseService.tableFuncionarios,
+      };
+      
+      for (final entry in tabelas.entries) {
+        try {
+          final result = await SupabaseService.instance.client
+              .from(entry.value)
+              .select('id')
+              .eq('empresa_id', _currentEmpresaId!)
+              .count();
+          remoto[entry.key] = result.count;
+        } catch (e) {
+          remoto[entry.key] = -1; // Erro na consulta
+        }
+      }
+      
+      // Comparar
+      final problemas = <String>[];
+      for (final key in local.keys) {
+        final loc = local[key] ?? 0;
+        final rem = remoto[key] ?? 0;
+        if (rem == -1) {
+          problemas.add('$key: erro ao consultar Supabase');
+        } else if (loc != rem) {
+          problemas.add('$key: local=$loc, nuvem=$rem');
+        }
+      }
+      
+      final ok = problemas.isEmpty;
+      final msg = ok
+          ? '✅ Integridade OK! Todas as contagens coincidem.'
+          : '⚠️ Diferenças encontradas:\n${problemas.join('\n')}';
+      
+      debugPrint('>>> [Sync] $msg');
+      return (ok, msg, <String, dynamic>{'local': local, 'remoto': remoto, 'problemas': problemas});
+    } catch (e) {
+      return (false, 'Erro ao verificar integridade: $e', <String, dynamic>{});
     }
   }
 

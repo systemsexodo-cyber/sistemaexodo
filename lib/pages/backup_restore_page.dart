@@ -155,6 +155,16 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
   Future<void> _enviarParaNuvem() async {
     if (_backupService == null) return;
     
+    // Obter contagens atuais para mostrar no dialog
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final contagemLocal = {
+      'Produtos': dataService.produtos.length,
+      'Clientes': dataService.clientes.length,
+      'Pedidos': dataService.pedidos.length,
+      'Serviços': dataService.tiposServico.length,
+      'Funcionários': dataService.funcionarios.length,
+    };
+    
     final confirmar = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -167,13 +177,41 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
             Text('Enviar para Nuvem', style: TextStyle(color: Colors.white, fontSize: 16)),
           ],
         ),
-        content: const Text(
-          '⚠️ ATENÇÃO: Isso vai:\n\n'
-          '1. LIMPAR todos os dados atuais desta empresa no Supabase\n'
-          '2. Enviar os dados do backup local para o Supabase\n'
-          '3. As outras máquinas receberão os dados na próxima sincronização\n\n'
-          'Os dados antigos no Supabase serão SUBSTITUÍDOS.\n\nContinuar?',
-          style: TextStyle(color: Colors.white70),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              '⚠️ ATENÇÃO: Isso vai:\n\n'
+              '1. Criar backup de segurança na nuvem\n'
+              '2. LIMPAR todos os dados atuais no Supabase\n'
+              '3. Enviar os dados locais para o Supabase\n'
+              '4. Outras máquinas receberão na próxima sincronização\n\n'
+              'Dados locais que serão enviados:',
+              style: TextStyle(color: Colors.white70),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.cyanAccent.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.cyanAccent.withOpacity(0.3)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: contagemLocal.entries.map((e) => Text(
+                  '${e.key}: ${e.value} registros',
+                  style: const TextStyle(color: Colors.white, fontSize: 13),
+                )).toList(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Os dados antigos no Supabase serão SUBSTITUÍDOS.\nContinuar?',
+              style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold),
+            ),
+          ],
         ),
         actions: [
           TextButton(
@@ -548,6 +586,25 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
               const SizedBox(height: 12),
               const Center(child: CircularProgressIndicator(color: Colors.cyanAccent)),
             ],
+            const SizedBox(height: 12),
+            // Botão verificar integridade
+            SizedBox(
+              width: double.infinity,
+              child: _buildBotaoAcao(
+                icon: Icons.verified,
+                label: 'Verificar Integridade',
+                desc: 'Comparar dados locais com Supabase',
+                cor: Colors.green,
+                onTap: () async {
+                  final dataService = Provider.of<DataService>(context, listen: false);
+                  _mostrarSnackBar('🔄 Verificando integridade...', Colors.orange);
+                  final (ok, msg, _) = await dataService.verificarIntegridade();
+                  if (mounted) {
+                    _mostrarSnackBar(msg, ok ? Colors.green : Colors.orange);
+                  }
+                },
+              ),
+            ),
             // Lista de backups na nuvem
             if (_backupsNuvem.isNotEmpty) ...[
               const SizedBox(height: 16),
