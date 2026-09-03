@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
@@ -6,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'data_service.dart';
 import 'database_service.dart';
+import 'env_config.dart';
 import '../pages/html_helper_stub.dart'
     if (dart.library.html) '../pages/html_helper_web.dart' as html_helper;
 
@@ -143,5 +145,156 @@ class BackupRestoreService {
       return false;
     }
     return await _dataService.importarBackup(backup);
+  }
+
+  // ============================================================
+  // RESTORE FROM POSTGRESQL DUMP
+  // ============================================================
+
+  /// Abre o seletor de arquivos para dumps PostgreSQL (.dump, .sql, .pg_dump)
+  Future<File?> selecionarArquivoDump() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['dump', 'sql', 'pg_dump', 'bak'],
+      );
+      if (result == null || result.files.isEmpty) return null;
+
+      final filePath = result.files.first.path;
+      if (filePath == null) return null;
+
+      return File(filePath);
+    } catch (e) {
+      debugPrint('>>> [BackupRestore] ❌ Erro ao selecionar dump: $e');
+      return null;
+    }
+  }
+
+  /// Restaura o banco de dados PostgreSQL a partir de um arquivo dump
+  /// Retorna (sucesso, mensagem)
+  Future<(bool, String)> restaurarDumpPostgres(File dumpFile) async {
+    try {
+      // Ler configuração do banco de dados do .env
+      final env = EnvConfig.env;
+      final dbHost = env['DB_HOST'] ?? '127.0.0.1';
+      final dbPort = env['DB_PORT'] ?? '5432';
+      final dbName = env['DB_NAME'] ?? 'exodo_db';
+      final dbUser = env['DB_USER'] ?? 'exodo_user';
+      final dbPass = env['DB_PASSWORD'] ?? '';
+
+      final fileName = p.basename(dumpFile.path).toLowerCase();
+      final isSql = fileName.endsWith('.sql');
+      final isDump = fileName.endsWith('.dump') || fileName.endsWith('.pg_dump') || fileName.endsWith('.bak');
+
+      if (!isSql && !isDump) {
+        return (false, 'Formato de arquivo não reconhecido. Use arquivos .sql ou .dump');
+      }
+
+      debugPrint('>>> [BackupRestore] 🔄 Restaurando dump PostgreSQL: ${dumpFile.path}');
+      debugPrint('>>> [BackupRestore] 📋 Banco: $dbName@$dbHost:$dbPort (user: $dbUser)');
+
+      // Verificar se pg_restore ou psql existem
+      final psqlPath = await _findExecutable('psql');
+      final pgRestorePath = await _findExecutable('pg_restore');
+
+      List<String> args;
+      String executable;
+
+      if (isDump && pgRestorePath != null) {
+        // Usar pg_restore para arquivos .dump
+        executable = pgRestorePath;
+        args = [
+          '-h', dbHost,
+          '-p', dbPort,
+          '-U', dbUser,
+          '-d', dbName,
+          '--clean',
+          '--if-exists',
+          '--no-owner',
+          '--no-privileges',
+          dumpFile.path,
+        ];
+      } else if (psqlPath != null) {
+        // Usar psql para arquivos .sql ou fallback
+        executable = psqlPath;
+        args = [
+          '-h', dbHost,
+          '-p', dbPort,
+          '-U', dbUser,
+          '-d', dbName,
+          '-f', dumpFile.path,
+        ];
+      } else {
+        return (false, 'Nem psql nem pg_restore encontrados. Instale o PostgreSQL client tools e adicione ao PATH do sistema.');
+      }
+
+      debugPrint('>>> [BackupRestore] 🖥️ Executando: $executable ${args.join(' ')}');
+
+      // Executar o comando com a senha via variável de ambiente
+      final environment = Map<String, String>.from(Platform.environment);
+      environment['PGPASSWORD'] = dbPass;
+
+      final result = await Process.run(
+        executable,
+        args,
+        environment: environment,
+        runInShell: true,
+      ).timeout(
+        const Duration(minutes: 30),
+        onTimeout: () {
+          throw TimeoutException('Restauração excedeu o tempo limite de 30 minutos');
+        },
+      );
+
+      if (result.exitCode == 0) {
+        debugPrint('>>> [BackupRestore] ✅ Dump restaurado com sucesso!');
+        return (true, 'Dump restaurado com sucesso! Reinicie o app para carregar os dados.');
+      } else {
+        final stderr = result.stderr.toString().trim();
+        final stdout = result.stdout.toString().trim();
+        debugPrint('>>> [BackupRestore] ❌ Erro na restauração (exitCode: ${result.exitCode})');
+        debugPrint('>>> [BackupRestore] STDERR: $stderr');
+        debugPrint('>>> [BackupRestore] STDOUT: $stdout');
+
+        // Mensagens de erro amigáveis
+        if (stderr.contains('could not connect') || stderr.contains('connection refused')) {
+          return (false, 'Não foi possível conectar ao PostgreSQL. Verifique se o serviço está rodando.');
+        }
+        if (stderr.contains('does not exist') && stderr.contains('database')) {
+          return (false, 'Banco de dados "$dbName" não existe. Crie-o primeiro com: createdb $dbName');
+        }
+        if (stderr.contains('authentication failed') || stderr.contains('password authentication')) {
+          return (false, 'Falha de autenticação. Verifique DB_USER e DB_PASSWORD no arquivo .env');
+        }
+        if (stderr.contains('permission denied') || result.exitCode == 127) {
+          return (false, 'Permissão negada ou executável não encontrado. Verifique se o PostgreSQL está no PATH.');
+        }
+
+        return (false, 'Erro na restauração: ${stderr.isNotEmpty ? stderr : stdout}');
+      }
+    } on TimeoutException {
+      return (false, 'Restauração excedeu o tempo limite (30 min). Arquivo pode ser muito grande.');
+    } catch (e) {
+      debugPrint('>>> [BackupRestore] ❌ Erro inesperado: $e');
+      return (false, 'Erro inesperado: $e');
+    }
+  }
+
+  /// Procura um executável no PATH do sistema
+  Future<String?> _findExecutable(String name) async {
+    try {
+      final result = await Process.run(
+        Platform.isWindows ? 'where' : 'which',
+        [name],
+      );
+      if (result.exitCode == 0) {
+        final output = result.stdout.toString().trim();
+        final lines = output.split(Platform.isWindows ? '\r\n' : '\n');
+        if (lines.isNotEmpty && lines.first.isNotEmpty) {
+          return lines.first;
+        }
+      }
+    } catch (_) {}
+    return null;
   }
 }

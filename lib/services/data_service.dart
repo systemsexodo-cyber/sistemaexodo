@@ -6169,8 +6169,7 @@ class DataService extends ChangeNotifier {
 
       // 1. Clientes
       if (dados['clientes'] != null) {
-        final novosRaw = dados['clientes'] as List;
-        final novos = novosRaw.map((map) => Cliente.fromMap(map as Map<String, dynamic>)).toList();
+        final novos = _parseListaSegura(dados['clientes'] as List, Cliente.fromMap, nomeColecao: 'Clientes');
         if (novos.isNotEmpty) {
           _mesclarSemRemover(_clientes, novos);
           _marcarSujo(LocalStorageService.keyClientes);
@@ -6201,7 +6200,7 @@ class DataService extends ChangeNotifier {
 
       // 3. Serviços
       if (dados['servicos'] != null && (!isSilentSync || _servicosSubscription == null)) {
-        final novos = (dados['servicos'] as List).map((map) => Servico.fromMap(map as Map<String, dynamic>)).toList();
+        final novos = _parseListaSegura(dados['servicos'] as List, Servico.fromMap, nomeColecao: 'Serviços');
         if (novos.isNotEmpty) {
           _mesclarSemRemover(_tiposServico, novos);
           _marcarSujo(LocalStorageService.keyServicos);
@@ -6211,7 +6210,7 @@ class DataService extends ChangeNotifier {
 
       // 4. Pedidos
       if (dados['pedidos'] != null && dados['pedidos'].isNotEmpty) {
-        final novosPedidos = (dados['pedidos'] as List).map((map) => Pedido.fromMap(map as Map<String, dynamic>)).toList();
+        final novosPedidos = _parseListaSegura(dados['pedidos'] as List, Pedido.fromMap, nomeColecao: 'Pedidos');
         bool dirty = false;
         for (final pedido in novosPedidos) {
           final indexLocal = _pedidos.indexWhere((p) => p.id == pedido.id);
@@ -6254,8 +6253,7 @@ class DataService extends ChangeNotifier {
 
       // 5. Ordens de Serviço
       if (dados['ordens_servico'] != null && dados['ordens_servico'].isNotEmpty) {
-        final novasOrdens = (dados['ordens_servico'] as List)
-            .map((map) => OrdemServico.fromMap(map as Map<String, dynamic>)).toList();
+        final novasOrdens = _parseListaSegura(dados['ordens_servico'] as List, OrdemServico.fromMap, nomeColecao: 'Ordens de Serviço');
         for (final ordem in novasOrdens) {
           final index = _ordensServico.indexWhere((o) => o.id == ordem.id);
           if (index >= 0) {
@@ -6270,7 +6268,7 @@ class DataService extends ChangeNotifier {
 
       // 6. Entregas
       if (dados['entregas'] != null && dados['entregas'].isNotEmpty) {
-        final novasEntregas = (dados['entregas'] as List).map((map) => Entrega.fromMap(map as Map<String, dynamic>)).toList();
+        final novasEntregas = _parseListaSegura(dados['entregas'] as List, Entrega.fromMap, nomeColecao: 'Entregas');
         for (final entrega in novasEntregas) {
           final index = _entregas.indexWhere((e) => e.id == entrega.id);
           if (index >= 0) {
@@ -6285,7 +6283,7 @@ class DataService extends ChangeNotifier {
 
       // 7. Motoristas
       if (dados['motoristas'] != null && dados['motoristas'].isNotEmpty) {
-        final novosMotoristas = (dados['motoristas'] as List).map((map) => Motorista.fromMap(map as Map<String, dynamic>)).toList();
+        final novosMotoristas = _parseListaSegura(dados['motoristas'] as List, Motorista.fromMap, nomeColecao: 'Motoristas');
         for (final motorista in novosMotoristas) {
           final index = _motoristas.indexWhere((m) => m.id == motorista.id);
           if (index >= 0) {
@@ -6300,8 +6298,7 @@ class DataService extends ChangeNotifier {
 
       // 8. Vendas Balcão
       if (dados['vendas_balcao'] != null && dados['vendas_balcao'].isNotEmpty) {
-        final novasVendasRaw = dados['vendas_balcao'] as List;
-        final novasVendas = novasVendasRaw.map((map) => VendaBalcao.fromMap(map as Map<String, dynamic>)).toList();
+        final novasVendas = _parseListaSegura(dados['vendas_balcao'] as List, VendaBalcao.fromMap, nomeColecao: 'Vendas Balcão');
         bool dirty = false;
         for (final venda in novasVendas) {
           final indexLocal = _vendasBalcao.indexWhere((v) => v.id == venda.id);
@@ -6339,7 +6336,7 @@ class DataService extends ChangeNotifier {
 
       // 9. Trocas/Devoluções
       if (dados['trocas_devolucoes'] != null && dados['trocas_devolucoes'].isNotEmpty) {
-        final novasTrocas = (dados['trocas_devolucoes'] as List).map((map) => TrocaDevolucao.fromMap(map as Map<String, dynamic>)).where(_isTrocaDevolucaoValida).toList();
+        final novasTrocas = _parseListaSegura(dados['trocas_devolucoes'] as List, TrocaDevolucao.fromMap, nomeColecao: 'Trocas/Devoluções').where(_isTrocaDevolucaoValida).toList();
         for (final troca in novasTrocas) {
           final index = _trocasDevolucoes.indexWhere((t) => t.id == troca.id);
           if (index >= 0) {
@@ -6354,7 +6351,7 @@ class DataService extends ChangeNotifier {
 
       // 10. Histórico de Estoque
       if (dados['estoque_historico'] != null && dados['estoque_historico'].isNotEmpty) {
-        final novosRegistros = (dados['estoque_historico'] as List).map((map) => EstoqueHistorico.fromMap(map as Map<String, dynamic>)).toList();
+        final novosRegistros = _parseListaSegura(dados['estoque_historico'] as List, EstoqueHistorico.fromMap, nomeColecao: 'Estoque Histórico');
         for (final registro in novosRegistros) {
           final index = _estoqueHistorico.indexWhere((e) => e.id == registro.id);
           if (index >= 0) {
@@ -6369,7 +6366,7 @@ class DataService extends ChangeNotifier {
 
       // 10b. Lotes de Produtos (validade/lote)
       if (dados['lotes_produto'] != null && dados['lotes_produto'].isNotEmpty) {
-        final novosLotes = (dados['lotes_produto'] as List).map((map) => LoteProduto.fromMap(map as Map<String, dynamic>)).toList();
+        final novosLotes = _parseListaSegura(dados['lotes_produto'] as List, LoteProduto.fromMap, nomeColecao: 'Lotes de Produto');
         for (final lote in novosLotes) {
           final index = _lotesProdutos.indexWhere((l) => l.id == lote.id);
           if (index >= 0) {
@@ -6384,7 +6381,7 @@ class DataService extends ChangeNotifier {
 
       // 11. Aberturas de Caixa
       if (dados['aberturas_caixa'] != null && dados['aberturas_caixa'].isNotEmpty) {
-        final novasAberturas = (dados['aberturas_caixa'] as List).map((map) => AberturaCaixa.fromMap(map as Map<String, dynamic>)).toList();
+        final novasAberturas = _parseListaSegura(dados['aberturas_caixa'] as List, AberturaCaixa.fromMap, nomeColecao: 'Aberturas de Caixa');
         for (final abertura in novasAberturas) {
           final index = _aberturasCaixa.indexWhere((a) => a.id == abertura.id);
           if (index >= 0) {
@@ -6402,7 +6399,7 @@ class DataService extends ChangeNotifier {
 
       // 12. Fechamentos de Caixa
       if (dados['fechamentos_caixa'] != null && dados['fechamentos_caixa'].isNotEmpty) {
-        final novosFechamentos = (dados['fechamentos_caixa'] as List).map((map) => FechamentoCaixa.fromMap(map as Map<String, dynamic>)).toList();
+        final novosFechamentos = _parseListaSegura(dados['fechamentos_caixa'] as List, FechamentoCaixa.fromMap, nomeColecao: 'Fechamentos de Caixa');
         for (final fechamento in novosFechamentos) {
           final index = _fechamentosCaixa.indexWhere((f) => f.id == fechamento.id);
           if (index >= 0) {
@@ -6418,8 +6415,7 @@ class DataService extends ChangeNotifier {
 
       // 13. Mesas/Comandas
       if (dados['mesas_comandas'] != null && dados['mesas_comandas'].isNotEmpty) {
-        final novasMesasRaw = (dados['mesas_comandas'] as List)
-            .map((map) => MesaComanda.fromMap(map as Map<String, dynamic>))
+        final novasMesasRaw = _parseListaSegura(dados['mesas_comandas'] as List, MesaComanda.fromMap, nomeColecao: 'Mesas/Comandas')
             .where((m) => !_idsMesaRemovidosRecentemente.contains(m.id))
             .toList();
         _mesclarMesasComandas(novasMesasRaw, isDelta: isDeltaSync);
@@ -6429,7 +6425,7 @@ class DataService extends ChangeNotifier {
 
       // 14. Romaneios
       if (dados['romaneios'] != null && dados['romaneios'].isNotEmpty) {
-        final novos = (dados['romaneios'] as List).map((map) => Romaneio.fromMap(map as Map<String, dynamic>)).toList();
+        final novos = _parseListaSegura(dados['romaneios'] as List, Romaneio.fromMap, nomeColecao: 'Romaneios');
         for (final item in novos) {
           _romaneios.removeWhere((r) => r.id == item.id);
           _romaneios.add(item);
@@ -6440,7 +6436,7 @@ class DataService extends ChangeNotifier {
 
       // 15. Funcionários
       if (dados['funcionarios'] != null && dados['funcionarios'].isNotEmpty) {
-        final novos = (dados['funcionarios'] as List).map((map) => Funcionario.fromMap(map as Map<String, dynamic>)).toList();
+        final novos = _parseListaSegura(dados['funcionarios'] as List, Funcionario.fromMap, nomeColecao: 'Funcionários');
         _mesclarSemRemover(_funcionarios, novos);
         _marcarSujo(LocalStorageService.keyFuncionarios);
         print('>>> ✓ ${novos.length} funcionários carregados do Supabase');
@@ -6448,54 +6444,54 @@ class DataService extends ChangeNotifier {
 
       // 16. Taxas de Entrega
       if (dados['taxas_entrega'] != null && dados['taxas_entrega'].isNotEmpty) {
-        final novos = (dados['taxas_entrega'] as List).map((map) => TaxaEntrega.fromMap(map as Map<String, dynamic>)).toList();
+        final novos = _parseListaSegura(dados['taxas_entrega'] as List, TaxaEntrega.fromMap, nomeColecao: 'Taxas de Entrega');
         _mesclarSemRemover(_taxasEntrega, novos);
         _marcarSujo(LocalStorageService.keyTaxasEntrega);
       }
 
       // 17. Contas a Pagar
       if (dados['contas_pagar'] != null && dados['contas_pagar'].isNotEmpty) {
-        final novos = (dados['contas_pagar'] as List).map((map) => ContaPagar.fromMap(map as Map<String, dynamic>)).toList();
+        final novos = _parseListaSegura(dados['contas_pagar'] as List, ContaPagar.fromMap, nomeColecao: 'Contas a Pagar');
         _mesclarSemRemover(_contasPagar, novos);
         _marcarSujo(LocalStorageService.keyContasPagar);
       }
 
       // 18. NFC-es e NF-es
       if (dados['nfces'] != null && dados['nfces'].isNotEmpty) {
-        final novos = (dados['nfces'] as List).map((map) => NFCe.fromMap(map as Map<String, dynamic>)).toList();
+        final novos = _parseListaSegura(dados['nfces'] as List, NFCe.fromMap, nomeColecao: 'NFC-es');
         _mesclarSemRemover(_nfces, novos);
         _marcarSujo(LocalStorageService.keyNFCes);
       }
       if (dados['nfes'] != null && dados['nfes'].isNotEmpty) {
-        final novos = (dados['nfes'] as List).map((map) => NFCe.fromMap(map as Map<String, dynamic>)).toList();
+        final novos = _parseListaSegura(dados['nfes'] as List, NFCe.fromMap, nomeColecao: 'NF-es');
         _mesclarSemRemover(_nfes, novos);
         _marcarSujo(LocalStorageService.keyNFEs);
       }
 
       // 19. Sangrias
       if (dados['sangrias'] != null && dados['sangrias'].isNotEmpty) {
-        final novos = (dados['sangrias'] as List).map((map) => SangriaCaixa.fromMap(map as Map<String, dynamic>)).toList();
+        final novos = _parseListaSegura(dados['sangrias'] as List, SangriaCaixa.fromMap, nomeColecao: 'Sangrias');
         _mesclarSemRemover(_sangrias, novos);
         _marcarSujo(LocalStorageService.keySangriasField);
       }
 
       // 20. Suprimentos
       if (dados['suprimentos'] != null && dados['suprimentos'].isNotEmpty) {
-        final novos = (dados['suprimentos'] as List).map((map) => SuprimentoCaixa.fromMap(map as Map<String, dynamic>)).toList();
+        final novos = _parseListaSegura(dados['suprimentos'] as List, SuprimentoCaixa.fromMap, nomeColecao: 'Suprimentos');
         _mesclarSemRemover(_suprimentos, novos);
         _marcarSujo(LocalStorageService.keySuprimentosField);
       }
 
       // 21. Links de Vendedores
       if (dados['links_vendedores'] != null && dados['links_vendedores'].isNotEmpty) {
-        final novos = (dados['links_vendedores'] as List).map((map) => LinkVendedor.fromMap(map as Map<String, dynamic>)).toList();
+        final novos = _parseListaSegura(dados['links_vendedores'] as List, LinkVendedor.fromMap, nomeColecao: 'Links de Vendedores');
         _mesclarSemRemover(_linksVendedores, novos);
         _marcarSujo(LocalStorageService.keyLinksVendedores);
       }
 
       // 22. Comissões de Vendedores
       if (dados['comissoes_vendedores'] != null && dados['comissoes_vendedores'].isNotEmpty) {
-        final novos = (dados['comissoes_vendedores'] as List).map((map) => ComissaoVendedor.fromMap(map as Map<String, dynamic>)).toList();
+        final novos = _parseListaSegura(dados['comissoes_vendedores'] as List, ComissaoVendedor.fromMap, nomeColecao: 'Comissões de Vendedores');
         _mesclarSemRemover(_comissoesVendedores, novos);
         _marcarSujo(LocalStorageService.keyComissoesVendedores);
       }
@@ -6504,15 +6500,9 @@ class DataService extends ChangeNotifier {
       final agendamentosNoSupabase = dados['agendamentos_servico'] as List?;
       if (agendamentosNoSupabase != null && agendamentosNoSupabase.isNotEmpty) {
         if (!isSilentSync || _agendamentosSubscription == null) {
-          final novosAgendamentos = agendamentosNoSupabase.map((map) {
-            try {
-              final agendamento = AgendamentoServico.fromMap(map as Map<String, dynamic>);
-              return _vincularReferenciasAgendamento(agendamento);
-            } catch (e) {
-              print('>>> ❌ ERRO ao processar agendamento do Supabase: $e');
-              return null;
-            }
-          }).where((a) => a != null).cast<AgendamentoServico>().toList();
+          final novosAgendamentos = _parseListaSegura(agendamentosNoSupabase, AgendamentoServico.fromMap, nomeColecao: 'Agendamentos')
+              .map((a) => _vincularReferenciasAgendamento(a))
+              .toList();
           
           for (final agendamento in novosAgendamentos) {
             _upsertAgendamentoLocal(agendamento);
@@ -6996,9 +6986,7 @@ class DataService extends ChangeNotifier {
         listaLocal.add(novo);
       }
     }
-  }
-
-  static void _atualizarListaInPlace<T>(List<T> listaAtual, List<T> novosItens) {
+  }  static void _atualizarListaInPlace<T>(List<T> listaAtual, List<T> novosItens) {
     if (novosItens.isEmpty) {
       listaAtual.clear();
       return;
@@ -7006,7 +6994,7 @@ class DataService extends ChangeNotifier {
 
     // BARREIRA DE SEGURANÇA: Limite aumentado para 25.000 itens para suportar catálogos massivos
     final List<T> itensSeguros = novosItens.length > 25000 
-        ? novosItens.take(25000).toList() 
+        ? novosItens.take(25000).toList()
         : novosItens;
 
     if (novosItens.length > 15000) {
@@ -7015,6 +7003,29 @@ class DataService extends ChangeNotifier {
 
     listaAtual.clear();
     listaAtual.addAll(itensSeguros);
+  }
+
+  /// Parse seguro de uma lista de registros vindos do Supabase.
+  /// Se um registro falhar no parse, ele é ignorado (logado) e os demais
+  /// continuam sendo processados. Retorna a lista de objetos parseados com
+  /// sucesso.
+  static List<T> _parseListaSegura<T>(
+    List rawList,
+    T Function(Map<String, dynamic>) fromMap, {
+    required String nomeColecao,
+  }) {
+    final List<T> resultado = [];
+    int erros = 0;
+    for (final map in rawList) {
+      try {
+        resultado.add(fromMap(map as Map<String, dynamic>));
+      } catch (e) {
+        erros++;
+        debugPrint('>>> [Sync] ⚠️ $nomeColecao com erro de parse ignorado: id=${(map as Map<String, dynamic>)['id'] ?? '?'} erro=$e');
+      }
+    }
+    debugPrint('>>> [Supabase] 📦 $nomeColecao: ${rawList.length} baixados, ${resultado.length} parse OK, $erros erros');
+    return resultado;
   }
 
   /// Mescla mesas/comandas no estado local de forma inteligente baseada em updatedAt

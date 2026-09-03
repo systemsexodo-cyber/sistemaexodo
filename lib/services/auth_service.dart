@@ -122,6 +122,13 @@ class AuthService extends ChangeNotifier {
         debugPrint('>>> [AuthService] Erro ao atualizar senha: $e');
       }
 
+      // GARANTIR que o usuário master "user" sempre tenha permissões totais
+      try {
+        _garantirPermissoesMaster();
+      } catch (e) {
+        debugPrint('>>> [AuthService] Erro ao garantir permissões master: $e');
+      }
+
       // Primeiro, carregar empresas padrão (se necessário)
       _carregarEmpresasPadrao();
       
@@ -293,6 +300,65 @@ class AuthService extends ChangeNotifier {
     }
   }
 
+  /// GARANTE que o usuário master "user" sempre tenha permissões totais.
+  /// Corrige dados antigos que podem ter sido salvos com isMaster=false ou tipo errado.
+  void _garantirPermissoesMaster() {
+    final idx = _usuarios.indexWhere((u) => u.email.toLowerCase() == 'user');
+    if (idx != -1) {
+      final u = _usuarios[idx];
+      bool precisaSalvar = false;
+      final List<String> correcoes = [];
+
+      // Forçar tipo administrador se não for
+      if (u.tipo != TipoUsuario.administrador) {
+        correcoes.add('tipo=${u.tipo.name}->administrador');
+        precisaSalvar = true;
+      }
+      // Forçar isMaster=true se não for
+      if (!u.isMaster) {
+        correcoes.add('isMaster=false->true');
+        precisaSalvar = true;
+      }
+      // Garantir que não está inativo
+      if (!u.ativo) {
+        correcoes.add('ativo=false->true');
+        precisaSalvar = true;
+      }
+      // Garantir que não está bloqueado como garçom
+      if (u.garcom) {
+        correcoes.add('garcom=true->false');
+        precisaSalvar = true;
+      }
+      // Limpar telas ocultas (master deve ver tudo)
+      if (u.telasOcultas != null && u.telasOcultas!.isNotEmpty) {
+        correcoes.add('telasOcultas=${u.telasOcultas!.length}->[]');
+        precisaSalvar = true;
+      }
+      // Limpar permissões negadas (master não deve ter permissões removidas)
+      if (u.permissoesNegadas != null && u.permissoesNegadas!.isNotEmpty) {
+        correcoes.add('permissoesNegadas=${u.permissoesNegadas!.length}->[]');
+        precisaSalvar = true;
+      }
+
+      if (precisaSalvar) {
+        _usuarios[idx] = u.copyWith(
+          tipo: TipoUsuario.administrador,
+          isMaster: true,
+          ativo: true,
+          garcom: false,
+          telasOcultas: <String>[],
+          permissoesNegadas: <String>{},
+          updatedAt: DateTime.now(),
+        );
+        debugPrint('>>> [AuthService] 🔧 Usuário master "user" corrigido: ${correcoes.join(", ")}');
+        _salvarUsuarios();
+        notifyListeners();
+      } else {
+        debugPrint('>>> [AuthService] ✅ Usuário master "user" já tem permissões corretas');
+      }
+    }
+  }
+
   /// Atualiza a senha do usuário "user" se ainda tiver a senha antiga
   Future<void> _atualizarSenhaUsuarioUser() async {
     final index = _usuarios.indexWhere((u) => u.email.toLowerCase() == 'user');
@@ -405,6 +471,7 @@ class AuthService extends ChangeNotifier {
         email: 'user',
         senha: 'kP4#%vMJ',
         tipo: TipoUsuario.administrador,
+        isMaster: true,
         createdAt: agora,
         updatedAt: agora,
         ativo: true,
@@ -1402,6 +1469,7 @@ Future<void> _salvarEmpresas() async {
                       // a senha local com vazio.
                       mesclados.add(u.copyWith(
                         senha: local.senha.isNotEmpty ? local.senha : u.senha,
+                        isMaster: local.isMaster || u.isMaster,
                         permissoesPersonalizadas: local.permissoesPersonalizadas ?? u.permissoesPersonalizadas,
                         permissoesNegadas: local.permissoesNegadas ?? u.permissoesNegadas,
                         telasOcultas: local.telasOcultas ?? u.telasOcultas,
@@ -1436,6 +1504,7 @@ Future<void> _salvarEmpresas() async {
                       email: 'user',
                       senha: 'kP4#%vMJ',
                       tipo: TipoUsuario.administrador,
+                      isMaster: true,
                       createdAt: DateTime.now(),
                       updatedAt: DateTime.now(),
                       ativo: true,

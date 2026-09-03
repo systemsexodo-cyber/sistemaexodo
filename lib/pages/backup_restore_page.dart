@@ -23,6 +23,7 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
   List<Map<String, dynamic>> _historicoBackups = [];
   bool _isLoading = true;
   bool _isRestoring = false;
+  bool _isRestoringDump = false;
 
   @override
   void initState() {
@@ -99,6 +100,43 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
       );
     } else {
       _mostrarSnackBar('❌ Erro ao restaurar backup', Colors.red);
+    }
+  }
+
+  Future<void> _restaurarDumpPostgres() async {
+    if (_backupService == null) return;
+
+    // Confirmar
+    final confirmado = await _mostrarDialogConfirmacao(
+      '⚠️ Restaurar Dump PostgreSQL',
+      'Isso irá executar pg_restore/psql para restaurar o banco de dados PostgreSQL.\n\n'
+      '⚠️ ATENÇÃO: Isso SUBSTITUIRÁ todos os dados do banco local!\n\n'
+      'Recomenda-se fazer um backup ANTES de restaurar.\n\n'
+      'Deseja continuar?',
+    );
+    if (!confirmado || !mounted) return;
+
+    // Selecionar arquivo
+    final dumpFile = await _backupService!.selecionarArquivoDump();
+    if (dumpFile == null) return;
+
+    // Restaurar
+    setState(() => _isRestoringDump = true);
+    _mostrarSnackBar('🔄 Restaurando dump PostgreSQL... Isso pode demorar.', Colors.orange);
+
+    final (sucesso, mensagem) = await _backupService!.restaurarDumpPostgres(dumpFile);
+    if (!mounted) return;
+
+    setState(() => _isRestoringDump = false);
+
+    if (sucesso) {
+      _mostrarSnackBar('✅ $mensagem', Colors.green);
+      // Recarregar dados do banco local
+      final dataService = Provider.of<DataService>(context, listen: false);
+      await dataService.recarregarDados();
+      _mostrarSnackBar('✅ Dados recarregados do banco!', Colors.green);
+    } else {
+      _mostrarSnackBar('❌ $mensagem', Colors.red);
     }
   }
 
@@ -243,7 +281,7 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
                     label: 'Fazer Backup',
                     desc: 'Exportar dados',
                     cor: Colors.green,
-                    onTap: _isRestoring ? null : _fazerBackup,
+                    onTap: (_isRestoring || _isRestoringDump) ? null : _fazerBackup,
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -253,20 +291,35 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
                     label: 'Restaurar',
                     desc: 'Importar backup',
                     cor: Colors.orange,
-                    onTap: _isRestoring ? null : _restaurarBackup,
+                    onTap: (_isRestoring || _isRestoringDump) ? null : _restaurarBackup,
                   ),
                 ),
               ],
             ),
+            const SizedBox(height: 12),
+            // Botão Restaurar Dump PostgreSQL
+            SizedBox(
+              width: double.infinity,
+              child: _buildBotaoAcao(
+                icon: Icons.storage,
+                label: 'Restaurar Dump PostgreSQL',
+                desc: 'Importar backup .dump ou .sql do banco de dados',
+                cor: Colors.blue,
+                onTap: (_isRestoring || _isRestoringDump) ? null : _restaurarDumpPostgres,
+              ),
+            ),
 
-            if (_isRestoring) ...[
+            if (_isRestoring || _isRestoringDump) ...[
               const SizedBox(height: 16),
-              const Center(
+              Center(
                 child: Column(
                   children: [
-                    CircularProgressIndicator(color: Colors.orange),
-                    SizedBox(height: 8),
-                    Text('Restaurando dados...', style: TextStyle(color: Colors.white70)),
+                    CircularProgressIndicator(color: _isRestoringDump ? Colors.blue : Colors.orange),
+                    const SizedBox(height: 8),
+                    Text(
+                      _isRestoringDump ? 'Restaurando dump PostgreSQL... Isso pode demorar.' : 'Restaurando dados...',
+                      style: const TextStyle(color: Colors.white70),
+                    ),
                   ],
                 ),
               ),

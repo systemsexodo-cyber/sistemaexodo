@@ -17,6 +17,7 @@ import '../services/process_utils.dart';
 import '../services/app_update_service.dart';
 import 'bloqueio_mensalidade_page.dart';
 import 'monitor_page.dart';
+import 'backup_restore_page.dart';
 /// Classe para armazenar o progresso da importação
 class ImportProgress {
   final int processados;
@@ -221,6 +222,8 @@ class _EmpresasPageState extends State<EmpresasPage> {
                   _buildCardGoogleDriveBackup(context),
                   // NOVO: Card do Google Drive - RESTAURAR (Verde)
                   _buildCardGoogleDriveRestore(context),
+                  // NOVO: Card de Backup e Restauracao Local (Vermelho)
+                  _buildCardBackupRestore(context),
                   // NOVO: Card de Publicar Atualização Global
                   if (podeAcessar)
                     _buildCardPublicarAtualizacaoGlobal(context),
@@ -1438,6 +1441,73 @@ class _EmpresasPageState extends State<EmpresasPage> {
                   ),
                 ),
                 const Icon(Icons.arrow_forward_ios, color: Colors.white, size: 20),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCardBackupRestore(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Colors.red.withOpacity(0.3), Colors.red.withOpacity(0.1)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.red, width: 2),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.red.withOpacity(0.2),
+            blurRadius: 8,
+            spreadRadius: 1,
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const BackupRestorePage()),
+            );
+          },
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: Colors.red,
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: const Icon(Icons.storage, color: Colors.white, size: 36),
+                ),
+                const SizedBox(width: 20),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '🗄️ BACKUP & RESTAURAÇÃO (LOCAL)',
+                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
+                      ),
+                      SizedBox(height: 6),
+                      Text(
+                        'Backup JSON local, restaurar dumps PostgreSQL (.dump/.sql).',
+                        style: TextStyle(fontSize: 14, color: Colors.white70),
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.chevron_right, color: Colors.white, size: 24),
               ],
             ),
           ),
