@@ -24,6 +24,7 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
   bool _isLoading = true;
   bool _isRestoring = false;
   bool _isRestoringDump = false;
+  bool _isSendingToCloud = false;
 
   @override
   void initState() {
@@ -100,6 +101,71 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
       );
     } else {
       _mostrarSnackBar('❌ Erro ao restaurar backup', Colors.red);
+    }
+  }
+
+  Future<void> _enviarParaNuvem() async {
+    if (_backupService == null) return;
+    
+    final confirmar = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.cloud_upload, color: Colors.cyanAccent, size: 28),
+            SizedBox(width: 10),
+            Text('Enviar para Nuvem', style: TextStyle(color: Colors.white, fontSize: 16)),
+          ],
+        ),
+        content: const Text(
+          'Irá recarregar os dados do PostgreSQL local e enviar TODOS para o Supabase.\n\nAs outras máquinas receberão os dados automaticamente na próxima sincronização.\n\nContinuar?',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.cyanAccent),
+            child: const Text('Enviar', style: TextStyle(color: Colors.black)),
+          ),
+        ],
+      ),
+    );
+    
+    if (confirmar != true) return;
+    
+    setState(() => _isSendingToCloud = true);
+    
+    try {
+      final dataService = Provider.of<DataService>(context, listen: false);
+      await dataService.enviarDadosLocaisParaNuvem();
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ Dados enviados para a nuvem! As outras máquinas receberão na próxima sincronização.'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 4),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ Erro ao enviar para nuvem: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSendingToCloud = false);
     }
   }
 
@@ -305,19 +371,31 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
                 label: 'Restaurar Dump PostgreSQL',
                 desc: 'Importar backup .dump ou .sql do banco de dados',
                 cor: Colors.blue,
-                onTap: (_isRestoring || _isRestoringDump) ? null : _restaurarDumpPostgres,
+                onTap: (_isRestoring || _isRestoringDump || _isSendingToCloud) ? null : _restaurarDumpPostgres,
+              ),
+            ),
+            const SizedBox(height: 12),
+            // Botão Enviar para Nuvem
+            SizedBox(
+              width: double.infinity,
+              child: _buildBotaoAcao(
+                icon: Icons.cloud_upload,
+                label: 'Enviar para Nuvem',
+                desc: 'Enviar dados locais ao Supabase para todas as máquinas',
+                cor: Colors.cyanAccent,
+                onTap: (_isRestoring || _isRestoringDump || _isSendingToCloud) ? null : _enviarParaNuvem,
               ),
             ),
 
-            if (_isRestoring || _isRestoringDump) ...[
+            if (_isRestoring || _isRestoringDump || _isSendingToCloud) ...[
               const SizedBox(height: 16),
               Center(
                 child: Column(
                   children: [
-                    CircularProgressIndicator(color: _isRestoringDump ? Colors.blue : Colors.orange),
+                    CircularProgressIndicator(color: _isSendingToCloud ? Colors.cyanAccent : (_isRestoringDump ? Colors.blue : Colors.orange)),
                     const SizedBox(height: 8),
                     Text(
-                      _isRestoringDump ? 'Restaurando dump PostgreSQL... Isso pode demorar.' : 'Restaurando dados...',
+                      _isSendingToCloud ? 'Enviando dados para a nuvem...' : (_isRestoringDump ? 'Restaurando dump PostgreSQL... Isso pode demorar.' : 'Restaurando dados...'),
                       style: const TextStyle(color: Colors.white70),
                     ),
                   ],

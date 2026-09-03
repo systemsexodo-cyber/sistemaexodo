@@ -7331,6 +7331,49 @@ class DataService extends ChangeNotifier {
     }
   }
 
+  /// Recarrega dados do PostgreSQL local e envia tudo para o Supabase.
+  /// Usado após restaurar um dump PostgreSQL para que outras máquinas
+  /// recebam os dados via sincronização automática.
+  Future<void> enviarDadosLocaisParaNuvem() async {
+    if (_currentEmpresaId == null) {
+      throw Exception('Empresa não selecionada.');
+    }
+    if (!SupabaseService.isAvailable) {
+      throw Exception('Supabase não está disponível.');
+    }
+    
+    _isLoading = true;
+    _mensagemLoading = 'Recarregando dados locais...';
+    notifyListeners();
+    
+    try {
+      // 1. Recarregar dados do PostgreSQL local para a memória
+      debugPrint('>>> [Sync] 📥 Recarregando dados do PostgreSQL local...');
+      await _carregarDadosSalvos();
+      debugPrint('>>> [Sync] ✅ Dados recarregados: ${_produtos.length} produtos, ${_clientes.length} clientes, ${_pedidos.length} pedidos');
+      
+      if (_produtos.isEmpty && _clientes.isEmpty && _pedidos.isEmpty) {
+        throw Exception('Nenhum dado encontrado no PostgreSQL local. Verifique se o dump foi restaurado corretamente.');
+      }
+      
+      // 2. Forçar reset do timestamp para forçar upload completo
+      _ultimaSincronizacao = null;
+      _ultimaSincronizacaoSucesso = null;
+      
+      // 3. Enviar tudo para o Supabase
+      _mensagemLoading = 'Enviando dados para a nuvem...';
+      notifyListeners();
+      debugPrint('>>> [Sync] 🚀 Enviando dados locais para Supabase...');
+      
+      await _sincronizarComSupabase();
+      
+      debugPrint('>>> [Sync] ✅ Dados enviados para a nuvem com sucesso!');
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
   void _limparCacheLocalCompleto() {
     _clientes.clear();
     _produtos.clear();
