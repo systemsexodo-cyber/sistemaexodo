@@ -64,6 +64,68 @@ class BackupRestoreService {
     }
   }
 
+  /// Salva backup automaticamente na pasta C:\ExodoBackups.
+  /// Usado pelo timer diário. Mantém apenas os últimos 30 backups.
+  /// Retorna o caminho do arquivo ou null se falhar.
+  Future<String?> salvarBackupLocalAutomatico() async {
+    try {
+      final empresaId = _dataService.currentEmpresaId;
+      if (empresaId == null) return null;
+
+      final empresaNome = _dataService.empresaAtual?.nomeExibicao?.replaceAll(RegExp(r'[^\w\s]'), '_') ?? 'empresa';
+      final now = DateTime.now();
+      final dataStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+      final horaStr = '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}';
+      final fileName = 'backup_${empresaNome}_${dataStr}_${horaStr}.json';
+
+      // Pasta fixa: C:\ExodoBackups\{empresaId}\
+      final backupDir = Directory('C:\\ExodoBackups\\$empresaId');
+      if (!await backupDir.exists()) {
+        await backupDir.create(recursive: true);
+      }
+
+      // Gerar backup
+      final backup = gerarBackup();
+      final json = const JsonEncoder.withIndent('  ').convert(backup);
+      final file = File(p.join(backupDir.path, fileName));
+      await file.writeAsString(json, flush: true);
+
+      debugPrint('>>> [BackupRestore] 💾 Backup local automático: ${file.path} (${(file.lengthSync() / 1024).toStringAsFixed(0)} KB)');
+
+      // Limpar backups antigos (manter apenas últimos 30)
+      await _limparBackupsAntigos(backupDir, maxBackups: 30);
+
+      return file.path;
+    } catch (e) {
+      debugPrint('>>> [BackupRestore] ❌ Erro no backup local automático: $e');
+      return null;
+    }
+  }
+
+  /// Remove backups antigos, mantendo apenas os mais recentes
+  Future<void> _limparBackupsAntigos(Directory dir, {int maxBackups = 30}) async {
+    try {
+      final files = await dir.list()
+          .where((f) => f is File && f.path.endsWith('.json'))
+          .cast<File>()
+          .toList();
+
+      if (files.length <= maxBackups) return;
+
+      // Ordenar por data de modificação (mais antigo primeiro)
+      files.sort((a, b) => a.lastModifiedSync().compareTo(b.lastModifiedSync()));
+
+      // Remover os mais antigos
+      final paraRemover = files.length - maxBackups;
+      for (int i = 0; i < paraRemover; i++) {
+        await files[i].delete();
+        debugPrint('>>> [BackupRestore] 🗑️ Backup antigo removido: ${p.basename(files[i].path)}');
+      }
+    } catch (e) {
+      debugPrint('>>> [BackupRestore] ⚠️ Erro ao limpar backups antigos: $e');
+    }
+  }
+
   Future<void> _registrarNoHistorico(String fileName, int tamanho) async {
     if (kIsWeb || _dataService.currentEmpresaId == null) return;
     try {

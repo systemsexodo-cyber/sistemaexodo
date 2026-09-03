@@ -987,7 +987,7 @@ class DataService extends ChangeNotifier {
   }
   
   Future<void> _verificarBackupDiario() async {
-    if (_currentEmpresaId == null || !SupabaseService.isAvailable || _isOffline) return;
+    if (_currentEmpresaId == null) return;
     
     final agora = DateTime.now();
     final ultimoBackup = _ultimoBackupDiario;
@@ -995,21 +995,37 @@ class DataService extends ChangeNotifier {
     // Se nunca fez backup ou se passou mais de 24 horas
     if (ultimoBackup == null || agora.difference(ultimoBackup).inHours >= 24) {
       debugPrint('>>> [Backup] 🕐 Hora do backup diário automático...');
+      final backupService = BackupRestoreService(this);
+      
+      // 1. Backup local (C:\ExodoBackups) — sempre, mesmo offline
       try {
-        // Usar BackupRestoreService diretamente
-        final backupService = BackupRestoreService(this);
-        final (sucesso, mensagem, _) = await backupService.uploadBackupNaNuvem();
-        if (sucesso) {
-          _ultimoBackupDiario = agora;
-          await _storage.salvar(_getEmpresaKey('exodo_ultimo_backup_diario'), agora.toIso8601String());
-          debugPrint('>>> [Backup] ✅ Backup diário concluído: $mensagem');
-          addSyncLog('☁️ Backup diário automático realizado com sucesso.');
-        } else {
-          debugPrint('>>> [Backup] ⚠️ Backup diário falhou: $mensagem');
+        final localPath = await backupService.salvarBackupLocalAutomatico();
+        if (localPath != null) {
+          debugPrint('>>> [Backup] 💾 Backup local salvo: $localPath');
+          addSyncLog('💾 Backup local automático salvo.');
         }
       } catch (e) {
-        debugPrint('>>> [Backup] ❌ Erro no backup diário: $e');
+        debugPrint('>>> [Backup] ⚠️ Erro no backup local: $e');
       }
+      
+      // 2. Backup nuvem (Supabase Storage) — só se online
+      if (SupabaseService.isAvailable && !_isOffline) {
+        try {
+          final (sucesso, mensagem, _) = await backupService.uploadBackupNaNuvem();
+          if (sucesso) {
+            debugPrint('>>> [Backup] ☁️ Backup nuvem concluído: $mensagem');
+            addSyncLog('☁️ Backup diário automático para nuvem realizado.');
+          } else {
+            debugPrint('>>> [Backup] ⚠️ Backup nuvem falhou: $mensagem');
+          }
+        } catch (e) {
+          debugPrint('>>> [Backup] ❌ Erro no backup nuvem: $e');
+        }
+      }
+      
+      // Atualizar timestamp
+      _ultimoBackupDiario = agora;
+      await _storage.salvar(_getEmpresaKey('exodo_ultimo_backup_diario'), agora.toIso8601String());
     }
   }
 
