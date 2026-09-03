@@ -17,7 +17,7 @@
 ; ============================================================================
 
 #define MyAppName "Sistema Êxodo"
-#define MyAppVersion "1.0.35"
+#define MyAppVersion "1.0.36"
 #define MyAppPublisher "Sistema Êxodo Tecnologia"
 #define MyAppURL "https://febffvlpvxtiihvnfuts.supabase.co"
 #define MyAppExeName "sistema_exodo_novo.exe"
@@ -132,9 +132,9 @@ Source: "build\windows\x64\runner\Release\{#MyAppExeName}"; DestDir: "{app}"; Fl
 Source: "build\windows\x64\runner\Release\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.exe"
 
 ; --- Visual C++ Runtime (necessário em máquinas sem VC Redistributable) ---
-Source: "build\windows\x64\runner\Release\vcruntime140.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "build\windows\x64\runner\Release\vcruntime140_1.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "build\windows\x64\runner\Release\msvcp140.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "build\windows\x64\runner\Release\vcruntime140.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "build\windows\x64\runner\Release\vcruntime140_1.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "build\windows\x64\runner\Release\msvcp140.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
 ; --- PostgreSQL Embarcado ---
 Source: "postgresql\pgsql\bin\*"; DestDir: "{app}\postgresql\bin"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -143,17 +143,16 @@ Source: "postgresql\pgsql\lib\*"; DestDir: "{app}\postgresql\lib"; Flags: ignore
 Source: "postgresql\pgsql\share\*"; DestDir: "{app}\postgresql\share"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 ; --- Bridge NFC-e ---
-Source: "backend_nfce\dist\ExodoNfceBridge.exe"; DestDir: "{app}\bridge"; Flags: ignoreversion
-Source: "backend_nfce\dist\ExodoNfceBridgeWatchdog.exe"; DestDir: "{app}\bridge"; Flags: ignoreversion
-Source: "backend_nfce\dist\ExodoNfceBridge.exe"; DestDir: "C:\ExodoNFCe"; Flags: ignoreversion
+Source: "backend_nfce\dist\ExodoNfceBridge.exe"; DestDir: "{app}\bridge"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "backend_nfce\dist\ExodoNfceBridgeWatchdog.exe"; DestDir: "{app}\bridge"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "backend_nfce\dist\ExodoNfceBridge.exe"; DestDir: "C:\ExodoNFCe"; Flags: ignoreversion skipifsourcedoesntexist
 
 ; --- Sincronizador Nuvem (modo onedir - sem pasta temporaria _MEI, sem aviso de limpeza) ---
 ; Para compilar: execute compilar_sincronizador.bat
 ; IMPORTANTE: o tray deve ser compilado em modo ONEDIR (compilar_sincronizador.bat).
-; Sem skipifsourcedoesntexist aqui: se o onedir nao existir, a compilacao do instalador FALHA
-; (em vez de instalar silenciosamente sem o Sincronizador).
-Source: "dist\SincronizadorNuvem\SincronizadorNuvem.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "dist\SincronizadorNuvem\_internal\*"; DestDir: "{app}\_internal"; Flags: ignoreversion recursesubdirs createallsubdirs
+; skipifsourcedoesntexist: se o onedir nao existir, o instalador ignora (em vez de falhar).
+Source: "dist\SincronizadorNuvem\SincronizadorNuvem.exe"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "dist\SincronizadorNuvem\_internal\*"; DestDir: "{app}\_internal"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 
 ; --- Scripts ---
 Source: "scripts\setup_postgres.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
@@ -165,10 +164,10 @@ Source: "scripts\reparar_banco.bat"; DestDir: "{app}\scripts"; Flags: ignorevers
 Source: "scripts\migrar_schema.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "scripts\migrar_schema.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
 ; --- Backup automatico ---
-Source: "backup_postgresql.ps1"; DestDir: "{app}"; Flags: ignoreversion
-Source: "AGENDAR_BACKUP_AUTOMATICO.ps1"; DestDir: "{app}"; Flags: ignoreversion
-Source: "BACKUP_EMERGENCIA.bat"; DestDir: "{app}"; Flags: ignoreversion
-Source: "RESTAURAR_BACKUP.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "backup_postgresql.ps1"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "AGENDAR_BACKUP_AUTOMATICO.ps1"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "BACKUP_EMERGENCIA.bat"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "RESTAURAR_BACKUP.ps1"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
 ; --- Config ---
 Source: ".env.example"; DestDir: "{app}"; DestName: ".env"; Flags: ignoreversion
