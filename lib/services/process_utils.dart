@@ -35,11 +35,12 @@ Future<ProcessResult> runProcessHidden(
     return ProcessResult(pid, 0, '', '');
   }
 
-  // Fallback: Process.start com detached (pode mostrar janela)
+  // Fallback: Process.start com inherit (conecta stdio ao processo pai)
+  // NOTA: detached NÃO conecta stdio, causando 'Bad state: stdio is not connected'
   final process = await Process.start(
     executable,
     arguments,
-    mode: ProcessStartMode.detached,
+    mode: ProcessStartMode.normal,
     workingDirectory: workingDirectory,
     environment: environment,
   );
@@ -84,11 +85,11 @@ Future<void> runProcessDetached(
   );
 
   if (pid == null) {
-    // Fallback: Process.start com detached
+    // Fallback: Process.start com inherit (conecta stdio)
     await Process.start(
       executable,
       arguments,
-      mode: ProcessStartMode.detached,
+      mode: ProcessStartMode.normal,
       workingDirectory: workingDirectory,
     );
   }
