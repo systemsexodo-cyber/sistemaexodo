@@ -4,7 +4,6 @@ import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'package:supabase_flutter/supabase_flutter.dart' show FileOptions, BucketOptions;
 import 'package:sistema_exodo_novo/services/supabase_service.dart';
-import 'process_utils.dart';
 
 class AppUpdateService {
   static const String currentAppVersion = "1.0.36";
@@ -199,6 +198,7 @@ del "%~f0"
       final configId = isGlobal ? 'app_latest' : 'app_update_$empresaId';
 
       debugPrint('>>> [AppUpdateService] 📦 Publicando versão $dbVersion (${isGlobal ? "GLOBAL" : "EMPRESA: $empresaId"})');
+      debugPrint('>>> [AppUpdateService] 📍 Executável atual: ${Platform.resolvedExecutable}');
 
       // 1. Localizar executável compilado
       final currentExePath = Platform.resolvedExecutable;
@@ -206,17 +206,19 @@ del "%~f0"
       
       // Procurar o .exe na pasta de release do build
       String localExe = p.join(exeDir, 'sistema_exodo_novo.exe');
+      debugPrint('>>> [AppUpdateService] 🔍 Tentando: $localExe (existe: ${await File(localExe).exists()})');
       if (!await File(localExe).exists()) {
         // Fallback: procurar no build directory relativo ao projeto
         final projectDir = p.dirname(p.dirname(p.dirname(p.dirname(exeDir))));
         localExe = p.join(projectDir, 'build', 'windows', 'x64', 'runner', 'Release', 'sistema_exodo_novo.exe');
+        debugPrint('>>> [AppUpdateService] 🔍 Tentando fallback: $localExe (existe: ${await File(localExe).exists()})');
       }
       if (!await File(localExe).exists()) {
-        return (false, 'Executável não encontrado. Compile com: flutter build windows --release');
+        return (false, 'Executável não encontrado em nenhum local. Caminhos testados:\n1. ${p.join(exeDir, 'sistema_exodo_novo.exe')}\n2. build/windows/x64/runner/Release/sistema_exodo_novo.exe\n\nCompile com: flutter build windows --release');
       }
 
       final fileSize = await File(localExe).length();
-      debugPrint('>>> [AppUpdateService] 📏 Tamanho: ${(fileSize / 1024 / 1024).toStringAsFixed(1)} MB');
+      debugPrint('>>> [AppUpdateService] 📏 Tamanho: ${(fileSize / 1024 / 1024).toStringAsFixed(1)} MB ($fileSize bytes)');
 
       // 2. Upload do executável para Supabase Storage
       debugPrint('>>> [AppUpdateService] 📤 Enviando para Supabase Storage...');
@@ -226,25 +228,30 @@ del "%~f0"
       final fileName = 'sistema_exodo_novo.exe';
       
       try {
+        debugPrint('>>> [AppUpdateService] 📤 Fazendo upload de ${(fileBytes.length / 1024 / 1024).toStringAsFixed(1)} MB para $bucketName/$fileName...');
         await SupabaseService.instance.client.storage
             .from(bucketName)
             .uploadBinary(fileName, fileBytes,
                 fileOptions: const FileOptions(upsert: true));
+        debugPrint('>>> [AppUpdateService] ✅ Upload concluído com sucesso!');
       } catch (e) {
+        debugPrint('>>> [AppUpdateService] ⚠️ Erro no upload: $e');
         // Se o bucket não existe, tentar criá-lo
-        debugPrint('>>> [AppUpdateService] ⚠️ Erro no upload, tentando criar bucket...');
+        debugPrint('>>> [AppUpdateService] 🔄 Tentando criar bucket "$bucketName"...');
         try {
           await SupabaseService.instance.client.storage.createBucket(
             bucketName,
             const BucketOptions(public: true),
           );
-          // Tentar novamente
+          debugPrint('>>> [AppUpdateService] ✅ Bucket criado! Tentando upload novamente...');
           await SupabaseService.instance.client.storage
               .from(bucketName)
               .uploadBinary(fileName, fileBytes,
                   fileOptions: const FileOptions(upsert: true));
+          debugPrint('>>> [AppUpdateService] ✅ Upload concluído após criar bucket!');
         } catch (e2) {
-          return (false, 'Erro ao criar bucket ou fazer upload: $e2');
+          debugPrint('>>> [AppUpdateService] ❌ Falha final no upload: $e2');
+          return (false, 'Erro ao enviar executável:\n${e2.toString().length > 200 ? e2.toString().substring(0, 200) : e2}');
         }
       }
 
@@ -264,11 +271,14 @@ del "%~f0"
       };
 
       // Tentar upsert (insert or update)
+      debugPrint('>>> [AppUpdateService] 💾 Salvando bridge_config: id=$configId, version=$dbVersion');
       try {
         await SupabaseService.instance.client
             .from('bridge_config')
             .upsert(payload, onConflict: 'id');
+        debugPrint('>>> [AppUpdateService] ✅ bridge_config atualizada!');
       } catch (e) {
+        debugPrint('>>> [AppUpdateService] ❌ Erro ao salvar bridge_config: $e');
         return (false, 'Erro ao salvar na bridge_config: $e');
       }
 
