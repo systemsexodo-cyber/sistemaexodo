@@ -607,15 +607,13 @@ class _EmpresasPageState extends State<EmpresasPage> {
     );
 
     try {
-      final result = await runProcessHidden(
-        'python',
-        ['publicar_para_empresa.py', 'global', versao],
-        workingDirectory: Directory.current.path,
+      final (sucesso, mensagem) = await AppUpdateService.publicarAtualizacao(
+        versao: versao,
       );
 
       if (mounted) Navigator.pop(context);
 
-      if (result.exitCode == 0) {
+      if (sucesso) {
         if (mounted) {
           showDialog(
             context: context,
@@ -629,7 +627,7 @@ class _EmpresasPageState extends State<EmpresasPage> {
                 ],
               ),
               content: Text(
-                '✅ Versão $versao publicada para TODOS os clientes!\n\nQuando abrirem o app, vão receber a atualização automaticamente.',
+                '$mensagem\n\nQuando abrirem o app, vão receber a atualização automaticamente.',
                 style: const TextStyle(color: Colors.white70),
               ),
               actions: [
@@ -642,15 +640,10 @@ class _EmpresasPageState extends State<EmpresasPage> {
           );
         }
       } else {
-        // Script falhou - mostrar o erro
         if (mounted) {
-          final err = result.stderr.toString();
-          final errorMsg = err.isEmpty
-              ? "Verifique se o Python está instalado."
-              : (err.length > 200 ? err.substring(0, 200) : err);
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('❌ Falha ao publicar globalmente.\n$errorMsg'),
+              content: Text('❌ Falha ao publicar globalmente.\n$mensagem'),
               backgroundColor: Colors.red,
               duration: const Duration(seconds: 10),
             ),
@@ -2229,20 +2222,14 @@ class _EmpresasPageState extends State<EmpresasPage> {
     );
 
     try {
-      // Chamar o script Python: python publicar_para_empresa.py ID VERSAO
-      final result = await runProcessHidden(
-        'python',
-        [
-          'publicar_para_empresa.py',
-          empresa.id,
-          versao,
-        ],
-        workingDirectory: Directory.current.path,
+      final (sucesso, mensagem) = await AppUpdateService.publicarAtualizacao(
+        versao: versao,
+        empresaId: empresa.id,
       );
 
       if (mounted) Navigator.pop(context); // Fechar loading
 
-      if (result.exitCode == 0) {
+      if (sucesso) {
         if (mounted) {
           showDialog(
             context: context,
@@ -2260,13 +2247,8 @@ class _EmpresasPageState extends State<EmpresasPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '✅ Atualização $versao publicada para ${empresa.nomeExibicao}!',
+                    '$mensagem\n\nQuando o cliente abrir o app, ele vai baixar e instalar automaticamente.',
                     style: const TextStyle(color: Colors.white70),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Quando o cliente abrir o app, ele vai baixar e instalar automaticamente.',
-                    style: const TextStyle(color: Colors.white54, fontSize: 12),
                   ),
                 ],
               ),
@@ -2280,46 +2262,12 @@ class _EmpresasPageState extends State<EmpresasPage> {
           );
         }
       } else {
-        final stderr = result.stderr.toString();
-        final stdout = result.stdout.toString();
         if (mounted) {
-          showDialog(
-            context: context,
-            builder: (context) => AlertDialog(
-              backgroundColor: const Color(0xFF1E1E2E),
-              title: const Row(
-                children: [
-                  Icon(Icons.error, color: Colors.red),
-                  SizedBox(width: 12),
-                  Text('Erro', style: TextStyle(color: Colors.white)),
-                ],
-              ),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('Saída do script:', style: TextStyle(color: Colors.white70)),
-                    const SizedBox(height: 8),
-                    if (stdout.isNotEmpty)
-                      SelectableText(
-                        stdout,
-                        style: const TextStyle(color: Colors.white54, fontSize: 12, fontFamily: 'monospace'),
-                      ),
-                    if (stderr.isNotEmpty)
-                      SelectableText(
-                        stderr,
-                        style: const TextStyle(color: Colors.redAccent, fontSize: 12, fontFamily: 'monospace'),
-                      ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Fechar'),
-                ),
-              ],
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('❌ Falha ao publicar: $mensagem'),
+              backgroundColor: Colors.red,
+              duration: const Duration(seconds: 10),
             ),
           );
         }
@@ -2329,7 +2277,7 @@ class _EmpresasPageState extends State<EmpresasPage> {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('❌ Erro ao executar script: $e'),
+            content: Text('❌ Erro ao publicar: $e'),
             backgroundColor: Colors.red,
             duration: const Duration(seconds: 10),
           ),

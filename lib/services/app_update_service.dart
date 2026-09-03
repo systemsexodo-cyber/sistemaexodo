@@ -2,11 +2,12 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
+import 'package:supabase_flutter/supabase_flutter.dart' show FileOptions, BucketOptions;
 import 'package:sistema_exodo_novo/services/supabase_service.dart';
 import 'process_utils.dart';
 
 class AppUpdateService {
-  static const String currentAppVersion = "1.0.35";
+  static const String currentAppVersion = "1.0.36";
 
   /// Verifica se há uma nova versão do aplicativo no Supabase (Direcionada por Empresa ou Global)
   static Future<Map<String, dynamic>?> verificarAtualizacao({
@@ -181,6 +182,115 @@ del "%~f0"
     } catch (e) {
       debugPrint('>>> [AppUpdateService] Erro ao aplicar atualização: $e');
       return false;
+    }
+  }
+
+  /// Publica uma atualização no Supabase (global ou por empresa).
+  /// Faz upload do executável para o Storage e atualiza bridge_config.
+  /// Retorna (sucesso, mensagem).
+  static Future<(bool, String)> publicarAtualizacao({
+    required String versao,
+    String? empresaId, // null = global
+    bool force = false,
+  }) async {
+    try {
+      final dbVersion = force ? '!$versao' : versao;
+      final isGlobal = empresaId == null || empresaId.isEmpty;
+      final configId = isGlobal ? 'app_latest' : 'app_update_$empresaId';
+
+      debugPrint('>>> [AppUpdateService] 📦 Publicando versão $dbVersion (${isGlobal ? "GLOBAL" : "EMPRESA: $empresaId"})');
+
+      // 1. Localizar executável compilado
+      final currentExePath = Platform.resolvedExecutable;
+      final exeDir = p.dirname(currentExePath);
+      
+      // Procurar o .exe na pasta de release do build
+      String localExe = p.join(exeDir, 'sistema_exodo_novo.exe');
+      if (!await File(localExe).exists()) {
+        // Fallback: procurar no build directory relativo ao projeto
+        final projectDir = p.dirname(p.dirname(p.dirname(p.dirname(exeDir))));
+        localExe = p.join(projectDir, 'build', 'windows', 'x64', 'runner', 'Release', 'sistema_exodo_novo.exe');
+      }
+      if (!await File(localExe).exists()) {
+        return (false, 'Executável não encontrado. Compile com: flutter build windows --release');
+      }
+
+      final fileSize = await File(localExe).length();
+      debugPrint('>>> [AppUpdateService] 📏 Tamanho: ${(fileSize / 1024 / 1024).toStringAsFixed(1)} MB');
+
+      // 2. Upload do executável para Supabase Storage
+      debugPrint('>>> [AppUpdateService] 📤 Enviando para Supabase Storage...');
+      
+      final fileBytes = await File(localExe).readAsBytes();
+      final bucketName = 'atualizacoes';
+      final fileName = 'sistema_exodo_novo.exe';
+      
+      try {
+        await SupabaseService.instance.client.storage
+            .from(bucketName)
+            .uploadBinary(fileName, fileBytes,
+                fileOptions: const FileOptions(upsert: true));
+      } catch (e) {
+        // Se o bucket não existe, tentar criá-lo
+        debugPrint('>>> [AppUpdateService] ⚠️ Erro no upload, tentando criar bucket...');
+        try {
+          await SupabaseService.instance.client.storage.createBucket(
+            bucketName,
+            const BucketOptions(public: true),
+          );
+          // Tentar novamente
+          await SupabaseService.instance.client.storage
+              .from(bucketName)
+              .uploadBinary(fileName, fileBytes,
+                  fileOptions: const FileOptions(upsert: true));
+        } catch (e2) {
+          return (false, 'Erro ao criar bucket ou fazer upload: $e2');
+        }
+      }
+
+      final downloadUrl = SupabaseService.instance.client.storage
+          .from(bucketName)
+          .getPublicUrl(fileName);
+      debugPrint('>>> [AppUpdateService] ✅ Upload concluído! URL: $downloadUrl');
+
+      // 3. Atualizar bridge_config
+      debugPrint('>>> [AppUpdateService] 💦 Atualizando bridge_config ($configId)...');
+      
+      final payload = {
+        'id': configId,
+        'version': dbVersion,
+        'download_url': downloadUrl,
+        'ativo': true,
+      };
+
+      // Tentar upsert (insert or update)
+      try {
+        await SupabaseService.instance.client
+            .from('bridge_config')
+            .upsert(payload, onConflict: 'id');
+      } catch (e) {
+        return (false, 'Erro ao salvar na bridge_config: $e');
+      }
+
+      // 4. Verificar
+      final check = await SupabaseService.instance.client
+          .from('bridge_config')
+          .select()
+          .eq('id', configId)
+          .maybeSingle();
+
+      if (check != null) {
+        final msg = isGlobal
+            ? '✅ Versão $versao publicada para TODOS os clientes!'
+            : '✅ Versão $versao publicada para a empresa $empresaId!';
+        debugPrint('>>> [AppUpdateService] $msg');
+        return (true, msg);
+      } else {
+        return (false, 'Não foi possível confirmar o registro na bridge_config');
+      }
+    } catch (e) {
+      debugPrint('>>> [AppUpdateService] ❌ Erro ao publicar: $e');
+      return (false, 'Erro inesperado: $e');
     }
   }
 }
