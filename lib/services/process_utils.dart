@@ -85,11 +85,12 @@ Future<void> runProcessDetached(
   );
 
   if (pid == null) {
-    // Fallback: Process.start com inherit (conecta stdio)
+    // Fallback: Process.start com detached (sem janela CMD)
+    // NOTA: não usar ProcessStartMode.normal pois cria janela CMD visível
     await Process.start(
       executable,
       arguments,
-      mode: ProcessStartMode.normal,
+      mode: ProcessStartMode.detached,
       workingDirectory: workingDirectory,
     );
   }

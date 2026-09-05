@@ -188,11 +188,12 @@ class BridgeManagerService {
       );
       if (pid == null) {
         debugPrint('>>> [BridgeManager] ❌ Win32 CreateProcess falhou, tentando fallback...');
-        // Fallback: Process.start com normal (conecta stdio)
+        // Fallback: Process.start com detached (sem janela CMD)
+        // NOTA: não usar ProcessStartMode.normal pois cria janela CMD visível
         await Process.start(
           bridgePath,
           [],
-          mode: ProcessStartMode.normal,
+          mode: ProcessStartMode.detached,
           workingDirectory: execDir,
         );
       }

@@ -97,7 +97,7 @@ class SincronizadorManagerService {
       final pid = Win32ProcessHelper.startProcessHidden(execPath, workingDirectory: dir);
       if (pid == null) {
         debugPrint('>>> [SincronizadorManager] ⚠️ Win32 falhou, tentando fallback...');
-        await Process.start(execPath, [], mode: ProcessStartMode.normal, workingDirectory: dir);
+        await Process.start(execPath, [], mode: ProcessStartMode.detached, workingDirectory: dir);
       }
 
       // 3. Aguardar inicialização com retries (máximo 10s)
