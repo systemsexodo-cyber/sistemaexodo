@@ -1160,10 +1160,16 @@ class SupabaseService {
   }
 
   /// Remove TODOS os registros de uma empresa em todas as tabelas do Supabase.
-  /// Usado antes de enviar backup local para garantir dados limpos.
-  /// IMPORTANTE: Isso é destrutivo! Só usar com confirmação do usuário.
-  Future<void> limparDadosEmpresa(String empresaId) async {
-    if (!isAvailable) return;
+  /// Usado quando se tem CERTEZA de que o upload sera feito em seguida.
+  /// IMPORTANTE: Isso e destrutivo! Nao usar sem upload confirmado.
+  Future<int> limparDadosEmpresa(String empresaId) async {
+    if (!isAvailable) return 0;
+    if (empresaId.isEmpty) {
+      debugPrint('>>> [Supabase] ❌ ERRO: empresaId vazio, abortando limpeza!');
+      return 0;
+    }
+    
+    debugPrint('>>> [Supabase] 🧹 Limpando dados da empresa $empresaId...');
     
     // Tabelas com empresa_id (ordem: filhas primeiro, depois pais)
     final tabelas = [
@@ -1196,16 +1202,32 @@ class SupabaseService {
     ];
     
     int totalRemovidos = 0;
+    int totalRegistros = 0;
     for (final tabela in tabelas) {
       try {
-        await _client.from(tabela).delete().eq('empresa_id', empresaId);
-        totalRemovidos++;
+        // Primeiro contar quantos registros existem para esta empresa
+        final countResp = await _client
+            .from(tabela)
+            .select('id')
+            .eq('empresa_id', empresaId)
+            .count();
+        final count = countResp.count;
+        totalRegistros += count;
+        
+        if (count > 0) {
+          await _client.from(tabela).delete().eq('empresa_id', empresaId);
+          debugPrint('>>> [Supabase] 🗑️ $tabela: $count registros removidos da empresa $empresaId');
+          totalRemovidos++;
+        } else {
+          debugPrint('>>> [Supabase] ⏭️ $tabela: 0 registros da empresa, pulando...');
+        }
       } catch (e) {
         debugPrint('>>> [Supabase] ⚠️ Erro ao limpar $tabela: $e');
       }
     }
     
-    debugPrint('>>> [Supabase] ✅ Dados da empresa $empresaId limpos de $totalRemovidos tabelas');
+    debugPrint('>>> [Supabase] ✅ Limpeza concluida: $totalRemovidos tabelas afetadas, $totalRegistros registros removidos da empresa $empresaId');
+    return totalRegistros;
   }
 }
 

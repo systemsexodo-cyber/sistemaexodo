@@ -7455,24 +7455,15 @@ class DataService extends ChangeNotifier {
         debugPrint('>>> [Sync] ⚠️ Erro no backup de seguranca: $e (continuando)');
       }
       
-      // 4. Limpar dados antigos no Supabase antes de enviar (garante dados limpos)
-      _mensagemLoading = 'Limpando dados antigos no Supabase...';
-      notifyListeners();
-      try {
-        await _supabaseService.limparDadosEmpresa(_currentEmpresaId!);
-        debugPrint('>>> [Sync] ✅ Dados antigos removidos do Supabase');
-      } catch (e) {
-        debugPrint('>>> [Sync] ⚠️ Aviso ao limpar Supabase: $e (continuando upload)');
-      }
-      
-      // 5. Enviar tudo para o Supabase
+      // 4. Enviar dados para o Supabase PRIMEIRO (upsert sobrescreve dados existentes)
+      // IMPORTANTE: NÃO deletar antes do upload — se o upload falhar, dados somem!
       _mensagemLoading = 'Enviando dados para a nuvem...';
       notifyListeners();
       debugPrint('>>> [Sync] 🚀 Enviando dados locais para Supabase...');
       
       await _sincronizarComSupabase();
       
-      // 4. Incrementar sync_version no Supabase para que outras máquinas detectem
+      // 5. Incrementar sync_version no Supabase para que outras máquinas detectem
       try {
         await _incrementarSyncVersion();
         // Salvar versão local para não detectar nosso próprio push
