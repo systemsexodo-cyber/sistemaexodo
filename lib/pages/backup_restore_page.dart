@@ -478,28 +478,16 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
             const SizedBox(height: 24),
 
             // Botões
-            Row(
-              children: [
-                Expanded(
-                  child: _buildBotaoAcao(
-                    icon: Icons.download,
-                    label: 'Fazer Backup',
-                    desc: 'Exportar dados',
-                    cor: Colors.green,
-                    onTap: (_isRestoring || _isRestoringDump) ? null : _fazerBackup,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _buildBotaoAcao(
-                    icon: Icons.upload,
-                    label: 'Restaurar',
-                    desc: 'Importar backup',
-                    cor: Colors.orange,
-                    onTap: (_isRestoring || _isRestoringDump) ? null : _restaurarBackup,
-                  ),
-                ),
-              ],
+            // Botão Fazer Backup
+            SizedBox(
+              width: double.infinity,
+              child: _buildBotaoAcao(
+                icon: Icons.download,
+                label: 'Fazer Backup',
+                desc: 'Exportar dados',
+                cor: Colors.green,
+                onTap: (_isRestoring || _isRestoringDump) ? null : _fazerBackup,
+              ),
             ),
             const SizedBox(height: 12),
             // Botão Restaurar Dump PostgreSQL
@@ -511,18 +499,6 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
                 desc: 'Importar backup .dump ou .sql do banco de dados',
                 cor: Colors.blue,
                 onTap: (_isRestoring || _isRestoringDump || _isSendingToCloud) ? null : _restaurarDumpPostgres,
-              ),
-            ),
-            const SizedBox(height: 12),
-            // Botão Enviar para Nuvem
-            SizedBox(
-              width: double.infinity,
-              child: _buildBotaoAcao(
-                icon: Icons.cloud_upload,
-                label: 'Enviar para Nuvem',
-                desc: 'Enviar dados locais ao Supabase para todas as máquinas',
-                cor: Colors.cyanAccent,
-                onTap: (_isRestoring || _isRestoringDump || _isSendingToCloud) ? null : _enviarParaNuvem,
               ),
             ),
             const SizedBox(height: 12),
