@@ -27,6 +27,8 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
   bool _isSendingToCloud = false;
   bool _isUploadingBackup = false;
   List<Map<String, dynamic>> _backupsNuvem = [];
+  List<Map<String, dynamic>> _dumpsNuvem = [];
+  bool _isUploadingDump = false;
 
   @override
   void initState() {
@@ -43,10 +45,12 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
     setState(() => _isLoading = true);
     final historico = await _backupService!.listarHistoricoBackups();
     final backupsNuvem = await _backupService!.listarBackupsNuvem();
+    final dumpsNuvem = await _backupService!.listarDumpsNuvem();
     if (mounted) {
       setState(() {
         _historicoBackups = historico;
         _backupsNuvem = backupsNuvem;
+        _dumpsNuvem = dumpsNuvem;
         _isLoading = false;
       });
     }
@@ -346,6 +350,35 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
     ));
   }
 
+  // ============================================================
+  // MÉTODOS DE DUMP NA NUVEM
+  // ============================================================
+
+  Future<void> _uploadDumpNuvem() async {
+    if (_backupService == null) return;
+    final file = await _backupService!.selecionarArquivoDump();
+    if (file == null) return;
+    
+    setState(() => _isUploadingDump = true);
+    try {
+      final (sucesso, mensagem) = await _backupService!.uploadDumpNaNuvem(file);
+      if (mounted) {
+        _mostrarSnackBar(sucesso ? '✅ $mensagem' : '❌ $mensagem', sucesso ? Colors.green : Colors.red);
+        if (sucesso) _carregarHistorico();
+      }
+    } finally {
+      if (mounted) setState(() => _isUploadingDump = false);
+    }
+  }
+
+  Future<void> _downloadDumpNuvem(String storagePath) async {
+    if (_backupService == null) return;
+    final (sucesso, mensagem, localPath) = await _backupService!.downloadDumpDaNuvem(storagePath);
+    if (mounted) {
+      _mostrarSnackBar(sucesso ? '✅ $mensagem\n$localPath' : '❌ $mensagem', sucesso ? Colors.green : Colors.red);
+    }
+  }
+
   String _formatarData(String? dataIso) {
     if (dataIso == null) return '';
     final dt = DateTime.tryParse(dataIso);
@@ -391,6 +424,10 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
 
                     // === BACKUP EM NUVEM ===
                     _buildCardBackupNuvem(),
+                    const SizedBox(height: 16),
+
+                    // === DUMPS POSTGRESQL NA NUVEM ===
+                    _buildCardDumpsNuvem(),
                     const SizedBox(height: 16),
 
                     // === INFO BACKUP ===
@@ -488,8 +525,20 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
                 onTap: (_isRestoring || _isRestoringDump || _isSendingToCloud) ? null : _enviarParaNuvem,
               ),
             ),
+            const SizedBox(height: 12),
+            // Botão Enviar Dump para Nuvem
+            SizedBox(
+              width: double.infinity,
+              child: _buildBotaoAcao(
+                icon: Icons.cloud_upload,
+                label: _isUploadingDump ? 'Enviando Dump...' : 'Enviar Dump PostgreSQL para Nuvem',
+                desc: 'Enviar arquivo .dump/.sql para Supabase Storage (outras máquinas baixam e restauram)',
+                cor: Colors.purpleAccent,
+                onTap: (_isRestoring || _isRestoringDump || _isSendingToCloud || _isUploadingDump) ? null : _uploadDumpNuvem,
+              ),
+            ),
 
-            if (_isRestoring || _isRestoringDump || _isSendingToCloud) ...[
+            if (_isRestoring || _isRestoringDump || _isSendingToCloud || _isUploadingDump) ...[
               const SizedBox(height: 16),
               Center(
                 child: Column(
@@ -673,6 +722,97 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
             },
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildCardDumpsNuvem() {
+    return Card(
+      color: const Color(0xFF1E1E2E).withOpacity(0.8),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.purpleAccent.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(Icons.storage, color: Colors.purpleAccent, size: 20),
+                ),
+                const SizedBox(width: 12),
+                const Text(
+                  'Dumps PostgreSQL na Nuvem',
+                  style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Arquivos .dump/.sql para restaurar em outras máquinas',
+              style: TextStyle(color: Colors.white54, fontSize: 12),
+            ),
+            const SizedBox(height: 12),
+            if (_dumpsNuvem.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 16),
+                child: Center(
+                  child: Text('Nenhum dump na nuvem', style: TextStyle(color: Colors.white38)),
+                ),
+              )
+            else
+              ..._dumpsNuvem.map((dump) {
+                final name = dump['name'] ?? '';
+                final path = dump['path'] ?? '';
+                final size = dump['size'] as int?;
+                final data = dump['createdAt'];
+                return ListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.file_copy, color: Colors.purpleAccent, size: 20),
+                  title: Text(name, style: const TextStyle(color: Colors.white, fontSize: 13), overflow: TextOverflow.ellipsis),
+                  subtitle: Text('${_formatarTamanho(size)} • ${_formatarData(data)}', style: const TextStyle(color: Colors.white54, fontSize: 11)),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.download, color: Colors.green, size: 20),
+                        tooltip: 'Baixar dump',
+                        onPressed: () => _downloadDumpNuvem(path),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.delete, color: Colors.red, size: 20),
+                        tooltip: 'Remover',
+                        onPressed: () async {
+                          final confirmar = await showDialog<bool>(
+                            context: context,
+                            builder: (ctx) => AlertDialog(
+                              backgroundColor: const Color(0xFF1E1E2E),
+                              title: const Text('Remover dump?', style: TextStyle(color: Colors.white)),
+                              content: Text('Remover $name da nuvem?', style: const TextStyle(color: Colors.white70)),
+                              actions: [
+                                TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Não', style: TextStyle(color: Colors.white54))),
+                                ElevatedButton(onPressed: () => Navigator.pop(ctx, true), style: ElevatedButton.styleFrom(backgroundColor: Colors.red), child: const Text('Remover')),
+                              ],
+                            ),
+                          );
+                          if (confirmar == true) {
+                            await _backupService!.removerDumpNuvem(path);
+                            _carregarHistorico();
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                );
+              }),
+          ],
+        ),
       ),
     );
   }
