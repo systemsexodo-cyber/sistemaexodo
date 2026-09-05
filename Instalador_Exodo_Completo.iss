@@ -1,6 +1,6 @@
 ; ============================================================================
 ; 🚀 Instalador do Sistema Êxodo Completo
-; Inno Setup Script - v1.0.35
+; Inno Setup Script - v1.0.37
 ; Design Profissional
 ; ============================================================================
 ; INSTRUÇÕES:
@@ -17,7 +17,7 @@
 ; ============================================================================
 
 #define MyAppName "Sistema Êxodo"
-#define MyAppVersion "1.0.36"
+#define MyAppVersion "1.0.37"
 #define MyAppPublisher "Sistema Êxodo Tecnologia"
 #define MyAppURL "https://febffvlpvxtiihvnfuts.supabase.co"
 #define MyAppExeName "sistema_exodo_novo.exe"
