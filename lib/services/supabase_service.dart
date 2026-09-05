@@ -889,8 +889,6 @@ class SupabaseService {
       List<Map<String, dynamic>> enrichedData = data.map((map) => _filtrarCamposLocais(table, map)).toList();
 
       // estoque_historico: envia apenas colunas que existem no schema real
-      // (mesma proteção do upsert individual — evita PGRST204 pelas colunas
-      // de custo que ainda não existem até rodar o SUPABASE_FIX_ALL.sql).
       if (table == SupabaseService.tableEstoqueHistorico) {
         final colunas = await _detectarColunasEstoqueHistorico();
         enrichedData = enrichedData
@@ -898,7 +896,7 @@ class SupabaseService {
             .toList();
       }
 
-      // empresas: mesma proteção do upsert individual (ver _detectarColunasEmpresas).
+      // empresas: mesma proteção do upsert individual
       if (table == SupabaseService.tableEmpresas) {
         final colunas = await _detectarColunasEmpresas();
         enrichedData = enrichedData
@@ -908,15 +906,53 @@ class SupabaseService {
 
       final typedData = enrichedData.map((m) => _toSafeMap(m)).toList();
       
+      // Retry com backoff para erros de quota/rate limit
+      const int maxRetries = 3;
+      
       if (typedData.length > batchSize) {
         debugPrint('>>> [Supabase] 📦 Fracionando upsert de ${typedData.length} itens em lotes de $batchSize...');
         for (int i = 0; i < typedData.length; i += batchSize) {
           final end = (i + batchSize < typedData.length) ? i + batchSize : typedData.length;
           final chunk = typedData.sublist(i, end);
-          await _client.from(table).upsert(chunk).timeout(const Duration(seconds: 15));
+          
+          for (int retry = 0; retry < maxRetries; retry++) {
+            try {
+              await _client.from(table).upsert(chunk).timeout(const Duration(seconds: 30));
+              break; // Sucesso, sair do retry
+            } catch (e) {
+              final isQuotaError = e.toString().contains('quota') || 
+                  e.toString().contains('rate limit') ||
+                  e.toString().contains('429') ||
+                  e.toString().contains('503');
+              if (isQuotaError && retry < maxRetries - 1) {
+                final delay = Duration(seconds: (retry + 1) * 5);
+                debugPrint('>>> [Supabase] ⏳ Quota/rate limit atingido, aguardando ${delay.inSeconds}s antes de retry...');
+                await Future.delayed(delay);
+              } else {
+                rethrow;
+              }
+            }
+          }
         }
       } else {
-        await _client.from(table).upsert(typedData).timeout(const Duration(seconds: 15));
+        for (int retry = 0; retry < maxRetries; retry++) {
+          try {
+            await _client.from(table).upsert(typedData).timeout(const Duration(seconds: 30));
+            break;
+          } catch (e) {
+            final isQuotaError = e.toString().contains('quota') || 
+                e.toString().contains('rate limit') ||
+                e.toString().contains('429') ||
+                e.toString().contains('503');
+            if (isQuotaError && retry < maxRetries - 1) {
+              final delay = Duration(seconds: (retry + 1) * 5);
+              debugPrint('>>> [Supabase] ⏳ Quota/rate limit atingido, aguardando ${delay.inSeconds}s antes de retry...');
+              await Future.delayed(delay);
+            } else {
+              rethrow;
+            }
+          }
+        }
       }
     } catch (e) {
       debugPrint('>>> [Supabase] ❌ Erro ao fazer upsertLote em $table: $e');
