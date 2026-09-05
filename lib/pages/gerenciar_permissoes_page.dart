@@ -6,6 +6,7 @@ import '../models/tela_sistema.dart';
 import '../services/auth_service.dart';
 import '../services/permission_service.dart';
 import '../theme.dart';
+import '../widgets/sync_status_widget.dart';
 
 /// Página para gerenciar permissões de usuários
 class GerenciarPermissoesPage extends StatefulWidget {
@@ -140,6 +141,127 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
     }
   }
 
+  void _mostrarDialogoTrocarSenha(BuildContext context, Usuario usuario) {
+    final senhaController = TextEditingController();
+    final confirmarSenhaController = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+    bool _senhaLocalVisivel = false;
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          backgroundColor: const Color(0xFF1E1E2E),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(
+            children: [
+              const Icon(Icons.password, color: Colors.blueAccent),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Trocar Senha - ${usuario.nome}',
+                  style: const TextStyle(color: Colors.white, fontSize: 18),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+          content: Form(
+            key: formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextFormField(
+                  controller: senhaController,
+                  obscureText: !_senhaLocalVisivel,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    labelText: 'Nova Senha',
+                    labelStyle: const TextStyle(color: Colors.white70),
+                    enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Colors.white30)),
+                    focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Colors.blueAccent)),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        _senhaLocalVisivel ? Icons.visibility : Icons.visibility_off,
+                        color: Colors.white54,
+                      ),
+                      onPressed: () => setState(() => _senhaLocalVisivel = !_senhaLocalVisivel),
+                    ),
+                  ),
+                  validator: (value) {
+                    if (value == null || value.isEmpty) return 'Informe a nova senha';
+                    if (value.length < 4) return 'Mínimo 4 caracteres';
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: confirmarSenhaController,
+                  obscureText: !_senhaLocalVisivel,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(
+                    labelText: 'Confirmar Nova Senha',
+                    labelStyle: TextStyle(color: Colors.white70),
+                    enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white30)),
+                    focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.blueAccent)),
+                  ),
+                  validator: (value) {
+                    if (value != senhaController.text) return 'As senhas não conferem';
+                    return null;
+                  },
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                if (formKey.currentState!.validate()) {
+                  final authService = Provider.of<AuthService>(context, listen: false);
+                  final usuarioAtualizado = usuario.copyWith(
+                    senha: senhaController.text,
+                    updatedAt: DateTime.now(),
+                  );
+                  
+                  try {
+                    await authService.atualizarUsuario(usuarioAtualizado);
+                    if (dialogContext.mounted) {
+                      Navigator.pop(dialogContext);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Senha atualizada com sucesso!'),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                    }
+                  } catch (e) {
+                    if (dialogContext.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Erro ao atualizar senha: $e'),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                    }
+                  }
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blueAccent,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Salvar'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _togglePermissao(TipoPermissao permissao, bool adicionar) {
     setState(() {
       final codigo = permissao.codigo;
@@ -258,6 +380,13 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
           backgroundColor: Colors.transparent,
           elevation: 0,
           actions: [
+            // Botão para trocar senha - Apenas para master/user
+            if (usuarioAtual != null && (usuarioAtual.isMaster || usuarioAtual.email.toLowerCase() == 'user'))
+              IconButton(
+                icon: const Icon(Icons.password_outlined, color: Colors.blueAccent),
+                tooltip: 'Trocar Senha Master',
+                onPressed: () => _mostrarDialogoTrocarSenha(context, usuarioAtual),
+              ),
             Padding(
               padding: const EdgeInsets.only(right: 16.0),
               child: Center(
@@ -275,6 +404,7 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
                 ),
               ),
             ),
+            const SyncStatusWidget(),
           ],
         ),
         body: _usuarioSelecionado == null && widget.usuario == null
@@ -449,7 +579,17 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
                     ],
                   ),
                   subtitle: Text('${usuario.tipo.nome} • ${usuario.email}'),
-                  trailing: const Icon(Icons.arrow_forward_ios),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.password, size: 20, color: Colors.blueAccent),
+                        tooltip: 'Trocar Senha',
+                        onPressed: () => _mostrarDialogoTrocarSenha(context, usuario),
+                      ),
+                      const Icon(Icons.arrow_forward_ios, size: 16),
+                    ],
+                  ),
                   onTap: () {
                     setState(() {
                       _usuarioSelecionado = usuario;

@@ -11,6 +11,7 @@ import '../theme.dart';
 import 'package:intl/intl.dart';
 import '../models/empresa.dart';
 import 'package:flutter/services.dart';
+import '../widgets/sync_status_widget.dart';
 // Import condicional para Web
 import 'html_helper_stub.dart' if (dart.library.html) 'html_helper_web.dart' as html_helper;
 
@@ -75,6 +76,7 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
   bool _exibirRedesSociais = true;
   bool _exibirHorarioFuncionamento = true;
   bool _exibirEnderecoLoja = true;
+  String _modoExibicao = 'ecommerce'; // ecommerce, delivery
   
   // Configurações do banner de frete grátis
   bool _bannerFreteGratisAtivo = true;
@@ -236,6 +238,7 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
       _slugController.text = empresa.slug;
       _exibirHorarioFuncionamento = ecommerceConfig['exibirHorarioFuncionamento'] as bool? ?? true;
       _exibirEnderecoLoja = ecommerceConfig['exibirEnderecoLoja'] as bool? ?? true;
+      _modoExibicao = ecommerceConfig['modoExibicao'] as String? ?? 'ecommerce';
       
       _emailContatoController.text = ecommerceConfig['emailContato'] as String? ?? empresa.email ?? '';
       _facebookController.text = ecommerceConfig['facebook'] as String? ?? '';
@@ -626,6 +629,7 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
       ecommerceExistente['exibirRedesSociais'] = _exibirRedesSociais;
       ecommerceExistente['exibirHorarioFuncionamento'] = _exibirHorarioFuncionamento;
       ecommerceExistente['exibirEnderecoLoja'] = _exibirEnderecoLoja;
+      ecommerceExistente['modoExibicao'] = _modoExibicao;
       ecommerceExistente['emailContato'] = _emailContatoController.text.trim();
       ecommerceExistente['facebook'] = _facebookController.text.trim();
       ecommerceExistente['instagram'] = _instagramController.text.trim();
@@ -770,6 +774,9 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
           title: const Text('Personalizar Loja'),
           backgroundColor: Colors.transparent,
           elevation: 0,
+          actions: [
+            const SyncStatusWidget(),
+          ],
           bottom: TabBar(
             controller: _tabController,
             isScrollable: true,
@@ -784,7 +791,6 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
               Tab(icon: Icon(Icons.info), text: 'Informações'),
               Tab(icon: Icon(Icons.gavel), text: 'Legal'),
               Tab(icon: Icon(Icons.settings), text: 'Layout'),
-              Tab(icon: Icon(Icons.pets), text: 'Taxi Dog'),
             ],
           ),
         ),
@@ -800,7 +806,6 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
               _buildAbaInformacoes(),
               _buildAbaLegal(),
               _buildAbaLayout(),
-              _buildAbaAgendamento(),
             ],
           ),
         ),
@@ -888,8 +893,8 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
                   // LINK DIRETO (MAIS FÁCIL)
                   _buildLinkItem(
                     'Link da sua Loja (E-commerce)',
-                    '${html_helper.getWindowHost()}/loja/${_slugController.text.isNotEmpty ? _slugController.text : Empresa.gerarSlug(empresa.nomeExibicao)}',
-                    '${html_helper.getWindowOrigin()}/loja/${_slugController.text.isNotEmpty ? _slugController.text : Empresa.gerarSlug(empresa.nomeExibicao)}',
+                    '${html_helper.getWindowHost()}/loja/${Empresa.gerarSlug(_slugController.text.isNotEmpty ? _slugController.text : empresa.nomeExibicao)}',
+                    '${html_helper.getWindowOrigin()}/loja/${Empresa.gerarSlug(_slugController.text.isNotEmpty ? _slugController.text : empresa.nomeExibicao)}',
                   ),
                   
                   const SizedBox(height: 12),
@@ -897,8 +902,8 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
                   // LINK DE AGENDAMENTO
                   _buildLinkItem(
                     'Link de Agendamento Online',
-                    '${html_helper.getWindowHost()}/agendamento/${_slugController.text.isNotEmpty ? _slugController.text : Empresa.gerarSlug(empresa.nomeExibicao)}',
-                    '${html_helper.getWindowOrigin()}/agendamento/${_slugController.text.isNotEmpty ? _slugController.text : Empresa.gerarSlug(empresa.nomeExibicao)}',
+                    '${html_helper.getWindowHost()}/agendamento/${Empresa.gerarSlug(_slugController.text.isNotEmpty ? _slugController.text : empresa.nomeExibicao)}',
+                    '${html_helper.getWindowOrigin()}/agendamento/${Empresa.gerarSlug(_slugController.text.isNotEmpty ? _slugController.text : empresa.nomeExibicao)}',
                   ),
 
                 ],
@@ -2374,6 +2379,68 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // NOVO: Seleção de Modo de Exibição (E-commerce ou Delivery)
+          Card(
+            color: Colors.blue.withOpacity(0.15),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: BorderSide(color: Colors.blueAccent.withOpacity(0.3)),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.storefront_rounded, color: Colors.blueAccent),
+                      const SizedBox(width: 8),
+                      const Text(
+                        'Modo de Exibição da Loja',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Defina o estilo principal de navegação para seus clientes.',
+                    style: TextStyle(color: Colors.white70, fontSize: 13),
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    child: SegmentedButton<String>(
+                      segments: const [
+                        ButtonSegment(
+                          value: 'ecommerce', 
+                          label: Text('E-commerce'), 
+                          icon: Icon(Icons.grid_view_rounded, size: 20)
+                        ),
+                        ButtonSegment(
+                          value: 'delivery', 
+                          label: Text('Delivery / Cardápio'), 
+                          icon: Icon(Icons.list_alt_rounded, size: 20)
+                        ),
+                      ],
+                      selected: {_modoExibicao},
+                      onSelectionChanged: (Set<String> newSelection) {
+                        setState(() => _modoExibicao = newSelection.first);
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    _modoExibicao == 'ecommerce' 
+                      ? '💡 Ideal para lojas de roupas, eletrônicos e produtos com foco em fotos grandes.'
+                      : '💡 Ideal para restaurantes, petshops e vendas rápidas com foco em lista.',
+                    style: TextStyle(color: Colors.blue[100], fontSize: 11, fontStyle: FontStyle.italic),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          
+          const SizedBox(height: 24),
           Card(
             color: Colors.white.withOpacity(0.1),
             child: Padding(
@@ -2484,108 +2551,7 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
     );
   }
 
-  Widget _buildAbaAgendamento() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Card(
-            color: Colors.white.withOpacity(0.1),
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(Icons.pets, color: Colors.white),
-                      const SizedBox(width: 8),
-                      const Text(
-                        'Bairros Atendidos (Taxi Dog)',
-                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Cadastre os bairros que aparecerão como opção no agendamento online.',
-                    style: TextStyle(color: Colors.white70, fontSize: 13),
-                  ),
-                  const SizedBox(height: 20),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _buildTextField(
-                          _novoBairroTaxiDogController,
-                          'Novo Bairro',
-                          hint: 'Ex: Centro',
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Padding(
-                        padding: const EdgeInsets.only(top: 24.0),
-                        child: ElevatedButton(
-                          onPressed: () {
-                            final nome = _novoBairroTaxiDogController.text.trim();
-                            if (nome.isNotEmpty) {
-                              setState(() {
-                                if (!_bairrosTaxiDog.contains(nome)) {
-                                  _bairrosTaxiDog.add(nome);
-                                }
-                                _novoBairroTaxiDogController.clear();
-                              });
-                            }
-                          },
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.green,
-                            padding: const EdgeInsets.all(16),
-                          ),
-                          child: const Icon(Icons.add, color: Colors.white),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-                  if (_bairrosTaxiDog.isEmpty)
-                    const Center(
-                      child: Padding(
-                        padding: EdgeInsets.all(20.0),
-                        child: Text(
-                          'Nenhum bairro cadastrado. O agendamento usará uma lista padrão.',
-                          style: TextStyle(color: Colors.white38, fontStyle: FontStyle.italic),
-                        ),
-                      ),
-                    )
-                  else
-                    ListView.separated(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: _bairrosTaxiDog.length,
-                      separatorBuilder: (_, __) => const Divider(color: Colors.white12),
-                      itemBuilder: (context, index) {
-                        final bairro = _bairrosTaxiDog[index];
-                        return ListTile(
-                          title: Text(bairro, style: const TextStyle(color: Colors.white)),
-                          trailing: IconButton(
-                            icon: const Icon(Icons.delete, color: Colors.redAccent),
-                            onPressed: () {
-                              setState(() {
-                                _bairrosTaxiDog.removeAt(index);
-                              });
-                            },
-                          ),
-                        );
-                      },
-                    ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  // O método _buildAbaAgendamento foi removido e movido para ConfiguracoesAgendaPage
 
   Widget _buildUploadBannerPromocional(
     String titulo,

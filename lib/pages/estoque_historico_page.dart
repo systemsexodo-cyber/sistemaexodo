@@ -401,6 +401,27 @@ class EstoqueHistoricoPage extends StatelessWidget {
                                               ),
                                             ],
                                           ),
+                                        if (h.fornecedorNome != null &&
+                                            h.fornecedorNome!.isNotEmpty)
+                                          Row(
+                                            children: [
+                                              Icon(
+                                                Icons.business,
+                                                size: 14,
+                                                color: Colors.blue.shade300,
+                                              ),
+                                              const SizedBox(width: 4),
+                                              Flexible(
+                                                child: Text(
+                                                  'Fornecedor: ${h.fornecedorNome}',
+                                                  style: TextStyle(
+                                                    fontSize: 12,
+                                                    color: Colors.blue.shade300,
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
                                         if (h.tipo == 'saida' &&
                                             numeroVenda != null)
                                           Padding(

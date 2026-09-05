@@ -570,7 +570,7 @@ class _LojaCheckoutPageState extends State<LojaCheckoutPage> {
           .map((item) => ItemPedido(
                 id: item.itemId,
                 nome: item.nome,
-                quantidade: item.quantidade,
+                quantidade: item.quantidade.toDouble(),
                 preco: item.preco,
               ))
           .toList();
@@ -647,6 +647,7 @@ class _LojaCheckoutPageState extends State<LojaCheckoutPage> {
       }
 
       if (mounted) {
+        carrinhoService.limparCarrinho();
         Navigator.of(context).pop();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(

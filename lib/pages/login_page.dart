@@ -2,9 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/auth_service.dart';
 import '../widgets/exodo_logo.dart';
+import 'dart:ui';
+import 'package:google_fonts/google_fonts.dart';
 import '../theme.dart';
 import 'home_page.dart';
+import 'garcom_home_page.dart';
 import 'selecionar_empresa_page.dart';
+import 'bloqueio_mensalidade_page.dart';
+import '../models/empresa.dart';
+import '../services/data_service.dart';
+import '../services/app_update_service.dart';
 
 /// Página de login do sistema
 class LoginPage extends StatefulWidget {
@@ -29,224 +36,301 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   Future<void> _fazerLogin() async {
-    if (!_formKey.currentState!.validate()) {
-      return;
-    }
-
+    if (!_formKey.currentState!.validate()) return;
     setState(() => _isLoading = true);
-
     final authService = Provider.of<AuthService>(context, listen: false);
-    final sucesso = await authService.login(
-      _emailController.text.trim(),
-      _senhaController.text.trim(),
-    );
-
+    final sucesso = await authService.login(_emailController.text.trim(), _senhaController.text.trim());
     setState(() => _isLoading = false);
-
     if (!mounted) return;
 
     if (sucesso) {
-      // Sempre mostra seleção de empresa após login bem-sucedido
-      // Se houver empresas disponíveis para o usuário, mostra a tela de seleção
+      final usuario = authService.usuarioAtual;
+      final email = usuario?.email.toLowerCase() ?? '';
+      final isMaster = usuario != null && (email == 'user' || email == 'admin' || email == 'suporte');
+
+      // Se for o usuário Master / Suporte, entra DIRETO na tela do Portal Êxodo (SelecionarEmpresaPage)
+      if (isMaster) {
+        Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const SelecionarEmpresaPage()));
+        return;
+      }
+
+      // GARÇOM: acesso restrito — entra direto na tela de mesas/comandas + vendas/ranking
+      if (usuario?.isGarcom == true) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const GarcomHomePage()),
+        );
+        return;
+      }
+
+      // Para demais usuários (ex: Silvia):
+      final dataService = Provider.of<DataService>(context, listen: false);
+      final empresaAtual = authService.empresaAtual;
+
+      if (empresaAtual != null) {
+        final motivo = empresaAtual.verificarMotivoBloqueio(
+          ultimaValidacaoOnline: dataService.ultimaValidacaoOnline,
+          ultimaDataExecucao: dataService.ultimaDataExecucao,
+          limiteDiasOffline: 5,
+        );
+        if (motivo != MotivoBloqueioEmpresa.nenhum && !dataService.liberacaoProvisoriaAtiva) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => BloqueioMensalidadePage(
+                configs: empresaAtual.configuracoes ?? {},
+                motivoBloqueio: motivo,
+              ),
+            ),
+          );
+          return;
+        }
+      }
+
       final empresasDoUsuario = authService.getEmpresasDoUsuario();
-      if (empresasDoUsuario.isNotEmpty) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => const SelecionarEmpresaPage(),
-          ),
-        );
+      if (empresasDoUsuario.length > 1) {
+        Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const SelecionarEmpresaPage()));
       } else {
-        // Se não tem empresas cadastradas, vai direto para home
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => const HomePage(),
-          ),
-        );
+        // FIX: usuários não-master com uma única empresa (ex: carlos) iam direto
+        // para a HomePage sem que o DataService carregasse os dados da empresa.
+        // Quem fazia esse carregamento era o AuthWrapper (definirEmpresaAtual),
+        // mas o pushReplacement abaixo substitui o AuthWrapper na pilha de rotas,
+        // então a lógica dele nunca rodava e as listas abriam vazias na primeira
+        // entrada. Aqui garantimos o carregamento ANTES de navegar.
+        final empresaSelecionada = authService.empresaAtual;
+        if (empresaSelecionada != null && dataService.currentEmpresaId != empresaSelecionada.id) {
+          dataService.setEmpresaAtual(empresaSelecionada);
+          if (mounted) setState(() => _isLoading = true);
+          try {
+            await dataService.definirEmpresaAtual(empresaSelecionada.id).timeout(
+              const Duration(seconds: 30),
+            );
+          } catch (e) {
+            debugPrint('>>> [Login] ⚠️ Erro ao carregar dados da empresa: $e');
+          }
+          if (mounted) setState(() => _isLoading = false);
+        }
+        Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const HomePage()));
       }
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Usuário ou senha inválidos'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Usuário ou senha inválidos'), backgroundColor: Colors.red));
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return AppTheme.appBackground(
-      child: Scaffold(
-        backgroundColor: Colors.transparent,
-        body: SafeArea(
-          child: Center(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 32.0),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(
-                  maxWidth: 420,
-                ),
-                child: Form(
-                  key: _formKey,
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      const SizedBox(height: 20),
-                      // Logo com efeito brilhante
-                      _buildLogoBrilhante(),
-                      const SizedBox(height: 50),
-                      // Campo de usuário
-                      TextFormField(
-                        controller: _emailController,
-                        textInputAction: TextInputAction.next,
-                        style: const TextStyle(color: Colors.white, fontSize: 16),
-                        decoration: InputDecoration(
-                          labelText: 'Usuário',
-                          labelStyle: const TextStyle(color: Colors.white70),
-                          hintText: 'Digite seu usuário',
-                          hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
-                          prefixIcon: const Icon(Icons.person, color: Colors.white70),
-                          filled: true,
-                          fillColor: Colors.white.withOpacity(0.08),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(16),
-                            borderSide: BorderSide.none,
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(16),
-                            borderSide: BorderSide(
-                              color: Colors.white.withOpacity(0.15),
-                              width: 1.5,
-                            ),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(16),
-                            borderSide: const BorderSide(
-                              color: Colors.blueAccent,
-                              width: 2.5,
-                            ),
-                          ),
-                        ),
-                        validator: (value) {
-                          if (value == null || value.trim().isEmpty) {
-                            return 'Por favor, insira seu usuário';
-                          }
-                          return null;
-                        },
+    return Scaffold(
+      backgroundColor: const Color(0xFF0F172A),
+      body: Stack(
+        children: [
+          // 1. Fundo Gradiente Deep
+          Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFF0F172A), Color(0xFF1E293B), Color(0xFF0F172A)],
+              ),
+            ),
+          ),
+          
+          // 2. Orbes de Luz Aurora
+          _buildOrb(top: -100, left: -50, color: Colors.blueAccent.withOpacity(0.2), size: 400),
+          _buildOrb(bottom: -150, right: -100, color: Colors.orangeAccent.withOpacity(0.15), size: 500),
+
+          // 3. Conteúdo
+          SafeArea(
+            child: Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(horizontal: 24.0),
+                child: Column(
+                  children: [
+                    _buildLogoPremium(),
+                    // CARD DE LOGIN GLASSMORPHISM
+                    _buildGlassCard(),
+                    
+                    const SizedBox(height: 40),
+                    
+                    // VERSÃO E RODAPÉ DISCRETO
+                    Text(
+                      'SISTEMA ÊXODO V${AppUpdateService.currentAppVersion}',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.2),
+                        fontSize: 10,
+                        letterSpacing: 2,
+                        fontWeight: FontWeight.bold
                       ),
-                      const SizedBox(height: 20),
-                      // Campo de senha
-                      TextFormField(
-                        controller: _senhaController,
-                        obscureText: _obscurePassword,
-                        textInputAction: TextInputAction.done,
-                        onFieldSubmitted: (_) => _fazerLogin(),
-                        style: const TextStyle(color: Colors.white, fontSize: 16),
-                        decoration: InputDecoration(
-                          labelText: 'Senha',
-                          labelStyle: const TextStyle(color: Colors.white70),
-                          hintText: 'Digite sua senha',
-                          hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
-                          prefixIcon: const Icon(Icons.lock_outline, color: Colors.white70),
-                          suffixIcon: IconButton(
-                            icon: Icon(
-                              _obscurePassword
-                                  ? Icons.visibility_outlined
-                                  : Icons.visibility_off_outlined,
-                              color: Colors.white70,
-                            ),
-                            onPressed: () {
-                              setState(() => _obscurePassword = !_obscurePassword);
-                            },
-                          ),
-                          filled: true,
-                          fillColor: Colors.white.withOpacity(0.08),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(16),
-                            borderSide: BorderSide.none,
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(16),
-                            borderSide: BorderSide(
-                              color: Colors.white.withOpacity(0.15),
-                              width: 1.5,
-                            ),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(16),
-                            borderSide: const BorderSide(
-                              color: Colors.blueAccent,
-                              width: 2.5,
-                            ),
-                          ),
-                        ),
-                        validator: (value) {
-                          if (value == null || value.trim().isEmpty) {
-                            return 'Por favor, insira sua senha';
-                          }
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 36),
-                      // Botão de login
-                      Container(
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(18),
-                          gradient: LinearGradient(
-                            colors: [
-                              Colors.blueAccent,
-                              Colors.blue.shade600,
-                            ],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.blueAccent.withOpacity(0.5),
-                              blurRadius: 24,
-                              spreadRadius: 0,
-                              offset: const Offset(0, 10),
-                            ),
-                          ],
-                        ),
-                        child: Material(
-                          color: Colors.transparent,
-                          child: InkWell(
-                            onTap: _isLoading ? null : _fazerLogin,
-                            borderRadius: BorderRadius.circular(18),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(vertical: 20),
-                              alignment: Alignment.center,
-                              child: _isLoading
-                                  ? const SizedBox(
-                                      height: 24,
-                                      width: 24,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 3,
-                                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                                      ),
-                                    )
-                                  : const Text(
-                                      'Entrar',
-                                      style: TextStyle(
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.w700,
-                                        letterSpacing: 1,
-                                        color: Colors.white,
-                                      ),
-                                    ),
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAnimatedAurora() {
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Color(0xFF0F172A), // Deep Slate
+            Color(0xFF1E293B), // Slate 800
+            Color(0xFF0F172A),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFloatingOrbs() {
+    return Stack(
+      children: [
+        _buildOrb(top: -100, left: -50, color: Colors.blueAccent.withOpacity(0.2), size: 400),
+        _buildOrb(bottom: -150, right: -100, color: Colors.orangeAccent.withOpacity(0.15), size: 500),
+        _buildOrb(top: 200, right: -50, color: Colors.indigo.withOpacity(0.1), size: 300),
+      ],
+    );
+  }
+
+  Widget _buildOrb({double? top, double? left, double? right, double? bottom, required Color color, required double size}) {
+    return Positioned(
+      top: top, left: left, right: right, bottom: bottom,
+      child: Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: RadialGradient(
+            colors: [color, Colors.transparent],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLogoPremium() {
+    return Hero(
+      tag: 'logo_exodo',
+      child: Column(
+        children: [
+          Stack(
+            alignment: Alignment.center,
+            children: [
+              Container(
+                width: 120,
+                height: 120,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(color: Colors.orange.withOpacity(0.3), blurRadius: 60, spreadRadius: 10),
+                  ],
+                ),
+              ),
+              const ExodoLogo(fontSize: 80, showSubtitle: false),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'GESTÃO INTELIGENTE',
+            style: TextStyle(
+              color: Colors.orange.shade300,
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 4
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGlassCard() {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(32),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+        child: Container(
+          width: 400,
+          padding: const EdgeInsets.all(40),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.05),
+            borderRadius: BorderRadius.circular(32),
+            border: Border.all(color: Colors.white.withOpacity(0.1), width: 1.5),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Colors.white.withOpacity(0.1),
+                Colors.white.withOpacity(0.02),
+              ],
+            ),
+          ),
+          child: Form(
+            key: _formKey,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  'Acesso Administrativo',
+                  style: TextStyle(color: Colors.white.withOpacity(0.9), fontSize: 18, fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 32),
+                
+                // INPUT USUÁRIO
+                _buildModernInput(
+                  controller: _emailController,
+                  label: 'Usuário',
+                  icon: Icons.alternate_email_rounded,
+                ),
+
+                // HISTÓRICO DE LOGINS
+                Consumer<AuthService>(
+                  builder: (context, auth, _) {
+                    if (auth.historicoLogins.isEmpty) return const SizedBox.shrink();
+                    return Padding(
+                      padding: const EdgeInsets.only(top: 12),
+                      child: Wrap(
+                        spacing: 8,
+                        runSpacing: 4,
+                        children: auth.historicoLogins.map((login) => ActionChip(
+                          label: Text(login, style: const TextStyle(fontSize: 11, color: Colors.white70)),
+                          backgroundColor: Colors.white.withOpacity(0.05),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                          side: BorderSide(color: Colors.white.withOpacity(0.1)),
+                          visualDensity: VisualDensity.compact,
+                          onPressed: () {
+                            _emailController.text = login;
+                            FocusScope.of(context).nextFocus(); // Pula para senha
+                          },
+                        )).toList(),
+                      ),
+                    );
+                  }
+                ),
+                
+                const SizedBox(height: 20),
+                
+                // INPUT SENHA
+                _buildModernInput(
+                  controller: _senhaController,
+                  label: 'Senha',
+                  icon: Icons.lock_open_rounded,
+                  isPassword: true,
+                  textInputAction: TextInputAction.done,
+                  onSubmitted: (_) => _fazerLogin(),
+                ),
+                
+                const SizedBox(height: 40),
+                
+                // BOTÃO ENTRAR
+                _buildLoginButton(),
+              ],
             ),
           ),
         ),
@@ -254,66 +338,78 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
-  Widget _buildLogoBrilhante() {
-    return Container(
-      padding: const EdgeInsets.all(30),
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          // Efeito de brilho pulsante
-          TweenAnimationBuilder<double>(
-            tween: Tween(begin: 0.0, end: 1.0),
-            duration: const Duration(seconds: 3),
-            curve: Curves.easeInOut,
-            onEnd: () {
-              if (mounted) {
-                setState(() {});
-              }
-            },
-            builder: (context, value, child) {
-              return Container(
-                width: 200,
-                height: 200,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: RadialGradient(
-                    colors: [
-                      Colors.orange.withOpacity(0.4 * (0.5 + 0.5 * value)),
-                      Colors.orange.withOpacity(0.1 * (0.5 + 0.5 * value)),
-                      Colors.transparent,
-                    ],
-                    stops: const [0.0, 0.5, 1.0],
-                  ),
-                ),
-              );
-            },
+  Widget _buildModernInput({
+    required TextEditingController controller,
+    required String label,
+    required IconData icon,
+    bool isPassword = false,
+    TextInputAction textInputAction = TextInputAction.next,
+    Function(String)? onSubmitted,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 4, bottom: 8),
+          child: Text(
+            label.toUpperCase(),
+            style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1),
           ),
-          // Brilho externo
-          Container(
-            width: 180,
-            height: 180,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.orange.withOpacity(0.6),
-                  blurRadius: 50,
-                  spreadRadius: 10,
-                ),
-                BoxShadow(
-                  color: Colors.orange.withOpacity(0.3),
-                  blurRadius: 80,
-                  spreadRadius: 20,
-                ),
-              ],
+        ),
+        TextFormField(
+          controller: controller,
+          obscureText: isPassword ? _obscurePassword : false,
+          textInputAction: textInputAction,
+          onFieldSubmitted: onSubmitted,
+          style: const TextStyle(color: Colors.white, fontSize: 16),
+          decoration: InputDecoration(
+            prefixIcon: Icon(icon, color: Colors.blueAccent, size: 20),
+            suffixIcon: isPassword ? IconButton(
+              icon: Icon(_obscurePassword ? Icons.visibility_off_rounded : Icons.visibility_rounded, color: Colors.white24, size: 20),
+              onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+            ) : null,
+            filled: true,
+            fillColor: Colors.white.withOpacity(0.05),
+            contentPadding: const EdgeInsets.symmetric(vertical: 20, horizontal: 20),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(16),
+              borderSide: BorderSide(color: Colors.white.withOpacity(0.1)),
             ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(16),
+              borderSide: const BorderSide(color: Colors.blueAccent, width: 2),
+            ),
+            errorStyle: const TextStyle(color: Colors.redAccent),
           ),
-          // Logo
-          const ExodoLogo(
-            fontSize: 72,
-            showSubtitle: true,
-          ),
+          validator: (v) => v == null || v.isEmpty ? 'Obrigatório' : null,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildLoginButton() {
+    return Container(
+      height: 60,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        gradient: const LinearGradient(
+          colors: [Color(0xFF3B82F6), Color(0xFF2563EB)],
+        ),
+        boxShadow: [
+          BoxShadow(color: Colors.blue.withOpacity(0.3), blurRadius: 20, offset: const Offset(0, 8)),
         ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: _isLoading ? null : _fazerLogin,
+          borderRadius: BorderRadius.circular(16),
+          child: Center(
+            child: _isLoading 
+              ? const SizedBox(height: 24, width: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+              : const Text('ACESSAR SISTEMA', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
+          ),
+        ),
       ),
     );
   }

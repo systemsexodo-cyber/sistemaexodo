@@ -25,8 +25,41 @@ void openWindow(String url, String name) {
   // Não faz nada fora da Web
 }
 
+/// Abre uma URL (stub)
+void openUrl(String url) {
+  // Não faz nada fora da Web
+}
+
 /// Atualiza o caminho da URL (stub)
 void updateUrl(String path, {bool replace = false}) {
   // Não faz nada fora da Web
 }
+
+/// Stream de foco da janela (stub)
+Stream<dynamic> get onWindowFocus => const Stream.empty();
+
+/// Toca áudio no navegador (stub)
+void playAudio(String assetPath, {double volume = 1.0}) {
+  // Não faz nada fora da Web
+}
+
+/// Download de arquivo (stub)
+void downloadFile(String content, String fileName, String mimeType) {
+  // Não faz nada fora da Web
+}
+
+/// Download de arquivo binário (stub)
+void downloadBytes(List<int> bytes, String fileName, String mimeType) {
+  // Não faz nada fora da Web
+}
+
+/// Verifica se está em tela cheia (stub)
+bool isFullscreen() => false;
+
+/// Solicita tela cheia (stub)
+void requestFullscreen() {}
+
+/// Sai da tela cheia (stub)
+void exitFullscreen() {}
+
 

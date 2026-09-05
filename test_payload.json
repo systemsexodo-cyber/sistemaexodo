@@ -1,0 +1,46 @@
+{
+  "empresa": {
+    "cnpj": "12345678901234",
+    "razao_social": "Teste Ltda",
+    "nome_fantasia": "Teste",
+    "inscricao_estadual": "123456789",
+    "logradouro": "Rua Teste",
+    "numero": "123",
+    "bairro": "Centro",
+    "municipio": "SAO PAULO",
+    "codigo_municipio": "3550308",
+    "uf": "SP",
+    "cep": "01310000",
+    "crt": "1",
+    "ambiente": 2,
+    "certificado_base64": "",
+    "senha_certificado": "123456",
+    "csc": "",
+    "csc_id_token": ""
+  },
+  "itens": [
+    {
+      "codigo": "1",
+      "descricao": "Produto Teste",
+      "ncm": "00000000",
+      "cfop": "5102",
+      "quantidade": 1,
+      "valor_unitario": 10.0,
+      "valor_total": 10.0,
+      "icms_origem": 0,
+      "icms_cst": "00",
+      "icms_aliquota": 0.0,
+      "icms_csosn": "102"
+    }
+  ],
+  "pagamentos": [
+    {
+      "tipo": "01",
+      "valor": 10.0
+    }
+  ],
+  "valor_total": 10.0,
+  "venda_numero": "1",
+  "cpf_cliente": "",
+  "serie": 1
+}

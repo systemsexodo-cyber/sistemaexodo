@@ -37,6 +37,49 @@ class NFCeApiService {
     String? cpfCnpjConsumidor,
     String? nomeConsumidor,
     String? observacoes,
+    // Novos campos adicionados para manter a assinatura com NFCeServiceBase
+    String? vendaId,
+    String? vendaNumero,
+    bool ambienteHomologacao = true,
+    int? serie,
+    int? modelo,
+    int? numero,
+    String? destLogradouro,
+    String? destNumero,
+    String? destComplemento,
+    String? destBairro,
+    String? destMunicipio,
+    String? destUf,
+    String? destCep,
+    String? destCodMunicipio,
+    String? destTelefone,
+    String? destEmail,
+    String? destIe,
+    int? finalidade,
+    String? naturezaOperacao,
+    String? chaveReferenciada,
+    double? valorFrete,
+    double? valorSeguro,
+    double? outrasDespesas,
+    int? modFrete,
+    String? transpNome,
+    String? transpCnpjCpf,
+    String? transpInscEst,
+    String? transpEndereco,
+    String? transpMunicipio,
+    String? transpUf,
+    String? transpPlaca,
+    String? transpPlacaUf,
+    double? transpQtdVolumes,
+    String? transpEspecie,
+    double? transpPesoBruto,
+    double? transpPesoLiquido,
+    double? icmsReducaoBc,
+    double? icmsBaseCalculo,
+    double? icmsAliquota,
+    double? icmsValor,
+    double? creditoAliquota,
+    double? creditoValor,
   }) async {
     try {
       debugPrint('>>> [NFCeApi] Iniciando emissão via API...');
@@ -109,20 +152,33 @@ class NFCeApiService {
     final itens = <Map<String, dynamic>>[];
     for (final produto in produtos) {
       final quantidade = quantidades[produto.id] ?? 1.0;
-      final valorUnitario = produto.precoAtual;
+      final valorUnitario = produto.aplicarPromocoes(produto.preco, quantidade: quantidade);
       final valorTotalItem = valorUnitario * quantidade;
+
+      String cfopFinal = produto.cfop?.replaceAll(RegExp(r'[^0-9]'), '') ?? '5102';
+      String csosnFinal = produto.csosn?.replaceAll(RegExp(r'[^0-9]'), '') ?? '';
+      final cstRaw = produto.icmsCst?.replaceAll(RegExp(r'[^0-9]'), '') ?? '';
+      
+      // ═══ VALIDAÇÃO CFOP × CSOSN (Rejeição SEFAZ 386) ═══
+      if (empresa.crt != 3 && csosnFinal.isNotEmpty) {
+        final correcao = _corrigirCfopCsosn(cfopFinal, csosnFinal);
+        cfopFinal = correcao['cfop']!;
+        csosnFinal = correcao['csosn']!;
+      } else if ((csosnFinal == '500' || cstRaw == '60') && (cfopFinal == '5102' || cfopFinal == '5101')) {
+        cfopFinal = '5405';
+      }
 
       itens.add({
         'codigo_produto': produto.codigo ?? produto.id,
         'descricao': produto.nome,
-        'ncm': produto.ncm ?? '00000000',
-        'cfop': produto.cfop ?? '5102',
-        'unidade_comercial': produto.unidade,
+        'ncm': produto.ncm?.replaceAll(RegExp(r'[^0-9]'), '') ?? '00000000',
+        'cfop': cfopFinal,
+        'unidade_comercial': produto.unidade ?? 'UN',
         'quantidade_comercial': quantidade.toStringAsFixed(3),
         'valor_unitario_comercial': valorUnitario.toStringAsFixed(2),
         'valor_total': valorTotalItem.toStringAsFixed(2),
         'icms_origem': produto.origem ?? '0',
-        'icms_situacao_tributaria': produto.csosn ?? produto.icmsCst ?? '102',
+        'icms_situacao_tributaria': (empresa.crt == 3) ? (produto.icmsCst ?? '00') : (produto.csosn ?? '102'),
         'icms_aliquota': (produto.icmsAliquota ?? 0).toStringAsFixed(2),
         if (produto.codigoBarras != null)
           'codigo_barras_comercial': produto.codigoBarras,
@@ -194,10 +250,15 @@ class NFCeApiService {
         serie: data['serie'] as String? ?? '1',
         protocolo: protocolo,
         status: 'autorizada',
-        xml: xml,
+        xmlEnviado: xml,
         qrCode: qrCode,
         dataEmissao: DateTime.now(),
         empresaId: empresa.id,
+        valorTotal: 0.0,
+        itens: [],
+        pagamentos: [],
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
       );
     } else {
       throw Exception('NFC-e não autorizada: ${data['mensagem'] ?? status}');
@@ -253,6 +314,35 @@ class NFCeApiService {
       debugPrint('>>> [NFCeApi] Erro ao cancelar: $e');
       rethrow;
     }
+  }
+
+  /// Valida e corrige combinações CFOP × CSOSN incompatíveis (Rejeição 386).
+  static Map<String, String> _corrigirCfopCsosn(String cfop, String csosn) {
+    String cfopCorrigido = cfop;
+    String csosnCorrigido = csosn;
+
+    // CFOPs aceitos para CSOSNs de tributação / imune / não-tributada
+    final cfopsTributados = {'5102', '1102', '6102', '7102', '5101', '1101', '6101', '7101'};
+    // CFOPs aceitos para CSOSN 500 (substituição tributária)
+    final cfopsSt = {'5405', '1551', '5551', '6551', '7551', '5403', '1403', '6403'};
+    // CSOSNs que usam CFOPs de tributação (inclui imune 300 e não-tributada 400)
+    final csosnsTributados = {'101', '102', '103', '201', '202', '203', '300', '400', '600'};
+
+    if (csosnsTributados.contains(csosn)) {
+      if (!cfopsTributados.contains(cfop)) {
+        cfopCorrigido = '5102';
+      }
+    } else if (csosn == '500') {
+      if (!cfopsSt.contains(cfop) && !cfopsTributados.contains(cfop)) {
+        cfopCorrigido = '5405';
+      }
+    } else if (csosn == '900') {
+      // CSOSN Outros → aceita qualquer CFOP
+    } else if (cfop == '5949' && csosn != '900') {
+      csosnCorrigido = '900';
+    }
+
+    return {'cfop': cfopCorrigido, 'csosn': csosnCorrigido};
   }
 }
 

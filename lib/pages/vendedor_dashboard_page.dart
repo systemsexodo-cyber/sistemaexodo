@@ -6,6 +6,7 @@ import 'package:sistema_exodo_novo/services/data_service.dart';
 import 'package:sistema_exodo_novo/services/auth_service.dart';
 import 'package:sistema_exodo_novo/theme.dart';
 import 'package:intl/intl.dart';
+import 'package:sistema_exodo_novo/widgets/sync_status_widget.dart';
 
 class VendedorDashboardPage extends StatefulWidget {
   final String? funcionarioId; // Se null, mostra todos os vendedores
@@ -110,6 +111,9 @@ class _VendedorDashboardPageState extends State<VendedorDashboardPage> {
                   onPressed: () => Navigator.of(context).pop(),
                 )
               : null,
+          actions: [
+            const SyncStatusWidget(),
+          ],
         ),
         body: Column(
         children: [

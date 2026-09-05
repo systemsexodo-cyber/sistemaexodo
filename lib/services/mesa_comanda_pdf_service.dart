@@ -20,43 +20,60 @@ class MesaComandaPdfService {
       final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
       final formatoData = DateFormat('dd/MM/yyyy HH:mm');
 
+      // Configurações de impressão dinâmicas
+      final config = empresa.configuracoes ?? {};
+      final double larguraBobina = config['comandaLarguraBobina']?.toDouble() ?? 80.0;
+      final double margemEsq = config['comandaMargemEsq']?.toDouble() ?? config['comandaMargemH']?.toDouble() ?? 10.0;
+      final double margemDir = config['comandaMargemDir']?.toDouble() ?? config['comandaMargemH']?.toDouble() ?? 15.0;
+      final double margemV = config['comandaMargemV']?.toDouble() ?? 10.0;
+      final double fontSizeTitulo = config['comandaFonteTitulo']?.toDouble() ?? 14.0;
+      final double fontSizeCorpo = config['comandaFonteCorpo']?.toDouble() ?? 9.0;
+      final double fontSizeStatus = config['comandaFonteStatus']?.toDouble() ?? 8.0;
+      final bool usarNegrito = config['comandaNegrito'] ?? true;
+
+      // Cálculo de largura útil (mm -> pt) com compensação de segurança
+      final double pageWidth = (larguraBobina - 2) * 2.83465; // Desconto de 2mm para segurança
+
       pdf.addPage(
         pw.Page(
-          pageFormat: const PdfPageFormat(80 * 2.83465, 297 * 2.83465), // 80mm x 297mm (térmica)
-          margin: const pw.EdgeInsets.symmetric(horizontal: 5, vertical: 5),
+          pageFormat: PdfPageFormat(pageWidth, 2000), // Usando altura grande para permitir rolo contínuo
+          margin: pw.EdgeInsets.only(
+            left: margemEsq,
+            right: margemDir,
+            top: margemV,
+            bottom: margemV,
+          ),
           build: (pw.Context context) {
             return pw.Column(
               crossAxisAlignment: pw.CrossAxisAlignment.center,
               children: [
-                _buildCabecalhoTermico(empresa),
+                _buildCabecalhoTermico(empresa, fontSizeTitulo, fontSizeCorpo, usarNegrito),
                 pw.SizedBox(height: 8),
-                _buildDadosMesaComandaTermico(mesaComanda, formatoData),
+                _buildDadosMesaComandaTermico(mesaComanda, formatoData, fontSizeCorpo, fontSizeStatus, usarNegrito),
                 pw.SizedBox(height: 8),
-                _buildClienteTermico(mesaComanda),
+                _buildClienteTermico(mesaComanda, fontSizeCorpo, usarNegrito),
                 pw.SizedBox(height: 8),
-                _buildItensTermico(mesaComanda, formatoMoeda),
+                _buildItensTermico(mesaComanda, formatoMoeda, fontSizeCorpo, usarNegrito),
                 // Itens das comandas vinculadas
                 if (comandasVinculadas != null && comandasVinculadas.isNotEmpty)
                   ...comandasVinculadas.map((comanda) => pw.Column(
                     children: [
                       pw.SizedBox(height: 8),
-                      _buildSeparadorComanda(comanda),
+                      _buildSeparadorComanda(comanda, fontSizeCorpo, usarNegrito),
                       pw.SizedBox(height: 4),
-                      _buildItensTermico(comanda, formatoMoeda),
+                      _buildItensTermico(comanda, formatoMoeda, fontSizeCorpo, usarNegrito),
                     ],
                   )),
                 pw.SizedBox(height: 8),
-                _buildTotalTermico(mesaComanda, comandasVinculadas, formatoMoeda),
+                _buildTotalTermico(mesaComanda, comandasVinculadas, formatoMoeda, fontSizeCorpo, usarNegrito),
                 pw.SizedBox(height: 8),
-                _buildPagamentosTermico(mesaComanda, comandasVinculadas, formatoMoeda, formatoData),
-                pw.SizedBox(height: 8),
-                _buildResumoTermico(mesaComanda, comandasVinculadas, formatoMoeda),
+                _buildResumoPagamentoSimplificado(mesaComanda, comandasVinculadas, formatoMoeda, fontSizeCorpo, usarNegrito),
                 if (mesaComanda.observacao != null && mesaComanda.observacao!.isNotEmpty) ...[
                   pw.SizedBox(height: 8),
-                  _buildObservacoesTermico(mesaComanda),
+                  _buildObservacoesTermico(mesaComanda, fontSizeCorpo, usarNegrito),
                 ],
                 pw.SizedBox(height: 8),
-                _buildRodapeTermico(empresa, formatoData),
+                _buildRodapeTermico(empresa, formatoData, fontSizeCorpo, usarNegrito),
               ],
             );
           },
@@ -70,15 +87,15 @@ class MesaComandaPdfService {
   }
 
   /// Constrói cabeçalho do recibo térmico
-  static pw.Widget _buildCabecalhoTermico(Empresa empresa) {
+  static pw.Widget _buildCabecalhoTermico(Empresa empresa, double fontSizeTitulo, double fontSizeCorpo, bool usarNegrito) {
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.center,
       children: [
         pw.Text(
           empresa.nomeFantasia ?? empresa.razaoSocial,
           style: pw.TextStyle(
-            fontSize: 14,
-            fontWeight: pw.FontWeight.bold,
+            fontSize: fontSizeTitulo,
+            fontWeight: usarNegrito ? pw.FontWeight.bold : pw.FontWeight.normal,
           ),
           textAlign: pw.TextAlign.center,
         ),
@@ -86,7 +103,7 @@ class MesaComandaPdfService {
           pw.SizedBox(height: 2),
           pw.Text(
             'CNPJ: ${_formatarCpfCnpj(empresa.cnpj!)}',
-            style: const pw.TextStyle(fontSize: 8),
+            style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
             textAlign: pw.TextAlign.center,
           ),
         ],
@@ -94,7 +111,7 @@ class MesaComandaPdfService {
           pw.SizedBox(height: 2),
           pw.Text(
             empresa.endereco!,
-            style: const pw.TextStyle(fontSize: 8),
+            style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
             textAlign: pw.TextAlign.center,
           ),
         ],
@@ -102,7 +119,7 @@ class MesaComandaPdfService {
           pw.SizedBox(height: 2),
           pw.Text(
             'Tel: ${empresa.telefone!}',
-            style: const pw.TextStyle(fontSize: 8),
+            style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
             textAlign: pw.TextAlign.center,
           ),
         ],
@@ -112,7 +129,7 @@ class MesaComandaPdfService {
         pw.Text(
           'FECHAMENTO DE CONTA',
           style: pw.TextStyle(
-            fontSize: 12,
+            fontSize: fontSizeTitulo - 2,
             fontWeight: pw.FontWeight.bold,
           ),
           textAlign: pw.TextAlign.center,
@@ -125,24 +142,31 @@ class MesaComandaPdfService {
   static pw.Widget _buildDadosMesaComandaTermico(
     MesaComanda mesaComanda,
     DateFormat formatoData,
+    double fontSizeCorpo,
+    double fontSizeStatus,
+    bool usarNegrito,
   ) {
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
         pw.Row(
           mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+          crossAxisAlignment: pw.CrossAxisAlignment.start,
           children: [
-            pw.Text(
-              '${mesaComanda.tipo == TipoControle.mesa ? "MESA" : "COMANDA"}: ${mesaComanda.numero}',
-              style: pw.TextStyle(
-                fontSize: 10,
-                fontWeight: pw.FontWeight.bold,
+            pw.Expanded(
+              child: pw.Text(
+                '${mesaComanda.tipo == TipoControle.mesa ? "MESA" : "COMANDA"}: ${mesaComanda.numero}',
+                style: pw.TextStyle(
+                  fontSize: fontSizeCorpo + 1,
+                  fontWeight: usarNegrito ? pw.FontWeight.bold : pw.FontWeight.normal,
+                ),
               ),
             ),
+            pw.SizedBox(width: 4),
             pw.Text(
               'Status: ${mesaComanda.status}',
               style: pw.TextStyle(
-                fontSize: 9,
+                fontSize: fontSizeStatus,
                 fontWeight: pw.FontWeight.bold,
                 color: PdfColors.black,
               ),
@@ -152,24 +176,24 @@ class MesaComandaPdfService {
         pw.SizedBox(height: 2),
         pw.Text(
           'Abertura: ${formatoData.format(mesaComanda.dataAbertura)}',
-          style: const pw.TextStyle(fontSize: 9),
+          style: pw.TextStyle(fontSize: fontSizeCorpo),
         ),
         if (mesaComanda.usuarioCriou != null && mesaComanda.usuarioCriou!.isNotEmpty)
           pw.Text(
             'Aberto por: ${mesaComanda.usuarioCriou}',
-            style: const pw.TextStyle(fontSize: 9),
+            style: pw.TextStyle(fontSize: fontSizeCorpo),
           ),
         if (mesaComanda.dataFechamento != null)
           pw.Text(
             'Fechamento: ${formatoData.format(mesaComanda.dataFechamento!)}',
-            style: const pw.TextStyle(fontSize: 9),
+            style: pw.TextStyle(fontSize: fontSizeCorpo),
           ),
       ],
     );
   }
 
   /// Constrói dados do cliente
-  static pw.Widget _buildClienteTermico(MesaComanda mesaComanda) {
+  static pw.Widget _buildClienteTermico(MesaComanda mesaComanda, double fontSizeCorpo, bool usarNegrito) {
     if (mesaComanda.clienteNome == null || mesaComanda.clienteNome!.isEmpty) {
       return pw.SizedBox.shrink();
     }
@@ -185,101 +209,188 @@ class MesaComandaPdfService {
           pw.Text(
             'CLIENTE',
             style: pw.TextStyle(
-              fontSize: 9,
+              fontSize: fontSizeCorpo,
               fontWeight: pw.FontWeight.bold,
             ),
           ),
           pw.SizedBox(height: 2),
           pw.Text(
             mesaComanda.clienteNome!,
-            style: const pw.TextStyle(fontSize: 8),
+            style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
           ),
         ],
       ),
     );
   }
 
+  /// Formata a quantidade para exibição amigável
+  static String _formatarQtdItem(double qty) {
+    if (qty == qty.roundToDouble()) {
+      return qty.toInt().toString();
+    }
+    return qty.toStringAsFixed(3).replaceAll(RegExp(r'0+$'), '').replaceAll(RegExp(r'\.$'), '');
+  }
+
   /// Constrói lista de itens
   static pw.Widget _buildItensTermico(
     MesaComanda mesaComanda,
     NumberFormat formatoMoeda,
+    double fontSizeCorpo,
+    bool usarNegrito,
   ) {
     if (mesaComanda.itens.isEmpty) {
       return pw.Text(
         'Nenhum item lançado',
-        style: const pw.TextStyle(fontSize: 8),
+        style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
         textAlign: pw.TextAlign.center,
       );
     }
 
+    int itemIndex = 1;
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
-        pw.Text(
-          'ITENS',
-          style: pw.TextStyle(
-            fontSize: 11,
-            fontWeight: pw.FontWeight.bold,
+        pw.Container(
+          padding: const pw.EdgeInsets.symmetric(vertical: 2),
+          decoration: const pw.BoxDecoration(
+            border: pw.Border(
+              bottom: pw.BorderSide(color: PdfColors.black, width: 1),
+            ),
+          ),
+          child: pw.Row(
+            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+            children: [
+              pw.Text(
+                'ITEM  DESCRIÇÃO',
+                style: pw.TextStyle(
+                  fontSize: fontSizeCorpo + 0.5,
+                  fontWeight: pw.FontWeight.bold,
+                ),
+              ),
+              pw.Text(
+                'TOTAL (R\$)',
+                style: pw.TextStyle(
+                  fontSize: fontSizeCorpo + 0.5,
+                  fontWeight: pw.FontWeight.bold,
+                ),
+              ),
+            ],
           ),
         ),
         pw.SizedBox(height: 4),
-        pw.Divider(),
         ...mesaComanda.itens.map((item) {
-          final itemTotal = item.preco * item.quantidade;
-          final statusTexto = _getStatusTexto(item.status);
-          
-          return pw.Padding(
-            padding: const pw.EdgeInsets.only(bottom: 4),
+          final indexStr = (itemIndex++).toString().padLeft(2, '0');
+          final isCancelado = item.status == StatusItem.cancelado;
+          final itemTotal = isCancelado ? 0.0 : item.subtotal;
+          final qtdFormatted = _formatarQtdItem(item.quantidade);
+          final corItem = isCancelado ? PdfColors.grey500 : PdfColors.black;
+
+          return pw.Container(
+            margin: const pw.EdgeInsets.only(bottom: 4),
+            padding: const pw.EdgeInsets.only(bottom: 3),
+            decoration: const pw.BoxDecoration(
+              border: pw.Border(
+                bottom: pw.BorderSide(color: PdfColors.grey400, width: 0.5),
+              ),
+            ),
             child: pw.Column(
               crossAxisAlignment: pw.CrossAxisAlignment.start,
               children: [
+                // Nome do item em destaque
                 pw.Row(
-                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
                   children: [
-                    pw.Expanded(
-                      child: pw.Text(
-                        '${item.quantidade}x ${item.nome}',
-                        style: pw.TextStyle(
-                          fontSize: 11,
-                          fontWeight: pw.FontWeight.bold,
-                        ),
+                    pw.Text(
+                      '$indexStr. ',
+                      style: pw.TextStyle(
+                        fontSize: fontSizeCorpo + 0.5,
+                        fontWeight: pw.FontWeight.bold,
+                        color: corItem,
                       ),
                     ),
-                    pw.Text(
-                      formatoMoeda.format(itemTotal),
-                      style: pw.TextStyle(
-                        fontSize: 11,
-                        fontWeight: pw.FontWeight.bold,
+                    pw.Expanded(
+                      child: pw.Text(
+                        '${item.nome}${isCancelado ? ' [CANCELADO]' : ''}',
+                        style: pw.TextStyle(
+                          fontSize: fontSizeCorpo + 0.5,
+                          fontWeight: pw.FontWeight.bold,
+                          color: corItem,
+                        ),
                       ),
                     ),
                   ],
                 ),
-                if (item.local != null)
-                  pw.Text(
-                    'Local: ${item.local}',
-                    style: const pw.TextStyle(fontSize: 9),
-                  ),
-                pw.Text(
-                  'Status: $statusTexto',
-                  style: const pw.TextStyle(
-                    fontSize: 9,
-                  ),
+                pw.SizedBox(height: 2),
+
+                // Qtd x Preço Unitário | Subtotal Alinhado
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Padding(
+                      padding: const pw.EdgeInsets.only(left: 14),
+                      child: pw.Text(
+                        '$qtdFormatted UN  x  ${formatoMoeda.format(item.preco)}',
+                        style: pw.TextStyle(
+                          fontSize: fontSizeCorpo,
+                          fontWeight: pw.FontWeight.bold,
+                          color: corItem,
+                        ),
+                      ),
+                    ),
+                    pw.Text(
+                      isCancelado ? '- ${formatoMoeda.format(item.subtotal)}' : formatoMoeda.format(itemTotal),
+                      style: pw.TextStyle(
+                        fontSize: fontSizeCorpo + 0.5,
+                        fontWeight: pw.FontWeight.bold,
+                        color: isCancelado ? PdfColors.red : PdfColors.black,
+                      ),
+                    ),
+                  ],
                 ),
-                if (item.observacao != null && item.observacao!.isNotEmpty)
-                  pw.Text(
-                    'Obs: ${item.observacao}',
-                    style: const pw.TextStyle(fontSize: 9),
+
+                // Adicionais
+                if (item.adicionais.isNotEmpty) ...[
+                  pw.SizedBox(height: 2),
+                  ...item.adicionais.map(
+                    (adicional) => pw.Padding(
+                      padding: const pw.EdgeInsets.only(left: 14, top: 1),
+                      child: pw.Text(
+                        '+ ${adicional.nome} (${formatoMoeda.format(adicional.preco)})',
+                        style: pw.TextStyle(
+                          fontSize: fontSizeCorpo - 0.5,
+                          fontWeight: pw.FontWeight.bold,
+                        ),
+                      ),
+                    ),
                   ),
+                ],
+
+                // Observação do item
+                if (item.observacao != null && item.observacao!.trim().isNotEmpty) ...[
+                  pw.SizedBox(height: 2),
+                  pw.Padding(
+                    padding: const pw.EdgeInsets.only(left: 14, top: 1),
+                    child: pw.Text(
+                      '* OBS: ${item.observacao}',
+                      style: pw.TextStyle(
+                        fontSize: fontSizeCorpo - 0.5,
+                        fontWeight: pw.FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
           );
         }),
+        pw.SizedBox(height: 3),
+        pw.Divider(thickness: 1),
       ],
     );
   }
 
   /// Constrói separador de comanda
-  static pw.Widget _buildSeparadorComanda(MesaComanda comanda) {
+  static pw.Widget _buildSeparadorComanda(MesaComanda comanda, double fontSizeCorpo, bool usarNegrito) {
     return pw.Container(
       padding: const pw.EdgeInsets.symmetric(vertical: 4),
       decoration: pw.BoxDecoration(
@@ -291,8 +402,8 @@ class MesaComandaPdfService {
       child: pw.Text(
         'COMANDA: ${comanda.numero}',
         style: pw.TextStyle(
-          fontSize: 9,
-          fontWeight: pw.FontWeight.bold,
+          fontSize: fontSizeCorpo,
+          fontWeight: usarNegrito ? pw.FontWeight.bold : pw.FontWeight.normal,
         ),
         textAlign: pw.TextAlign.center,
       ),
@@ -304,20 +415,19 @@ class MesaComandaPdfService {
     MesaComanda mesaComanda,
     List<MesaComanda>? comandasVinculadas,
     NumberFormat formatoMoeda,
+    double fontSizeCorpo,
+    bool usarNegrito,
   ) {
     // Calcular subtotal dos itens (sem couvert e garçom)
     double subtotalItensMesa = mesaComanda.itens
         .where((item) => item.status != StatusItem.cancelado)
-        .fold(0.0, (sum, item) => sum + (item.preco * item.quantidade));
+        .fold(0.0, (sum, item) => sum + item.subtotal);
     
     // Valor do couvert
     double valorCouvertMesa = mesaComanda.valorCouvertCalculado;
     
-    // Valor do garçom (10% sobre subtotal + couvert, se não foi retirado)
-    double valorGarcomMesa = 0.0;
-    if (!mesaComanda.garcomRetirado && mesaComanda.valorGarcom != null) {
-      valorGarcomMesa = mesaComanda.valorGarcom!;
-    }
+    // Valor do garçom (Taxa de serviço)
+    double valorGarcomMesa = mesaComanda.valorTaxaServicoCalculado;
     
     double totalMesa = mesaComanda.totalCalculado;
     double totalComandas = 0.0;
@@ -330,12 +440,10 @@ class MesaComandaPdfService {
         totalComandas += comanda.totalCalculado;
         subtotalItensComandas += comanda.itens
             .where((item) => item.status != StatusItem.cancelado)
-            .fold(0.0, (sum, item) => sum + (item.preco * item.quantidade));
+            .fold(0.0, (sum, item) => sum + item.subtotal);
         valorCouvertComandas += comanda.valorCouvertCalculado;
-        if (!comanda.garcomRetirado && comanda.valorGarcom != null) {
-          valorGarcomComandas += comanda.valorGarcom!;
+        valorGarcomComandas += comanda.valorTaxaServicoCalculado;
       }
-    }
     }
     
     final subtotalItensGeral = subtotalItensMesa + subtotalItensComandas;
@@ -358,15 +466,15 @@ class MesaComandaPdfService {
               pw.Text(
                 'Subtotal Itens:',
                 style: pw.TextStyle(
-                  fontSize: 9,
-                  fontWeight: pw.FontWeight.bold,
+                  fontSize: fontSizeCorpo,
+                  fontWeight: usarNegrito ? pw.FontWeight.bold : pw.FontWeight.normal,
                 ),
               ),
               pw.Text(
                 formatoMoeda.format(subtotalItensGeral),
                 style: pw.TextStyle(
-                  fontSize: 9,
-                  fontWeight: pw.FontWeight.bold,
+                  fontSize: fontSizeCorpo,
+                  fontWeight: usarNegrito ? pw.FontWeight.bold : pw.FontWeight.normal,
                 ),
               ),
             ],
@@ -380,15 +488,15 @@ class MesaComandaPdfService {
                 pw.Text(
                   'Couvert Artístico:',
                   style: pw.TextStyle(
-                    fontSize: 9,
-                    fontWeight: pw.FontWeight.bold,
+                    fontSize: fontSizeCorpo,
+                    fontWeight: usarNegrito ? pw.FontWeight.bold : pw.FontWeight.normal,
                   ),
                 ),
                 pw.Text(
                   formatoMoeda.format(valorCouvertGeral),
                   style: pw.TextStyle(
-                    fontSize: 9,
-                    fontWeight: pw.FontWeight.bold,
+                    fontSize: fontSizeCorpo,
+                    fontWeight: usarNegrito ? pw.FontWeight.bold : pw.FontWeight.normal,
                   ),
                 ),
               ],
@@ -399,7 +507,7 @@ class MesaComandaPdfService {
                 padding: const pw.EdgeInsets.only(left: 8),
                 child: pw.Text(
                   '${mesaComanda.quantidadePessoasCouvert} pessoa(s) × ${formatoMoeda.format(mesaComanda.valorCouvertPorPessoa)}',
-                  style: const pw.TextStyle(fontSize: 8),
+                  style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
                 ),
               ),
             ],
@@ -413,15 +521,15 @@ class MesaComandaPdfService {
                 pw.Text(
                   'Garçom (10%):',
                   style: pw.TextStyle(
-                    fontSize: 9,
-                    fontWeight: pw.FontWeight.bold,
+                    fontSize: fontSizeCorpo,
+                    fontWeight: usarNegrito ? pw.FontWeight.bold : pw.FontWeight.normal,
                   ),
                 ),
                 pw.Text(
                   formatoMoeda.format(valorGarcomGeral),
                   style: pw.TextStyle(
-                    fontSize: 9,
-                    fontWeight: pw.FontWeight.bold,
+                    fontSize: fontSizeCorpo,
+                    fontWeight: usarNegrito ? pw.FontWeight.bold : pw.FontWeight.normal,
                   ),
                 ),
               ],
@@ -436,15 +544,15 @@ class MesaComandaPdfService {
               pw.Text(
                 'Total Mesa:',
                 style: pw.TextStyle(
-                  fontSize: 9,
-                  fontWeight: pw.FontWeight.bold,
+                  fontSize: fontSizeCorpo,
+                  fontWeight: usarNegrito ? pw.FontWeight.bold : pw.FontWeight.normal,
                 ),
               ),
               pw.Text(
                 formatoMoeda.format(totalMesa),
                 style: pw.TextStyle(
-                  fontSize: 9,
-                  fontWeight: pw.FontWeight.bold,
+                  fontSize: fontSizeCorpo,
+                  fontWeight: usarNegrito ? pw.FontWeight.bold : pw.FontWeight.normal,
                 ),
               ),
             ],
@@ -455,7 +563,7 @@ class MesaComandaPdfService {
             pw.Text(
               'Comandas Vinculadas:',
               style: pw.TextStyle(
-                fontSize: 8,
+                fontSize: fontSizeCorpo - 1,
                 fontWeight: pw.FontWeight.bold,
               ),
             ),
@@ -474,12 +582,12 @@ class MesaComandaPdfService {
                       children: [
                         pw.Text(
                           'Comanda ${comanda.numero}:',
-                          style: const pw.TextStyle(fontSize: 8),
+                          style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
                         ),
                         pw.Text(
                           formatoMoeda.format(totalComanda),
                           style: pw.TextStyle(
-                            fontSize: 8,
+                            fontSize: fontSizeCorpo - 1,
                             fontWeight: pw.FontWeight.bold,
                           ),
                         ),
@@ -491,12 +599,12 @@ class MesaComandaPdfService {
                         children: [
                           pw.Text(
                             '  Pago:',
-                            style: const pw.TextStyle(fontSize: 7),
+                            style: pw.TextStyle(fontSize: fontSizeCorpo - 2),
                           ),
                           pw.Text(
                             formatoMoeda.format(pagoComanda),
-                            style: const pw.TextStyle(
-                              fontSize: 7,
+                            style: pw.TextStyle(
+                              fontSize: fontSizeCorpo - 2,
                             ),
                           ),
                         ],
@@ -508,12 +616,12 @@ class MesaComandaPdfService {
                         children: [
                           pw.Text(
                             '  Pendente:',
-                            style: const pw.TextStyle(fontSize: 7),
+                            style: pw.TextStyle(fontSize: fontSizeCorpo - 2),
                           ),
                           pw.Text(
                             formatoMoeda.format(pendenteComanda),
-                            style: const pw.TextStyle(
-                              fontSize: 7,
+                            style: pw.TextStyle(
+                              fontSize: fontSizeCorpo - 2,
                             ),
                           ),
                         ],
@@ -530,15 +638,15 @@ class MesaComandaPdfService {
                 pw.Text(
                   'Total Comandas:',
                   style: pw.TextStyle(
-                    fontSize: 9,
-                    fontWeight: pw.FontWeight.bold,
+                    fontSize: fontSizeCorpo,
+                    fontWeight: usarNegrito ? pw.FontWeight.bold : pw.FontWeight.normal,
                   ),
                 ),
                 pw.Text(
                   formatoMoeda.format(totalComandas),
                   style: pw.TextStyle(
-                    fontSize: 9,
-                    fontWeight: pw.FontWeight.bold,
+                    fontSize: fontSizeCorpo,
+                    fontWeight: usarNegrito ? pw.FontWeight.bold : pw.FontWeight.normal,
                   ),
                 ),
               ],
@@ -547,24 +655,28 @@ class MesaComandaPdfService {
           pw.SizedBox(height: 4),
           pw.Divider(),
           pw.SizedBox(height: 4),
-          pw.Row(
-            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-            children: [
-              pw.Text(
-                'TOTAL GERAL:',
-                style: pw.TextStyle(
-                  fontSize: 11,
-                  fontWeight: pw.FontWeight.bold,
+          // TOTAIS GERAIS
+          pw.Padding(
+            padding: const pw.EdgeInsets.symmetric(vertical: 4),
+            child: pw.Row(
+              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+              children: [
+                pw.Text(
+                  'TOTAL GERAL:',
+                  style: pw.TextStyle(
+                    fontSize: fontSizeCorpo + 4,
+                    fontWeight: pw.FontWeight.bold,
+                  ),
                 ),
-              ),
-              pw.Text(
-                formatoMoeda.format(totalGeral),
-                style: pw.TextStyle(
-                  fontSize: 11,
-                  fontWeight: pw.FontWeight.bold,
+                pw.Text(
+                  formatoMoeda.format(totalGeral),
+                  style: pw.TextStyle(
+                    fontSize: fontSizeCorpo + 4,
+                    fontWeight: pw.FontWeight.bold,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ],
       ),
@@ -577,6 +689,8 @@ class MesaComandaPdfService {
     List<MesaComanda>? comandasVinculadas,
     NumberFormat formatoMoeda,
     DateFormat formatoData,
+    double fontSizeCorpo,
+    bool usarNegrito,
   ) {
     final todosPagamentos = <Map<String, dynamic>>[];
     
@@ -623,7 +737,7 @@ class MesaComandaPdfService {
         pw.Text(
           'PAGAMENTOS REALIZADOS',
           style: pw.TextStyle(
-            fontSize: 9,
+            fontSize: fontSizeCorpo,
             fontWeight: pw.FontWeight.bold,
           ),
         ),
@@ -662,7 +776,7 @@ class MesaComandaPdfService {
                   pw.Text(
                     origem,
                     style: pw.TextStyle(
-                      fontSize: 10,
+                      fontSize: fontSizeCorpo + 1,
                       fontWeight: pw.FontWeight.bold,
                     ),
                   ),
@@ -673,70 +787,70 @@ class MesaComandaPdfService {
                       pw.Text(
                         formatoMoeda.format(pagamento.valor),
                         style: pw.TextStyle(
-                          fontSize: 11,
+                          fontSize: fontSizeCorpo + 2,
                           fontWeight: pw.FontWeight.bold,
                         ),
                       ),
                       pw.Text(
                         pagamento.formaPagamento ?? 'Não informado',
-                        style: const pw.TextStyle(fontSize: 9),
+                        style: pw.TextStyle(fontSize: fontSizeCorpo),
                       ),
                     ],
                   ),
                   pw.SizedBox(height: 2),
                   pw.Text(
                     'Data: ${formatoData.format(pagamento.dataPagamento)}',
-                    style: const pw.TextStyle(fontSize: 9),
+                    style: pw.TextStyle(fontSize: fontSizeCorpo),
                   ),
                   if (pagamento.pessoaPagou != null && pagamento.pessoaPagou!.isNotEmpty)
                     pw.Text(
                       'Pagou: ${pagamento.pessoaPagou}',
                       style: pw.TextStyle(
-                        fontSize: 10,
+                        fontSize: fontSizeCorpo + 1,
                         fontWeight: pw.FontWeight.bold,
                       ),
                     ),
-                  // Mostrar itens pagos
-                  if (itensPagosNestePagamento.isNotEmpty) ...[
-                    pw.SizedBox(height: 4),
-                    pw.Text(
-                      'Itens pagos:',
-                      style: pw.TextStyle(
-                        fontSize: 9,
-                        fontWeight: pw.FontWeight.bold,
-                      ),
-                    ),
-                    pw.SizedBox(height: 2),
-                    ...itensPagosNestePagamento.map((item) {
-                      final itemTotal = item.preco * item.quantidade;
-                      return pw.Padding(
-                        padding: const pw.EdgeInsets.only(left: 8, bottom: 2),
-                        child: pw.Row(
-                          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                          children: [
-                            pw.Expanded(
-                              child: pw.Text(
-                                '${item.quantidade}x ${item.nome}',
-                                style: const pw.TextStyle(fontSize: 9),
-                              ),
-                            ),
-                            pw.Text(
-                              formatoMoeda.format(itemTotal),
-                              style: pw.TextStyle(
-                                fontSize: 9,
-                                fontWeight: pw.FontWeight.bold,
-                              ),
-                            ),
-                          ],
+                    // Mostrar itens pagos
+                    if (itensPagosNestePagamento.isNotEmpty) ...[
+                      pw.SizedBox(height: 4),
+                      pw.Text(
+                        'Itens pagos:',
+                        style: pw.TextStyle(
+                          fontSize: fontSizeCorpo,
+                          fontWeight: pw.FontWeight.bold,
                         ),
-                      );
-                    }),
-                  ],
+                      ),
+                      pw.SizedBox(height: 2),
+                      ...itensPagosNestePagamento.map((item) {
+                        final itemTotal = item.subtotal; // Usar subtotal
+                        return pw.Padding(
+                          padding: const pw.EdgeInsets.only(left: 8, bottom: 2),
+                          child: pw.Row(
+                            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                            children: [
+                              pw.Expanded(
+                                child: pw.Text(
+                                  '${item.quantidade}x ${item.nome}',
+                                  style: pw.TextStyle(fontSize: fontSizeCorpo),
+                                ),
+                              ),
+                              pw.Text(
+                                formatoMoeda.format(itemTotal),
+                                style: pw.TextStyle(
+                                  fontSize: fontSizeCorpo,
+                                  fontWeight: pw.FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }),
+                    ],
                   if (pagamento.observacao != null && pagamento.observacao!.isNotEmpty) ...[
                     pw.SizedBox(height: 2),
                     pw.Text(
                       'Obs: ${pagamento.observacao}',
-                      style: const pw.TextStyle(fontSize: 8),
+                      style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
                     ),
                   ],
                 ],
@@ -748,80 +862,93 @@ class MesaComandaPdfService {
     );
   }
 
-  /// Constrói resumo (pago e pendente)
-  static pw.Widget _buildResumoTermico(
+  /// Resumo de pagamento simplificado (substitui a seção detalhada de pagamentos)
+  static pw.Widget _buildResumoPagamentoSimplificado(
     MesaComanda mesaComanda,
     List<MesaComanda>? comandasVinculadas,
     NumberFormat formatoMoeda,
+    double fontSizeCorpo,
+    bool usarNegrito,
   ) {
     double totalPagoMesa = mesaComanda.totalPago;
     double totalPagoComandas = 0.0;
     double totalGeral = mesaComanda.totalCalculado;
-    
+    final Map<String, double> formasPagamento = {};
+
+    // Consolidar pagamentos por forma
+    for (final pg in mesaComanda.historicoPagamentos) {
+      final forma = pg.formaPagamento ?? 'Não informado';
+      formasPagamento[forma] = (formasPagamento[forma] ?? 0.0) + pg.valor;
+    }
+
     if (comandasVinculadas != null) {
       for (final comanda in comandasVinculadas) {
         totalPagoComandas += comanda.totalPago;
         totalGeral += comanda.totalCalculado;
+        for (final pg in comanda.historicoPagamentos) {
+          final forma = pg.formaPagamento ?? 'Não informado';
+          formasPagamento[forma] = (formasPagamento[forma] ?? 0.0) + pg.valor;
+        }
       }
     }
-    
+
     final totalPagoGeral = totalPagoMesa + totalPagoComandas;
     final totalPendente = totalGeral - totalPagoGeral;
 
-    return pw.Container(
-      padding: const pw.EdgeInsets.all(4),
-      decoration: pw.BoxDecoration(
-        border: pw.Border.all(color: PdfColors.black, width: 2),
-      ),
-      child: pw.Column(
-        crossAxisAlignment: pw.CrossAxisAlignment.start,
-        children: [
-          pw.Row(
+    return pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.start,
+      children: [
+        pw.Text(
+          'RESUMO',
+          style: pw.TextStyle(
+            fontSize: fontSizeCorpo,
+            fontWeight: pw.FontWeight.bold,
+          ),
+        ),
+        pw.Divider(),
+        pw.Row(
+          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+          children: [
+            pw.Text('Total:', style: pw.TextStyle(fontSize: fontSizeCorpo)),
+            pw.Text(formatoMoeda.format(totalGeral), style: pw.TextStyle(fontSize: fontSizeCorpo, fontWeight: pw.FontWeight.bold)),
+          ],
+        ),
+        if (formasPagamento.isNotEmpty)
+          ...formasPagamento.entries.map((e) => pw.Row(
             mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
             children: [
-              pw.Text(
-                'TOTAL PAGO:',
-                style: pw.TextStyle(
-                  fontSize: 10,
-                  fontWeight: pw.FontWeight.bold,
-                ),
-              ),
-              pw.Text(
-                formatoMoeda.format(totalPagoGeral),
-                style: pw.TextStyle(
-                  fontSize: 10,
-                  fontWeight: pw.FontWeight.bold,
-                ),
-              ),
+              pw.Text('  ${e.key}:', style: pw.TextStyle(fontSize: fontSizeCorpo - 1)),
+              pw.Text(formatoMoeda.format(e.value), style: pw.TextStyle(fontSize: fontSizeCorpo - 1)),
             ],
-          ),
-          pw.SizedBox(height: 4),
-          pw.Row(
-            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-            children: [
-              pw.Text(
-                'TOTAL PENDENTE:',
-                style: pw.TextStyle(
-                  fontSize: 10,
-                  fontWeight: pw.FontWeight.bold,
-                ),
+          )),
+        pw.SizedBox(height: 2),
+        pw.Row(
+          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+          children: [
+            pw.Text('Pago:', style: pw.TextStyle(fontSize: fontSizeCorpo)),
+            pw.Text(formatoMoeda.format(totalPagoGeral), style: pw.TextStyle(fontSize: fontSizeCorpo, fontWeight: pw.FontWeight.bold, color: PdfColors.green)),
+          ],
+        ),
+        pw.Row(
+          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+          children: [
+            pw.Text('Pendente:', style: pw.TextStyle(fontSize: fontSizeCorpo)),
+            pw.Text(
+              formatoMoeda.format(totalPendente > 0 ? totalPendente : 0),
+              style: pw.TextStyle(
+                fontSize: fontSizeCorpo,
+                fontWeight: pw.FontWeight.bold,
+                color: totalPendente > 0 ? PdfColors.red : PdfColors.green,
               ),
-              pw.Text(
-                formatoMoeda.format(totalPendente),
-                style: pw.TextStyle(
-                  fontSize: 10,
-                  fontWeight: pw.FontWeight.bold,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 
   /// Constrói observações
-  static pw.Widget _buildObservacoesTermico(MesaComanda mesaComanda) {
+  static pw.Widget _buildObservacoesTermico(MesaComanda mesaComanda, double fontSizeCorpo, bool usarNegrito) {
     if (mesaComanda.observacao == null || mesaComanda.observacao!.isEmpty) {
       return pw.SizedBox.shrink();
     }
@@ -837,14 +964,14 @@ class MesaComandaPdfService {
           pw.Text(
             'OBSERVAÇÕES',
             style: pw.TextStyle(
-              fontSize: 9,
+              fontSize: fontSizeCorpo,
               fontWeight: pw.FontWeight.bold,
             ),
           ),
           pw.SizedBox(height: 2),
           pw.Text(
             mesaComanda.observacao!,
-            style: const pw.TextStyle(fontSize: 8),
+            style: pw.TextStyle(fontSize: fontSizeCorpo - 1),
           ),
         ],
       ),
@@ -852,7 +979,7 @@ class MesaComandaPdfService {
   }
 
   /// Constrói rodapé
-  static pw.Widget _buildRodapeTermico(Empresa empresa, DateFormat formatoData) {
+  static pw.Widget _buildRodapeTermico(Empresa empresa, DateFormat formatoData, double fontSizeCorpo, bool usarNegrito) {
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.center,
       children: [
@@ -860,14 +987,14 @@ class MesaComandaPdfService {
         pw.SizedBox(height: 4),
         pw.Text(
           'Impresso em: ${formatoData.format(DateTime.now())}',
-          style: const pw.TextStyle(fontSize: 7),
+          style: pw.TextStyle(fontSize: fontSizeCorpo - 2),
           textAlign: pw.TextAlign.center,
         ),
         if (empresa.configuracoes != null && empresa.configuracoes!['observacoes'] != null) ...[
           pw.SizedBox(height: 4),
           pw.Text(
             empresa.configuracoes!['observacoes'].toString(),
-            style: const pw.TextStyle(fontSize: 7),
+            style: pw.TextStyle(fontSize: fontSizeCorpo - 2),
             textAlign: pw.TextAlign.center,
           ),
         ],
@@ -875,29 +1002,13 @@ class MesaComandaPdfService {
         pw.Text(
           '--- FIM DO RECIBO ---',
           style: pw.TextStyle(
-            fontSize: 8,
+            fontSize: fontSizeCorpo - 1,
             fontWeight: pw.FontWeight.bold,
           ),
           textAlign: pw.TextAlign.center,
         ),
       ],
     );
-  }
-
-  /// Retorna texto do status
-  static String _getStatusTexto(StatusItem status) {
-    switch (status) {
-      case StatusItem.pendente:
-        return 'Pendente';
-      case StatusItem.emPreparo:
-        return 'Em Preparo';
-      case StatusItem.pronto:
-        return 'Pronto';
-      case StatusItem.entregue:
-        return 'Entregue';
-      case StatusItem.cancelado:
-        return 'Cancelado';
-    }
   }
 
   /// Formata CPF ou CNPJ

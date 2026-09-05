@@ -20,6 +20,13 @@
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
   <meta name="description" content="Sistema Êxodo - Sistema de gestão empresarial completo">
+  <meta name="google-signin-client_id"
+    content="767835275358-ar47lvn9uboh1b12s2tvqli7epq8ttu0.apps.googleusercontent.com">
+
+  <!-- Meta tags para prevenir cache agressivo do index.html -->
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
 
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
@@ -39,35 +46,6 @@
 </head>
 
 <body>
-  <script>
-    // SOLUÇÃO DEFINITIVA PARA CACHE PRESO (Problema da aba anônima)
-    // Este script limpa tudo que pode estar forçando uma versão antiga
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.getRegistrations().then(function (registrations) {
-        for (let registration of registrations) {
-          registration.unregister();
-          console.log('>>> [SISTEMA] Service Worker removido');
-        }
-      });
-    }
-
-    // Limpar todos os caches do navegador
-    if (window.caches) {
-      caches.keys().then(function (names) {
-        for (let name of names) {
-          caches.delete(name);
-          console.log('>>> [SISTEMA] Cache deletado: ' + name);
-        }
-      });
-    }
-
-    // Remover qualquer service worker que possa estar travando a carga
-    window.addEventListener('load', function () {
-      if (typeof window.flutter_web_auth != 'undefined') {
-        // Se houver algum objeto de auth travado, podemos limpar aqui
-      }
-    });
-  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 

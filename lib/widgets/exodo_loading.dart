@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'exodo_logo.dart';
 
@@ -19,6 +20,8 @@ class ExodoLoading extends StatefulWidget {
 
 class _ExodoLoadingState extends State<ExodoLoading>
     with SingleTickerProviderStateMixin {
+  bool _mostrarCancelar = false;
+  Timer? _timerCancelar;
   late AnimationController _controller;
   late Animation<double> _fadeAnimation;
 
@@ -37,11 +40,19 @@ class _ExodoLoadingState extends State<ExodoLoading>
       parent: _controller,
       curve: Curves.easeInOut,
     ));
+
+    // Mostrar botão de cancelar após 15 segundos
+    _timerCancelar = Timer(const Duration(seconds: 15), () {
+      if (mounted) {
+        setState(() => _mostrarCancelar = true);
+      }
+    });
   }
 
   @override
   void dispose() {
     _controller.dispose();
+    _timerCancelar?.cancel();
     super.dispose();
   }
 
@@ -89,26 +100,51 @@ class _ExodoLoadingState extends State<ExodoLoading>
               ),
             ),
             const SizedBox(height: 24),
-            // Mensagem de carregamento
+            // Mensagem de carregamento animada
             FadeTransition(
               opacity: _fadeAnimation,
               child: Text(
-                widget.mensagem ?? 'Carregando...',
+                widget.mensagem ?? 'Preparando ambiente...',
                 style: TextStyle(
-                  color: Colors.white.withOpacity(0.8),
-                  fontSize: 16,
-                  fontWeight: FontWeight.w500,
+                  color: Colors.white.withOpacity(0.9),
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.5,
                 ),
+                textAlign: TextAlign.center,
               ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 12),
             Text(
-              'Aguarde alguns instantes',
+              'Ajustando os últimos detalhes para você',
               style: TextStyle(
-                color: Colors.white.withOpacity(0.5),
-                fontSize: 12,
+                color: corLoading.withOpacity(0.8),
+                fontSize: 13,
+                fontStyle: FontStyle.italic,
               ),
+              textAlign: TextAlign.center,
             ),
+            if (_mostrarCancelar) ...[
+              const SizedBox(height: 40),
+              ElevatedButton.icon(
+                onPressed: () => Navigator.pop(context),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.white10,
+                  foregroundColor: Colors.white70,
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                icon: const Icon(Icons.close, size: 20),
+                label: const Text('Cancelar e Voltar'),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'O processo parece estar demorando mais que o normal.',
+                style: TextStyle(color: Colors.white30, fontSize: 11),
+              ),
+            ],
           ],
         ),
       ),

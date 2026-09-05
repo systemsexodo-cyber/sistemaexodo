@@ -14,6 +14,28 @@ import '../services/codigo_service.dart';
 /// - Importa estoque quando disponível
 /// - Evita erros e duplicações
 class ExcelImportService {
+  
+  /// Remove acentos e caracteres especiais para facilitar comparação
+  /// Ex: "Preço" → "preco", "Categoria" → "categoria"
+  static String _normalizarTexto(String texto) {
+    final comAcentos = 'àáâãäåæçèéêëìíîïðñòóôõöøùúûüýþÿ';
+    final semAcentos = 'aaaaaaaceeeeiiiionoooooouuuuyby';
+    
+    var resultado = texto.toLowerCase().trim();
+    
+    for (int i = 0; i < comAcentos.length; i++) {
+      resultado = resultado.replaceAll(comAcentos[i], semAcentos[i]);
+    }
+
+    // Remover caracteres especiais e símbolos restantes (inclusive de encoding errado)
+    // PRESERVAR ESPAÇO para permitir detecção de "preço de venda" etc.
+    resultado = resultado.replaceAll(RegExp(r'[^a-z0-9 ]'), '');
+    
+    // Normalizar espaços múltiplos em um único espaço
+    resultado = resultado.replaceAll(RegExp(r'\s+'), ' ').trim();
+    
+    return resultado;
+  }
   /// Mapa de índices de colunas detectados automaticamente
   static Map<String, int?> _detectarColunas(List<dynamic> cabecalho) {
     final indices = <String, int?>{};
@@ -25,27 +47,27 @@ class ExcelImportService {
     for (int i = 0; i < cabecalho.length; i++) {
       final valorRaw = cabecalho[i];
       final valorLido = _lerCelula(cabecalho, i);
-      final valorLower = (valorLido ?? '').toLowerCase().trim();
-      final podeSerGrupo = valorLower.contains('grupo') || valorLower.contains('gurpo') || 
-                          valorLower.contains('categoria') || valorLower == 'grupo' || valorLower == 'gurpo';
+      final valorNormalizado = valorLido != null ? _normalizarTexto(valorLido) : '';
+      final podeSerGrupo = valorNormalizado.contains('grupo') || valorNormalizado.contains('gurpo') || 
+                          valorNormalizado.contains('categoria');
       final marcacao = podeSerGrupo ? ' ← PODE SER GRUPO!' : '';
-      debugPrint('  [Célula $i] RAW: $valorRaw → Lido: "$valorLido"$marcacao');
+      debugPrint('  [Célula $i] RAW: $valorRaw → Lido: "$valorLido" (norm: "$valorNormalizado")$marcacao');
     }
     
     for (int i = 0; i < cabecalho.length; i++) {
       final valor = _lerCelula(cabecalho, i);
       if (valor == null) continue;
       
-      final valorLower = valor.toLowerCase().trim();
-      debugPrint('>>> [Excel Import] Coluna $i: "$valor" (lowercase: "$valorLower")');
+      final valorLower = _normalizarTexto(valor);
+      debugPrint('>>> [Excel Import] Coluna $i: "$valor" (normalizado: "$valorLower")');
       
       // Detectar códigos de coluna
       // ORDEM IMPORTANTE: Padrões mais específicos primeiro!
       
       // 1. Código
       if (indices['codigo'] == null) {
-        if (valorLower.contains('código') || valorLower.contains('codigo') || 
-            valorLower == 'cod' || valorLower == 'cód') {
+        if (valorLower.contains('codigo') || valorLower.contains('codigo') || 
+            valorLower == 'cod' || valorLower == 'cod') {
           // Não pode ser código de barras
           if (!valorLower.contains('barras') && !valorLower.contains('ean') && 
               !valorLower.contains('gtin')) {
@@ -63,12 +85,13 @@ class ExcelImportService {
         // Padrões mais específicos primeiro - verificar igualdade exata
         if (valorNormalizado == 'preço de venda' || valorNormalizado == 'preco de venda' ||
             valorNormalizado == 'preço venda' || valorNormalizado == 'preco venda' ||
-            valorNormalizado == 'preco de venda' || valorNormalizado == 'preço de venda') {
+            valorNormalizado == 'preco de venda' || valorNormalizado == 'preço de venda' ||
+            valorNormalizado == 'venda' || valorNormalizado == 'precom') {
           // Garantir que não é preço de custo
           if (!valorNormalizado.contains('custo')) {
             indices['preco'] = i;
             debugPrint('>>> [Excel Import] ✅ Coluna "preco" detectada no índice $i: "$valor" (normalizado: "$valorNormalizado")');
-            continue; // IMPORTANTE: não verificar descrição para esta coluna
+            continue; 
           }
         }
         // Fallback: verificar contains (caso tenha espaços extras ou variações)
@@ -104,11 +127,14 @@ class ExcelImportService {
       
       // 4. Preço genérico (apenas se não foi detectado como preço de venda)
       if (indices['preco'] == null) {
-        if (valorLower.contains('preço') || valorLower.contains('preco') ||
-            valorLower == 'pre' || valorLower == 'vlr') {
+        // Busca resiliente por prefixos
+        if (valorLower.contains('prec') || valorLower.contains('valor') ||
+            valorLower.contains('venda') || valorLower.contains('vlr') ||
+            valorLower.contains('val') || valorLower == 'prc') {
           // Não pode ser preço de custo
           if (!valorLower.contains('custo')) {
             indices['preco'] = i;
+            debugPrint('>>> [Excel Import] ✅ Coluna "preco" detectada no índice $i (genérico): "$valor"');
             continue;
           }
         }
@@ -117,7 +143,7 @@ class ExcelImportService {
       // 5. Nome/Produto
       if (indices['nome'] == null) {
         if (valorLower.contains('nome') || valorLower.contains('produto') ||
-            valorLower.contains('descrição curta') || valorLower == 'prod') {
+            valorLower.contains('descricao curta') || valorLower == 'prod') {
           indices['nome'] = i;
           continue;
         }
@@ -144,9 +170,9 @@ class ExcelImportService {
           }
         }
         // Fallback: verificar contains
-        else if ((valorLower.contains('descrição') || valorLower.contains('descricao') ||
+        else if ((valorLower.contains('descricao') || valorLower.contains('descricao') ||
                  valorLower.contains('detalhe')) &&
-                 !valorLower.contains('preço') && !valorLower.contains('preco') &&
+                 !valorLower.contains('preco') && !valorLower.contains('preco') &&
                  !valorLower.contains('venda') && !valorLower.contains('custo')) {
           indices['descricao'] = i;
           debugPrint('>>> [Excel Import] ✅ Coluna "descricao" detectada no índice $i (via contains): "$valor"');
@@ -252,7 +278,7 @@ class ExcelImportService {
       
       // 14. ICMS Alíquota
       if (indices['icmsAliquota'] == null) {
-        if (valorLower.contains('icms') && (valorLower.contains('alíquota') || 
+        if (valorLower.contains('icms') && (valorLower.contains('aliquota') || 
             valorLower.contains('aliquota') || valorLower.contains('%'))) {
           indices['icmsAliquota'] = i;
           continue;
@@ -262,7 +288,7 @@ class ExcelImportService {
       // 15. ICMS CST
       if (indices['icmsCst'] == null) {
         if (valorLower.contains('icms') && (valorLower.contains('cst') || 
-            valorLower.contains('situação tributária') || valorLower.contains('situacao tributaria'))) {
+            valorLower.contains('situacao tributaria') || valorLower.contains('situacao tributaria'))) {
           indices['icmsCst'] = i;
           continue;
         }
@@ -368,16 +394,15 @@ class ExcelImportService {
       }
     }
     
-    // Log final das colunas detectadas
-    debugPrint('>>> [Excel Import] Resumo da detecção de colunas:');
-    indices.forEach((key, value) {
-      if (value != null) {
-        final nomeColuna = _lerCelula(cabecalho, value);
-        debugPrint('  ✓ $key: índice $value ("$nomeColuna")');
-      } else {
-        debugPrint('  ✗ $key: não detectado');
-      }
-    });
+    // FALLBACK CRÍTICO: Se não detectou nome, tentar colunas comuns
+    if (indices['nome'] == null) {
+      debugPrint('>>> [Excel Import] ⚠️ "nome" não detectado! Tentando fallback para colunas 1 ou 0...');
+      // Se a coluna 1 ou 0 tiver um nome razoável no cabeçalho ou for a maior string, podemos tentar
+      // Mas o mais seguro é pegar a coluna que parece ter "texto longo"
+      indices['nome'] = indices['descricao'] ?? 1; // Fallback para coluna 1 (B) que é comum ser nome
+      if (indices['nome']! >= cabecalho.length) indices['nome'] = 0;
+      debugPrint('>>> [Excel Import] 🛡️ Fallback: Usando coluna ${indices['nome']} como Nome');
+    }
     
     return indices;
   }
@@ -392,10 +417,11 @@ class ExcelImportService {
   /// Importa produtos de um arquivo Excel (aceita File ou bytes)
   static Future<Map<String, dynamic>> importarProdutos(
     File arquivo,
-    DataService dataService,
-  ) async {
+    DataService dataService, {
+    void Function(int processados, int total, String etapa)? onProgress,
+  }) async {
     final bytes = await arquivo.readAsBytes();
-    return importarProdutosDeBytes(bytes, dataService);
+    return importarProdutosDeBytes(bytes, dataService, onProgress: onProgress);
   }
 
   /// Importa produtos usando bytes do arquivo (funciona em web e outras plataformas)
@@ -413,6 +439,9 @@ class ExcelImportService {
     };
 
     try {
+      // Sinalizar início de importação para o DataService (bloqueia streams de realtime)
+      dataService.setImportandoExcel(true);
+
       // Ler arquivo Excel
       final excel = Excel.decodeBytes(Uint8List.fromList(bytes));
 
@@ -428,61 +457,61 @@ class ExcelImportService {
         return resultado;
       }
 
-      // Detectar índices de colunas
-      final primeiraLinha = sheet.rows[0];
+      // 1. DETECTAR CABEÇALHO (Procurar nas primeiras 10 linhas)
       Map<String, int?> indicesColunas = {};
-      
-      // Tentar detectar se a primeira linha é cabeçalho
-      // Verificar TODAS as colunas, não apenas as 5 primeiras
-      bool pareceCabecalho = false;
-      int palavrasCabecalhoEncontradas = 0;
-      
-      for (int i = 0; i < primeiraLinha.length; i++) {
-        final valor = _lerCelula(primeiraLinha, i);
-        if (valor != null && valor.trim().isNotEmpty) {
-          final valorLower = valor.toLowerCase().trim();
-          
-          // Palavras-chave que indicam cabeçalho
-          if (              valorLower.contains('código') || valorLower.contains('codigo') ||
-              valorLower.contains('nome') || valorLower.contains('produto') ||
-              valorLower.contains('preço') || valorLower.contains('preco') ||
-              valorLower.contains('venda') || valorLower.contains('custo') ||
-              valorLower.contains('descrição') || valorLower.contains('descricao') ||
-              valorLower.contains('estoque') || valorLower.contains('quantidade') ||
-              valorLower.contains('unidade') || valorLower.contains('grupo') ||
-              valorLower.contains('categoria') || valorLower.contains('categ')) {
-            palavrasCabecalhoEncontradas++;
+      int linhaInicio = 0;
+      bool encontrouCabecalho = false;
+      List<Data?> cabecalhoEfetivo = [];
+
+      debugPrint('>>> [Excel Import] Buscando cabecalho nas primeiras 10 linhas...');
+      for (int i = 0; i < sheet.rows.length && i < 10; i++) {
+        final row = sheet.rows[i];
+        
+        // Tentar detectar se esta linha é um cabeçalho
+        int palavrasChave = 0;
+        final valoresLidos = <String>[];
+        
+        for (int j = 0; j < row.length; j++) {
+          final valor = _lerCelula(row, j);
+          if (valor != null && valor.trim().isNotEmpty) {
+            final v = _normalizarTexto(valor);
+            valoresLidos.add(v);
             
-            // Se encontrou pelo menos 2 palavras-chave, provavelmente é cabeçalho
-            if (palavrasCabecalhoEncontradas >= 2) {
-              pareceCabecalho = true;
-              break;
+            if (v.contains('codigo') || v.contains('nome') || v.contains('produto') || 
+                v.contains('preco') || v.contains('venda') || v.contains('custo') ||
+                v.contains('valor') ||
+                v.contains('descricao') || v.contains('estoque') || v.contains('unidade')) {
+              palavrasChave++;
             }
           }
         }
+
+        if (palavrasChave >= 2) {
+          debugPrint('>>> [Excel Import] ✅ Cabeçalho provável encontrado na linha $i (Palavras-chave: $palavrasChave)');
+          indicesColunas = _detectarColunas(row);
+          cabecalhoEfetivo = row;
+          linhaInicio = i + 1; // Dados começam na próxima linha
+          encontrouCabecalho = true;
+          
+          indicesColunas.forEach((key, value) {
+            if (value != null) {
+              final nomeReal = _lerCelula(row, value);
+              debugPrint('  - $key: índice $value ("$nomeReal")');
+            }
+          });
+          break;
+        }
       }
-      
-      int linhaInicio = 0;
-      if (pareceCabecalho) {
-        indicesColunas = _detectarColunas(primeiraLinha);
+
+      if (!encontrouCabecalho) {
+        debugPrint('>>> [Excel Import] ⚠️ Cabeçalho não identificado. Usando primeira linha e tentando mapear colunas...');
+        cabecalhoEfetivo = sheet.rows[0];
+        indicesColunas = _detectarColunas(cabecalhoEfetivo);
         linhaInicio = 1;
-        debugPrint('>>> [Excel Import] Cabeçalho detectado! Colunas encontradas:');
-        indicesColunas.forEach((key, value) {
-          if (value != null) {
-            final nomeColuna = _lerCelula(primeiraLinha, value);
-            debugPrint('  - $key: índice $value ("$nomeColuna")');
-          }
-        });
-        (resultado['mensagens'] as List<String>).add('✅ Cabeçalho detectado automaticamente');
-      } else {
-        // Se não detectou cabeçalho, tentar detectar mesmo assim (pode ser que a primeira linha tenha dados misturados)
-        debugPrint('>>> [Excel Import] Cabeçalho não detectado automaticamente, tentando detectar colunas mesmo assim...');
-        indicesColunas = _detectarColunas(primeiraLinha);
-        
-        // Se ainda não detectou nada, usar ordem padrão
-        if (indicesColunas.values.every((v) => v == null)) {
-          debugPrint('>>> [Excel Import] Nenhuma coluna detectada, usando ordem padrão');
-          // Ordem padrão: Código, Nome, Descrição, Unidade, Grupo, Preço, Preço Custo, Estoque, Código de Barras
+
+        // Se mesmo assim não detectou o básico (nome), usar ordem padrão
+        if (indicesColunas['nome'] == null) {
+          debugPrint('>>> [Excel Import] ❌ Nome não detectado. Usando ordem padrão fixa.');
           indicesColunas = {
             'codigo': 0,
             'nome': 1,
@@ -494,19 +523,15 @@ class ExcelImportService {
             'estoque': 7,
             'codigoBarras': 8,
           };
-          linhaInicio = 0; // Usar primeira linha também
-        } else {
-          // Detectou algumas colunas, usar cabeçalho
-          linhaInicio = 1;
-          debugPrint('>>> [Excel Import] Algumas colunas detectadas mesmo sem cabeçalho claro');
-          indicesColunas.forEach((key, value) {
-            if (value != null) {
-              final nomeColuna = _lerCelula(primeiraLinha, value);
-              debugPrint('  - $key: índice $value ("$nomeColuna")');
-            }
-          });
+          linhaInicio = 0; // Assume que não tem cabeçalho e começa do zero
         }
       }
+
+      (resultado['mensagens'] as List<String>).add(
+        encontrouCabecalho 
+          ? '✅ Cabeçalho detectado na linha $linhaInicio' 
+          : 'ℹ️ Usando mapeamento de colunas padrão'
+      );
 
       // Carregar produtos existentes
       final produtosExistentes = dataService.produtos;
@@ -533,9 +558,10 @@ class ExcelImportService {
       int linhasProcessadas = 0;
       int linhasVazias = 0;
 
+      debugPrint('>>> [Excel Import] Planilha detectada: ${excel.tables.keys.first}');
       debugPrint('>>> [Excel Import] Total de linhas na planilha: ${sheet.rows.length}');
-      debugPrint('>>> [Excel Import] Linha de início (cabeçalho): $linhaInicio');
-      debugPrint('>>> [Excel Import] Total de linhas para processar: $totalLinhas');
+      debugPrint('>>> [Excel Import] Linha inicial de dados: $linhaInicio');
+      debugPrint('>>> [Excel Import] Expectativa de processamento: $totalLinhas linhas');
 
       // Notificar início do processamento
       onProgress?.call(0, totalLinhas, 'Lendo planilha...');
@@ -578,6 +604,11 @@ class ExcelImportService {
         // Notificar progresso durante processamento (SEMPRE, não apenas a cada 10)
         linhasProcessadas++;
         onProgress?.call(linhasProcessadas, totalLinhas, 'Processando linha $linhasProcessadas de $totalLinhas...');
+
+        // PAUSA a cada 100 linhas para UI respirar (evita travamento com muitos itens)
+        if (linhasProcessadas % 100 == 0) {
+          await Future.delayed(const Duration(milliseconds: 1));
+        }
 
         try {
           // Ler colunas usando índices detectados ou padrão
@@ -728,8 +759,8 @@ class ExcelImportService {
           String nomeColunaPreco = 'preço';
           if (indicesColunas['preco'] != null) {
             final indicePreco = indicesColunas['preco']!;
-            if (indicePreco < primeiraLinha.length) {
-              final nomeColuna = _lerCelula(primeiraLinha, indicePreco);
+            if (cabecalhoEfetivo.isNotEmpty && indicePreco < cabecalhoEfetivo.length) {
+              final nomeColuna = _lerCelula(cabecalhoEfetivo, indicePreco);
               if (nomeColuna != null && nomeColuna.trim().isNotEmpty) {
                 nomeColunaPreco = nomeColuna.trim().toLowerCase();
               }
@@ -767,10 +798,9 @@ class ExcelImportService {
               preco = produtoExistente.preco;
               debugPrint('>>> [Excel Import] Linha ${i + 1} ($nomeFinal): Preço não fornecido, mantendo preço existente: ${preco}');
             } else {
-              // Para novo produto: preço é obrigatório
-              resultado['erros'] = (resultado['erros'] as int) + 1;
-              (resultado['mensagens'] as List<String>).add('Linha ${i + 1} ($nomeFinal): ❌ ERRO - Preço é obrigatório (coluna "$nomeColunaPreco" está vazia)');
-              continue;
+              // Para novo produto: preço não é estritamente obrigatório agora, mas avisamos
+              preco = 0.0;
+              debugPrint('>>> [Excel Import] Linha ${i + 1} ($nomeFinal): ⚠️ Preço não fornecido para novo produto, usando 0.0');
             }
           }
 
@@ -888,7 +918,7 @@ class ExcelImportService {
               preco: preco,
               // Se preço de custo foi fornecido, usar. Caso contrário, manter o existente
               precoCusto: precoCusto ?? produtoExistente.precoCusto,
-              estoque: estoqueNovo, // Usa o novo estoque ou mantém o atual
+              estoque: estoqueNovo.toDouble(), // Usa o novo estoque ou mantém o atual
               codigoBarras: codigoBarrasFinal ?? produtoExistente.codigoBarras,
               codigo: codigoGerado.isNotEmpty ? codigoGerado : produtoExistente.codigo,
               // Campos de impostos - usar valores da planilha se fornecidos, caso contrário manter existentes
@@ -926,7 +956,7 @@ class ExcelImportService {
               grupo: grupoFinal,
               preco: preco,
               precoCusto: precoCusto,
-              estoque: estoqueFinal, // Importa o estoque
+              estoque: estoqueFinal.toDouble(), // Importa o estoque
               // Campos de impostos
               ncm: ncmFinal,
               cfop: cfopFinal,
@@ -984,51 +1014,43 @@ class ExcelImportService {
       debugPrint('>>> [Excel Import] Linhas vazias puladas: $linhasVazias');
       debugPrint('>>> [Excel Import] Produtos para importar (NOVOS): ${produtosParaImportar.length}');
       debugPrint('>>> [Excel Import] Produtos para atualizar: ${produtosParaAtualizar.length}');
-      debugPrint('>>> [Excel Import] Lista de produtos novos:');
-      for (int idx = 0; idx < produtosParaImportar.length; idx++) {
-        final p = produtosParaImportar[idx];
-        debugPrint('  ${idx + 1}. ${p.nome} (COD: ${p.codigo})');
-      }
+      debugPrint('>>> [Excel Import] Preparados ${produtosParaImportar.length} novos e ${produtosParaAtualizar.length} para atualizar.');
 
       // Notificar início do salvamento
-      onProgress?.call(linhasProcessadas, totalLinhas, 'Salvando ${produtosParaImportar.length} produtos novos...');
-
-      // Salvar produtos novos
-      int salvos = 0;
-      for (final produto in produtosParaImportar) {
-        try {
-          await dataService.addProduto(produto);
-          resultado['sucesso'] = (resultado['sucesso'] as int) + 1;
-          salvos++;
-          if (salvos % 10 == 0) {
-            onProgress?.call(linhasProcessadas, totalLinhas, 'Salvando produto $salvos de ${produtosParaImportar.length}...');
-          }
-        } catch (e) {
-          resultado['erros'] = (resultado['erros'] as int) + 1;
-          (resultado['mensagens'] as List<String>).add('❌ Erro ao importar ${produto.nome}: $e');
-          debugPrint('>>> Erro ao importar produto ${produto.nome}: $e');
+      // Sincronizar produtos NOVOS em lote
+      if (produtosParaImportar.isNotEmpty) {
+        final total = produtosParaImportar.length;
+        // Processar em chunks menores para dar feedback à UI e não travar o Firebase
+        for (int i = 0; i < total; i += 500) {
+          final fim = (i + 500 > total) ? total : i + 500;
+          final chunk = produtosParaImportar.sublist(i, fim);
+          
+          onProgress?.call(linhasProcessadas, totalLinhas, 'Salvando NOVOS produtos ($fim de $total)...');
+          debugPrint('>>> [Excel Import] Salvando chunk de $i até $fim de $total novos...');
+          
+          await dataService.addProdutosLote(chunk);
+          
+          // Pequena pausa para a UI processar e respirar
+          await Future.delayed(const Duration(milliseconds: 50));
         }
+        resultado['sucesso'] = total;
       }
 
-      // Notificar atualização
+      // Sincronizar produtos ATUALIZADOS em lote
       if (produtosParaAtualizar.isNotEmpty) {
-        onProgress?.call(linhasProcessadas, totalLinhas, 'Atualizando ${produtosParaAtualizar.length} produtos...');
-      }
+        final total = produtosParaAtualizar.length;
+        for (int i = 0; i < total; i += 500) {
+          final fim = (i + 500 > total) ? total : i + 500;
+          final chunk = produtosParaAtualizar.sublist(i, fim);
 
-      // Atualizar produtos existentes
-      int atualizados = 0;
-      for (final produto in produtosParaAtualizar) {
-        try {
-          await dataService.updateProduto(produto);
-          atualizados++;
-          if (atualizados % 10 == 0) {
-            onProgress?.call(linhasProcessadas, totalLinhas, 'Atualizando produto $atualizados de ${produtosParaAtualizar.length}...');
-          }
-        } catch (e) {
-          resultado['erros'] = (resultado['erros'] as int) + 1;
-          (resultado['mensagens'] as List<String>).add('❌ Erro ao atualizar ${produto.nome}: $e');
-          debugPrint('>>> Erro ao atualizar produto ${produto.nome}: $e');
+          onProgress?.call(linhasProcessadas, totalLinhas, 'Atualizando produtos ($fim de $total)...');
+          debugPrint('>>> [Excel Import] Atualizando chunk de $i até $fim de $total...');
+          
+          await dataService.addProdutosLote(chunk);
+          
+          await Future.delayed(const Duration(milliseconds: 50));
         }
+        resultado['atualizados'] = total;
       }
       
       // Notificar conclusão
@@ -1041,7 +1063,12 @@ class ExcelImportService {
         '${resultado['duplicados']} duplicados ignorados, '
         '${resultado['erros']} erros',
       );
+      // Garantir que a flag seja resetada
+      dataService.setImportandoExcel(false);
     } catch (e, stackTrace) {
+      // Resetar flag em caso de erro
+      dataService.setImportandoExcel(false);
+      
       resultado['erros'] = (resultado['erros'] as int) + 1;
       (resultado['mensagens'] as List<String>).add('❌ Erro crítico ao ler arquivo Excel: $e');
       debugPrint('>>> Erro crítico ao importar Excel: $e\n$stackTrace');

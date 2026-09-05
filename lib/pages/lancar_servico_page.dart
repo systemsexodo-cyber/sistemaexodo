@@ -18,6 +18,7 @@ import '../models/taxa_entrega.dart';
 import '../widgets/pagamento_widget.dart';
 import '../theme.dart';
 import 'pdv_page.dart';
+import '../widgets/sync_status_widget.dart';
 import 'package:flutter/services.dart';
 
 /// Página de lançamento de serviços com cadastro integrado
@@ -70,6 +71,10 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
   String? _bairroEntrega;
   double? _valorTaxiDog;
   final _valorTaxiDogController = TextEditingController();
+  final _ruaController = TextEditingController();
+  final _numeroController = TextEditingController();
+  final _complementoController = TextEditingController();
+  final _referenciaController = TextEditingController();
   
   // Busca de cliente
   final _buscaClienteController = TextEditingController();
@@ -122,6 +127,11 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
     _valorComissaoController.dispose();
     _buscaClienteController.dispose();
     _buscaClienteFocusNode.dispose();
+    _valorTaxiDogController.dispose();
+    _ruaController.dispose();
+    _numeroController.dispose();
+    _complementoController.dispose();
+    _referenciaController.dispose();
     super.dispose();
   }
 
@@ -323,11 +333,19 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
       dataAgendamento: dataHoraAgendamento,
       duracaoMinutos: dataHoraAgendamento != null ? duracao : null,
       funcionarioId: _funcionarioSelecionado?.id,
+      tipoComissao: _comissaoEmPorcentagem ? 'Porcentagem' : 'Fixo',
+      porcentagemComissao: _comissaoEmPorcentagem 
+          ? (double.tryParse(_valorComissaoController.text.replaceAll(',', '.')) ?? 0.0)
+          : 0.0,
       valorComissao: _calcularComissao(),
       materiais: List.from(_materiaisSelecionados), // Copiar lista de materiais
       tipoEntrega: _tipoEntrega,
       valorTaxiDog: _valorTaxiDog,
       bairroEntrega: _bairroEntrega,
+      endereco: _ruaController.text.trim(),
+      numeroEndereco: _numeroController.text.trim(),
+      complemento: _complementoController.text.trim(),
+      pontoReferencia: _referenciaController.text.trim(),
     );
 
     setState(() {
@@ -366,6 +384,10 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
     _tipoEntrega = null;
     _bairroEntrega = null;
     _valorTaxiDog = null;
+    _ruaController.clear();
+    _numeroController.clear();
+    _complementoController.clear();
+    _referenciaController.clear();
 
     // Cadastrar serviço automaticamente para poder buscar depois (não bloqueia)
     _cadastrarServicoAutomaticamente(novoServico).then((_) {
@@ -384,12 +406,12 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
     final precoBase = itemServico.valor;
     final valorAdicional = itemServico.valorAdicional;
     
-    // Nome do serviço: usar o nome base, com descrição adicional se houver
+    // Nome do serviço: usar SEMPRE o nome base para o template
+    // para evitar poluição com bairros/taxi dog na lista global
     String nomeServico = itemServico.descricao;
-    if (itemServico.descricaoAdicional != null && 
-        itemServico.descricaoAdicional!.isNotEmpty) {
-      nomeServico = '${itemServico.descricao} - ${itemServico.descricaoAdicional}';
-    }
+    
+    // A descrição adicional continua indo para o campo 'descricao' do template
+    // para facilitar a identificação, mas o NOME permanece limpo.
 
     // Normalizar nome para comparação (remover diferenças de separadores: -, +, etc)
     String normalizarNomeParaComparacao(String nome) {
@@ -597,8 +619,11 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
                            (s.preco == itemServico.valor || s.precoTotal == (itemServico.valor + itemServico.valorAdicional)),
                     orElse: () => Servico(
                       id: '',
-                      nome: '',
-                      preco: 0,
+                      nome: itemServico.descricao,
+                      preco: itemServico.valor,
+                      tipoComissao: itemServico.tipoComissao,
+                      porcentagemComissao: itemServico.porcentagemComissao,
+                      valorComissao: itemServico.tipoComissao == 'Fixo' ? itemServico.valorComissao : 0.0,
                       createdAt: DateTime.now(),
                       updatedAt: DateTime.now(),
                     ),
@@ -645,6 +670,15 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
                   bairroEntrega: itemServico.bairroEntrega,
                   pedidoId: pedido.id, // ID do pedido relacionado
                   numeroPedido: pedido.numero, // Número do pedido (SRV-0001, etc.)
+                  endereco: itemServico.endereco,
+                  numeroEndereco: itemServico.numeroEndereco,
+                  complemento: itemServico.complemento,
+                  pontoReferencia: itemServico.pontoReferencia,
+                  funcionarioId: itemServico.funcionarioId,
+                  funcionarioNome: itemServico.funcionarioId != null 
+                    ? dataService.funcionarios.firstWhere((f) => f.id == itemServico.funcionarioId, orElse: () => Funcionario(id: '', nome: '')).nome 
+                    : null,
+                  servico: servicoCadastrado,
                 );
                 
                 // Validação de conflito REMOVIDA - permitir múltiplos agendamentos no mesmo horário
@@ -763,6 +797,7 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
             onPressed: () => Navigator.of(context).pop(),
           ),
           actions: [
+            const SyncStatusWidget(),
             TextButton.icon(
               onPressed: _servicosSelecionados.isNotEmpty ? _salvarPedido : null,
               icon: const Icon(Icons.save, color: Colors.white),
@@ -1231,52 +1266,83 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
                 ],
               ),
               const SizedBox(height: 12),
-              Row(
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
                 children: [
-                  Expanded(
-                    child: ChoiceChip(
-                      label: const Text('Cliente busca'),
-                      selected: _tipoEntrega == 'Cliente busca',
-                      onSelected: (selected) {
-                        if (selected) {
-                          setState(() {
-                            _tipoEntrega = 'Cliente busca';
-                            _bairroEntrega = null;
-                            _valorTaxiDog = null;
-                            _valorTaxiDogController.clear();
-                          });
-                        }
-                      },
-                      selectedColor: Colors.blue.withOpacity(0.3),
-                      labelStyle: TextStyle(
-                        color: _tipoEntrega == 'Cliente busca' ? Colors.white : Colors.white70,
-                        fontWeight: _tipoEntrega == 'Cliente busca' ? FontWeight.bold : FontWeight.normal,
-                      ),
+                  ChoiceChip(
+                    label: const Text('Cliente busca'),
+                    selected: _tipoEntrega == 'Cliente busca',
+                    onSelected: (selected) {
+                      if (selected) {
+                        setState(() {
+                          _tipoEntrega = 'Cliente busca';
+                          _bairroEntrega = null;
+                          _valorTaxiDog = null;
+                          _valorTaxiDogController.clear();
+                        });
+                      }
+                    },
+                    selectedColor: Colors.blue.withOpacity(0.3),
+                    labelStyle: TextStyle(
+                      color: _tipoEntrega == 'Cliente busca' ? Colors.white : Colors.white70,
+                      fontWeight: _tipoEntrega == 'Cliente busca' ? FontWeight.bold : FontWeight.normal,
                     ),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ChoiceChip(
-                      label: const Text('Taxi Dog'),
-                      selected: _tipoEntrega == 'Taxi Dog',
-                      onSelected: (selected) {
-                        if (selected) {
-                          setState(() {
-                            _tipoEntrega = 'Taxi Dog';
-                            _calcularValorTaxiDog();
-                          });
-                        }
-                      },
-                      selectedColor: Colors.green.withOpacity(0.3),
-                      labelStyle: TextStyle(
-                        color: _tipoEntrega == 'Taxi Dog' ? Colors.white : Colors.white70,
-                        fontWeight: _tipoEntrega == 'Taxi Dog' ? FontWeight.bold : FontWeight.normal,
-                      ),
+                  ChoiceChip(
+                    label: const Text('Taxi Dog'),
+                    selected: _tipoEntrega == 'Taxi Dog',
+                    onSelected: (selected) {
+                      if (selected) {
+                        setState(() {
+                          _tipoEntrega = 'Taxi Dog';
+                          _calcularValorTaxiDog();
+                        });
+                      }
+                    },
+                    selectedColor: Colors.green.withOpacity(0.3),
+                    labelStyle: TextStyle(
+                      color: _tipoEntrega == 'Taxi Dog' ? Colors.white : Colors.white70,
+                      fontWeight: _tipoEntrega == 'Taxi Dog' ? FontWeight.bold : FontWeight.normal,
+                    ),
+                  ),
+                  ChoiceChip(
+                    label: const Text('Apenas Busca'),
+                    selected: _tipoEntrega == 'Apenas Busca',
+                    onSelected: (selected) {
+                      if (selected) {
+                        setState(() {
+                          _tipoEntrega = 'Apenas Busca';
+                          _calcularValorTaxiDog();
+                        });
+                      }
+                    },
+                    selectedColor: Colors.orange.withOpacity(0.3),
+                    labelStyle: TextStyle(
+                      color: _tipoEntrega == 'Apenas Busca' ? Colors.white : Colors.white70,
+                      fontWeight: _tipoEntrega == 'Apenas Busca' ? FontWeight.bold : FontWeight.normal,
+                    ),
+                  ),
+                  ChoiceChip(
+                    label: const Text('Apenas Entrega'),
+                    selected: _tipoEntrega == 'Apenas Entrega',
+                    onSelected: (selected) {
+                      if (selected) {
+                        setState(() {
+                          _tipoEntrega = 'Apenas Entrega';
+                          _calcularValorTaxiDog();
+                        });
+                      }
+                    },
+                    selectedColor: Colors.orange.withOpacity(0.3),
+                    labelStyle: TextStyle(
+                      color: _tipoEntrega == 'Apenas Entrega' ? Colors.white : Colors.white70,
+                      fontWeight: _tipoEntrega == 'Apenas Entrega' ? FontWeight.bold : FontWeight.normal,
                     ),
                   ),
                 ],
               ),
-              if (_tipoEntrega == 'Taxi Dog') ...[
+              if (_tipoEntrega == 'Taxi Dog' || _tipoEntrega == 'Apenas Busca' || _tipoEntrega == 'Apenas Entrega') ...[
                 const SizedBox(height: 12),
                 Container(
                   padding: const EdgeInsets.all(12),
@@ -1291,10 +1357,68 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
                       if (_clienteSelecionado != null && _clienteSelecionado!.bairro != null && _clienteSelecionado!.bairro!.isNotEmpty) ...[
                         Text(
                           'Bairro: ${_clienteSelecionado!.bairro}',
-                          style: const TextStyle(color: Colors.white70, fontSize: 14),
+                          style: const TextStyle(color: Colors.white70, fontSize: 13),
                         ),
                         const SizedBox(height: 8),
                       ],
+                      Row(
+                        children: [
+                          Expanded(
+                            flex: 3,
+                            child: TextField(
+                              controller: _ruaController,
+                              style: const TextStyle(color: Colors.white, fontSize: 13),
+                              decoration: const InputDecoration(
+                                labelText: 'Rua',
+                                labelStyle: TextStyle(color: Colors.white70),
+                                isDense: true,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            flex: 1,
+                            child: TextField(
+                              controller: _numeroController,
+                              style: const TextStyle(color: Colors.white, fontSize: 13),
+                              decoration: const InputDecoration(
+                                labelText: 'Nº',
+                                labelStyle: TextStyle(color: Colors.white70),
+                                isDense: true,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _complementoController,
+                              style: const TextStyle(color: Colors.white, fontSize: 13),
+                              decoration: const InputDecoration(
+                                labelText: 'Complemento',
+                                labelStyle: TextStyle(color: Colors.white70),
+                                isDense: true,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: TextField(
+                              controller: _referenciaController,
+                              style: const TextStyle(color: Colors.white, fontSize: 13),
+                              decoration: const InputDecoration(
+                                labelText: 'Referência',
+                                labelStyle: TextStyle(color: Colors.white70),
+                                isDense: true,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
                       TextField(
                         controller: _valorTaxiDogController,
                         keyboardType: const TextInputType.numberWithOptions(decimal: true),
@@ -1418,7 +1542,46 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
     }
     
     final dataService = Provider.of<DataService>(context, listen: false);
+    final empresa = dataService.empresaAtual;
+    
     try {
+      // Buscar configurações de bairro na empresa
+      final config = empresa?.configuracoes ?? {};
+      final agendamentoConfig = config['agendamento'] as Map<String, dynamic>? ?? {};
+      final bairrosConfig = (agendamentoConfig['bairrosTaxiDogV2'] ?? config['bairrosTaxiDogV2']) as List<dynamic>?;
+
+      if (bairrosConfig != null) {
+        final bConfig = bairrosConfig.firstWhere((e) => e['bairro'].toString().toLowerCase().trim() == bairro.toLowerCase().trim(), orElse: () => null);
+        
+        if (bConfig != null) {
+          double valor = 0.0;
+          if (_tipoEntrega == 'Taxi Dog') {
+            valor = (bConfig['taxa'] as num?)?.toDouble() ?? 0.0;
+          } else if (_tipoEntrega == 'Apenas Busca') {
+            valor = (bConfig['taxaBusca'] as num?)?.toDouble() ?? (bConfig['taxa'] as num?)?.toDouble() ?? 0.0;
+          } else if (_tipoEntrega == 'Apenas Entrega') {
+            valor = (bConfig['taxaSoleva'] as num?)?.toDouble() ?? (bConfig['taxa'] as num?)?.toDouble() ?? 0.0;
+          }
+
+          setState(() {
+            _valorTaxiDog = valor > 0 ? valor : null;
+            _bairroEntrega = bConfig['bairro'];
+            if (valor > 0) {
+              _valorTaxiDogController.text = valor.toStringAsFixed(2).replaceAll('.', ',');
+            } else {
+              _valorTaxiDogController.clear();
+            }
+            // Preencher endereço do cliente
+            _ruaController.text = _clienteSelecionado?.endereco ?? '';
+            _numeroController.text = _clienteSelecionado?.numero ?? '';
+            _complementoController.text = _clienteSelecionado?.complemento ?? '';
+            _referenciaController.text = _clienteSelecionado?.pontoReferencia ?? '';
+          });
+          return;
+        }
+      }
+
+      // Fallback para taxas de entrega legadas se não encontrar na V2
       final taxa = dataService.taxasEntrega.firstWhere(
         (t) => t.bairro.toLowerCase().trim() == bairro.toLowerCase().trim() && t.ativo,
       );
@@ -1426,12 +1589,22 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
         _valorTaxiDog = taxa.valor;
         _bairroEntrega = taxa.bairro;
         _valorTaxiDogController.text = taxa.valor.toStringAsFixed(2).replaceAll('.', ',');
+        // Preencher endereço do cliente
+        _ruaController.text = _clienteSelecionado?.endereco ?? '';
+        _numeroController.text = _clienteSelecionado?.numero ?? '';
+        _complementoController.text = _clienteSelecionado?.complemento ?? '';
+        _referenciaController.text = _clienteSelecionado?.pontoReferencia ?? '';
       });
     } catch (e) {
       setState(() {
         _valorTaxiDog = null;
         _bairroEntrega = bairro;
         _valorTaxiDogController.clear();
+        // Limpar campos de endereço ou preencher se cliente tiver
+        _ruaController.text = _clienteSelecionado?.endereco ?? '';
+        _numeroController.text = _clienteSelecionado?.numero ?? '';
+        _complementoController.text = _clienteSelecionado?.complemento ?? '';
+        _referenciaController.text = _clienteSelecionado?.pontoReferencia ?? '';
       });
     }
   }
@@ -1911,6 +2084,25 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
                 // Carregar materiais do serviço cadastrado
                 _materiaisSelecionados = List.from(servico.materiais);
                 
+                // Prioridade para comissão:
+                // 1. Se o serviço tem comissão definida (> 0), usa ela
+                // 2. Se não, se o funcionário tem comissão definida, usa a dele
+                if (servico.tipoComissao == 'Fixo' && servico.valorComissao > 0) {
+                  _comissaoEmPorcentagem = false;
+                  _valorComissaoController.text = servico.valorComissao.toStringAsFixed(2).replaceAll('.', ',');
+                } else if (servico.tipoComissao == 'Porcentagem' && servico.porcentagemComissao > 0) {
+                  _comissaoEmPorcentagem = true;
+                  _valorComissaoController.text = servico.porcentagemComissao.toStringAsFixed(2).replaceAll('.', ',');
+                } else if (_funcionarioSelecionado != null) {
+                  if (_funcionarioSelecionado!.tipoComissao == 'Fixo' && _funcionarioSelecionado!.valorComissao > 0) {
+                    _comissaoEmPorcentagem = false;
+                    _valorComissaoController.text = _funcionarioSelecionado!.valorComissao.toStringAsFixed(2).replaceAll('.', ',');
+                  } else if (_funcionarioSelecionado!.tipoComissao == 'Porcentagem' && _funcionarioSelecionado!.porcentagemComissao > 0) {
+                    _comissaoEmPorcentagem = true;
+                    _valorComissaoController.text = _funcionarioSelecionado!.porcentagemComissao.toStringAsFixed(2).replaceAll('.', ',');
+                  }
+                }
+                
                 debugPrint('>>> Serviço selecionado: ${servico.nome}');
                 debugPrint('>>> Materiais carregados: ${servico.materiais.length}');
                 for (var material in servico.materiais) {
@@ -2139,6 +2331,17 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
                         onChanged: (funcionario) {
                           setState(() {
                             _funcionarioSelecionado = funcionario;
+                            
+                            // Carregar a comissão padrão do funcionário se disponível
+                            if (funcionario != null) {
+                              if (funcionario.tipoComissao == 'Fixo') {
+                                _comissaoEmPorcentagem = false;
+                                _valorComissaoController.text = funcionario.valorComissao.toStringAsFixed(2).replaceAll('.', ',');
+                              } else if (funcionario.tipoComissao == 'Porcentagem') {
+                                _comissaoEmPorcentagem = true;
+                                _valorComissaoController.text = funcionario.porcentagemComissao.toStringAsFixed(2).replaceAll('.', ',');
+                              }
+                            }
                           });
                         },
                       ),
@@ -2845,7 +3048,7 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
                   return;
                 }
 
-                final estoque = int.tryParse(estoqueController.text) ?? 0;
+                final estoque = (int.tryParse(estoqueController.text) ?? 0).toDouble();
                 final unidade = unidadeController.text.trim().isEmpty 
                     ? 'UN' 
                     : unidadeController.text.trim();
@@ -3188,6 +3391,16 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
                     onChanged: (funcionario) {
                       setDialogState(() {
                         funcionarioSelecionado = funcionario;
+                        // Carregar a comissão padrão do funcionário se disponível
+                        if (funcionario != null) {
+                          if (funcionario.tipoComissao == 'Fixo') {
+                            comissaoEmPorcentagem = false;
+                            comissaoController.text = funcionario.valorComissao.toStringAsFixed(2).replaceAll('.', ',');
+                          } else if (funcionario.tipoComissao == 'Porcentagem') {
+                            comissaoEmPorcentagem = true;
+                            comissaoController.text = funcionario.porcentagemComissao.toStringAsFixed(2).replaceAll('.', ',');
+                          }
+                        }
                       });
                     },
                   ),
@@ -3585,7 +3798,7 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
           // Para baixas fracionadas, subtrair a quantidade exata e arredondar o resultado
           // Usar round() para arredondar corretamente (0.5 vai para cima)
           final novoEstoqueDouble = produto.estoque - quantidadeParaBaixa;
-          final novoEstoque = novoEstoqueDouble < 0 ? 0 : novoEstoqueDouble.round();
+          final novoEstoque = (novoEstoqueDouble < 0 ? 0 : novoEstoqueDouble.round()).toDouble();
 
           // Atualizar produto no estoque
           await dataService.updateProduto(
@@ -3743,10 +3956,11 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
       }
     }
     
+    bool comissaoEmPorcentagem = itemServico.tipoComissao == 'Porcentagem';
     final valorComissaoController = TextEditingController(
-      text: itemServico.valorComissao > 0
-        ? itemServico.valorComissao.toStringAsFixed(2).replaceAll('.', ',')
-        : '',
+      text: (comissaoEmPorcentagem 
+          ? itemServico.porcentagemComissao 
+          : itemServico.valorComissao).toStringAsFixed(2).replaceAll('.', ','),
     );
 
     showDialog(
@@ -3896,16 +4110,57 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
                   onChanged: (value) {
                     setState(() {
                       funcionarioSelecionado = value;
+                      // Atualizar campos de comissão se o funcionário tiver comissão padrão
+                      if (value != null) {
+                        if (value.tipoComissao == 'Fixo') {
+                          comissaoEmPorcentagem = false;
+                          valorComissaoController.text = value.valorComissao.toStringAsFixed(2).replaceAll('.', ',');
+                        } else if (value.tipoComissao == 'Porcentagem') {
+                          comissaoEmPorcentagem = true;
+                          valorComissaoController.text = value.porcentagemComissao.toStringAsFixed(2).replaceAll('.', ',');
+                        }
+                      }
                     });
                   },
                 ),
                 const SizedBox(height: 16),
+                const SizedBox(height: 16),
+                // Tipo de comissão
+                Row(
+                  children: [
+                    Expanded(
+                      child: ChoiceChip(
+                        label: const Text('Valor Fixo (R\$)'),
+                        selected: !comissaoEmPorcentagem,
+                        onSelected: (selected) {
+                          setState(() {
+                            comissaoEmPorcentagem = false;
+                          });
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: ChoiceChip(
+                        label: const Text('Porcentagem (%)'),
+                        selected: comissaoEmPorcentagem,
+                        onSelected: (selected) {
+                          setState(() {
+                            comissaoEmPorcentagem = true;
+                          });
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
                 TextField(
                   controller: valorComissaoController,
-                  decoration: const InputDecoration(
-                    labelText: 'Comissão (opcional)',
-                    prefixText: 'R\$ ',
-                    border: OutlineInputBorder(),
+                  decoration: InputDecoration(
+                    labelText: comissaoEmPorcentagem ? 'Porcentagem da Comissão (%)' : 'Valor da Comissão (R\$)',
+                    prefixText: comissaoEmPorcentagem ? '' : 'R\$ ',
+                    suffixText: comissaoEmPorcentagem ? '%' : null,
+                    border: const OutlineInputBorder(),
                   ),
                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
                 ),
@@ -3938,10 +4193,22 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
                 final valorAdicional = valorAdicionalTexto.isEmpty 
                   ? 0.0 
                   : (double.tryParse(valorAdicionalTexto) ?? 0.0);
-                final comissao = valorComissaoController.text.trim().isEmpty
+                final rawComissao = valorComissaoController.text.trim().isEmpty
                   ? 0.0
                   : (double.tryParse(valorComissaoController.text.trim().replaceAll(',', '.')) ?? 0.0);
+                
+                double comissaoCalculada = 0.0;
+                double porcentagemComissao = 0.0;
+                
+                if (comissaoEmPorcentagem) {
+                  porcentagemComissao = rawComissao;
+                  comissaoCalculada = (precoBase + valorAdicional) * (porcentagemComissao / 100);
+                } else {
+                  comissaoCalculada = rawComissao;
+                }
+
                 final duracao = int.tryParse(duracaoController.text) ?? 60;
+                
 
                 if (precoBase <= 0) {
                   ScaffoldMessenger.of(context).showSnackBar(
@@ -3986,7 +4253,9 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
                   dataAgendamento: dataHoraAgendamento,
                   duracaoMinutos: dataHoraAgendamento != null ? duracao : null,
                   funcionarioId: funcionarioSelecionado?.id,
-                  valorComissao: comissao,
+                  tipoComissao: comissaoEmPorcentagem ? 'Porcentagem' : 'Fixo',
+                  porcentagemComissao: porcentagemComissao,
+                  valorComissao: comissaoCalculada,
                 );
 
                 setState(() {

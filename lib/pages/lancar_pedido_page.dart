@@ -2,28 +2,43 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../services/data_service.dart';
+import '../services/producao_pdf_service.dart';
 import '../services/pedido_service.dart';
 import '../models/pedido.dart';
 import '../models/produto.dart';
 import '../models/cliente.dart';
+import '../models/tabela_preco.dart';
 import '../models/item_pedido.dart';
 import '../models/forma_pagamento.dart';
 import '../widgets/pagamento_widget.dart';
+import '../models/adicional_produto.dart';
+import 'package:intl/intl.dart';
+import 'package:uuid/uuid.dart';
 import '../theme.dart';
+import '../models/delivery_info.dart';
+import '../widgets/sync_status_widget.dart';
 
 /// Item no carrinho de compras
 class ItemCarrinho {
   final Produto produto;
-  int quantidade;
+  double quantidade;
   double precoUnitario;
+  String? observacao;
+  List<AdicionalProduto> adicionais;
 
   ItemCarrinho({
     required this.produto,
-    this.quantidade = 1,
+    this.quantidade = 1.0,
     double? precoUnitario,
-  }) : precoUnitario = precoUnitario ?? produto.preco;
+    this.observacao,
+    List<AdicionalProduto>? adicionais,
+  }) : precoUnitario = precoUnitario ?? produto.preco,
+       adicionais = adicionais ?? [];
 
-  double get subtotal => quantidade * precoUnitario;
+  double get subtotal {
+    final totalAdicionais = adicionais.fold(0.0, (sum, a) => sum + a.preco);
+    return quantidade * (precoUnitario + totalAdicionais);
+  }
 
   ItemPedido toItemPedido() {
     return ItemPedido(
@@ -31,6 +46,8 @@ class ItemCarrinho {
       nome: produto.nome,
       quantidade: quantidade,
       preco: precoUnitario,
+      observacao: observacao,
+      adicionais: adicionais,
     );
   }
 }
@@ -55,10 +72,11 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
   final _buscaController = TextEditingController();
   final _observacoesController = TextEditingController();
   final _buscaFocusNode = FocusNode();
+  final _keyboardFocusNode = FocusNode();
 
   // Estado do pedido
   Cliente? _clienteSelecionado;
-  final List<ItemCarrinho> _carrinho = [];
+    final List<ItemCarrinho> _carrinho = [];
   List<PagamentoPedido> _pagamentos = []; // Formas de pagamento
   String _statusPedido = 'Pendente';
   String _numeroPedido = '';
@@ -68,6 +86,11 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
   List<Produto> _produtosFiltrados = [];
   bool _mostrarResultadosBusca = false;
   int _indiceSelecionado = -1;
+  
+  // Entrega
+  bool _isEntrega = false;
+  DateTime? _dataEntrega;
+  TimeOfDay? _horaEntrega;
   
   // Busca de cliente
   final _buscaClienteController = TextEditingController();
@@ -99,18 +122,15 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
       }
       // Gerar próximo número de pedido
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        _gerarNumeroPedido();
+        final dataService = Provider.of<DataService>(context, listen: false);
+        setState(() {
+          _numeroPedido = dataService.getProximoNumeroPedido();
+        });
       });
     }
   }
 
-  void _gerarNumeroPedido() {
-    final dataService = Provider.of<DataService>(context, listen: false);
-    final numerosExistentes = dataService.pedidos.map((p) => p.numero).toList();
-    setState(() {
-      _numeroPedido = PedidoService.gerarProximoNumeroPedido(numerosExistentes);
-    });
-  }
+
 
   void _carregarPedidoExistente() {
     final pedido = widget.pedidoExistente!;
@@ -152,6 +172,14 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
 
     _statusPedido = pedido.status;
     _observacoesController.text = pedido.observacoes ?? '';
+    
+    if (pedido.deliveryInfo != null) {
+      _isEntrega = true;
+      _dataEntrega = pedido.deliveryInfo!.dataEntrega;
+      if (_dataEntrega != null) {
+        _horaEntrega = TimeOfDay.fromDateTime(_dataEntrega!);
+      }
+    }
   }
 
   @override
@@ -162,6 +190,7 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
     _buscaFocusNode.dispose();
     _buscaClienteController.dispose();
     _buscaClienteFocusNode.dispose();
+    _keyboardFocusNode.dispose();
     super.dispose();
   }
 
@@ -190,23 +219,25 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
         final nome = p.nome.toLowerCase();
         final codigo = (p.codigo ?? '').trim();
         final codigoLower = codigo.toLowerCase();
-        final codigoBarras = (p.codigoBarras ?? '').trim();
-        final codigoBarrasLower = codigoBarras.toLowerCase();
+        final todosBarras = p.todosCodigosBarras;
+        final barrasLower = todosBarras.map((b) => b.toLowerCase()).toList();
         final grupo = p.grupo.toLowerCase();
         
         // Extrair números dos códigos (removendo zeros à esquerda)
         final codigoNumeros = codigo.replaceAll(RegExp(r'[^0-9]'), '');
         final codigoNumerosSemZeros = codigoNumeros.isEmpty ? '' : int.tryParse(codigoNumeros)?.toString() ?? codigoNumeros;
-        final codigoBarrasNumeros = codigoBarras.replaceAll(RegExp(r'[^0-9]'), '');
-        final codigoBarrasNumerosSemZeros = codigoBarrasNumeros.isEmpty ? '' : int.tryParse(codigoBarrasNumeros)?.toString() ?? codigoBarrasNumeros;
+        final barrasNumeros = todosBarras.map((b) => b.replaceAll(RegExp(r'[^0-9]'), '')).toList();
+        final barrasNumerosSemZeros = barrasNumeros
+            .map((n) => n.isEmpty ? '' : (int.tryParse(n)?.toString() ?? n))
+            .toList();
 
         // 1. Match exato case-insensitive de código (maior prioridade)
         if (codigoLower == queryLower || codigo == query) {
           return true;
         }
         
-        // 2. Match exato case-insensitive de código de barras
-        if (codigoBarrasLower == queryLower || codigoBarras == query) {
+        // 2. Match exato case-insensitive de código de barras (principal + adicionais)
+        if (barrasLower.contains(queryLower) || todosBarras.contains(query)) {
           return true;
         }
         
@@ -214,11 +245,11 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
         // Ex: "001" encontra "1", "PROD-001", "001", etc.
         if (queryNumerosSemZeros.isNotEmpty) {
           if (codigoNumerosSemZeros == queryNumerosSemZeros || 
-              codigoBarrasNumerosSemZeros == queryNumerosSemZeros) {
+              barrasNumerosSemZeros.contains(queryNumerosSemZeros)) {
             return true;
           }
           // Também verificar com zeros à esquerda preservados
-          if (codigoNumeros == queryNumeros || codigoBarrasNumeros == queryNumeros) {
+          if (codigoNumeros == queryNumeros || barrasNumeros.contains(queryNumeros)) {
             return true;
           }
         }
@@ -228,8 +259,8 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
           return true;
         }
         
-        // 5. Código de barras começa exatamente com o termo
-        if (codigoBarrasLower.startsWith(queryLower) && codigoBarrasLower.isNotEmpty) {
+        // 5. Código de barras começa exatamente com o termo (principal + adicionais)
+        if (barrasLower.any((b) => b.startsWith(queryLower) && b.isNotEmpty)) {
           return true;
         }
         
@@ -246,15 +277,14 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
                 codigoNumerosSemZeros.length <= 3) {
               return true;
             }
-            if (codigoBarrasNumerosSemZeros.startsWith(queryNumerosSemZeros) &&
-                codigoBarrasNumerosSemZeros.length <= 3) {
+            if (barrasNumerosSemZeros.any((n) => n.startsWith(queryNumerosSemZeros) && n.length <= 3)) {
               return true;
             }
           }
           // Para números maiores (3+ dígitos), pode buscar por início
           else if (queryNumerosSemZeros.length >= 3) {
             if (codigoNumerosSemZeros.startsWith(queryNumerosSemZeros) ||
-                codigoBarrasNumerosSemZeros.startsWith(queryNumerosSemZeros)) {
+                barrasNumerosSemZeros.any((n) => n.startsWith(queryNumerosSemZeros))) {
               return true;
             }
           }
@@ -292,14 +322,14 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
         }
         
         // 12. Código de barras contém o termo (apenas se o termo tiver pelo menos 3 caracteres)
-        if (query.length >= 3 && codigoBarrasLower.contains(queryLower)) {
+        if (query.length >= 3 && barrasLower.any((b) => b.contains(queryLower))) {
           return true;
         }
         
         // 13. Código numérico contém o termo numérico (apenas se tiver 3+ dígitos)
         if (queryNumerosSemZeros.length >= 3 && 
             (codigoNumerosSemZeros.contains(queryNumerosSemZeros) ||
-             codigoBarrasNumerosSemZeros.contains(queryNumerosSemZeros))) {
+             barrasNumerosSemZeros.any((n) => n.contains(queryNumerosSemZeros)))) {
           return true;
         }
         
@@ -369,27 +399,83 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
     });
   }
 
-  void _adicionarProduto(Produto produto, {int quantidade = 1}) {
+  void _recalcularPrecosCarrinho() {
+    final empresaAtual = Provider.of<DataService>(context, listen: false).empresaAtual;
+    final configPerfil = empresaAtual?.getConfigPerfilPreco(_clienteSelecionado?.perfilPreco);
+    
+    final qtdMinima = configPerfil != null && configPerfil['quantidade_minima'] != null 
+        ? (configPerfil['quantidade_minima'] as num).toDouble() 
+        : 0.0;
+        
+    final tipoQtdMinima = configPerfil != null && configPerfil['tipo_quantidade_minima'] != null 
+        ? configPerfil['tipo_quantidade_minima'] as String
+        : 'carrinho';
+        
+    final modificadorPerfil = configPerfil != null && (configPerfil['tipo'] == 'desconto' || configPerfil['tipo'] == 'acrescimo')
+        ? (configPerfil['valor'] as num?)?.toDouble() ?? 0.0
+        : 0.0;
+    final tipoModificador = configPerfil != null ? configPerfil['tipo'] as String? ?? 'desconto' : 'desconto';
+        
+    final totalItens = _totalItens;
+    
     setState(() {
-      // Verifica se o produto já está no carrinho
+      for (var item in _carrinho) {
+        bool aplicarTabela = false;
+        if (qtdMinima <= 0) {
+          aplicarTabela = true;
+        } else if (tipoQtdMinima == 'carrinho') {
+          aplicarTabela = totalItens >= qtdMinima;
+        } else { // 'item'
+          aplicarTabela = item.quantidade >= qtdMinima;
+        }
+        
+        item.precoUnitario = item.produto.getPrecoInteligente(
+          perfilCliente: aplicarTabela ? _clienteSelecionado?.perfilPreco : null,
+          modificadorPerfil: aplicarTabela ? modificadorPerfil : 0.0,
+          tipoModificador: tipoModificador,
+          quantidade: item.quantidade,
+        );
+      }
+    });
+  }
+
+  void _adicionarProduto(Produto produto, {double quantidade = 1.0}) {
+    if (produto.temAdicionais) {
+      _exibirSelecaoAdicionais(produto, quantidade: quantidade);
+      return;
+    }
+
+    setState(() {
+      // Verifica se o produto já está no carrinho (apenas se não tiver adicionais)
       final index = _carrinho.indexWhere(
-        (item) => item.produto.id == produto.id,
+        (item) => item.produto.id == produto.id && item.adicionais.isEmpty,
       );
 
       if (index != -1) {
         // Incrementa quantidade
         _carrinho[index].quantidade += quantidade;
       } else {
-        // Adiciona novo item
-        _carrinho.add(ItemCarrinho(produto: produto, quantidade: quantidade));
+        _carrinho.add(ItemCarrinho(
+          produto: produto,
+          quantidade: quantidade,
+          precoUnitario: produto.preco, // Será recalculado abaixo
+        ));
       }
 
       // Limpa busca
       _buscaController.clear();
       _mostrarResultadosBusca = false;
     });
+    
+    _recalcularPrecosCarrinho();
 
-    // Mostra feedback
+    _mostrarFeedbackAdicao(produto);
+    
+    // Foca novamente na busca
+    _buscaFocusNode.requestFocus();
+  }
+
+  void _mostrarFeedbackAdicao(Produto produto) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('${produto.nome} adicionado ao pedido'),
@@ -398,9 +484,140 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
         behavior: SnackBarBehavior.floating,
       ),
     );
+  }
 
-    // Foca novamente na busca
-    _buscaFocusNode.requestFocus();
+  void _exibirSelecaoAdicionais(Produto produto, {double quantidade = 1.0}) {
+    List<AdicionalProduto> selecionados = [];
+    final precoBase = produto.preco;
+    
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final totalAdicionais = selecionados.fold(0.0, (sum, a) => sum + a.preco);
+          
+          return AlertDialog(
+            backgroundColor: const Color(0xFF1E1E2E),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: Text(produto.nome, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+            content: SizedBox(
+              width: 320,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Selecione os adicionais:', style: TextStyle(color: Colors.grey, fontSize: 14)),
+                  const SizedBox(height: 12),
+                  Flexible(
+                    child: Consumer<DataService>(
+                      builder: (context, dataService, _) {
+                        final empresa = dataService.empresaAtual;
+                        final List<AdicionalProduto> listaExibicao = [...produto.adicionais.where((a) => a.ativo)];
+                        
+                        if (empresa != null && empresa.modelosAdicionais.isNotEmpty) {
+                          for (final modelo in empresa.modelosAdicionais) {
+                            final nomeNormalizado = modelo.nome.trim().toLowerCase();
+                            if (!listaExibicao.any((a) => a.nome.trim().toLowerCase() == nomeNormalizado)) {
+                              listaExibicao.add(modelo);
+                            }
+                          }
+                        }
+
+                        if (listaExibicao.isEmpty) {
+                          return const Center(
+                            child: Padding(
+                              padding: EdgeInsets.all(20.0),
+                              child: Text('Nenhum adicional disponível', style: TextStyle(color: Colors.white24)),
+                            ),
+                          );
+                        }
+
+                        return ListView.builder(
+                          shrinkWrap: true,
+                          itemCount: listaExibicao.length,
+                          itemBuilder: (context, index) {
+                            final adicional = listaExibicao[index];
+                            final qtd = selecionados.where((s) => s.id == adicional.id).length;
+                            final estaSelecionado = qtd > 0;
+                            
+                            return ListTile(
+                              dense: true,
+                              title: Text(adicional.nome, style: const TextStyle(color: Colors.white, fontSize: 14)),
+                              subtitle: Text('+ R\$ ${adicional.preco.toStringAsFixed(2)}', style: const TextStyle(color: Colors.greenAccent, fontSize: 12)),
+                              trailing: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (estaSelecionado) ...[
+                                    IconButton(
+                                      icon: const Icon(Icons.remove_circle_outline, color: Colors.white38),
+                                      onPressed: () {
+                                        setDialogState(() {
+                                          final idx = selecionados.indexWhere((s) => s.id == adicional.id);
+                                          if (idx != -1) selecionados.removeAt(idx);
+                                        });
+                                      },
+                                    ),
+                                    Text('$qtd', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                                  ],
+                                  IconButton(
+                                    icon: Icon(estaSelecionado ? Icons.add_circle : Icons.add_circle_outline, 
+                                      color: estaSelecionado ? Colors.orange : Colors.white24),
+                                    onPressed: () {
+                                      setDialogState(() {
+                                        selecionados.add(adicional);
+                                      });
+                                    },
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        );
+                      }
+                    ),
+                  ),
+                  const Divider(color: Colors.white24),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('Total Item:', style: TextStyle(color: Colors.white)),
+                      Text('R\$ ${(precoBase + totalAdicionais).toStringAsFixed(2)}', 
+                        style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 16)),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('CANCELAR', style: TextStyle(color: Colors.grey)),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  setState(() {
+                    _carrinho.add(
+                      ItemCarrinho(
+                        produto: produto,
+                        quantidade: quantidade,
+                        adicionais: List<AdicionalProduto>.from(selecionados),
+                        observacao: produto.observacaoPadrao,
+                      ),
+                    );
+                    _buscaController.clear();
+                    _mostrarResultadosBusca = false;
+                  });
+                  Navigator.pop(context);
+                  _mostrarFeedbackAdicao(produto);
+                  _buscaFocusNode.requestFocus();
+                },
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+                child: const Text('ADICIONAR'),
+              ),
+            ],
+          );
+        }
+      ),
+    );
   }
 
   void _removerItem(int index) {
@@ -408,6 +625,8 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
     setState(() {
       _carrinho.removeAt(index);
     });
+    
+    _recalcularPrecosCarrinho();
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -422,13 +641,14 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
             setState(() {
               _carrinho.insert(index, item);
             });
+            _recalcularPrecosCarrinho();
           },
         ),
       ),
     );
   }
 
-  void _alterarQuantidade(int index, int delta) {
+  void _alterarQuantidade(int index, double delta) {
     setState(() {
       final novaQuantidade = _carrinho[index].quantidade + delta;
       if (novaQuantidade > 0) {
@@ -437,14 +657,79 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
         _removerItem(index);
       }
     });
+    
+    _recalcularPrecosCarrinho();
   }
 
   double get _totalPedido {
     return _carrinho.fold(0.0, (sum, item) => sum + item.subtotal);
   }
 
-  int get _totalItens {
-    return _carrinho.fold(0, (sum, item) => sum + item.quantidade);
+  double get _totalItens {
+    return _carrinho.fold(0.0, (sum, item) => sum + item.quantidade);
+  }
+
+  void _editarObservacaoItem(int index) {
+    final item = _carrinho[index];
+    final controller = TextEditingController(text: item.observacao ?? '');
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1a237e),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            const Icon(Icons.notes, color: Colors.white),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Observação: ${item.produto.nome}',
+                style: const TextStyle(color: Colors.white, fontSize: 18),
+              ),
+            ),
+          ],
+        ),
+        content: TextField(
+          controller: controller,
+          maxLines: 3,
+          autofocus: true,
+          style: const TextStyle(color: Colors.white),
+          decoration: InputDecoration(
+            hintText: 'Ex: Sem cebola, gelo e limão...',
+            hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
+            filled: true,
+            fillColor: Colors.black.withOpacity(0.2),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide.none,
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('CANCELAR', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              setState(() {
+                _carrinho[index].observacao = controller.text.trim().isEmpty 
+                    ? null 
+                    : controller.text.trim();
+              });
+              Navigator.pop(context);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.greenAccent.shade700,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            child: const Text('SALVAR'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _salvarPedido() async {
@@ -485,10 +770,9 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
       }
     }
 
+    // Criar objeto do pedido base
     final pedido = Pedido(
-      id:
-          widget.pedidoExistente?.id ??
-          DateTime.now().millisecondsSinceEpoch.toString(),
+      id: widget.pedidoExistente?.id ?? const Uuid().v4(),
       numero: _numeroPedido,
       clienteId: _clienteSelecionado?.id,
       clienteNome: _clienteSelecionado?.nome,
@@ -504,46 +788,111 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
       produtos: _carrinho.map((item) => item.toItemPedido()).toList(),
       servicos: widget.pedidoExistente?.servicos ?? [],
       pagamentos: _pagamentos,
+      deliveryInfo: widget.pedidoExistente?.deliveryInfo,
       createdAt: widget.pedidoExistente?.createdAt ?? DateTime.now(),
       updatedAt: DateTime.now(),
     );
 
-    if (widget.pedidoExistente != null) {
-      dataService.updatePedido(pedido);
+    // Criar DeliveryInfo se for entrega
+    DeliveryInfo? deliveryInfo = pedido.deliveryInfo;
+    if (_isEntrega) {
+      DateTime? dataFinalEntrega;
+      if (_dataEntrega != null) {
+        dataFinalEntrega = DateTime(
+          _dataEntrega!.year,
+          _dataEntrega!.month,
+          _dataEntrega!.day,
+          _horaEntrega?.hour ?? 0,
+          _horaEntrega?.minute ?? 0,
+        );
+      }
+
+      deliveryInfo = (pedido.deliveryInfo ?? DeliveryInfo(
+        id: const Uuid().v4(),
+        enderecoId: _clienteSelecionado?.id ?? 'balcao',
+        logradouro: _clienteSelecionado?.endereco ?? '',
+        numero: _clienteSelecionado?.numero ?? '',
+        bairro: _clienteSelecionado?.bairro ?? '',
+        cidade: _clienteSelecionado?.cidade ?? '',
+        uf: _clienteSelecionado?.estado ?? '',
+        status: 'Pendente',
+      )).copyWith(
+        dataEntrega: dataFinalEntrega,
+      );
     } else {
-      await dataService.addPedido(pedido);
+      deliveryInfo = null;
+    }
+
+    final pedidoFinal = pedido.copyWith(
+      deliveryInfo: deliveryInfo,
+    );
+
+    if (widget.pedidoExistente != null) {
+      dataService.updatePedido(pedidoFinal);
+    } else {
+      await dataService.addPedido(pedidoFinal);
+
+      // IMPRIMIR TICKETS DE PRODUÇÃO automaticamente (impressoras por setor do produto)
+      await _imprimirTicketsProducao(pedidoFinal);
     }
 
     if (mounted) {
-      Navigator.of(context).pop(pedido);
+      Navigator.of(context).pop(pedidoFinal);
     }
   }
 
-  // Trata teclas especiais na busca
-  void _onKeyEvent(KeyEvent event) {
-    if (event is! KeyDownEvent) return;
+  /// Imprime os tickets de produção do pedido recém-criado nas impressoras
+  /// dos setores configuradas em cada produto (Cozinha, Bar, etc.).
+  /// Silencioso: falhas não impedem o salvamento do pedido.
+  Future<void> _imprimirTicketsProducao(Pedido pedido) async {
+    try {
+      final dataService = Provider.of<DataService>(context, listen: false);
+      final empresa = dataService.empresaAtual;
+      if (empresa == null) return;
 
-    if (_produtosFiltrados.isEmpty) return;
+      final inputs = _carrinho
+          .map((item) => ItemProducaoInput(
+                id: item.produto.id,
+                nome: item.produto.nome,
+                quantidade: item.quantidade,
+                observacao: item.observacao,
+                adicionais: item.adicionais.map((a) => a.nome).toList(),
+              ))
+          .toList();
 
-    setState(() {
-      if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
-        _indiceSelecionado =
-            (_indiceSelecionado + 1) % _produtosFiltrados.length;
-      } else if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
-        _indiceSelecionado =
-            (_indiceSelecionado - 1 + _produtosFiltrados.length) %
-            _produtosFiltrados.length;
-      } else if (event.logicalKey == LogicalKeyboardKey.enter) {
-        if (_indiceSelecionado >= 0 &&
-            _indiceSelecionado < _produtosFiltrados.length) {
-          _adicionarProduto(_produtosFiltrados[_indiceSelecionado]);
-        }
-      } else if (event.logicalKey == LogicalKeyboardKey.escape) {
-        _buscaController.clear();
-        _mostrarResultadosBusca = false;
+      final qtd = await ProducaoPdfService.imprimirTicketsProducao(
+        itens: inputs,
+        dataService: dataService,
+        empresa: empresa,
+        numeroDocumento: pedido.numero,
+        clienteNome: pedido.clienteNome,
+        isDelivery: pedido.deliveryInfo != null,
+        detalhes: DetalhesTicketProducao(
+          mesaComanda: pedido.origem,
+          clienteTelefone: pedido.clienteTelefone,
+          enderecoEntrega: pedido.clienteEndereco,
+          motorista: pedido.deliveryInfo?.motoristaNome,
+          previsaoEntrega: pedido.deliveryInfo?.previsaoEntrega,
+          formasPagamento: pedido.pagamentos
+              .where((p) => p.valor > 0)
+              .map((p) => p.tipo.nome)
+              .toList(),
+          pagamentoConcluido: pedido.totalmenteRecebido,
+          observacoesGerais: pedido.observacoes,
+          // Hora do pedido + operador (para a cozinha)
+          dataPedido: pedido.dataPedido,
+          usuarioCriou: pedido.operador,
+        ),
+      );
+      if (qtd > 0) {
+        debugPrint('>>> [Producao] ✓ $qtd ticket(s) de produção impressos (pedido ${pedido.numero})');
       }
-    });
+    } catch (e) {
+      debugPrint('>>> [Producao] ⚠️ Erro ao imprimir tickets de produção: $e');
+    }
   }
+
+
 
   @override
   Widget build(BuildContext context) {
@@ -583,6 +932,7 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
             onPressed: () => Navigator.of(context).pop(),
           ),
           actions: [
+            SyncStatusWidget(),
             TextButton.icon(
               onPressed: _carrinho.isNotEmpty ? _salvarPedido : null,
               icon: const Icon(Icons.save, color: Colors.white),
@@ -623,6 +973,9 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
         children: [
           // Seleção de cliente
           _buildSelecaoCliente(clientes),
+          const SizedBox(height: 12),
+          // Seção de Entrega
+          _buildSecaoEntrega(),
           const SizedBox(height: 12),
           // Status do pedido
           Row(
@@ -684,9 +1037,41 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
           const SizedBox(height: 12),
 
           // Campo de busca de produtos
-          KeyboardListener(
-            focusNode: FocusNode(),
-            onKeyEvent: _onKeyEvent,
+          Focus(
+            focusNode: _keyboardFocusNode,
+            onKeyEvent: (node, event) {
+              if (event is! KeyDownEvent) return KeyEventResult.ignored;
+
+              if (_produtosFiltrados.isEmpty) return KeyEventResult.ignored;
+
+              if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+                setState(() {
+                  _indiceSelecionado =
+                      (_indiceSelecionado + 1) % _produtosFiltrados.length;
+                });
+                return KeyEventResult.handled;
+              } else if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+                setState(() {
+                  _indiceSelecionado =
+                      (_indiceSelecionado - 1 + _produtosFiltrados.length) %
+                      _produtosFiltrados.length;
+                });
+                return KeyEventResult.handled;
+              } else if (event.logicalKey == LogicalKeyboardKey.enter || event.logicalKey == LogicalKeyboardKey.numpadEnter) {
+                if (_indiceSelecionado >= 0 &&
+                    _indiceSelecionado < _produtosFiltrados.length) {
+                  _adicionarProduto(_produtosFiltrados[_indiceSelecionado]);
+                  return KeyEventResult.handled;
+                }
+              } else if (event.logicalKey == LogicalKeyboardKey.escape) {
+                setState(() {
+                  _buscaController.clear();
+                  _mostrarResultadosBusca = false;
+                });
+                return KeyEventResult.handled;
+              }
+              return KeyEventResult.ignored;
+            },
             child: TextField(
               controller: _buscaController,
               focusNode: _buscaFocusNode,
@@ -1125,14 +1510,66 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'R\$ ${item.precoUnitario.toStringAsFixed(2)} / ${item.produto.unidade}',
+                    'Subtotal: R\$ ${(item.precoUnitario + item.adicionais.fold(0.0, (sum, a) => sum + a.preco)).toStringAsFixed(2)} / ${item.produto.unidade}',
                     style: TextStyle(
                       color: Colors.white.withOpacity(0.7),
                       fontSize: 14,
                     ),
                   ),
+                  if (item.adicionais.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    ...item.adicionais.map((adicional) => Padding(
+                      padding: const EdgeInsets.only(left: 4),
+                      child: Text(
+                        '+ ${adicional.nome} (R\$ ${adicional.preco.toStringAsFixed(2)})',
+                        style: const TextStyle(color: Colors.greenAccent, fontSize: 11),
+                      ),
+                    )),
+                  ],
+                  if (item.observacao != null && item.observacao!.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.yellow.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: Colors.yellow.withOpacity(0.3)),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.info_outline, color: Colors.yellow, size: 12),
+                            const SizedBox(width: 4),
+                            Flexible(
+                              child: Text(
+                                item.observacao!,
+                                style: const TextStyle(color: Colors.yellow, fontSize: 11),
+                                overflow: TextOverflow.ellipsis,
+                                maxLines: 2,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                 ],
               ),
+            ),
+
+            // Botão Observação
+            IconButton(
+              icon: Icon(
+                item.observacao != null && item.observacao!.isNotEmpty 
+                  ? Icons.comment 
+                  : Icons.add_comment_outlined,
+                color: item.observacao != null && item.observacao!.isNotEmpty
+                  ? Colors.yellow
+                  : Colors.white.withOpacity(0.4),
+                size: 20,
+              ),
+              onPressed: () => _editarObservacaoItem(index),
+              tooltip: 'Adicionar observação ao item',
             ),
 
             // Controle de quantidade
@@ -1756,6 +2193,7 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
                       _clienteSelecionado = cliente;
                       _mostrarSugestoesCliente = false;
                     });
+                    _recalcularPrecosCarrinho();
                     _buscaClienteFocusNode.unfocus();
                   },
                 );
@@ -1780,5 +2218,132 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
       default:
         return Colors.grey;
     }
+  }
+
+  Widget _buildSecaoEntrega() {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: _isEntrega ? Colors.blueAccent.withOpacity(0.1) : Colors.white.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: _isEntrega ? Colors.blueAccent.withOpacity(0.3) : Colors.white.withOpacity(0.1),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.delivery_dining,
+                color: _isEntrega ? Colors.blueAccent : Colors.white54,
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              const Text(
+                'Agendar Entrega?',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const Spacer(),
+              SizedBox(
+                height: 24,
+                child: Switch(
+                  value: _isEntrega,
+                  onChanged: (val) {
+                    setState(() {
+                      _isEntrega = val;
+                      if (_isEntrega && _dataEntrega == null) {
+                        _dataEntrega = DateTime.now();
+                        _horaEntrega = TimeOfDay.now();
+                      }
+                    });
+                  },
+                  activeColor: Colors.blueAccent,
+                ),
+              ),
+            ],
+          ),
+          if (_isEntrega) ...[
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: InkWell(
+                    onTap: () async {
+                      final date = await showDatePicker(
+                        context: context,
+                        initialDate: _dataEntrega ?? DateTime.now(),
+                        firstDate: DateTime(2020),
+                        lastDate: DateTime.now().add(const Duration(days: 365)),
+                      );
+                      if (date != null) {
+                        setState(() => _dataEntrega = date);
+                      }
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.calendar_today, size: 14, color: Colors.blueAccent),
+                          const SizedBox(width: 6),
+                          Text(
+                            _dataEntrega != null
+                                ? DateFormat('dd/MM/yy').format(_dataEntrega!)
+                                : 'Data',
+                            style: const TextStyle(color: Colors.white, fontSize: 13),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: InkWell(
+                    onTap: () async {
+                      final time = await showTimePicker(
+                        context: context,
+                        initialTime: _horaEntrega ?? TimeOfDay.now(),
+                      );
+                      if (time != null) {
+                        setState(() => _horaEntrega = time);
+                      }
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.access_time, size: 14, color: Colors.blueAccent),
+                          const SizedBox(width: 6),
+                          Text(
+                            _horaEntrega != null
+                                ? _horaEntrega!.format(context)
+                                : 'Hora',
+                            style: const TextStyle(color: Colors.white, fontSize: 13),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
   }
 }

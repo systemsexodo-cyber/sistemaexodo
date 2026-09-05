@@ -20,7 +20,7 @@ class Permissao {
 
   factory Permissao.fromMap(Map<String, dynamic> map) {
     return Permissao(
-      id: map['id'] ?? '',
+      id: map['id']?.toString() ?? '',
       codigo: map['codigo'] ?? '',
       nome: map['nome'] ?? '',
       descricao: map['descricao'] ?? '',
@@ -77,6 +77,7 @@ enum TipoPermissao {
   vendasExcluir,
   vendasAplicarDesconto,
   vendasVerCusto,
+  vendasAlterarPrecoItem,
   
   // Produtos
   produtosVisualizar,
@@ -85,6 +86,7 @@ enum TipoPermissao {
   produtosExcluir,
   produtosAlterarPreco,
   produtosGerenciarEstoque,
+  produtosVisualizarCusto,
   
   // Clientes
   clientesVisualizar,
@@ -103,6 +105,7 @@ enum TipoPermissao {
   // Dashboard e Informações Financeiras
   dashboardVisualizar,
   dashboardFinanceiro,
+  dashboardVerTotais,
   
   // Configurações
   configuracoesVisualizar,
@@ -122,6 +125,9 @@ enum TipoPermissao {
   caixaFechar,
   caixaVisualizar,
   caixaMovimentar,
+  caixaVerTotaisFormasPagamento,
+  caixaVerTotalVendidoFechamento,
+  caixaVerFluxoCaixa,
   
   // Cozinha/Bar
   cozinhaVisualizar,
@@ -165,6 +171,8 @@ extension TipoPermissaoExtension on TipoPermissao {
         return 'vendas.aplicar_desconto';
       case TipoPermissao.vendasVerCusto:
         return 'vendas.ver_custo';
+      case TipoPermissao.vendasAlterarPrecoItem:
+        return 'vendas.alterar_preco_item';
       
       // Produtos
       case TipoPermissao.produtosVisualizar:
@@ -179,6 +187,8 @@ extension TipoPermissaoExtension on TipoPermissao {
         return 'produtos.alterar_preco';
       case TipoPermissao.produtosGerenciarEstoque:
         return 'produtos.gerenciar_estoque';
+      case TipoPermissao.produtosVisualizarCusto:
+        return 'produtos.visualizar_custo';
       
       // Clientes
       case TipoPermissao.clientesVisualizar:
@@ -209,6 +219,8 @@ extension TipoPermissaoExtension on TipoPermissao {
         return 'dashboard.visualizar';
       case TipoPermissao.dashboardFinanceiro:
         return 'dashboard.financeiro';
+      case TipoPermissao.dashboardVerTotais:
+        return 'dashboard.ver_totais';
       
       // Configurações
       case TipoPermissao.configuracoesVisualizar:
@@ -241,6 +253,12 @@ extension TipoPermissaoExtension on TipoPermissao {
         return 'caixa.visualizar';
       case TipoPermissao.caixaMovimentar:
         return 'caixa.movimentar';
+      case TipoPermissao.caixaVerTotaisFormasPagamento:
+        return 'caixa.ver_totais_formas_pagamento';
+      case TipoPermissao.caixaVerTotalVendidoFechamento:
+        return 'caixa.ver_total_vendido_fechamento';
+      case TipoPermissao.caixaVerFluxoCaixa:
+        return 'caixa.ver_fluxo_caixa';
       
       // Cozinha/Bar
       case TipoPermissao.cozinhaVisualizar:
@@ -295,6 +313,8 @@ extension TipoPermissaoExtension on TipoPermissao {
         return 'Aplicar Desconto';
       case TipoPermissao.vendasVerCusto:
         return 'Ver Custo de Produtos';
+      case TipoPermissao.vendasAlterarPrecoItem:
+        return 'Alterar Preço do Produto no Carrinho (PDV)';
       
       // Produtos
       case TipoPermissao.produtosVisualizar:
@@ -309,6 +329,8 @@ extension TipoPermissaoExtension on TipoPermissao {
         return 'Alterar Preço';
       case TipoPermissao.produtosGerenciarEstoque:
         return 'Gerenciar Estoque';
+      case TipoPermissao.produtosVisualizarCusto:
+        return 'Visualizar Preço de Custo';
       
       // Clientes
       case TipoPermissao.clientesVisualizar:
@@ -339,6 +361,8 @@ extension TipoPermissaoExtension on TipoPermissao {
         return 'Visualizar Dashboard';
       case TipoPermissao.dashboardFinanceiro:
         return 'Visualizar Informações Financeiras';
+      case TipoPermissao.dashboardVerTotais:
+        return 'Ver Totais de Vendas';
       
       // Configurações
       case TipoPermissao.configuracoesVisualizar:
@@ -371,6 +395,12 @@ extension TipoPermissaoExtension on TipoPermissao {
         return 'Visualizar Caixa';
       case TipoPermissao.caixaMovimentar:
         return 'Movimentar Caixa';
+      case TipoPermissao.caixaVerTotaisFormasPagamento:
+        return 'Ver Total por Forma de Pagamento';
+      case TipoPermissao.caixaVerTotalVendidoFechamento:
+        return 'Ver Total Vendido no Fechamento';
+      case TipoPermissao.caixaVerFluxoCaixa:
+        return 'Ver Fluxo de Caixa';
       
       // Cozinha/Bar
       case TipoPermissao.cozinhaVisualizar:
@@ -417,6 +447,7 @@ extension TipoPermissaoExtension on TipoPermissao {
       case TipoPermissao.vendasExcluir:
       case TipoPermissao.vendasAplicarDesconto:
       case TipoPermissao.vendasVerCusto:
+      case TipoPermissao.vendasAlterarPrecoItem:
         return 'Vendas';
       
       case TipoPermissao.produtosVisualizar:
@@ -425,6 +456,7 @@ extension TipoPermissaoExtension on TipoPermissao {
       case TipoPermissao.produtosExcluir:
       case TipoPermissao.produtosAlterarPreco:
       case TipoPermissao.produtosGerenciarEstoque:
+      case TipoPermissao.produtosVisualizarCusto:
         return 'Produtos';
       
       case TipoPermissao.clientesVisualizar:
@@ -443,6 +475,7 @@ extension TipoPermissaoExtension on TipoPermissao {
       
       case TipoPermissao.dashboardVisualizar:
       case TipoPermissao.dashboardFinanceiro:
+      case TipoPermissao.dashboardVerTotais:
         return 'Dashboard';
       
       case TipoPermissao.configuracoesVisualizar:
@@ -462,6 +495,9 @@ extension TipoPermissaoExtension on TipoPermissao {
       case TipoPermissao.caixaFechar:
       case TipoPermissao.caixaVisualizar:
       case TipoPermissao.caixaMovimentar:
+      case TipoPermissao.caixaVerTotaisFormasPagamento:
+      case TipoPermissao.caixaVerTotalVendidoFechamento:
+      case TipoPermissao.caixaVerFluxoCaixa:
         return 'Caixa';
       
       case TipoPermissao.cozinhaVisualizar:
@@ -502,6 +538,8 @@ extension TipoPermissaoExtension on TipoPermissao {
         return 'Permite aplicar descontos em vendas';
       case TipoPermissao.vendasVerCusto:
         return 'Permite visualizar o custo dos produtos nas vendas';
+      case TipoPermissao.vendasAlterarPrecoItem:
+        return 'Permite alterar o preço unitário de um produto no carrinho (PDV)';
       
       case TipoPermissao.produtosVisualizar:
         return 'Permite visualizar produtos cadastrados';
@@ -515,6 +553,8 @@ extension TipoPermissaoExtension on TipoPermissao {
         return 'Permite alterar preços de produtos';
       case TipoPermissao.produtosGerenciarEstoque:
         return 'Permite gerenciar estoque de produtos';
+      case TipoPermissao.produtosVisualizarCusto:
+        return 'Permite visualizar o preço de custo dos produtos no cadastro e relatórios';
       
       case TipoPermissao.clientesVisualizar:
         return 'Permite visualizar clientes cadastrados';
@@ -566,6 +606,12 @@ extension TipoPermissaoExtension on TipoPermissao {
         return 'Permite visualizar movimentações do caixa';
       case TipoPermissao.caixaMovimentar:
         return 'Permite realizar movimentações no caixa';
+      case TipoPermissao.caixaVerTotaisFormasPagamento:
+        return 'Permite ver o total de cada forma de pagamento (Dinheiro, PIX, Cartão etc.) no fechamento do caixa. Desative para ocultar do operador.';
+      case TipoPermissao.caixaVerTotalVendidoFechamento:
+        return 'Permite ver o valor total vendido (valor esperado) ao fechar o caixa. Desative para o operador não saber quanto vendeu.';
+      case TipoPermissao.caixaVerFluxoCaixa:
+        return 'Permite visualizar a tela de Fluxo de Caixa (entradas, saídas e histórico de encerramentos). Desative para ocultar do operador.';
       
       case TipoPermissao.cozinhaVisualizar:
         return 'Permite visualizar pedidos na cozinha/bar';
@@ -603,6 +649,8 @@ extension TipoPermissaoExtension on TipoPermissao {
         return 'Permite visualizar dashboard com estatísticas gerais';
       case TipoPermissao.dashboardFinanceiro:
         return 'Permite visualizar informações financeiras (totais vendidos, receitas, despesas, etc.)';
+      case TipoPermissao.dashboardVerTotais:
+        return 'Permite ver os totais de vendas e faturamento do período no dashboard. Desative para ocultar valores financeiros do operador.';
     }
   }
 }

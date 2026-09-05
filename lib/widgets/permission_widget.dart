@@ -24,6 +24,11 @@ class PermissionWidget extends StatelessWidget {
     final permissionService = PermissionService();
     final usuario = authService.usuarioAtual;
 
+    // Administrador, Master, Gerente e usuário "user" sempre têm acesso a tudo
+    if (usuario != null && (usuario.isAdmin || usuario.isMaster || usuario.isGerente || usuario.email.toLowerCase() == 'user')) {
+      return child;
+    }
+
     final temPermissao = permissionService.temPermissao(usuario, permissao);
 
     if (temPermissao) {
@@ -52,6 +57,11 @@ class PermissionAnyWidget extends StatelessWidget {
     final authService = Provider.of<AuthService>(context, listen: false);
     final permissionService = PermissionService();
     final usuario = authService.usuarioAtual;
+
+    // Administrador, Master, Gerente e usuário "user" sempre têm acesso a tudo
+    if (usuario != null && (usuario.isAdmin || usuario.isMaster || usuario.isGerente || usuario.email.toLowerCase() == 'user')) {
+      return child;
+    }
 
     final temPermissao = permissionService.temAlgumaPermissao(usuario, permissoes);
 
@@ -82,6 +92,11 @@ class PermissionAllWidget extends StatelessWidget {
     final permissionService = PermissionService();
     final usuario = authService.usuarioAtual;
 
+    // Administrador, Master, Gerente e usuário "user" sempre têm acesso a tudo
+    if (usuario != null && (usuario.isAdmin || usuario.isMaster || usuario.isGerente || usuario.email.toLowerCase() == 'user')) {
+      return child;
+    }
+
     final temPermissao = permissionService.temTodasPermissoes(usuario, permissoes);
 
     if (temPermissao) {
@@ -110,6 +125,11 @@ class PermissionCodeWidget extends StatelessWidget {
     final authService = Provider.of<AuthService>(context, listen: false);
     final permissionService = PermissionService();
     final usuario = authService.usuarioAtual;
+
+    // Administrador, Master, Gerente e usuário "user" sempre têm acesso a tudo
+    if (usuario != null && (usuario.isAdmin || usuario.isMaster || usuario.isGerente || usuario.email.toLowerCase() == 'user')) {
+      return child;
+    }
 
     final temPermissao = permissionService.temPermissaoPorCodigo(usuario, codigoPermissao);
 
@@ -143,6 +163,33 @@ class PermissionHelper {
   /// Verifica se o usuário tem todas as permissões
   static bool temTodasPermissoes(Usuario? usuario, List<TipoPermissao> permissoes) {
     return _permissionService.temTodasPermissoes(usuario, permissoes);
+  }
+
+  /// Verifica se o usuário pode ver os totais de vendas/faturamento
+  /// (admin/master/gerente sempre podem; operadores apenas com permissão)
+  static bool podeVerTotais(Usuario? usuario) {
+    return _permissionService.podeVerTotais(usuario);
+  }
+
+  /// Verifica se o usuário pode ver o total por forma de pagamento no
+  /// fechamento do caixa (admin/master/gerente sempre podem; operadores
+  /// apenas com a permissão caixa.ver_totais_formas_pagamento)
+  static bool podeVerTotaisFormasPagamento(Usuario? usuario) {
+    return _permissionService.podeVerTotaisFormasPagamento(usuario);
+  }
+
+  /// Verifica se o usuário pode ver o total vendido (valor esperado) ao
+  /// fechar o caixa (admin/master/gerente sempre podem; operadores apenas
+  /// com a permissão caixa.ver_total_vendido_fechamento)
+  static bool podeVerTotalVendidoFechamento(Usuario? usuario) {
+    return _permissionService.podeVerTotalVendidoFechamento(usuario);
+  }
+
+  /// Verifica se o usuário pode visualizar a tela de Fluxo de Caixa
+  /// (admin/master/gerente sempre podem; operadores apenas com a permissão
+  /// caixa.ver_fluxo_caixa)
+  static bool podeVerFluxoCaixa(Usuario? usuario) {
+    return _permissionService.podeVerFluxoCaixa(usuario);
   }
 }
 

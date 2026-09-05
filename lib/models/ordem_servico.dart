@@ -8,7 +8,7 @@ class OrdemServico {
 
   factory OrdemServico.fromMap(Map<String, dynamic> map) {
     return OrdemServico(
-      id: map['id'] ?? '',
+      id: map['id']?.toString() ?? '',
       cliente: Cliente.fromMap(map['cliente'] ?? {}),
     );
   }

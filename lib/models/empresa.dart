@@ -1,3 +1,4 @@
+import 'package:sistema_exodo_novo/models/adicional_produto.dart';
 /// Modelo para representar uma empresa
 class Empresa {
   final String id;
@@ -44,6 +45,7 @@ class Empresa {
   
   // Configurações do sistema
   final Map<String, dynamic>? configuracoes; // Configurações específicas da empresa
+  final List<String> perfisDePreco; // Perfis de preço de clientes (ex: Revenda, VIP)
   
   // Controle de acesso às telas
   final Set<String>? telasPermitidas; // Códigos das telas que podem ser acessadas (null = todas permitidas)
@@ -52,8 +54,16 @@ class Empresa {
   final String? whatsappApiUrl;       // URL da Evolution API (ex: https://xxx.up.railway.app)
   final String? whatsappApiKey;       // API Key da Evolution API
   final String? whatsappInstanceName; // Nome da instância (ex: empresa_principal)
+  final String? whatsappTipo;         // 'evolution' ou 'twilio'
   final bool whatsappAtivo;           // Se as notificações WhatsApp estão ativas
   final bool moduloPet;               // Se o módulo Pet Shop está ativo
+  final List<AdicionalProduto> modelosAdicionais; // Modelos de adicionais reutilizáveis
+  
+  // Fiscal / Contabilidade
+  final String? emailContabilidade;   // E-mail da contabilidade para envio de XMLs
+  final bool envioFiscalAutomatico;    // Se deve enviar no dia 01 de cada mês automaticamente
+  final bool incluirTaxaEntregaNfce;   // Incluir taxa de entrega no valor total da NFC-e
+  final bool incluirServicoGarcomNfce; // Incluir serviço do garçom (10%) no valor total da NFC-e
 
   Empresa({
     required this.id,
@@ -90,16 +100,53 @@ class Empresa {
     this.ambienteHomologacao,
     this.focusNFeToken,
     this.configuracoes,
+    this.perfisDePreco = const [],
     this.telasPermitidas,
     this.whatsappApiUrl,
     this.whatsappApiKey,
     this.whatsappInstanceName,
+    this.whatsappTipo = 'evolution',
     this.whatsappAtivo = false,
     this.moduloPet = false,
+    this.modelosAdicionais = const [],
+    this.emailContabilidade,
+    this.envioFiscalAutomatico = false,
+    this.incluirTaxaEntregaNfce = true,
+    this.incluirServicoGarcomNfce = true,
   });
 
   /// Retorna o nome de exibição (nome fantasia ou razão social)
   String get nomeExibicao => nomeFantasia ?? razaoSocial;
+
+  /// Retorna as regras completas configuradas para um perfil de preço
+  Map<String, dynamic>? getConfigPerfilPreco(String? perfil) {
+    if (perfil == null || configuracoes == null || configuracoes!['perfis_preco'] == null) {
+      return null;
+    }
+    
+    final perfisList = configuracoes!['perfis_preco'] as List;
+    for (var p in perfisList) {
+      if (p is Map && p['nome'] == perfil) {
+        return Map<String, dynamic>.from(p);
+      }
+    }
+    return null;
+  }
+
+  /// Retorna o valor do modificador (desconto ou acréscimo) global para um determinado perfil
+  double getModificadorPerfilValor(String? perfil) {
+    final config = getConfigPerfilPreco(perfil);
+    if (config != null && (config['tipo'] == 'desconto' || config['tipo'] == 'acrescimo')) {
+      return (config['valor'] as num?)?.toDouble() ?? 0.0;
+    }
+    return 0.0;
+  }
+
+  /// Retorna o tipo do modificador global ('desconto', 'acrescimo' ou 'fixo')
+  String getModificadorPerfilTipo(String? perfil) {
+    final config = getConfigPerfilPreco(perfil);
+    return config?['tipo'] as String? ?? 'desconto';
+  }
 
   /// Retorna o endereço completo formatado
   String get enderecoCompleto {
@@ -164,12 +211,19 @@ class Empresa {
     bool? ambienteHomologacao,
     String? focusNFeToken,
     Map<String, dynamic>? configuracoes,
+    List<String>? perfisDePreco,
     Set<String>? telasPermitidas,
     String? whatsappApiUrl,
     String? whatsappApiKey,
     String? whatsappInstanceName,
+    String? whatsappTipo,
     bool? whatsappAtivo,
     bool? moduloPet,
+    List<AdicionalProduto>? modelosAdicionais,
+    String? emailContabilidade,
+    bool? envioFiscalAutomatico,
+    bool? incluirTaxaEntregaNfce,
+    bool? incluirServicoGarcomNfce,
   }) {
     return Empresa(
       id: id ?? this.id,
@@ -210,82 +264,126 @@ class Empresa {
               ? (Map<String, dynamic>.from(this.configuracoes!)..addAll(configuracoes))
               : configuracoes)
           : this.configuracoes,
+      perfisDePreco: perfisDePreco ?? this.perfisDePreco,
       telasPermitidas: telasPermitidas ?? this.telasPermitidas,
       whatsappApiUrl: whatsappApiUrl ?? this.whatsappApiUrl,
       whatsappApiKey: whatsappApiKey ?? this.whatsappApiKey,
       whatsappInstanceName: whatsappInstanceName ?? this.whatsappInstanceName,
+      whatsappTipo: whatsappTipo ?? this.whatsappTipo,
       whatsappAtivo: whatsappAtivo ?? this.whatsappAtivo,
       moduloPet: moduloPet ?? this.moduloPet,
+      modelosAdicionais: modelosAdicionais ?? this.modelosAdicionais,
+      emailContabilidade: emailContabilidade ?? this.emailContabilidade,
+      envioFiscalAutomatico: envioFiscalAutomatico ?? this.envioFiscalAutomatico,
+      incluirTaxaEntregaNfce: incluirTaxaEntregaNfce ?? this.incluirTaxaEntregaNfce,
+      incluirServicoGarcomNfce: incluirServicoGarcomNfce ?? this.incluirServicoGarcomNfce,
     );
   }
 
   factory Empresa.fromMap(Map<String, dynamic> map) {
+    // Helper para suportar tanto camelCase (localStorage) quanto snake_case (PostgreSQL)
+    String? getString(String camelCase, String snakeCase) {
+      return map[camelCase] ?? map[snakeCase];
+    }
+    
+    bool? getBool(String camelCase, String snakeCase, bool defaultValue) {
+      final val = map[camelCase] ?? map[snakeCase];
+      if (val == null) return defaultValue;
+      if (val is bool) return val;
+      return val.toString().toLowerCase() == 'true';
+    }
+    
+    DateTime getDateTime(String camelCase, String snakeCase) {
+      final val = map[camelCase] ?? map[snakeCase];
+      if (val == null) return DateTime.now();
+      if (val is DateTime) return val;
+      return DateTime.parse(val.toString());
+    }
+    
     return Empresa(
-      id: map['id'] ?? '',
-      razaoSocial: map['razaoSocial'] ?? '',
-      nomeFantasia: map['nomeFantasia'],
-      cnpj: map['cnpj'],
-      inscricaoEstadual: map['inscricaoEstadual'],
-      inscricaoMunicipal: map['inscricaoMunicipal'],
+      id: map['id']?.toString() ?? '',
+      razaoSocial: getString('razaoSocial', 'razao_social') ?? '',
+      nomeFantasia: getString('nomeFantasia', 'nome_fantasia'),
+      cnpj: getString('cnpj', 'cnpj'),
+      inscricaoEstadual: getString('inscricaoEstadual', 'inscricao_estadual'),
+      inscricaoMunicipal: getString('inscricaoMunicipal', 'inscricao_municipal'),
       crt: map['crt'] != null 
           ? (map['crt'] is int ? map['crt'] as int : int.tryParse(map['crt'].toString()))
-          : (map['regimeTributario'] != null 
-              ? _converterRegimeTributarioParaCRT(map['regimeTributario'].toString())
-              : null), // Compatibilidade com dados antigos
+          : (map['regime_tributario'] != null 
+              ? _converterRegimeTributarioParaCRT(map['regime_tributario'].toString())
+              : null),
       slug: (map['slug'] != null && map['slug'].toString().trim().isNotEmpty)
           ? map['slug'].toString()
-          : gerarSlug(map['nomeFantasia'] ?? map['razaoSocial'] ?? ''),
-      email: map['email'],
-      telefone: map['telefone'],
-      celular: map['celular'],
-      site: map['site'],
-      endereco: map['endereco'],
-      numero: map['numero'],
-      complemento: map['complemento'],
-      bairro: map['bairro'],
-      cidade: map['cidade'],
-      estado: map['estado'],
-      cep: map['cep'],
-      codigoIBGE: map['codigoIBGE'],
-      logoUrl: map['logoUrl'],
-      corPrimaria: map['corPrimaria'],
-      corSecundaria: map['corSecundaria'],
-      ativo: map['ativo'] ?? true,
-      createdAt: map['createdAt'] != null
-          ? DateTime.parse(map['createdAt'])
-          : DateTime.now(),
-      updatedAt: map['updatedAt'] != null
-          ? DateTime.parse(map['updatedAt'])
-          : DateTime.now(),
-      certificadoDigitalUrl: map['certificadoDigitalUrl'],
-      senhaCertificado: map['senhaCertificado'],
-      csc: map['csc'],
-      cscIdToken: map['cscIdToken'],
-      serieNFCe: map['serieNFCe'],
-      ambienteHomologacao: map['ambienteHomologacao'] ?? true, // Padrão: homologação
-      focusNFeToken: map['focusNFeToken'],
+          : gerarSlug(getString('nomeFantasia', 'nome_fantasia') ?? getString('razaoSocial', 'razao_social') ?? ''),
+      email: getString('email', 'email'),
+      telefone: getString('telefone', 'telefone'),
+      celular: getString('celular', 'celular'),
+      site: getString('site', 'site'),
+      endereco: getString('endereco', 'endereco'),
+      numero: getString('numero', 'numero'),
+      complemento: getString('complemento', 'complemento'),
+      bairro: getString('bairro', 'bairro'),
+      cidade: getString('cidade', 'cidade'),
+      estado: getString('estado', 'estado'),
+      cep: getString('cep', 'cep'),
+      codigoIBGE: getString('codigoIBGE', 'codigo_ibge'),
+      logoUrl: getString('logoUrl', 'logo_url'),
+      corPrimaria: getString('corPrimaria', 'cor_primaria'),
+      corSecundaria: getString('corSecundaria', 'cor_secundaria'),
+      ativo: getBool('ativo', 'ativo', true) ?? true,
+      createdAt: getDateTime('createdAt', 'created_at'),
+      updatedAt: getDateTime('updatedAt', 'updated_at'),
+      certificadoDigitalUrl: getString('certificadoDigitalUrl', 'certificado_digital_url'),
+      senhaCertificado: getString('senhaCertificado', 'senha_certificado'),
+      csc: getString('csc', 'csc'),
+      cscIdToken: getString('cscIdToken', 'csc_id_token'),
+      serieNFCe: getString('serieNFCe', 'serie_nfce'),
+      ambienteHomologacao: getBool('ambienteHomologacao', 'ambiente_homologacao', true) ?? true,
+      focusNFeToken: getString('focusNFeToken', 'focus_nfe_token'),
       configuracoes: map['configuracoes'] != null
           ? Map<String, dynamic>.from(map['configuracoes'])
           : null,
+      perfisDePreco: () {
+        // Prioridade 1: extrair nomes de configuracoes['perfis_preco']
+        final perfisList = map['configuracoes']?['perfis_preco'];
+        if (perfisList is List && perfisList.isNotEmpty) {
+          return perfisList.map((e) {
+            if (e is Map) return e['nome']?.toString() ?? '';
+            return e.toString(); // fallback se for string simples
+          }).where((n) => n.isNotEmpty).toList();
+        }
+        // Prioridade 2: campo perfisDePreco direto
+        if (map['perfisDePreco'] is List) return List<String>.from(map['perfisDePreco']);
+        if (map['perfis_de_preco'] is List) return List<String>.from(map['perfis_de_preco']);
+        return <String>[];
+      }(),
       telasPermitidas: map['telasPermitidas'] != null
           ? Set<String>.from(map['telasPermitidas'])
           : null,
-      whatsappApiUrl: map['whatsappApiUrl'],
-      whatsappApiKey: map['whatsappApiKey'],
-      whatsappInstanceName: map['whatsappInstanceName'],
-      whatsappAtivo: map['whatsappAtivo'] ?? false,
-      moduloPet: map['moduloPet'] ?? false,
+      whatsappApiUrl: getString('whatsappApiUrl', 'whatsapp_api_url'),
+      whatsappApiKey: getString('whatsappApiKey', 'whatsapp_api_key'),
+      whatsappInstanceName: getString('whatsappInstanceName', 'whatsapp_instance_name'),
+      whatsappTipo: getString('whatsappTipo', 'whatsapp_tipo') ?? 'evolution',
+      whatsappAtivo: getBool('whatsappAtivo', 'whatsapp_ativo', false) ?? false,
+      moduloPet: getBool('moduloPet', 'modulo_pet', false) ?? false,
+      modelosAdicionais: ((map['modelosAdicionais'] ?? map['modelos_adicionais']) as List?)
+          ?.map((e) => AdicionalProduto.fromMap(e as Map<String, dynamic>))
+          .toList() ?? [],
+      emailContabilidade: getString('emailContabilidade', 'email_contabilidade'),
+      envioFiscalAutomatico: getBool('envioFiscalAutomatico', 'envio_fiscal_automatico', false) ?? false,
+      incluirTaxaEntregaNfce: getBool('incluirTaxaEntregaNfce', 'incluir_taxa_entrega_nfce', true) ?? true,
+      incluirServicoGarcomNfce: getBool('incluirServicoGarcomNfce', 'incluir_servico_garcom_nfce', true) ?? true,
     );
   }
 
   Map<String, dynamic> toMap() {
     return {
       'id': id,
+      'razao_social': razaoSocial,
       'razaoSocial': razaoSocial,
+      'nome_fantasia': nomeFantasia,
       'nomeFantasia': nomeFantasia,
       'cnpj': cnpj,
-      'inscricaoEstadual': inscricaoEstadual,
-      'inscricaoMunicipal': inscricaoMunicipal,
       'crt': crt,
       'email': email,
       'telefone': telefone,
@@ -298,28 +396,45 @@ class Empresa {
       'cidade': cidade,
       'estado': estado,
       'cep': cep,
+      'ativo': ativo,
+      'slug': slug,
+      'created_at': createdAt.toIso8601String(),
+      'updated_at': updatedAt.toIso8601String(),
+      'createdAt': createdAt.toIso8601String(),
+      'updatedAt': updatedAt.toIso8601String(),
+      'configuracoes': configuracoes,
+      'telas_permitidas': telasPermitidas?.toList(),
+      'telasPermitidas': telasPermitidas?.toList(),
+      'perfisDePreco': perfisDePreco, // backup caso configuracoes seja nulo
+      
+      // Colunas camelCase que existem no Supabase:
+      'inscricaoEstadual': inscricaoEstadual,
+      'inscricaoMunicipal': inscricaoMunicipal,
       'codigoIBGE': codigoIBGE,
       'logoUrl': logoUrl,
       'corPrimaria': corPrimaria,
       'corSecundaria': corSecundaria,
-      'ativo': ativo,
-      'slug': slug,
-      'createdAt': createdAt.toIso8601String(),
-      'updatedAt': updatedAt.toIso8601String(),
+      'whatsappApiUrl': whatsappApiUrl,
+      'whatsappApiKey': whatsappApiKey,
+      'whatsappInstanceName': whatsappInstanceName,
+      'whatsappTipo': whatsappTipo,
+      'whatsappAtivo': whatsappAtivo,
+      'moduloPet': moduloPet,
+      'modelosAdicionais': modelosAdicionais.map((e) => e.toMap()).toList(),
+      'emailContabilidade': emailContabilidade,
+      'envioFiscalAutomatico': envioFiscalAutomatico,
+      'incluirTaxaEntregaNfce': incluirTaxaEntregaNfce,
+      'incluirServicoGarcomNfce': incluirServicoGarcomNfce,
+
+      // Campos de NFC-e/certificado:
       'certificadoDigitalUrl': certificadoDigitalUrl,
       'senhaCertificado': senhaCertificado,
+      'senha_certificado': senhaCertificado,
       'csc': csc,
       'cscIdToken': cscIdToken,
       'serieNFCe': serieNFCe,
       'ambienteHomologacao': ambienteHomologacao,
       'focusNFeToken': focusNFeToken,
-      'configuracoes': configuracoes,
-      'telasPermitidas': telasPermitidas?.toList(),
-      'whatsappApiUrl': whatsappApiUrl,
-      'whatsappApiKey': whatsappApiKey,
-      'whatsappInstanceName': whatsappInstanceName,
-      'whatsappAtivo': whatsappAtivo,
-      'moduloPet': moduloPet,
     };
   }
 
@@ -360,6 +475,134 @@ class Empresa {
     return telasPermitidas!.contains(codigoTela);
   }
 
+  /// Verifica se a empresa está inadimplente baseado na recorrência mensal
+  bool get isInadimplenteRecorrente {
+    final configs = configuracoes;
+    if (configs == null) return false;
+
+    // 1. Bloqueio manual direto
+    if (configs['bloqueado'] == true || configs['bloqueado'] == 'true') {
+      return true;
+    }
+    // 2. Bloqueio por status inadimplente
+    if (configs['status_pagamento'] == 'inadimplente') {
+      return true;
+    }
+
+    final agora = DateTime.now();
+    final hoje = DateTime(agora.year, agora.month, agora.day);
+
+    // 3. Obter o dia do vencimento mensal (extrai dia do mês)
+    int? diaVencimento;
+    final dataCobrancaStr = configs['data_cobranca'] ?? configs['dataCobranca'];
+    if (dataCobrancaStr != null && dataCobrancaStr.toString().trim().isNotEmpty) {
+      final str = dataCobrancaStr.toString().trim();
+      final parsedDate = DateTime.tryParse(str);
+      if (parsedDate != null) {
+        diaVencimento = parsedDate.day;
+      } else {
+        diaVencimento = int.tryParse(str);
+      }
+    }
+
+    // Se o status do pagamento estiver como pendente e sem confirmação do mês -> bloqueia
+    if (configs['status_pagamento'] == 'pendente') {
+      final ultimoMesPago = configs['ultimo_mes_pago']?.toString();
+      final mesAtualStr = '${agora.year}-${agora.month.toString().padLeft(2, '0')}';
+      if (ultimoMesPago == null || ultimoMesPago.compareTo(mesAtualStr) < 0) {
+        return true;
+      }
+    }
+
+    if (diaVencimento != null && diaVencimento > 0) {
+      // Competência necessária:
+      // Se a data de hoje já é maior ou igual ao dia de vencimento (ex: hoje = 23, vencimento = 22):
+      // exige que a competência do MÊS ATUAL (ex: '2026-07') tenha o OK de pagamento!
+      // Se a data de hoje é menor que o dia de vencimento (ex: hoje = 10, vencimento = 22):
+      // exige que o MÊS ANTERIOR (ex: '2026-06') tenha o OK de pagamento!
+      String mesCompetenciaNecessario;
+      if (hoje.day < diaVencimento) {
+        final mesPassado = DateTime(hoje.year, hoje.month - 1, 1);
+        final stringMes = mesPassado.month.toString().padLeft(2, '0');
+        mesCompetenciaNecessario = '${mesPassado.year}-$stringMes';
+      } else {
+        final stringMes = hoje.month.toString().padLeft(2, '0');
+        mesCompetenciaNecessario = '${hoje.year}-$stringMes';
+      }
+
+      final ultimoMesPago = configs['ultimo_mes_pago']?.toString();
+
+      // Sem o OK de pagamento (ultimo_mes_pago < mesCompetenciaNecessario) -> BLOQUEIA!
+      if (ultimoMesPago == null || ultimoMesPago.compareTo(mesCompetenciaNecessario) < 0) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /// Verifica se há algum motivo de bloqueio (Inadimplência, > 5 dias offline ou relógio alterado)
+  MotivoBloqueioEmpresa verificarMotivoBloqueio({
+    DateTime? ultimaValidacaoOnline,
+    DateTime? ultimaDataExecucao,
+    int limiteDiasOffline = 5,
+  }) {
+    // 1. Anti-Adulteração de Relógio do Sistema (voltar data)
+    if (ultimaDataExecucao != null) {
+      final agora = DateTime.now();
+      if (agora.isBefore(ultimaDataExecucao.subtract(const Duration(minutes: 5)))) {
+        return MotivoBloqueioEmpresa.relogioAdulterado;
+      }
+    }
+
+    // 2. Inadimplência ou vencimento no cache local
+    if (isInadimplenteRecorrente) {
+      return MotivoBloqueioEmpresa.inadimplente;
+    }
+
+    // 3. Excesso de dias sem sincronização online
+    if (ultimaValidacaoOnline != null) {
+      final diferencaDias = DateTime.now().difference(ultimaValidacaoOnline).inDays;
+      if (diferencaDias > limiteDiasOffline) {
+        return MotivoBloqueioEmpresa.excessoDiasOffline;
+      }
+    }
+
+    return MotivoBloqueioEmpresa.nenhum;
+  }
+
+  /// Retorna o número de dias restantes para o vencimento recorrente
+  /// Retorna -1 se não houver vencimento configurado
+  int get diasRestantesVencimentoRecorrente {
+    final configs = configuracoes;
+    if (configs == null) return -1;
+
+    final dataCobrancaStr = configs['data_cobranca'] ?? configs['dataCobranca'];
+    if (dataCobrancaStr == null) return -1;
+
+    final dataCobrancaOriginal = DateTime.tryParse(dataCobrancaStr.toString());
+    if (dataCobrancaOriginal == null) return -1;
+
+    final agora = DateTime.now();
+    final hoje = DateTime(agora.year, agora.month, agora.day);
+
+    // Se o primeiro vencimento ainda é no futuro
+    if (hoje.isBefore(dataCobrancaOriginal)) {
+      return dataCobrancaOriginal.difference(hoje).inDays;
+    }
+
+    // Caso contrário, calcula o dia do vencimento deste mês
+    int diaVencimento = dataCobrancaOriginal.day;
+    DateTime vencimentoDesteMes = DateTime(hoje.year, hoje.month, diaVencimento);
+    
+    // Se o vencimento deste mês já passou, o próximo vencimento é no mês seguinte
+    if (vencimentoDesteMes.isBefore(hoje)) {
+      vencimentoDesteMes = DateTime(hoje.year, hoje.month + 1, diaVencimento);
+    }
+
+    return vencimentoDesteMes.difference(hoje).inDays;
+  }
+
   /// Gera um slug a partir de um texto (ex: "Exodo Systems" -> "exodo-systems")
   static String gerarSlug(String texto) {
     if (texto.isEmpty) return 'loja';
@@ -391,4 +634,12 @@ class Empresa {
     
     return slug.trim();
   }
+}
+
+/// Enum para representar o motivo do bloqueio da empresa
+enum MotivoBloqueioEmpresa {
+  nenhum,
+  inadimplente,
+  excessoDiasOffline,
+  relogioAdulterado,
 }

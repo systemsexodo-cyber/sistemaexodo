@@ -57,7 +57,7 @@ class ZonaEntrega {
 
   factory ZonaEntrega.fromMap(Map<String, dynamic> map) {
     return ZonaEntrega(
-      id: map['id'] ?? '',
+      id: map['id']?.toString() ?? '',
       nome: map['nome'] ?? '',
       tipo: map['tipo'] ?? 'bairro',
       bairro: map['bairro'],

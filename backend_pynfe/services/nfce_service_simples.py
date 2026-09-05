@@ -5,6 +5,7 @@ Esta biblioteca é mais simples e confiável que nfelib+signxml
 
 import os
 import base64
+import tempfile
 from datetime import datetime
 from decimal import Decimal
 
@@ -141,7 +142,6 @@ class NFCeServiceSimples:
                 senha = empresa_data.get('senha_certificado', '')
                 
                 # Criar arquivo temporário
-                import tempfile
                 with tempfile.NamedTemporaryFile(delete=False, suffix='.pfx') as f:
                     f.write(cert_bytes)
                     cert_path = f.name

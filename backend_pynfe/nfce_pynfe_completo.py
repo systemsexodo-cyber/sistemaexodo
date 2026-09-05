@@ -12,6 +12,7 @@ from decimal import Decimal
 from typing import Dict, List, Optional, Any
 from lxml import etree
 import requests
+import subprocess
 
 # Importar PyNFe (instalado em modo desenvolvimento)
 # Primeiro tentar importar do PyNFe instalado globalmente
@@ -6238,10 +6239,6 @@ class NFCePyNFeCompleto:
             Dicionário com resultado da impressão
         """
         try:
-            import subprocess
-            import tempfile
-            from datetime import datetime
-            
             print("=" * 70)
             print("GERANDO PDF DO DANFE NFC-e")
             print("=" * 70)

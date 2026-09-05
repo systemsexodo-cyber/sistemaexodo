@@ -1,0 +1,5 @@
+=== STATUS DO EMISSOR EXODO ===
+Versão: 2.8.1
+Última inicialização: 11/03/2026 19:53:50
+Porta Local: 8000
+Firebase: ATIVO

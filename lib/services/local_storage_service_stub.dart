@@ -14,6 +14,13 @@ class LocalStorageWeb {
   static Future<void> remover(String key) async {
     // Não implementado para plataformas não-Web
   }
+
+  static bool isSessaoAtiva() => true;
+}
+
+/// Stub para download de bytes em plataformas não-Web
+void downloadBytes(List<int> bytes, String fileName, String mimeType) {
+  // Não implementado para plataformas não-Web
 }
 
 

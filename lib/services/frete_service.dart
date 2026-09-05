@@ -212,6 +212,106 @@ class FreteService {
     }
   }
 
+  /// Obtém coordenadas (latitude e longitude) a partir de um CEP (wrapper público)
+  static Future<Map<String, double>?> obterCoordenadasPorCEP(String cep) {
+    return _obterCoordenadasPorCEP(cep);
+  }
+
+  /// Calcula distância entre duas coordenadas usando a fórmula de Haversine (wrapper público)
+  static double calcularDistancia(double lat1, double lon1, double lat2, double lon2) {
+    return _calcularDistancia(lat1, lon1, lat2, lon2);
+  }
+
+  /// Obtém coordenadas (latitude e longitude) a partir de um endereço completo
+  static Future<Map<String, double>?> obterCoordenadasPorEndereco(String endereco) async {
+    // Tenta primeiro o endereço completo fornecido
+    final coords = await _consultarNominatim(endereco);
+    if (coords != null) return coords;
+
+    // Se falhou, e o endereço contém número (ex: "Rua Parintins, 36, ..."), tenta sem o número
+    final partes = endereco.split(',');
+    if (partes.length >= 3) {
+      // Exclui a segunda parte (geralmente o número)
+      final semNumero = [partes.first, ...partes.sublist(2)].join(',');
+      debugPrint('>>> [FreteService] Tentando geocodificação sem número: $semNumero');
+      return _consultarNominatim(semNumero);
+    }
+    
+    return null;
+  }
+
+  static Future<Map<String, double>?> _consultarNominatim(String query) async {
+    try {
+      final url = Uri.parse(
+        'https://nominatim.openstreetmap.org/search?q=${Uri.encodeComponent(query)}&format=json&limit=1',
+      );
+      final response = await http.get(
+        url,
+        headers: {'User-Agent': 'SistemaExodo/1.0'},
+      ).timeout(const Duration(seconds: 8));
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body) as List<dynamic>;
+        if (data.isNotEmpty) {
+          final result = data.first as Map<String, dynamic>;
+          final lat = double.tryParse(result['lat'] as String? ?? '');
+          final lon = double.tryParse(result['lon'] as String? ?? '');
+          if (lat != null && lon != null) {
+            return {'lat': lat, 'lon': lon};
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('>>> [FreteService] Erro ao consultar Nominatim ($query): $e');
+    }
+    return null;
+  }
+
+
+  /// Calcula a distância real de rota de carro via Google Maps Distance Matrix API
+  static Future<double?> obterDistanciaGoogleMaps({
+    required String origem,
+    required String destino,
+    required String apiKey,
+  }) async {
+    try {
+      final url = Uri.parse(
+        'https://maps.googleapis.com/maps/api/distancematrix/json?'
+        'origins=${Uri.encodeComponent(origem)}'
+        '&destinations=${Uri.encodeComponent(destino)}'
+        '&key=$apiKey',
+      );
+      final response = await http.get(url).timeout(const Duration(seconds: 8));
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body) as Map<String, dynamic>;
+        if (data['status'] == 'OK') {
+          final rows = data['rows'] as List<dynamic>;
+          if (rows.isNotEmpty) {
+            final elements = rows.first['elements'] as List<dynamic>;
+            if (elements.isNotEmpty) {
+              final element = elements.first as Map<String, dynamic>;
+              if (element['status'] == 'OK') {
+                final distanceMap = element['distance'] as Map<String, dynamic>;
+                // O valor retornado é em metros
+                final metros = (distanceMap['value'] as num).toDouble();
+                return metros / 1000.0; // Converter para km
+              } else {
+                debugPrint('>>> [FreteService] Element status error: ${element['status']}');
+              }
+            }
+          }
+        } else {
+          debugPrint('>>> [FreteService] Matrix status error: ${data['status']}');
+        }
+      }
+    } catch (e) {
+      debugPrint('>>> [FreteService] Erro ao calcular distância via Google Maps: $e');
+    }
+    return null;
+  }
+
+
+
   /// Calcula todas as opções de frete disponíveis (SISTEMA HÍBRIDO)
   /// 
   /// Prioridade: 1. Taxa por Bairro > 2. Entrega Mesmo Bairro > 3. Correios > 4. Transportadoras > 5. Cálculo por Distância > 6. Manual

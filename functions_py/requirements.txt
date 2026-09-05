@@ -1,0 +1,12 @@
+# Cloud Functions Python requirements
+# Baseado nas necessidades do Bridge NFC-e Exodo
+
+firebase-functions~=0.1.0
+firebase-admin~=6.2.0
+fastapi
+python-multipart
+requests
+signxml
+lxml
+cryptography
+pynfe

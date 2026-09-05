@@ -11,6 +11,9 @@ import '../services/codigo_service.dart';
 import '../services/grupos_manager.dart';
 import '../theme.dart';
 import 'package:intl/intl.dart';
+import '../services/google_drive_service.dart';
+import '../services/auth_service.dart';
+import '../widgets/sync_status_widget.dart';
 
 class EntradaMercadoriasPage extends StatefulWidget {
   const EntradaMercadoriasPage({super.key});
@@ -33,6 +36,7 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
   int _abaAtiva = 0; // 0 = Itens, 1 = Notas
   String? _notaRascunhoId; // ID da nota rascunho atual
   String? _numeroNotaReal; // Número real da nota fiscal (do XML)
+  String? _xmlRawContent; // Conteúdo bruto do XML para backup
   
   // Filtros e busca para aba de Notas
   final TextEditingController _buscaNotasController = TextEditingController();
@@ -607,9 +611,16 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
         setState(() {
           _carregando = false;
           _modo = 'xml';
+          _xmlRawContent = xmlString; // Salvar conteúdo bruto
         });
         
         print('>>> Estado atualizado, _itens.length = ${_itens.length}');
+
+        // Tentar salvar no Google Drive se identificado
+        if (_chaveNFe != null && _xmlRawContent != null) {
+          final authService = Provider.of<AuthService>(context, listen: false);
+          _salvarXmlNoDrive(_chaveNFe!, _xmlRawContent!, _dataEmissao, authService);
+        }
 
         // Mostrar mensagens apropriadas
         if (_itens.isEmpty) {
@@ -674,7 +685,7 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
       return service.produtos.firstWhere(
         (p) => 
           p.codigo == codigo || 
-          p.codigoBarras == codigo ||
+          p.todosCodigosBarras.contains(codigo) ||
           p.temCodigoFornecedor(codigo),
       );
     } catch (_) {
@@ -770,6 +781,9 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
         precoVenda: item.precoVenda,
         unidade: item.unidade,
         produtoId: item.produtoExistente?.id,
+        numeroLote: item.numeroLote,
+        dataValidade: item.dataValidade,
+        dataFabricacao: item.dataFabricacao,
       );
     }).toList();
 
@@ -853,12 +867,25 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
           unidade: itemNota.unidade,
           grupo: produto?.grupo ?? 'Sem Grupo',
           produtoExistente: produto,
+          numeroLote: itemNota.numeroLote,
+          dataValidade: itemNota.dataValidade,
+          dataFabricacao: itemNota.dataFabricacao,
         ));
       }
 
       _notaRascunhoId = nota.id;
       _modo = nota.tipo;
       _numeroNotaReal = nota.numeroNotaReal;
+      // Restaurar o fornecedor da nota para que o lote fique atrelado a ele
+      // ao processar o rascunho (antes se perdia e o lote era criado sem fornecedor)
+      _fornecedorNome = nota.fornecedorNome;
+      _fornecedorCNPJ = nota.fornecedorCNPJ;
+      _chaveNFe = nota.chaveNFe;
+      _dataEmissao = nota.dataEmissao;
+      _valorTotal = nota.valorTotal;
+      _serie = nota.serie;
+      _modelo = nota.modelo;
+      _xmlRawContent = nota.xmlOriginal;
       _abaAtiva = 0; // Voltar para aba de itens
     });
   }
@@ -1265,11 +1292,12 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
           final precoVendaAnterior = produtoAtual.preco;
           final estoqueAnterior = produtoAtual.estoque;
           
-          // Atualizar produto
+           // Atualizar produto
           var produtoAtualizado = produtoAtual.copyWith(
             precoCusto: item.precoCusto,
             preco: item.precoVenda,
-            estoque: produtoAtual.estoque + item.quantidade.toInt(),
+            estoqueMinimo: item.estoqueMinimo?.toDouble(),
+            // NÃO incrementamos estoque aqui manualmente, registrarEntradaEstoque fará isso
             updatedAt: DateTime.now(),
           );
 
@@ -1280,14 +1308,35 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
           }
           
           service.updateProduto(produtoAtualizado);
-          print('>>> Produto atualizado: ${produtoAtualizado.nome} - Estoque: ${produtoAtualizado.estoque} - Custo: ${produtoAtualizado.precoCusto}');
+          print('>>> Produto preco atualizado: ${produtoAtualizado.nome}');
           
-          // Registrar entrada no histórico
-          service.registrarEntradaEstoque(
-            produtoId: produtoAtual.id,
-            quantidade: item.quantidade.toInt(),
-            observacao: 'Entrada por ${_modo == 'xml' ? 'XML' : 'Manual'}',
-          );
+          // Registrar entrada no histórico e gerenciar estoque
+          final fornecedorFinal = (item.fornecedorNome != null && item.fornecedorNome!.isNotEmpty) 
+              ? item.fornecedorNome 
+              : _fornecedorNome;
+
+          // Registrar entrada no histórico e gerenciar estoque (com lote/validade se informados)
+          final temLote = (item.numeroLote != null && item.numeroLote!.trim().isNotEmpty) || item.dataValidade != null;
+          if (temLote) {
+            await service.registrarEntradaEstoqueComLote(
+              produtoId: produtoAtual.id,
+              quantidade: item.quantidade,
+              numeroLote: item.numeroLote,
+              dataValidade: item.dataValidade,
+              dataFabricacao: item.dataFabricacao,
+              observacao: 'Entrada por ${_modo == 'xml' ? 'XML' : 'Manual'}',
+              fornecedorId: _fornecedorCNPJ,
+              fornecedorNome: fornecedorFinal,
+            );
+          } else {
+            await service.registrarEntradaEstoque(
+              produtoId: produtoAtual.id,
+              quantidade: item.quantidade,
+              observacao: 'Entrada por ${_modo == 'xml' ? 'XML' : 'Manual'}',
+              fornecedorId: _fornecedorCNPJ,
+              fornecedorNome: fornecedorFinal,
+            );
+          }
 
           // Adicionar item com valores anteriores
           itensComValoresAnteriores.add(ItemNotaEntrada(
@@ -1301,10 +1350,14 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
             precoVenda: item.precoVenda,
             unidade: item.unidade,
             produtoId: produtoAtual.id,
+            estoqueMinimo: item.estoqueMinimo,
             precoCustoAnterior: precoCustoAnterior,
             precoVendaAnterior: precoVendaAnterior,
-            estoqueAnterior: estoqueAnterior,
+            estoqueAnterior: estoqueAnterior?.toInt(),
             produtoNovo: false,
+            numeroLote: item.numeroLote,
+            dataValidade: item.dataValidade,
+            dataFabricacao: item.dataFabricacao,
           ));
 
           atualizados++;
@@ -1335,8 +1388,14 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
           // Garantir que o grupo está cadastrado
           _cadastrarGrupoSeNaoExistir(item.grupo);
           
+           // Registrar entrada no histórico e gerenciar estoque
+          final fornecedorFinal = (item.fornecedorNome != null && item.fornecedorNome!.isNotEmpty) 
+              ? item.fornecedorNome 
+              : _fornecedorNome;
+
+          final uniqueTime = DateTime.now().microsecondsSinceEpoch.toString();
           final novoProduto = Produto(
-            id: DateTime.now().millisecondsSinceEpoch.toString(),
+            id: '${uniqueTime}_$processados',
             codigo: codigoInterno,
             codigoBarras: item.codigoBarras,
             nome: item.nome,
@@ -1344,21 +1403,40 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
             grupo: item.grupo,
             preco: item.precoVenda,
             precoCusto: item.precoCusto,
-            estoque: item.quantidade.toInt(),
+            estoque: 0, // Inicia com 0, registrarEntradaEstoque vai adicionar
             createdAt: DateTime.now(),
             updatedAt: DateTime.now(),
             codigosFornecedor: codigosFornecedor,
+            fornecedorId: _fornecedorCNPJ,
+            fornecedorNome: fornecedorFinal,
+            estoqueMinimo: item.estoqueMinimo?.toDouble() ?? 0.0,
           );
 
           service.addProduto(novoProduto);
-          print('>>> Produto criado: ${novoProduto.nome} - Estoque: ${novoProduto.estoque} - Custo: ${novoProduto.precoCusto}');
+          print('>>> Produto novo criado com estoque 0: ${novoProduto.nome}');
           
-          // Registrar entrada no histórico
-          service.registrarEntradaEstoque(
-            produtoId: novoProduto.id,
-            quantidade: item.quantidade.toInt(),
-            observacao: 'Entrada por ${_modo == 'xml' ? 'XML' : 'Manual'} - Produto novo',
-          );
+          // Registrar entrada no histórico e gerenciar estoque (com lote/validade se informados)
+          final temLoteNovo = (item.numeroLote != null && item.numeroLote!.trim().isNotEmpty) || item.dataValidade != null;
+          if (temLoteNovo) {
+            await service.registrarEntradaEstoqueComLote(
+              produtoId: novoProduto.id,
+              quantidade: item.quantidade,
+              numeroLote: item.numeroLote,
+              dataValidade: item.dataValidade,
+              dataFabricacao: item.dataFabricacao,
+              observacao: 'Entrada por ${_modo == 'xml' ? 'XML' : 'Manual'} - Produto novo',
+              fornecedorId: _fornecedorCNPJ,
+              fornecedorNome: fornecedorFinal,
+            );
+          } else {
+            await service.registrarEntradaEstoque(
+              produtoId: novoProduto.id,
+              quantidade: item.quantidade,
+              observacao: 'Entrada por ${_modo == 'xml' ? 'XML' : 'Manual'} - Produto novo',
+              fornecedorId: _fornecedorCNPJ,
+              fornecedorNome: fornecedorFinal,
+            );
+          }
 
           // Adicionar item marcando como produto novo
           itensComValoresAnteriores.add(ItemNotaEntrada(
@@ -1372,7 +1450,11 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
             precoVenda: item.precoVenda,
             unidade: item.unidade,
             produtoId: novoProduto.id,
+            estoqueMinimo: item.estoqueMinimo,
             produtoNovo: true,
+            numeroLote: item.numeroLote,
+            dataValidade: item.dataValidade,
+            dataFabricacao: item.dataFabricacao,
           ));
 
           criados++;
@@ -1512,6 +1594,29 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
     });
   }
 
+  /// Salva o XML da nota de entrada no Google Drive de forma assíncrona
+  void _salvarXmlNoDrive(String chave, String xml, DateTime? emissao, AuthService auth) {
+    if (auth.empresaAtual == null) return;
+    
+    Future.microtask(() async {
+      try {
+        debugPrint('>>> [EntradaDrive] Tentando organizar XML no Drive: $chave');
+        final sucesso = await GoogleDriveService.instance.salvarNotaXml(
+          empresa: auth.empresaAtual!,
+          tipoNota: 'Entrada',
+          chaveAcesso: chave,
+          conteudoXml: xml,
+          dataEmissao: emissao,
+        );
+        if (sucesso) {
+          debugPrint('>>> [EntradaDrive] ✅ XML de entrada organizado com sucesso!');
+        }
+      } catch (e) {
+        debugPrint('>>> [EntradaDrive] ❌ Erro ao salvar XML: $e');
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     // Atualizar índice do TabController se necessário
@@ -1531,6 +1636,7 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
           backgroundColor: Colors.transparent,
           elevation: 0,
           actions: [
+            const SyncStatusWidget(),
             IconButton(
               icon: const Icon(Icons.upload_file),
               tooltip: 'Carregar XML',
@@ -1635,9 +1741,121 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
 
     return Column(
       children: [
+        // Informações do Fornecedor (Cabeçalho da Nota)
+        Container(
+          margin: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.05),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.white.withOpacity(0.1)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                   Icon(Icons.business, color: Colors.blueAccent.withOpacity(0.7), size: 18),
+                  const SizedBox(width: 8),
+                  const Text(
+                    'Dados do Fornecedor / Nota',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                    ),
+                  ),
+                  const Spacer(),
+                  if (_modo == 'xml')
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.green.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Text(
+                        'XML',
+                        style: TextStyle(color: Colors.greenAccent, fontSize: 10, fontWeight: FontWeight.bold),
+                      ),
+                    )
+                  else
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Text(
+                        'MANUAL',
+                        style: TextStyle(color: Colors.orangeAccent, fontSize: 10, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    flex: 2,
+                    child: _buildHeaderTextField(
+                      label: 'Nome do Fornecedor',
+                      value: _fornecedorNome ?? '',
+                      onChanged: (v) => setState(() => _fornecedorNome = v),
+                      hint: 'Ex: Ambev S.A.',
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildHeaderTextField(
+                      label: 'CNPJ / CPF',
+                      value: _fornecedorCNPJ ?? '',
+                      onChanged: (v) => setState(() => _fornecedorCNPJ = v),
+                      hint: '00.000.000/0001-00',
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildHeaderTextField(
+                      label: 'Nº da Nota',
+                      value: _numeroNotaReal ?? '',
+                      onChanged: (v) => setState(() => _numeroNotaReal = v),
+                      hint: '000.000.000',
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildHeaderTextField(
+                      label: 'Data Emissão',
+                      value: _dataEmissao != null ? DateFormat('dd/MM/yyyy').format(_dataEmissao!) : '',
+                      readOnly: true,
+                      onTap: () async {
+                        final data = await showDatePicker(
+                          context: context,
+                          initialDate: _dataEmissao ?? DateTime.now(),
+                          firstDate: DateTime(2020),
+                          lastDate: DateTime.now(),
+                        );
+                        if (data != null) {
+                          setState(() => _dataEmissao = data);
+                        }
+                      },
+                      onChanged: (_) {}, // Obrigatório mas não usado pelo campo readOnly
+                      hint: '00/00/0000',
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+
         // Filtro de busca
         Padding(
-          padding: const EdgeInsets.all(16.0),
+          padding: const EdgeInsets.symmetric(horizontal: 16.0),
           child: TextField(
             controller: _buscaController,
             style: const TextStyle(color: Colors.white),
@@ -2863,6 +3081,46 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
               ),
             ],
           ),
+          if (item.numeroLote != null || item.dataValidade != null)
+            Container(
+              margin: const EdgeInsets.only(top: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.orange.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: Colors.orange.withOpacity(0.3)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    item.dataValidade != null && item.dataValidade!.isBefore(DateTime.now())
+                        ? Icons.error
+                        : Icons.event_available,
+                    color: item.dataValidade != null && item.dataValidade!.isBefore(DateTime.now())
+                        ? Colors.redAccent
+                        : Colors.orangeAccent,
+                    size: 16,
+                  ),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      [
+                        if (item.numeroLote != null && item.numeroLote!.isNotEmpty) 'Lote: ${item.numeroLote}',
+                        if (item.dataValidade != null) 'Validade: ${DateFormat('dd/MM/yyyy').format(item.dataValidade!)}',
+                      ].join(' | '),
+                      style: TextStyle(
+                        color: item.dataValidade != null && item.dataValidade!.isBefore(DateTime.now())
+                            ? Colors.redAccent
+                            : Colors.orangeAccent,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           if (item.produtoNovo)
             Container(
               margin: const EdgeInsets.only(top: 8),
@@ -3063,6 +3321,53 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
       }
     }
   }
+
+  Widget _buildHeaderTextField({
+    required String label,
+    required String value,
+    required Function(String) onChanged,
+    String? hint,
+    bool readOnly = false,
+    VoidCallback? onTap,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            color: Colors.white.withOpacity(0.5),
+            fontSize: 10,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 4),
+        TextFormField(
+          initialValue: value,
+          key: ValueKey('header_${label}_$value'),
+          style: const TextStyle(color: Colors.white, fontSize: 13),
+          readOnly: readOnly,
+          onTap: onTap,
+          onChanged: onChanged,
+          decoration: InputDecoration(
+            hintText: hint,
+            hintStyle: TextStyle(color: Colors.white.withOpacity(0.2), fontSize: 13),
+            isDense: true,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 0, vertical: 8),
+            border: UnderlineInputBorder(
+              borderSide: BorderSide(color: Colors.white.withOpacity(0.1)),
+            ),
+            enabledBorder: UnderlineInputBorder(
+              borderSide: BorderSide(color: Colors.white.withOpacity(0.1)),
+            ),
+            focusedBorder: const UnderlineInputBorder(
+              borderSide: BorderSide(color: Colors.blueAccent),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 
@@ -3257,11 +3562,18 @@ class _ItemEntrada {
   double quantidadePorEmbalagem; // Quantidade dentro de cada embalagem
   double precoCusto;
   double precoVenda;
+  int estoqueMinimo; // Adicionado: estoque mínimo configurado para o produto
   String unidade;
   String grupo; // Grupo/Categoria do produto
   Produto? produtoExistente;
   double? margemAtual;
+  String? fornecedorNome; // Fornecedor específico do item
+  // Controle de validade/lote (pet shop: ração, medicamentos, etc.)
+  String? numeroLote;
+  DateTime? dataValidade;
+  DateTime? dataFabricacao;
 
+  final TextEditingController _loteController = TextEditingController();
   final TextEditingController _nomeController = TextEditingController();
   final TextEditingController _codigoController = TextEditingController();
   final TextEditingController _quantidadeEmbalagensController = TextEditingController();
@@ -3271,6 +3583,8 @@ class _ItemEntrada {
   final TextEditingController _precoVendaController = TextEditingController();
   final TextEditingController _unidadeController = TextEditingController();
   final TextEditingController _grupoController = TextEditingController();
+  final TextEditingController _fornecedorController = TextEditingController();
+  final TextEditingController _estoqueMinimoController = TextEditingController();
 
   _ItemEntrada({
     required this.codigo,
@@ -3285,12 +3599,18 @@ class _ItemEntrada {
     String? grupo,
     this.produtoExistente,
     double? margemAtual,
+    this.fornecedorNome,
+    this.numeroLote,
+    this.dataValidade,
+    this.dataFabricacao,
   }) : precoVenda = precoVenda ?? 0,
+       estoqueMinimo = (produtoExistente?.estoqueMinimo ?? 0).toInt(),
        margemAtual = margemAtual,
        quantidadeEmbalagens = quantidadeEmbalagens ?? 0,
        quantidadePorEmbalagem = quantidadePorEmbalagem ?? 1,
        grupo = grupo ?? 'Sem Grupo' {
     _nomeController.text = nome;
+    _loteController.text = numeroLote ?? '';
     _codigoController.text = codigo;
     _quantidadeEmbalagensController.text = (quantidadeEmbalagens ?? 0).toString();
     _quantidadePorEmbalagemController.text = (quantidadePorEmbalagem ?? 1).toString();
@@ -3299,6 +3619,8 @@ class _ItemEntrada {
     _precoVendaController.text = precoVenda.toString();
     _unidadeController.text = unidade;
     _grupoController.text = this.grupo;
+    _fornecedorController.text = fornecedorNome ?? '';
+    _estoqueMinimoController.text = estoqueMinimo.toString();
     _calcularQuantidadeTotal();
   }
 
@@ -3313,6 +3635,7 @@ class _ItemEntrada {
   }
 
   void dispose() {
+    _loteController.dispose();
     _nomeController.dispose();
     _codigoController.dispose();
     _quantidadeEmbalagensController.dispose();
@@ -3322,6 +3645,8 @@ class _ItemEntrada {
     _precoVendaController.dispose();
     _unidadeController.dispose();
     _grupoController.dispose();
+    _fornecedorController.dispose();
+    _estoqueMinimoController.dispose();
   }
 }
 
@@ -3477,7 +3802,7 @@ class _ItemEntradaWidgetState extends State<_ItemEntradaWidget> {
                       if (value.isNotEmpty) {
                         try {
                           final produto = service.produtos.firstWhere(
-                            (p) => p.codigo == value || p.codigoBarras == value,
+                            (p) => p.codigo == value || p.todosCodigosBarras.contains(value),
                           );
                           if (produto.id != item.produtoExistente?.id) {
                             setState(() {
@@ -3527,7 +3852,7 @@ class _ItemEntradaWidgetState extends State<_ItemEntradaWidget> {
                     Produto? produtoEncontrado;
                     try {
                       produtoEncontrado = service.produtos.firstWhere(
-                        (p) => p.codigo == novoCodigo || p.codigoBarras == novoCodigo,
+                        (p) => p.codigo == novoCodigo || p.todosCodigosBarras.contains(novoCodigo),
                       );
                     } catch (_) {
                       produtoEncontrado = null;
@@ -3565,7 +3890,7 @@ class _ItemEntradaWidgetState extends State<_ItemEntradaWidget> {
               ],
             ),
             const SizedBox(height: 8),
-            TextField(
+             TextField(
               controller: item._nomeController,
               decoration: const InputDecoration(
                 labelText: 'Nome do Produto',
@@ -3573,6 +3898,25 @@ class _ItemEntradaWidgetState extends State<_ItemEntradaWidget> {
               ),
               onChanged: (value) => item.nome = value,
             ),
+            const SizedBox(height: 8),
+            // Fornecedor específico do item
+            if (context.findAncestorStateOfType<_EntradaMercadoriasPageState>()?._modo == 'manual')
+              Column(
+                children: [
+                  TextField(
+                    controller: item._fornecedorController,
+                    decoration: const InputDecoration(
+                      labelText: 'Fornecedor deste Item (Opcional)',
+                      hintText: 'Ex: Ambev, Coca-Cola...',
+                      prefixIcon: Icon(Icons.business),
+                      helperText: 'Deixe vazio para usar o fornecedor principal (acima)',
+                      helperStyle: TextStyle(fontSize: 10),
+                    ),
+                    onChanged: (v) => item.fornecedorNome = v,
+                  ),
+                  const SizedBox(height: 8),
+                ],
+              ),
             const SizedBox(height: 8),
             // Seção de Quantidade Inteligente
             Container(
@@ -3814,6 +4158,124 @@ class _ItemEntradaWidgetState extends State<_ItemEntradaWidget> {
                 ),
               ),
             ],
+            const SizedBox(height: 8),
+            // Estoque mínimo
+            TextField(
+              controller: item._estoqueMinimoController,
+              decoration: const InputDecoration(
+                labelText: 'Estoque Mínimo',
+                prefixIcon: Icon(Icons.notifications_active),
+                helperText: 'Alerta quando o estoque atingir este valor',
+              ),
+              keyboardType: TextInputType.number,
+              onChanged: (value) {
+                item.estoqueMinimo = int.tryParse(value) ?? 0;
+                setState(() {});
+              },
+            ),
+            const SizedBox(height: 8),
+            // Validade e Lote (pet shop: ração, medicamentos, etc.)
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.orange.withOpacity(0.06),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.orange.withOpacity(0.3)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.event_available, color: Colors.orange.shade700, size: 18),
+                      const SizedBox(width: 8),
+                      const Text(
+                        'Validade e Lote (Opcional)',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: item._loteController,
+                          decoration: const InputDecoration(
+                            labelText: 'Nº do Lote',
+                            prefixIcon: Icon(Icons.confirmation_number),
+                            helperText: 'Ex: LOTE-A1',
+                          ),
+                          onChanged: (value) => item.numeroLote = value,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: InkWell(
+                          onTap: () async {
+                            final hoje = DateTime.now();
+                            final data = await showDatePicker(
+                              context: context,
+                              initialDate: item.dataValidade ?? hoje.add(const Duration(days: 30)),
+                              firstDate: hoje.subtract(const Duration(days: 365)),
+                              lastDate: hoje.add(const Duration(days: 3650)),
+                              helpText: 'Data de Validade',
+                            );
+                            if (data != null) {
+                              setState(() {
+                                item.dataValidade = data;
+                              });
+                            }
+                          },
+                          child: InputDecorator(
+                            decoration: const InputDecoration(
+                              labelText: 'Validade',
+                              prefixIcon: Icon(Icons.calendar_today),
+                            ),
+                            child: Text(
+                              item.dataValidade != null
+                                  ? DateFormat('dd/MM/yyyy').format(item.dataValidade!)
+                                  : 'Selecionar',
+                              style: TextStyle(
+                                color: item.dataValidade != null ? Colors.black87 : Colors.grey[600],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (item.dataValidade != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.clean_hands,
+                            size: 14,
+                            color: item.dataValidade!.isBefore(DateTime.now())
+                                ? Colors.red
+                                : Colors.green,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            item.dataValidade!.isBefore(DateTime.now())
+                                ? 'ATENÇÃO: data de validade já passou!'
+                                : 'Vence em ${item.dataValidade!.difference(DateTime.now()).inDays} dia(s)',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: item.dataValidade!.isBefore(DateTime.now())
+                                  ? Colors.red
+                                  : Colors.green,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
           ],
         ),
       ),
@@ -3858,8 +4320,7 @@ class _DialogBuscarProdutoState extends State<_DialogBuscarProduto> {
         _produtosFiltrados = service.produtos.where((p) {
           return p.nome.toLowerCase().contains(busca) ||
               (p.codigo != null && p.codigo!.toLowerCase().contains(busca)) ||
-              (p.codigoBarras != null &&
-                  p.codigoBarras!.toLowerCase().contains(busca));
+              p.todosCodigosBarras.any((b) => b.toLowerCase().contains(busca));
         }).toList();
       });
     }

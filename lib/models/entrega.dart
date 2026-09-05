@@ -1,7 +1,12 @@
+export 'package:sistema_exodo_novo/models/motorista.dart';
+
 /// Status possíveis de uma entrega
 enum StatusEntrega {
   aguardando, // Aguardando entrega
+  romaneioCriado, // Romaneio já foi gerado
+  emEntrega, // Saiu para entrega
   entregue, // Entregue com sucesso
+  cancelado, // Entrega cancelada
 }
 
 extension StatusEntregaExtension on StatusEntrega {
@@ -9,8 +14,14 @@ extension StatusEntregaExtension on StatusEntrega {
     switch (this) {
       case StatusEntrega.aguardando:
         return 'Aguardando';
+      case StatusEntrega.romaneioCriado:
+        return 'Romaneio Criado';
+      case StatusEntrega.emEntrega:
+        return 'Em Entrega';
       case StatusEntrega.entregue:
         return 'Entregue';
+      case StatusEntrega.cancelado:
+        return 'Cancelado';
     }
   }
 
@@ -18,8 +29,29 @@ extension StatusEntregaExtension on StatusEntrega {
     switch (this) {
       case StatusEntrega.aguardando:
         return 'hourglass_empty';
+      case StatusEntrega.romaneioCriado:
+        return 'assignment';
+      case StatusEntrega.emEntrega:
+        return 'local_shipping';
       case StatusEntrega.entregue:
         return 'done_all';
+      case StatusEntrega.cancelado:
+        return 'cancel';
+    }
+  }
+
+  dynamic get cor {
+    switch (this) {
+      case StatusEntrega.aguardando:
+        return 'orange';
+      case StatusEntrega.romaneioCriado:
+        return 'blue';
+      case StatusEntrega.emEntrega:
+        return 'deepPurple';
+      case StatusEntrega.entregue:
+        return 'green';
+      case StatusEntrega.cancelado:
+        return 'red';
     }
   }
 }
@@ -44,7 +76,7 @@ class EventoEntrega {
 
   factory EventoEntrega.fromMap(Map<String, dynamic> map) {
     return EventoEntrega(
-      id: map['id'] ?? '',
+      id: map['id']?.toString() ?? '',
       dataHora: DateTime.parse(map['dataHora']),
       status: StatusEntrega.values.firstWhere(
         (s) => s.name == map['status'],
@@ -118,8 +150,9 @@ class Entrega {
   // Histórico de eventos
   final List<EventoEntrega> historico;
 
-  // Itens da entrega
-  final int quantidadeVolumes;
+  // Custos e Financeiro
+  final double? comissaoMotorista;
+  final double quantidadeVolumes;
   final double? pesoTotal;
 
   Entrega({
@@ -156,29 +189,10 @@ class Entrega {
     this.observacoes,
     this.motivoFalha,
     this.historico = const [],
-    this.quantidadeVolumes = 1,
+    this.comissaoMotorista,
+    this.quantidadeVolumes = 1.0,
     this.pesoTotal,
   });
-
-  /// Verifica se a entrega está atrasada
-  bool get estaAtrasada {
-    if (dataPrevisao == null) return false;
-    if (status == StatusEntrega.entregue) {
-      return false;
-    }
-    return DateTime.now().isAfter(dataPrevisao!);
-  }
-
-  /// Verifica se pode alterar para determinado status
-  bool podeAlterarPara(StatusEntrega novoStatus) {
-    // Regras de transição de status
-    switch (status) {
-      case StatusEntrega.aguardando:
-        return novoStatus == StatusEntrega.entregue;
-      case StatusEntrega.entregue:
-        return false; // Estado final
-    }
-  }
 
   /// Retorna o endereço completo formatado
   String get enderecoCompleto {
@@ -191,10 +205,9 @@ class Entrega {
     if (cep != null && cep!.isNotEmpty) partes.add('CEP: $cep');
     return partes.join(', ');
   }
-
   factory Entrega.fromMap(Map<String, dynamic> map) {
     return Entrega(
-      id: map['id'] ?? '',
+      id: map['id']?.toString() ?? '',
       pedidoId: map['pedidoId'] ?? '',
       pedidoNumero: map['pedidoNumero'],
       clienteNome: map['clienteNome'] ?? '',
@@ -240,7 +253,8 @@ class Entrega {
                 .map((e) => EventoEntrega.fromMap(e))
                 .toList()
           : [],
-      quantidadeVolumes: map['quantidadeVolumes'] ?? 1,
+      comissaoMotorista: (map['comissaoMotorista'] as num?)?.toDouble(),
+      quantidadeVolumes: (map['quantidadeVolumes'] as num?)?.toDouble() ?? 1.0,
       pesoTotal: map['pesoTotal']?.toDouble(),
     );
   }
@@ -280,6 +294,7 @@ class Entrega {
       'observacoes': observacoes,
       'motivoFalha': motivoFalha,
       'historico': historico.map((e) => e.toMap()).toList(),
+      'comissaoMotorista': comissaoMotorista,
       'quantidadeVolumes': quantidadeVolumes,
       'pesoTotal': pesoTotal,
     };
@@ -319,7 +334,7 @@ class Entrega {
     String? observacoes,
     String? motivoFalha,
     List<EventoEntrega>? historico,
-    int? quantidadeVolumes,
+    double? quantidadeVolumes,
     double? pesoTotal,
   }) {
     return Entrega(
@@ -356,6 +371,7 @@ class Entrega {
       observacoes: observacoes ?? this.observacoes,
       motivoFalha: motivoFalha ?? this.motivoFalha,
       historico: historico ?? this.historico,
+      comissaoMotorista: comissaoMotorista ?? this.comissaoMotorista,
       quantidadeVolumes: quantidadeVolumes ?? this.quantidadeVolumes,
       pesoTotal: pesoTotal ?? this.pesoTotal,
     );
@@ -365,83 +381,23 @@ class Entrega {
   Entrega adicionarEvento(EventoEntrega evento) {
     return copyWith(historico: [...historico, evento], status: evento.status);
   }
-}
 
-/// Modelo de Motorista/Entregador
-class Motorista {
-  final String id;
-  final String nome;
-  final String telefone;
-  final String? cpf;
-  final String? cnh;
-  final String? veiculoModelo;
-  final String? veiculoPlaca;
-  final bool ativo;
-  final DateTime dataCadastro;
-
-  Motorista({
-    required this.id,
-    required this.nome,
-    required this.telefone,
-    this.cpf,
-    this.cnh,
-    this.veiculoModelo,
-    this.veiculoPlaca,
-    this.ativo = true,
-    required this.dataCadastro,
-  });
-
-  factory Motorista.fromMap(Map<String, dynamic> map) {
-    return Motorista(
-      id: map['id'] ?? '',
-      nome: map['nome'] ?? '',
-      telefone: map['telefone'] ?? '',
-      cpf: map['cpf'],
-      cnh: map['cnh'],
-      veiculoModelo: map['veiculoModelo'],
-      veiculoPlaca: map['veiculoPlaca'],
-      ativo: map['ativo'] ?? true,
-      dataCadastro: map['dataCadastro'] != null
-          ? DateTime.parse(map['dataCadastro'])
-          : DateTime.now(),
-    );
+  /// Verifica se pode alterar para um determinado status
+  bool podeAlterarPara(StatusEntrega novoStatus) {
+    // Se for o mesmo status, não precisa alterar
+    if (status == novoStatus) return false;
+    
+    // Permitir todas as transições para máxima flexibilidade (correções, voltar status, etc)
+    return true;
   }
 
-  Map<String, dynamic> toMap() {
-    return {
-      'id': id,
-      'nome': nome,
-      'telefone': telefone,
-      'cpf': cpf,
-      'cnh': cnh,
-      'veiculoModelo': veiculoModelo,
-      'veiculoPlaca': veiculoPlaca,
-      'ativo': ativo,
-      'dataCadastro': dataCadastro.toIso8601String(),
-    };
-  }
-
-  Motorista copyWith({
-    String? id,
-    String? nome,
-    String? telefone,
-    String? cpf,
-    String? cnh,
-    String? veiculoModelo,
-    String? veiculoPlaca,
-    bool? ativo,
-    DateTime? dataCadastro,
-  }) {
-    return Motorista(
-      id: id ?? this.id,
-      nome: nome ?? this.nome,
-      telefone: telefone ?? this.telefone,
-      cpf: cpf ?? this.cpf,
-      cnh: cnh ?? this.cnh,
-      veiculoModelo: veiculoModelo ?? this.veiculoModelo,
-      veiculoPlaca: veiculoPlaca ?? this.veiculoPlaca,
-      ativo: ativo ?? this.ativo,
-      dataCadastro: dataCadastro ?? this.dataCadastro,
-    );
+  bool get estaAtrasada {
+    if (status == StatusEntrega.entregue || status == StatusEntrega.cancelado) {
+      return false;
+    }
+    if (dataPrevisao == null) return false;
+    return DateTime.now().isAfter(dataPrevisao!);
   }
 }
+
+

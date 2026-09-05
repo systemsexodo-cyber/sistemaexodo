@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../services/data_service.dart';
@@ -8,6 +10,14 @@ import '../models/permissao.dart';
 import '../models/usuario.dart';
 import '../theme.dart';
 import '../models/conta_pagar.dart';
+import '../models/nfce.dart';
+import '../widgets/sync_status_widget.dart';
+import '../services/excel_export_service.dart';
+import '../services/lucro_calculator.dart';
+import '../services/garcom_service.dart';
+import 'relatorio_lucro_page.dart';
+import 'html_helper_stub.dart' if (dart.library.html) 'html_helper_web.dart' as html_helper;
+
 
 class DashboardPage extends StatefulWidget {
   final bool showAppBar;
@@ -89,6 +99,10 @@ class _DashboardPageState extends State<DashboardPage> {
     final podeVisualizar = usuarioAtual != null && 
         (usuarioAtual.tipo == TipoUsuario.administrador ||
          permissionService.temPermissao(usuarioAtual, TipoPermissao.dashboardVisualizar));
+
+    // Permissão para ver TOTAIS de vendas/faturamento (dashboard.ver_totais).
+    // Operador/funcionário sem ela não vê valores financeiros no dashboard.
+    final podeVerTotais = permissionService.podeVerTotais(usuarioAtual);
     
     if (!podeVisualizar) {
       return AppTheme.appBackground(
@@ -155,6 +169,22 @@ class _DashboardPageState extends State<DashboardPage> {
             final pedidosPendentes = _calcularPedidosPendentes(dataService);
             final contasPagar = _calcularContasPagar(dataService);
             final receitasDespesas = _calcularReceitasDespesas(dataService, inicioPeriodo, fimPeriodo);
+            final statsFiscalPeriodo = _calcularEstatisticasFiscal(dataService, inicioPeriodo, fimPeriodo);
+            final statsFiscalDia = _calcularEstatisticasFiscal(dataService, inicioDia, fimDia);
+
+            // Lucro / DRE: receita - custo das mercadorias vendidas no período
+            final vendasLucro =
+                LucroCalculator.vendasDoPeriodo(dataService, inicioPeriodo, fimPeriodo);
+            final totaisLucro = LucroCalculator.totais(dataService, vendasLucro);
+
+            // Garçons: total vendido e comissões no período
+            final rankingGarcons = GarcomService.rankingGarcons(
+              funcionarios: dataService.funcionarios,
+              vendas: dataService.vendasBalcao,
+              pedidos: dataService.pedidos,
+              inicio: inicioPeriodo,
+              fim: fimPeriodo,
+            );
 
             return SingleChildScrollView(
               scrollDirection: Axis.vertical,
@@ -162,37 +192,59 @@ class _DashboardPageState extends State<DashboardPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  // Alerta de Inventário de Fim de Ano (Proativo)
+                  if (DateTime.now().month == 12 && DateTime.now().day >= 31 || (DateTime.now().month == 1 && DateTime.now().day <= 5))
+                    _buildInventoryAlert(),
+                  
                   // Filtro de Data
                   _buildFiltroData(),
                   const SizedBox(height: 16),
                   
                   // Gráfico de Receitas vs Despesas
-                  _buildCardGraficoReceitas(receitasDespesas),
-                  const SizedBox(height: 16),
+                  if (podeVerTotais)
+                    _buildCardGraficoReceitas(receitasDespesas),
+                  if (podeVerTotais) const SizedBox(height: 16),
 
                   // Resumo do Dia
-                  _buildCardResumo(
-                    'Resumo do Dia',
-                    statsDia,
-                    Colors.blue,
-                    Icons.today,
-                  ),
-                  const SizedBox(height: 16),
+                  if (podeVerTotais)
+                    _buildCardResumo(
+                      'Resumo do Dia',
+                      statsDia,
+                      Colors.blue,
+                      Icons.today,
+                    ),
+                  if (podeVerTotais) const SizedBox(height: 16),
 
                   // Resumo do Período Selecionado
-                  _buildCardResumo(
-                    _periodoSelecionado == 'hoje' ? 'Resumo do Dia' : 
-                    _periodoSelecionado == 'semana' ? 'Resumo da Semana' :
-                    _periodoSelecionado == 'mês' ? 'Resumo do Mês' : 'Resumo do Período',
-                    statsPeriodo,
-                    Colors.purple,
-                    Icons.calendar_month,
-                  ),
-                  const SizedBox(height: 16),
+                  if (podeVerTotais)
+                    _buildCardResumo(
+                      _periodoSelecionado == 'hoje' ? 'Resumo do Dia' : 
+                      _periodoSelecionado == 'semana' ? 'Resumo da Semana' :
+                      _periodoSelecionado == 'mês' ? 'Resumo do Mês' : 'Resumo do Período',
+                      statsPeriodo,
+                      Colors.purple,
+                      Icons.calendar_month,
+                    ),
+                  if (podeVerTotais) const SizedBox(height: 16),
 
-                  // Status do Caixa
+                  // Vendas Fiscais (NFC-e & NF-e)
+                  if (podeVerTotais)
+                    _buildCardVendasFiscais(statsFiscalPeriodo, statsFiscalDia),
+                  if (podeVerTotais) const SizedBox(height: 16),
+
+                  // Lucro / DRE do período (receita vs custo dos produtos vendidos)
+                  if (podeVerTotais)
+                    _buildCardLucroDre(totaisLucro),
+                  if (podeVerTotais) const SizedBox(height: 16),
+
+                  // Status do Caixa (saldo fica visível para operação)
                   _buildCardCaixa(statsCaixa),
                   const SizedBox(height: 16),
+
+                  // Vendas e Comissões dos Garçons
+                  if (podeVerTotais)
+                    _buildCardGarcons(rankingGarcons),
+                  if (podeVerTotais) const SizedBox(height: 16),
 
                   // Grid de Métricas
                   Row(
@@ -206,25 +258,32 @@ class _DashboardPageState extends State<DashboardPage> {
                         ),
                       ),
                       const SizedBox(width: 12),
-                      Expanded(
-                        child: _buildMetricCard(
-                          'Contas a Pagar',
-                          NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$')
-                              .format(contasPagar['total']),
-                          Colors.red,
-                          Icons.account_balance_wallet,
+                      if (podeVerTotais)
+                        Expanded(
+                          child: _buildMetricCard(
+                            'Contas a Pagar',
+                            NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$')
+                                .format(contasPagar['total']),
+                            Colors.red,
+                            Icons.account_balance_wallet,
+                          ),
                         ),
-                      ),
                     ],
                   ),
                   const SizedBox(height: 16),
 
                   // Top Produtos
-                  _buildCardTopProdutos(topProdutos, _periodoSelecionado),
-                  const SizedBox(height: 16),
+                  if (podeVerTotais)
+                    _buildCardTopProdutos(topProdutos, _periodoSelecionado),
+                  if (podeVerTotais) const SizedBox(height: 16),
 
                   // Top Serviços
-                  _buildCardTopServicos(topServicos, _periodoSelecionado),
+                  if (podeVerTotais)
+                    _buildCardTopServicos(topServicos, _periodoSelecionado),
+                  if (podeVerTotais) const SizedBox(height: 16),
+
+                  // Backup
+                  _buildCardBackup(dataService),
                   const SizedBox(height: 80),
                 ],
               ),
@@ -256,6 +315,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 tooltip: 'Atualizar',
                 onPressed: () => setState(() {}),
               ),
+              const SyncStatusWidget(),
             ],
           ),
           body: body,
@@ -350,8 +410,11 @@ class _DashboardPageState extends State<DashboardPage> {
     final inicioDia = DateTime(agora.year, agora.month, agora.day);
     final fimDia = inicioDia.add(const Duration(days: 1));
 
-    // Vendas do dia (EXCLUIR canceladas)
-    final vendasDia = dataService.vendasBalcao.where((v) {
+    // Vendas do caixa atual (somente do MESMO operador e dentro da janela do
+    // caixa — getVendasDoCaixa já filtra por operador e pelo fechamento), ainda
+    // restritas ao dia de hoje. ANTES isso somava TODAS as vendas do dia de
+    // todos os operadores no saldo do caixa (valores se misturavam).
+    final vendasDia = dataService.getVendasDoCaixa(abertura).where((v) {
       if (v.isCancelada) return false; // Não incluir vendas canceladas
       return v.dataVenda.isAfter(inicioDia) &&
           v.dataVenda.isBefore(fimDia);
@@ -379,6 +442,13 @@ class _DashboardPageState extends State<DashboardPage> {
     };
   }
 
+  /// Formata quantidade para exibição (2 -> "2", 2.5 -> "2,5")
+  String _fmtQuantidade(dynamic valor) {
+    final num v = valor is num ? valor : 0;
+    if (v == v.roundToDouble()) return v.toInt().toString();
+    return v.toString().replaceAll('.', ',');
+  }
+
   List<Map<String, dynamic>> _calcularTopProdutos(
     DataService dataService,
     DateTime inicio,
@@ -400,12 +470,12 @@ class _DashboardPageState extends State<DashboardPage> {
           if (!produtosVendidos.containsKey(nome)) {
             produtosVendidos[nome] = {
               'nome': nome,
-              'quantidade': 0,
+              'quantidade': 0.0,
               'total': 0.0,
             };
           }
           produtosVendidos[nome]!['quantidade'] =
-              (produtosVendidos[nome]!['quantidade'] as int) + item.quantidade;
+              (produtosVendidos[nome]!['quantidade'] as double) + item.quantidade;
           produtosVendidos[nome]!['total'] =
               (produtosVendidos[nome]!['total'] as double) +
                   (item.precoUnitario * item.quantidade);
@@ -416,7 +486,7 @@ class _DashboardPageState extends State<DashboardPage> {
     final lista = produtosVendidos.values.toList();
     lista.sort((a, b) => (b['total'] as double).compareTo(a['total'] as double));
 
-    return lista.take(5).toList();
+    return lista.take(20).toList();
   }
 
   List<Map<String, dynamic>> _calcularTopServicos(
@@ -439,12 +509,12 @@ class _DashboardPageState extends State<DashboardPage> {
         if (!servicosVendidos.containsKey(nome)) {
           servicosVendidos[nome] = {
             'nome': nome,
-            'quantidade': 0,
+            'quantidade': 0.0,
             'total': 0.0,
           };
         }
         servicosVendidos[nome]!['quantidade'] =
-            (servicosVendidos[nome]!['quantidade'] as int) + 1;
+            (servicosVendidos[nome]!['quantidade'] as double) + 1;
         servicosVendidos[nome]!['total'] =
             (servicosVendidos[nome]!['total'] as double) +
                 (servico.valor + servico.valorAdicional);
@@ -454,7 +524,7 @@ class _DashboardPageState extends State<DashboardPage> {
     final lista = servicosVendidos.values.toList();
     lista.sort((a, b) => (b['total'] as double).compareTo(a['total'] as double));
 
-    return lista.take(5).toList();
+    return lista.take(20).toList();
   }
 
   Map<String, dynamic> _calcularPedidosPendentes(DataService dataService) {
@@ -494,48 +564,372 @@ class _DashboardPageState extends State<DashboardPage> {
     DateTime inicioMes,
     DateTime fimMes,
   ) {
-    // Receitas: Vendas do balcão + Pedidos recebidos do mês
-    // IMPORTANTE: Excluir vendas e pedidos cancelados
+    double totalEntradas = 0;
+    double totalSaidas = 0;
+
+    // 1. Vendas Balcão (Entradas)
     final vendasMes = dataService.vendasBalcao.where((v) {
-      if (v.isCancelada) return false; // Não incluir vendas canceladas
-      return v.dataVenda.isAfter(inicioMes) &&
-          v.dataVenda.isBefore(fimMes);
+      if (v.isCancelada) return false;
+      return v.dataVenda.isAfter(inicioMes) && v.dataVenda.isBefore(fimMes);
     }).toList();
+    totalEntradas += vendasMes.fold(0.0, (sum, v) => sum + v.valorTotal);
 
-    final pedidosMes = dataService.pedidos.where((p) {
-      if (p.status.toLowerCase() == 'cancelado') return false; // Não incluir pedidos cancelados
-      return p.dataPedido.isAfter(inicioMes) &&
-          p.dataPedido.isBefore(fimMes);
-    }).toList();
+    // 2. Pedidos - Recebimentos no período (Entradas)
+    for (var p in dataService.pedidos.where((p) => p.status.toLowerCase() != 'cancelado')) {
+      for (var pag in p.pagamentos.where((pag) => pag.recebido && pag.dataRecebimento != null)) {
+        if (pag.dataRecebimento!.isAfter(inicioMes) && pag.dataRecebimento!.isBefore(fimMes)) {
+          totalEntradas += pag.valor;
+        }
+      }
+    }
 
-    // Total de receitas = vendas + pedidos recebidos
-    double totalVendas = vendasMes.fold(0.0, (sum, v) => sum + v.valorTotal);
-    double totalPedidosRecebidos = pedidosMes.fold(
-      0.0,
-      (sum, p) => sum + p.totalRecebido,
-    );
-    double totalReceitas = totalVendas + totalPedidosRecebidos;
+    // 3. Suprimentos de Caixa (Entradas)
+    final suprimentos = dataService.suprimentos.where((s) => s.data.isAfter(inicioMes) && s.data.isBefore(fimMes));
+    totalEntradas += suprimentos.fold(0.0, (sum, s) => sum + s.valor);
 
-    // Despesas: Contas a pagar que foram pagas no mês
+    // 4. Sangrias de Caixa (Saídas)
+    final sangrias = dataService.sangrias.where((s) => s.data.isAfter(inicioMes) && s.data.isBefore(fimMes));
+    totalSaidas += sangrias.fold(0.0, (sum, s) => sum + s.valor);
+
+    // 5. Contas Pagas (Saídas) - Apenas se não estiverem já na sangria
     final contasPagas = dataService.contasPagar.where((c) {
-      if (c.status != StatusContaPagar.pago) return false;
-      if (c.dataPagamento == null) return false;
-      return c.dataPagamento!.isAfter(inicioMes) &&
-          c.dataPagamento!.isBefore(fimMes);
+      if (c.status != StatusContaPagar.pago || c.dataPagamento == null) return false;
+      return c.dataPagamento!.isAfter(inicioMes) && c.dataPagamento!.isBefore(fimMes);
     }).toList();
 
-    double totalDespesas = contasPagas.fold(0.0, (sum, c) => sum + (c.valorPago ?? c.valor));
+    for (var cp in contasPagas) {
+      bool jaContabilizadoSgr = dataService.sangrias.any((s) => 
+        s.data.day == cp.dataPagamento!.day && 
+        s.valor == (cp.valorPago ?? cp.valor) && 
+        s.motivo.contains(cp.descricao));
+      
+      if (!jaContabilizadoSgr) {
+        totalSaidas += cp.valorPago ?? cp.valor;
+      }
+    }
 
-    // Lucro líquido = Receitas - Despesas
-    double lucroLiquido = totalReceitas - totalDespesas;
+    double lucroLiquido = totalEntradas - totalSaidas;
 
     return {
-      'receitas': totalReceitas,
-      'despesas': totalDespesas,
+      'receitas': totalEntradas,
+      'despesas': totalSaidas,
       'lucroLiquido': lucroLiquido,
-      'vendas': totalVendas,
-      'pedidosRecebidos': totalPedidosRecebidos,
+      'vendas': totalEntradas, // Legado
+      'pedidosRecebidos': 0.0, // Legado
     };
+  }
+
+  Map<String, dynamic> _calcularEstatisticasFiscal(
+    DataService dataService,
+    DateTime inicio,
+    DateTime fim,
+  ) {
+    final mapNfce = <String, NFCe>{};
+    final mapNfe = <String, NFCe>{};
+
+    // Coleção NFC-es do DataService
+    for (final n in dataService.nfces) {
+      if (n.modelo == 55) {
+        mapNfe[n.id] = n;
+      } else {
+        mapNfce[n.id] = n;
+      }
+    }
+
+    // Coleção NF-es do DataService
+    for (final n in dataService.nfes) {
+      if (n.modelo == 65) {
+        mapNfce[n.id] = n;
+      } else {
+        mapNfe[n.id] = n;
+      }
+    }
+
+    bool ehAutorizada(NFCe n) {
+      final st = (n.status ?? '').toLowerCase();
+      return st == 'autorizada' || st == 'sucesso' || st == 'aprovada';
+    }
+
+    bool estaNoPeriodo(DateTime data) {
+      return (data.isAfter(inicio) || data.isAtSameMomentAs(inicio)) && data.isBefore(fim);
+    }
+
+    final nfcesPeriodo = mapNfce.values.where((n) => ehAutorizada(n) && estaNoPeriodo(n.dataEmissao)).toList();
+    final nfesPeriodo = mapNfe.values.where((n) => ehAutorizada(n) && estaNoPeriodo(n.dataEmissao)).toList();
+
+    final double totalNfce = nfcesPeriodo.fold(0.0, (sum, n) => sum + n.valorTotal);
+    final double totalNfe = nfesPeriodo.fold(0.0, (sum, n) => sum + n.valorTotal);
+
+    return {
+      'totalNfce': totalNfce,
+      'qtdNfce': nfcesPeriodo.length,
+      'totalNfe': totalNfe,
+      'qtdNfe': nfesPeriodo.length,
+      'totalFiscal': totalNfce + totalNfe,
+      'qtdTotal': nfcesPeriodo.length + nfesPeriodo.length,
+    };
+  }
+
+  Widget _buildCardVendasFiscais(
+    Map<String, dynamic> statsPeriodo,
+    Map<String, dynamic> statsDia,
+  ) {
+    final formato = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+    final totalNfce = statsPeriodo['totalNfce'] as double? ?? 0.0;
+    final qtdNfce = statsPeriodo['qtdNfce'] as int? ?? 0;
+    final totalNfe = statsPeriodo['totalNfe'] as double? ?? 0.0;
+    final qtdNfe = statsPeriodo['qtdNfe'] as int? ?? 0;
+    final totalFiscal = statsPeriodo['totalFiscal'] as double? ?? 0.0;
+
+    final totalNfceDia = statsDia['totalNfce'] as double? ?? 0.0;
+    final qtdNfceDia = statsDia['qtdNfce'] as int? ?? 0;
+    final totalNfeDia = statsDia['totalNfe'] as double? ?? 0.0;
+    final qtdNfeDia = statsDia['qtdNfe'] as int? ?? 0;
+
+    final tituloPeriodo = _periodoSelecionado == 'hoje'
+        ? 'Hoje'
+        : _periodoSelecionado == 'semana'
+            ? 'Esta Semana'
+            : _periodoSelecionado == 'mês'
+                ? 'Este Mês'
+                : 'Período Selecionado';
+
+    return Card(
+      color: const Color(0xFF1E1E2E).withOpacity(0.8),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Cabeçalho do Card
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.teal.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.receipt_long, color: Colors.tealAccent, size: 28),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Vendas Fiscais (NFC-e & NF-e)',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      Text(
+                        'Totais autorizados ($tituloPeriodo)',
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.teal.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: Colors.teal.withOpacity(0.4)),
+                  ),
+                  child: Text(
+                    formato.format(totalFiscal),
+                    style: const TextStyle(
+                      color: Colors.tealAccent,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+
+            // Colunas NFC-e e NF-e
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final isWide = constraints.maxWidth > 550;
+
+                final cardNfce = Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        const Color(0xFF0F3838).withOpacity(0.6),
+                        const Color(0xFF164E4D).withOpacity(0.4),
+                      ],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.teal.withOpacity(0.3)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: Colors.tealAccent.withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Icon(Icons.qr_code_2, color: Colors.tealAccent, size: 20),
+                          ),
+                          const SizedBox(width: 10),
+                          const Text(
+                            'NFC-e (Consumidor)',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 15,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        formato.format(totalNfce),
+                        style: const TextStyle(
+                          color: Colors.tealAccent,
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '$qtdNfce ${qtdNfce == 1 ? 'nota autorizada' : 'notas autorizadas'}',
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 12,
+                        ),
+                      ),
+                      if (_periodoSelecionado != 'hoje') ...[
+                        const SizedBox(height: 8),
+                        Divider(color: Colors.white.withOpacity(0.1), height: 12),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text('Hoje:', style: TextStyle(color: Colors.white54, fontSize: 11)),
+                            Text(
+                              '${formato.format(totalNfceDia)} ($qtdNfceDia)',
+                              style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ],
+                  ),
+                );
+
+                final cardNfe = Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        const Color(0xFF231F46).withOpacity(0.6),
+                        const Color(0xFF2E295B).withOpacity(0.4),
+                      ],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.indigoAccent.withOpacity(0.3)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: Colors.indigoAccent.withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Icon(Icons.description, color: Colors.indigoAccent, size: 20),
+                          ),
+                          const SizedBox(width: 10),
+                          const Text(
+                            'NF-e (Modelo 55)',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 15,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        formato.format(totalNfe),
+                        style: const TextStyle(
+                          color: Colors.indigoAccent,
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '$qtdNfe ${qtdNfe == 1 ? 'nota autorizada' : 'notas autorizadas'}',
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 12,
+                        ),
+                      ),
+                      if (_periodoSelecionado != 'hoje') ...[
+                        const SizedBox(height: 8),
+                        Divider(color: Colors.white.withOpacity(0.1), height: 12),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text('Hoje:', style: TextStyle(color: Colors.white54, fontSize: 11)),
+                            Text(
+                              '${formato.format(totalNfeDia)} ($qtdNfeDia)',
+                              style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ],
+                  ),
+                );
+
+                if (isWide) {
+                  return Row(
+                    children: [
+                      Expanded(child: cardNfce),
+                      const SizedBox(width: 12),
+                      Expanded(child: cardNfe),
+                    ],
+                  );
+                } else {
+                  return Column(
+                    children: [
+                      cardNfce,
+                      const SizedBox(height: 12),
+                      cardNfe,
+                    ],
+                  );
+                }
+              },
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildCardResumo(
@@ -732,6 +1126,101 @@ class _DashboardPageState extends State<DashboardPage> {
                   ),
                 ],
               ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Card com o total vendido pelos GARÇONS e suas comissões no período.
+  Widget _buildCardGarcons(List<GarcomResumo> ranking) {
+    final formato = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+    final totalVendido = ranking.fold<double>(0, (s, r) => s + r.totalVendido);
+    final totalComissao = ranking.fold<double>(0, (s, r) => s + r.totalComissao);
+    final top3 = ranking.take(3).toList();
+    final medalhas = ['🥇', '🥈', '🥉'];
+
+    return Card(
+      color: const Color(0xFF1E1E2E).withOpacity(0.8),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.deepOrangeAccent.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.emoji_events_outlined, color: Colors.amberAccent, size: 28),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Garçons',
+                        style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+                      ),
+                      Text(
+                        'Vendas e comissões do período',
+                        style: TextStyle(color: Colors.white70, fontSize: 13),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildStatItem('Total Vendido', formato.format(totalVendido), Colors.greenAccent),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildStatItem('Comissões', formato.format(totalComissao), Colors.orangeAccent),
+                ),
+              ],
+            ),
+            if (top3.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              const Divider(color: Colors.white12, height: 1),
+              const SizedBox(height: 12),
+              ...top3.asMap().entries.map((e) {
+                final item = e.value;
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Row(
+                    children: [
+                      Text(medalhas[e.key], style: const TextStyle(fontSize: 18)),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          item.funcionario.nome,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13),
+                        ),
+                      ),
+                      Text(
+                        '${formato.format(item.totalVendido)}  •  ${item.percentual.toStringAsFixed(1)}%',
+                        style: TextStyle(
+                          color: e.key == 0 ? Colors.amberAccent : Colors.white70,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }),
             ],
           ],
         ),
@@ -1137,7 +1626,7 @@ class _DashboardPageState extends State<DashboardPage> {
                               ),
                             ),
                             Text(
-                              '${produto['quantidade']} unidades',
+                              '${_fmtQuantidade(produto['quantidade'])} unidades',
                               style: TextStyle(
                                 color: Colors.white70,
                                 fontSize: 12,
@@ -1261,7 +1750,7 @@ class _DashboardPageState extends State<DashboardPage> {
                               ),
                             ),
                             Text(
-                              '${servico['quantidade']} realizados',
+                              '${_fmtQuantidade(servico['quantidade'])} realizados',
                               style: TextStyle(
                                 color: Colors.white70,
                                 fontSize: 12,
@@ -1333,7 +1822,7 @@ class _DashboardPageState extends State<DashboardPage> {
             // Gráfico de barras
             if (maxValor > 0) ...[
               SizedBox(
-                height: alturaGrafico,
+                height: alturaGrafico + 60, // Aumentado para evitar overflow dos textos abaixo das barras
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
@@ -1583,6 +2072,333 @@ class _DashboardPageState extends State<DashboardPage> {
                   ),
                 ],
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _gerarBackupTotal(DataService dataService) {
+    try {
+      final now = DateTime.now();
+      final timestamp = DateFormat('yyyyMMdd_HHmm').format(now);
+      
+      final Map<String, dynamic> backup = dataService.exportarBackupCompleto();
+      final jsonContent = jsonEncode(backup);
+      final fileName = 'backup_exodo_${timestamp}.json';
+      
+      html_helper.downloadFile(jsonContent, fileName, 'application/json');
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('✅ Backup gerado com sucesso! Download iniciado.'),
+          backgroundColor: Colors.green,
+          duration: Duration(seconds: 4),
+        ),
+      );
+    } catch (e) {
+      debugPrint('Erro ao gerar backup: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('❌ Erro ao gerar backup: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  Widget _buildCardBackup(DataService dataService) {
+    return Card(
+      color: const Color(0xFF1E1E2E).withOpacity(0.8),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.security, color: Colors.orange, size: 28),
+                ),
+                const SizedBox(width: 16),
+                const Expanded(
+                  child: Text(
+                    'Segurança e Backup',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'O sistema já realiza cópias automáticas em tempo real na nuvem. Use esta função para baixar uma cópia de segurança manual de todos os seus dados para conferência ou migração.',
+              style: TextStyle(color: Colors.white70, fontSize: 14),
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: () => _gerarBackupTotal(dataService),
+                icon: const Icon(Icons.download),
+                label: const Text('GERAR BACKUP TOTAL (JSON)'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.orange.shade800,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  elevation: 4,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCardLucroDre(Map<String, double> totais) {
+    final formato = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+    final receita = totais['receita'] ?? 0;
+    final custo = totais['custo'] ?? 0;
+    final lucro = totais['lucro'] ?? 0;
+    final margem = totais['margem'] ?? 0;
+    final corLucro = lucro >= 0 ? Colors.green : Colors.red;
+
+    return Card(
+      color: const Color(0xFF1E1E2E).withOpacity(0.8),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.teal.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.insights, color: Colors.teal, size: 28),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Lucro / DRE',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      Text(
+                        'Receita das vendas (PDV/mesas) menos o custo dos produtos ${_getLabelPeriodo(_periodoSelecionado)}',
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.6),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildStatItem('Receita Bruta', formato.format(receita), Colors.blue),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildStatItem('Custo (CMV)', formato.format(custo), Colors.orange),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildStatItem('Lucro Bruto', formato.format(lucro), corLucro),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildStatItem('Margem Bruta', '${margem.toStringAsFixed(1)}%', Colors.purple),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+
+            // DRE simplificado
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.05),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.white.withOpacity(0.1)),
+              ),
+              child: Column(
+                children: [
+                  _linhaDre('Receita Bruta', formato.format(receita), Colors.white),
+                  _linhaDre('(-) Custo das Vendas (CMV)', formato.format(custo), Colors.orange),
+                  const Divider(color: Colors.white24, height: 16),
+                  _linhaDre('= LUCRO BRUTO', formato.format(lucro), corLucro, bold: true),
+                  _linhaDre('Margem Bruta', '${margem.toStringAsFixed(1)}%', Colors.purple),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const RelatorioLucroPage()),
+                  );
+                },
+                icon: const Icon(Icons.open_in_new),
+                label: const Text('VER RELATÓRIO COMPLETO (RANKINGS + CSV)'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.tealAccent,
+                  side: BorderSide(color: Colors.tealAccent.withOpacity(0.5)),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _linhaDre(String rotulo, String valor, Color cor, {bool bold = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            rotulo,
+            style: TextStyle(
+              color: cor,
+              fontWeight: bold ? FontWeight.bold : FontWeight.w500,
+              fontSize: bold ? 15 : 13,
+            ),
+          ),
+          Text(
+            valor,
+            style: TextStyle(
+              color: cor,
+              fontWeight: bold ? FontWeight.bold : FontWeight.w600,
+              fontSize: bold ? 15 : 13,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInventoryAlert() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Colors.amber.shade900, Colors.orange.shade800],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.orange.withOpacity(0.3),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.assignment_turned_in, color: Colors.white, size: 32),
+                const SizedBox(width: 16),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Inventário de Fim de Ano',
+                        style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                      ),
+                      SizedBox(height: 4),
+                      Text(
+                        'Hoje é um dia importante para a sua contabilidade! Gere o Registro de Inventário para o fechamento do ano.',
+                        style: TextStyle(color: Colors.white70, fontSize: 13),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                ElevatedButton.icon(
+                  onPressed: () {
+                    final dataService = Provider.of<DataService>(context, listen: false);
+                    final ativos = dataService.produtos.where((p) => p.estoque > 0).toList();
+                    if (ativos.isEmpty) {
+                       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Nenhum produto com estoque ativo')));
+                       return;
+                    }
+                    ExcelExportService.exportarInventarioContabilidade(ativos);
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.white,
+                    foregroundColor: Colors.orange.shade900,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  icon: const Icon(Icons.description),
+                  label: const Text('GERAR ESTOQUE ATUAL', style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
+                if (DateTime.now().month == 1) // Se for Janeiro, oferecer o de 31/12 do ano anterior
+                  ElevatedButton.icon(
+                    onPressed: () {
+                      final dataService = Provider.of<DataService>(context, listen: false);
+                      final dataAlvo = DateTime(DateTime.now().year - 1, 12, 31);
+                      ExcelExportService.exportarInventarioRetroativo(dataService.produtos, dataService.estoqueHistorico, dataAlvo);
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.white.withOpacity(0.9),
+                      foregroundColor: Colors.blue.shade900,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    icon: const Icon(Icons.history),
+                    label: const Text('GERAR RETROATIVO (31/12)', style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+              ],
             ),
           ],
         ),

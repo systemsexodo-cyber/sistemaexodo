@@ -8,7 +8,9 @@ import '../models/agendamento_servico.dart';
 import '../models/pedido.dart';
 import '../models/forma_pagamento.dart';
 import '../models/pet.dart';
+import 'package:flutter/material.dart';
 import '../services/data_service.dart';
+import '../services/impressao_service.dart';
 
 /// Serviço para geração de PDF de agendamento de serviço
 class AgendamentoPdfService {
@@ -994,6 +996,7 @@ class AgendamentoPdfService {
     required AgendamentoServico agendamento,
     Pedido? pedido,
     DataService? dataService,
+    BuildContext? context,
   }) async {
     try {
       final pdfBytes = await gerarPDF(
@@ -1001,9 +1004,19 @@ class AgendamentoPdfService {
         pedido: pedido,
         dataService: dataService,
       );
-      await Printing.layoutPdf(
-        onLayout: (PdfPageFormat format) async => pdfBytes,
-      );
+      if (dataService?.empresaAtual != null) {
+        await ImpressaoService.imprimirPdf(
+          bytes: pdfBytes,
+          empresa: dataService!.empresaAtual!,
+          name: 'Agendamento_${agendamento.id}',
+          termico: true,
+          context: context,
+        );
+      } else {
+        await Printing.layoutPdf(
+          onLayout: (PdfPageFormat format) async => pdfBytes,
+        );
+      }
     } catch (e) {
       throw Exception('Erro ao visualizar PDF: $e');
     }

@@ -7,6 +7,7 @@ import 'pkcs12_service.dart';
 import 'pem_certificate_service.dart';
 import 'certificado_converter_service.dart';
 import 'certificado_openssl_service.dart';
+import 'certificado_node_service.dart';
 import 'package:pointycastle/asymmetric/api.dart';
 import 'package:pointycastle/export.dart';
 
@@ -637,6 +638,50 @@ class CertificadoService {
         }
         
         // Se chegou aqui, OpenSSL falhou, mas já tentamos parsing direto antes
+        
+        // TENTAR 3: Cloud Function (Node.js) - Especialmente para Web ou se OpenSSL local falhar
+        debugPrint('>>> [Certificado] ========================================');
+        debugPrint('>>> [Certificado] TENTATIVA 3: Cloud Function (Node.js)');
+        debugPrint('>>> [Certificado] Útil para Web ou fallbacks remotos');
+        debugPrint('>>> [Certificado] ========================================');
+        
+        try {
+          final nodeService = CertificadoNodeService();
+          final nodeResult = await nodeService.processarCertificado(
+            bytes: bytes,
+            senha: senha,
+          );
+          
+          if (nodeResult['sucesso'] == true) {
+            debugPrint('>>> [Certificado] ✓✓✓ Cloud Function processou com sucesso!');
+            
+            final certificadoData = nodeResult['certificado'] as Map<String, dynamic>;
+            final chaveData = nodeResult['chavePrivada'] as Map<String, dynamic>;
+            final info = nodeResult['informacoes'] as Map<String, dynamic>;
+            
+            // Re-instanciar o service PKCS12 para extrair a chave do PEM retornado (se necessário)
+            // Ou converter o PEM direto para o modelo PointyCastle
+            // Mas o CertificadoNodeService já retornou os bytes do certificado PEM
+            
+            // Para extrair a chave privada RSA do PEM retornado:
+            final privateKeyPem = chaveData['pem'] as String;
+            final privateKey = await PEMCertificateService.extrairChavePrivada(privateKeyPem);
+            
+            final certificado = CertificadoDigital(
+              bytes: bytes,
+              senha: senha,
+              cnpj: info['cnpj'] as String?,
+              validade: info['validade'] != null ? DateTime.parse(info['validade'] as String) : null,
+              privateKey: privateKey,
+            );
+            
+            debugPrint('>>> [Certificado] ✓✓✓ Certificado criado com sucesso via Cloud Function!');
+            return certificado;
+          }
+        } catch (eNode) {
+          debugPrint('>>> [Certificado] ⚠️ Cloud Function falhou: $eNode');
+        }
+
         // Lançar erro final com diagnóstico detalhado
         final erroOpenSSLStr = eOpenSSL.toString();
         

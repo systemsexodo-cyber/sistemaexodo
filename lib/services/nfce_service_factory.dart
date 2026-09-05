@@ -1,38 +1,30 @@
 /// Factory para criar o serviço de NFC-e apropriado
-/// Por padrão, usa backend Python. Pode ser configurado para usar implementação manual
+/// Por padrão, usa backend Python local (localhost:8000).
 
 import 'nfce_backend_service.dart' show NFCeServiceBase, NFCeBackendService;
-// Comentado para evitar conflito de nomes com nfce_service.dart simples
-// import 'nfce_service.dart';
-// import 'sefaz_service.dart';
-// import 'certificado_service.dart';
-// import 'assinatura_service.dart';
-// import 'xml_builder_service.dart';
 
 /// Factory para criar serviços de NFC-e
 class NFCeServiceFactory {
-  /// URL do backend Python (pode ser configurada)
+  /// URL do backend Python — null = usa localhost:8000 (padrão)
   static String? _backendUrl;
-  
+
   /// Se deve usar backend Python (padrão: true)
   static bool _usarBackend = true;
-  
-  /// Configurar URL do backend
+
+  /// Configurar URL do backend (para túneis Zrok/Ngrok ou IP de rede)
   static void configurarBackend({String? url, bool usarBackend = true}) {
     _backendUrl = url;
     _usarBackend = usarBackend;
   }
-  
-  /// Criar instância do serviço apropriado
+
+  /// Criar instância do serviço
   static NFCeServiceBase criar() {
-    // Sempre usar backend Python (a implementação manual foi desativada)
     return NFCeBackendService(baseUrl: _backendUrl);
   }
-  
-  /// Verificar se backend está disponível
+
+  /// Verificar se o Bridge local está disponível via HTTP (GET /health)
   static Future<bool> verificarBackend() async {
     if (!_usarBackend) return false;
-    
     try {
       final backendService = NFCeBackendService(baseUrl: _backendUrl);
       return await backendService.verificarConexao();

@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'package:sistema_exodo_novo/utils/date_parser.dart';
+
 /// Modelo para representar um usuário do sistema
 class Usuario {
   final String id;
@@ -9,11 +12,14 @@ class Usuario {
   final TipoUsuario tipo;
   final String? empresaId; // ID da empresa associada
   final String? funcionarioId; // ID do funcionário associado (para vendedores)
+  final bool garcom; // Garçom: acesso restrito às telas de mesas/comandas + suas vendas/comissões/ranking
   final bool ativo;
   final bool isMaster; // Usuário master da empresa (pode gerenciar permissões)
   final Set<String>? permissoesPersonalizadas; // Permissões adicionais concedidas
   final Set<String>? permissoesNegadas; // Permissões removidas do padrão
   final List<String>? telasOcultas; // Telas que o usuário não pode ver/acessar
+  final int serieNfce; // Série da NFC-e (cada usuário pode ter a sua)
+  final int numeroInicialNfce; // Número inicial da NFC-e para a série do usuário (padrão: 1)
   final DateTime createdAt;
   final DateTime updatedAt;
   final DateTime? ultimoAcesso;
@@ -28,11 +34,14 @@ class Usuario {
     this.tipo = TipoUsuario.operador,
     this.empresaId,
     this.funcionarioId,
+    this.garcom = false,
     this.ativo = true,
     this.isMaster = false,
     this.permissoesPersonalizadas,
     this.permissoesNegadas,
     this.telasOcultas,
+    this.serieNfce = 1,
+    this.numeroInicialNfce = 1,
     required this.createdAt,
     required this.updatedAt,
     this.ultimoAcesso,
@@ -49,11 +58,14 @@ class Usuario {
     TipoUsuario? tipo,
     String? empresaId,
     String? funcionarioId,
+    bool? garcom,
     bool? ativo,
     bool? isMaster,
     Set<String>? permissoesPersonalizadas,
     Set<String>? permissoesNegadas,
     List<String>? telasOcultas,
+    int? serieNfce,
+    int? numeroInicialNfce,
     DateTime? createdAt,
     DateTime? updatedAt,
     DateTime? ultimoAcesso,
@@ -68,11 +80,14 @@ class Usuario {
       tipo: tipo ?? this.tipo,
       empresaId: empresaId ?? this.empresaId,
       funcionarioId: funcionarioId ?? this.funcionarioId,
+      garcom: garcom ?? this.garcom,
       ativo: ativo ?? this.ativo,
       isMaster: isMaster ?? this.isMaster,
       permissoesPersonalizadas: permissoesPersonalizadas ?? this.permissoesPersonalizadas,
       permissoesNegadas: permissoesNegadas ?? this.permissoesNegadas,
       telasOcultas: telasOcultas ?? this.telasOcultas,
+      serieNfce: serieNfce ?? this.serieNfce,
+      numeroInicialNfce: numeroInicialNfce ?? this.numeroInicialNfce,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       ultimoAcesso: ultimoAcesso ?? this.ultimoAcesso,
@@ -80,40 +95,73 @@ class Usuario {
   }
 
   factory Usuario.fromMap(Map<String, dynamic> map) {
+    // Helpers para suportar camelCase (localStorage) e snake_case (Supabase)
+    T? get<T>(String camel, String snake) {
+      if (map.containsKey(camel)) return map[camel] as T?;
+      if (map.containsKey(snake)) return map[snake] as T?;
+      return null;
+    }
+
+    String? getStr(String camel, String snake) => get<String>(camel, snake);
+    bool? getBool(String camel, String snake) => get<bool>(camel, snake);
+    List? getList(String camel, String snake) => get<List>(camel, snake);
+    Set? getSet(String camel, String snake) => get<Set>(camel, snake);
+
+    String? empId = getStr('empresaId', 'empresa_id');
+    if (empId == null || empId.isEmpty) {
+      final dados = map['dados_usuario'] ?? map['dadosUsuario'];
+      if (dados != null) {
+        if (dados is Map) {
+          empId = dados['empresa_id']?.toString() ?? dados['empresaId']?.toString();
+        } else if (dados is String && dados.isNotEmpty) {
+          try {
+            final decoded = jsonDecode(dados);
+            if (decoded is Map) {
+              empId = decoded['empresa_id']?.toString() ?? decoded['empresaId']?.toString();
+            }
+          } catch (_) {}
+        }
+      }
+    }
+
     return Usuario(
-      id: map['id'] ?? '',
-      nome: map['nome'] ?? '',
-      email: map['email'] ?? '',
-      senha: map['senha'] ?? '',
-      telefone: map['telefone'],
-      fotoUrl: map['fotoUrl'],
+      id: map['id']?.toString() ?? '',
+      nome: map['nome']?.toString() ?? '',
+      email: map['email']?.toString() ?? '',
+      senha: map['senha']?.toString() ?? '',
+      telefone: map['telefone']?.toString(),
+      fotoUrl: getStr('fotoUrl', 'foto_url'),
       tipo: TipoUsuario.values.firstWhere(
         (t) => t.name == map['tipo'],
         orElse: () => TipoUsuario.operador,
       ),
-      empresaId: map['empresaId'],
-      funcionarioId: map['funcionarioId'],
-      ativo: map['ativo'] ?? true,
-      isMaster: map['isMaster'] ?? false,
-      permissoesPersonalizadas: map['permissoesPersonalizadas'] != null
-          ? Set<String>.from(map['permissoesPersonalizadas'])
+      empresaId: empId,
+      funcionarioId: getStr('funcionarioId', 'funcionario_id'),
+      garcom: getBool('garcom', 'garcom') ?? false,
+      ativo: getBool('ativo', 'ativo') ?? true,
+      isMaster: getBool('isMaster', 'is_master') ?? false,
+      permissoesPersonalizadas: get('permissoesPersonalizadas', 'permissoes_personalizadas') != null
+          ? Set<String>.from(get('permissoesPersonalizadas', 'permissoes_personalizadas'))
           : null,
-      permissoesNegadas: map['permissoesNegadas'] != null
-          ? Set<String>.from(map['permissoesNegadas'])
+      permissoesNegadas: get('permissoesNegadas', 'permissoes_negadas') != null
+          ? Set<String>.from(get('permissoesNegadas', 'permissoes_negadas'))
           : null,
-      telasOcultas: map['telasOcultas'] != null
-          ? List<String>.from(map['telasOcultas'])
+      telasOcultas: getList('telasOcultas', 'telas_ocultas') != null
+          ? List<String>.from(getList('telasOcultas', 'telas_ocultas')!)
           : null,
-      createdAt: map['createdAt'] != null
-          ? DateTime.parse(map['createdAt'])
-          : DateTime.now(),
-      updatedAt: map['updatedAt'] != null
-          ? DateTime.parse(map['updatedAt'])
-          : DateTime.now(),
-      ultimoAcesso: map['ultimoAcesso'] != null
-          ? DateTime.parse(map['ultimoAcesso'])
+      createdAt: DateParser.parse(map['created_at'] ?? map['createdAt']),
+      updatedAt: DateParser.parse(map['updated_at'] ?? map['updatedAt']),
+      serieNfce: get<num>('serieNfce', 'serie_nfce')?.toInt() ?? 1,
+      numeroInicialNfce: get<num>('numeroInicialNfce', 'numero_inicial_nfce')?.toInt() ?? 1,
+      ultimoAcesso: (map['ultimo_acesso'] ?? map['ultimoAcesso']) != null
+          ? DateParser.parse(map['ultimo_acesso'] ?? map['ultimoAcesso'])
           : null,
     );
+  }
+
+  static DateTime? getDate(String? val) {
+    if (val == null) return null;
+    return DateTime.parse(val);
   }
 
   Map<String, dynamic> toMap() {
@@ -123,17 +171,21 @@ class Usuario {
       'email': email,
       'senha': senha,
       'telefone': telefone,
-      'fotoUrl': fotoUrl,
+      'foto_url': fotoUrl,
       'tipo': tipo.name,
-      'empresaId': empresaId,
-      'funcionarioId': funcionarioId,
+      'empresa_id': empresaId,
+      'funcionario_id': funcionarioId,
+      'garcom': garcom,
       'ativo': ativo,
-      'isMaster': isMaster,
-      'permissoesPersonalizadas': permissoesPersonalizadas?.toList(),
-      'permissoesNegadas': permissoesNegadas?.toList(),
-      'createdAt': createdAt.toIso8601String(),
-      'updatedAt': updatedAt.toIso8601String(),
-      'ultimoAcesso': ultimoAcesso?.toIso8601String(),
+      'is_master': isMaster,
+      'permissoes_personalizadas': permissoesPersonalizadas?.toList(),
+      'permissoes_negadas': permissoesNegadas?.toList(),
+      'telas_ocultas': telasOcultas,
+      'serie_nfce': serieNfce,
+      'numero_inicial_nfce': numeroInicialNfce,
+      'created_at': createdAt.toIso8601String(),
+      'updated_at': updatedAt.toIso8601String(),
+      'ultimo_acesso': ultimoAcesso?.toIso8601String(),
     };
   }
 
@@ -145,6 +197,9 @@ class Usuario {
 
   /// Verifica se o usuário é gerente
   bool get isGerente => tipo == TipoUsuario.gerente;
+
+  /// Verifica se o usuário é garçom (acesso restrito às telas de mesas/comandas)
+  bool get isGarcom => garcom;
 
   /// Verifica se o usuário tem permissões de administrador ou gerente
   bool get podeGerenciarUsuarios => isAdmin || isGerente;

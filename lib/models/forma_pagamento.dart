@@ -1,3 +1,5 @@
+import 'package:flutter/material.dart';
+
 /// Tipos de forma de pagamento disponíveis
 enum TipoPagamento {
   dinheiro,
@@ -8,6 +10,8 @@ enum TipoPagamento {
   crediario,
   fiado,
   outro,
+  alimentacao,
+  transferencia,
 }
 
 /// Extensão para obter informações do tipo de pagamento
@@ -30,27 +34,60 @@ extension TipoPagamentoExtension on TipoPagamento {
         return 'Fiado';
       case TipoPagamento.outro:
         return 'Outro';
+      case TipoPagamento.alimentacao:
+        return 'Alimentação';
+      case TipoPagamento.transferencia:
+        return 'Transferência';
     }
   }
 
-  String get icone {
+  IconData get icone {
     switch (this) {
       case TipoPagamento.dinheiro:
-        return 'money';
+        return Icons.money;
       case TipoPagamento.pix:
-        return 'pix';
+        return Icons.qr_code;
       case TipoPagamento.cartaoCredito:
-        return 'credit_card';
+        return Icons.credit_card;
       case TipoPagamento.cartaoDebito:
-        return 'credit_card';
+        return Icons.credit_card;
       case TipoPagamento.boleto:
-        return 'receipt';
+        return Icons.receipt;
       case TipoPagamento.crediario:
-        return 'calendar_month';
+        return Icons.calendar_month;
       case TipoPagamento.fiado:
-        return 'handshake';
+        return Icons.handshake;
       case TipoPagamento.outro:
-        return 'more_horiz';
+        return Icons.more_horiz;
+      case TipoPagamento.alimentacao:
+        return Icons.restaurant;
+      case TipoPagamento.transferencia:
+        return Icons.swap_horiz;
+    }
+  }
+
+  Color get cor {
+    switch (this) {
+      case TipoPagamento.dinheiro:
+        return Colors.green;
+      case TipoPagamento.pix:
+        return Colors.teal;
+      case TipoPagamento.cartaoCredito:
+        return Colors.purple;
+      case TipoPagamento.cartaoDebito:
+        return Colors.blue;
+      case TipoPagamento.boleto:
+        return Colors.orange;
+      case TipoPagamento.crediario:
+        return Colors.pink;
+      case TipoPagamento.fiado:
+        return Colors.red;
+      case TipoPagamento.outro:
+        return Colors.grey;
+      case TipoPagamento.alimentacao:
+        return Colors.teal;
+      case TipoPagamento.transferencia:
+        return Colors.blueAccent;
     }
   }
 
@@ -59,7 +96,8 @@ extension TipoPagamentoExtension on TipoPagamento {
     return this == TipoPagamento.dinheiro ||
         this == TipoPagamento.pix ||
         this == TipoPagamento.cartaoCredito ||
-        this == TipoPagamento.cartaoDebito;
+        this == TipoPagamento.cartaoDebito ||
+        this == TipoPagamento.alimentacao;
   }
 
   /// Verifica se é pagamento a prazo (fiado, boleto, crediário)
@@ -86,6 +124,8 @@ class PagamentoPedido {
   final String? observacao;
   final double? valorRecebido; // Valor que o cliente entregou (para dinheiro)
   final double? troco; // Troco a devolver (para dinheiro)
+  final double? desconto;
+  final double? acrescimo;
 
   PagamentoPedido({
     required this.id,
@@ -101,11 +141,13 @@ class PagamentoPedido {
     this.observacao,
     this.valorRecebido,
     this.troco,
+    this.desconto,
+    this.acrescimo,
   });
 
   factory PagamentoPedido.fromMap(Map<String, dynamic> map) {
     return PagamentoPedido(
-      id: map['id'] ?? '',
+      id: map['id']?.toString() ?? '',
       tipo: TipoPagamento.values.firstWhere(
         (t) => t.name == map['tipo'],
         orElse: () => TipoPagamento.outro,
@@ -130,6 +172,8 @@ class PagamentoPedido {
       observacao: map['observacao'],
       valorRecebido: map['valorRecebido']?.toDouble(),
       troco: map['troco']?.toDouble(),
+      desconto: map['desconto']?.toDouble(),
+      acrescimo: map['acrescimo']?.toDouble(),
     );
   }
 
@@ -148,6 +192,8 @@ class PagamentoPedido {
       'observacao': observacao,
       'valorRecebido': valorRecebido,
       'troco': troco,
+      'desconto': desconto,
+      'acrescimo': acrescimo,
     };
   }
 
@@ -165,6 +211,8 @@ class PagamentoPedido {
     String? observacao,
     double? valorRecebido,
     double? troco,
+    double? desconto,
+    double? acrescimo,
   }) {
     return PagamentoPedido(
       id: id ?? this.id,
@@ -180,6 +228,8 @@ class PagamentoPedido {
       observacao: observacao ?? this.observacao,
       valorRecebido: valorRecebido ?? this.valorRecebido,
       troco: troco ?? this.troco,
+      desconto: desconto ?? this.desconto,
+      acrescimo: acrescimo ?? this.acrescimo,
     );
   }
 

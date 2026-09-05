@@ -1,0 +1,85 @@
+2026-03-07 12:06:37,229 [INFO] ========================================
+2026-03-07 12:06:37,229 [INFO] ExodoNfceBridge Watchdog INICIADO
+2026-03-07 12:06:37,229 [INFO] Monitorando: ExodoNfceBridge.exe
+2026-03-07 12:06:37,229 [INFO] ========================================
+2026-03-07 12:06:37,910 [INFO] Firebase ativo no Watchdog (Controle Remoto Disponível)
+2026-03-07 12:06:38,978 [INFO] Comando recebido pelo Watchdog: start
+2026-03-07 12:06:38,978 [INFO] Executando início forçado do Bridge via comando remoto...
+2026-03-07 12:06:38,980 [INFO] Bridge iniciado: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\backend_nfce\ExodoNfceBridge.exe
+2026-03-07 12:06:39,230 [INFO] Comando recebido pelo Watchdog: start
+2026-03-07 12:06:39,231 [INFO] Executando início forçado do Bridge via comando remoto...
+2026-03-07 12:06:39,232 [INFO] Bridge iniciado: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\backend_nfce\ExodoNfceBridge.exe
+2026-03-07 12:06:39,485 [INFO] Comando recebido pelo Watchdog: start
+2026-03-07 12:06:39,485 [INFO] Executando início forçado do Bridge via comando remoto...
+2026-03-07 12:06:39,487 [INFO] Bridge iniciado: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\backend_nfce\ExodoNfceBridge.exe
+2026-03-07 12:06:39,732 [INFO] Comando recebido pelo Watchdog: start
+2026-03-07 12:06:39,732 [INFO] Executando início forçado do Bridge via comando remoto...
+2026-03-07 12:06:39,743 [INFO] Bridge iniciado: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\backend_nfce\ExodoNfceBridge.exe
+2026-03-07 12:06:40,091 [INFO] Comando recebido pelo Watchdog: start
+2026-03-07 12:06:40,091 [INFO] Executando início forçado do Bridge via comando remoto...
+2026-03-07 12:06:40,096 [INFO] Bridge iniciado: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\backend_nfce\ExodoNfceBridge.exe
+2026-03-07 12:06:40,433 [INFO] Comando recebido pelo Watchdog: start
+2026-03-07 12:06:40,433 [INFO] Executando início forçado do Bridge via comando remoto...
+2026-03-07 12:06:40,440 [INFO] Bridge iniciado: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\backend_nfce\ExodoNfceBridge.exe
+2026-03-07 12:06:40,730 [INFO] Comando recebido pelo Watchdog: start
+2026-03-07 12:06:40,730 [INFO] Executando início forçado do Bridge via comando remoto...
+2026-03-07 12:06:40,810 [INFO] Bridge iniciado: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\backend_nfce\ExodoNfceBridge.exe
+2026-03-07 12:06:41,067 [INFO] Comando recebido pelo Watchdog: start
+2026-03-07 12:06:41,068 [INFO] Executando início forçado do Bridge via comando remoto...
+2026-03-07 12:06:41,092 [INFO] Bridge iniciado: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\backend_nfce\ExodoNfceBridge.exe
+2026-03-07 12:06:41,300 [INFO] Comando recebido pelo Watchdog: start
+2026-03-07 12:06:41,300 [INFO] Executando início forçado do Bridge via comando remoto...
+2026-03-07 12:06:41,302 [INFO] Bridge iniciado: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\backend_nfce\ExodoNfceBridge.exe
+2026-03-07 12:06:41,526 [INFO] Comando recebido pelo Watchdog: start
+2026-03-07 12:06:41,526 [INFO] Executando início forçado do Bridge via comando remoto...
+2026-03-07 12:06:41,528 [INFO] Bridge iniciado: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\backend_nfce\ExodoNfceBridge.exe
+2026-03-07 12:06:41,809 [INFO] Comando recebido pelo Watchdog: start
+2026-03-07 12:06:41,809 [INFO] Executando início forçado do Bridge via comando remoto...
+2026-03-07 12:06:41,861 [INFO] Bridge iniciado: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\backend_nfce\ExodoNfceBridge.exe
+2026-03-07 12:06:42,126 [INFO] Comando recebido pelo Watchdog: start
+2026-03-07 12:06:42,127 [INFO] Executando início forçado do Bridge via comando remoto...
+2026-03-07 12:06:42,159 [INFO] Bridge iniciado: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\backend_nfce\ExodoNfceBridge.exe
+2026-03-07 13:32:06,305 [WARNING] Bridge não encontrado! Reiniciando...
+2026-03-07 13:32:06,310 [INFO] Bridge iniciado: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\backend_nfce\ExodoNfceBridge.exe
+2026-03-07 13:33:07,535 [WARNING] Bridge não encontrado! Reiniciando...
+2026-03-07 13:33:07,552 [INFO] Bridge iniciado: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\backend_nfce\ExodoNfceBridge.exe
+2026-03-07 13:33:27,869 [INFO] Comando recebido pelo Watchdog: start
+2026-03-07 13:33:27,869 [INFO] Executando início forçado do Bridge via comando remoto...
+2026-03-07 13:33:27,871 [INFO] Bridge iniciado: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\backend_nfce\ExodoNfceBridge.exe
+2026-03-07 13:33:48,520 [INFO] Comando recebido pelo Watchdog: start
+2026-03-07 13:33:48,520 [INFO] Executando início forçado do Bridge via comando remoto...
+2026-03-07 13:33:48,522 [INFO] Bridge iniciado: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\backend_nfce\ExodoNfceBridge.exe
+2026-03-07 13:34:04,848 [INFO] Comando recebido pelo Watchdog: start
+2026-03-07 13:34:04,853 [INFO] Executando início forçado do Bridge via comando remoto...
+2026-03-07 13:34:04,857 [INFO] Bridge iniciado: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\backend_nfce\ExodoNfceBridge.exe
+2026-03-07 13:34:24,461 [WARNING] Bridge não encontrado! Reiniciando...
+2026-03-07 13:34:24,463 [INFO] Bridge iniciado: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\backend_nfce\ExodoNfceBridge.exe
+2026-03-07 13:44:16,640 [INFO] ========================================
+2026-03-07 13:44:16,675 [INFO] ExodoNfceBridge Watchdog INICIADO
+2026-03-07 13:44:16,675 [INFO] Monitorando: ExodoNfceBridge.exe
+2026-03-07 13:44:16,675 [INFO] ========================================
+2026-03-07 13:44:18,063 [INFO] Firebase ativo no Watchdog (Controle Remoto Disponível)
+2026-03-07 16:36:00,382 [WARNING] Bridge não encontrado! Reiniciando...
+2026-03-07 16:36:00,407 [INFO] Bridge iniciado: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\backend_nfce\ExodoNfceBridge.exe
+2026-03-07 17:51:56,252 [INFO] Comando recebido pelo Watchdog: set_identity
+2026-03-07 17:52:03,121 [INFO] Comando recebido pelo Watchdog: set_identity
+2026-03-07 18:29:19,046 [INFO] Comando recebido pelo Watchdog: restart
+2026-03-07 18:29:19,047 [INFO] Executando início forçado do Bridge via comando remoto...
+2026-03-07 18:29:19,054 [INFO] Bridge iniciado: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\backend_nfce\ExodoNfceBridge.exe
+2026-03-07 18:32:34,063 [WARNING] Bridge não encontrado! Reiniciando...
+2026-03-07 18:32:34,070 [INFO] Bridge iniciado: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\backend_nfce\ExodoNfceBridge.exe
+2026-03-07 18:34:21,859 [WARNING] Bridge não encontrado! Reiniciando...
+2026-03-07 18:34:21,864 [INFO] Bridge iniciado: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\backend_nfce\ExodoNfceBridge.exe
+2026-03-07 18:42:34,538 [INFO] ========================================
+2026-03-07 18:42:34,540 [INFO] ExodoNfceBridge Watchdog INICIADO
+2026-03-07 18:42:34,540 [INFO] Monitorando: ExodoNfceBridge.exe
+2026-03-07 18:42:34,540 [INFO] ========================================
+2026-03-07 18:42:35,317 [INFO] Firebase ativo no Watchdog (Controle Remoto Disponível)
+2026-03-07 18:42:37,577 [WARNING] Bridge não encontrado! Reiniciando...
+2026-03-07 18:42:37,583 [INFO] Bridge iniciado: C:\Users\USER\.gemini\antigravity\sistema_exodo_01-12\backend_nfce\ExodoNfceBridge.exe
+2026-03-11 21:24:38,611 [INFO] ========================================
+2026-03-11 21:24:38,611 [INFO] ExodoNfceBridge Watchdog INICIADO
+2026-03-11 21:24:38,613 [INFO] Monitorando: ExodoNfceBridge.exe
+2026-03-11 21:24:38,613 [INFO] ========================================
+2026-03-11 21:24:41,086 [INFO] Firebase ativo no Watchdog (Controle Remoto Disponível)
+2026-03-11 21:24:42,664 [INFO] Comando recebido pelo Watchdog: identify

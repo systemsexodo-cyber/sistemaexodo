@@ -10,6 +10,8 @@ import 'pdv_page.dart';
 import 'clientes_servicos_page.dart';
 import 'comissoes_page.dart';
 import 'historico_vendas_page.dart';
+import '../widgets/sync_status_widget.dart';
+
 
 class ServicosPage extends StatelessWidget {
   const ServicosPage({super.key});
@@ -120,6 +122,8 @@ class ServicosPage extends StatelessWidget {
                 });
               },
             ),
+            const SyncStatusWidget(),
+
           ],
         ),
         body: Consumer<DataService>(
@@ -264,6 +268,39 @@ class ServicosPage extends StatelessWidget {
                       },
                       tooltip: 'Editar serviço',
                     ),
+                    IconButton(
+                      icon: const Icon(Icons.delete, color: Colors.redAccent),
+                      onPressed: () {
+                        showDialog(
+                          context: context,
+                          builder: (context) => AlertDialog(
+                            title: const Text('Deletar Serviço'),
+                            content: Text('Tem certeza que deseja deletar o serviço "${servico.nome}"?'),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(context),
+                                child: const Text('Cancelar'),
+                              ),
+                              TextButton(
+                                onPressed: () {
+                                  dataService.deleteTipoServico(servico.id);
+                                  Navigator.pop(context);
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('Serviço removido com sucesso!'),
+                                      backgroundColor: Colors.redAccent,
+                                    ),
+                                  );
+                                },
+                                child: const Text('Deletar', style: TextStyle(color: Colors.redAccent)),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                      tooltip: 'Deletar serviço',
+                    ),
+                    const SizedBox(width: 8),
                     Text(
                       'R\$ ${(precoBase + valorAdicional).toStringAsFixed(2)}',
                       style: TextStyle(
@@ -522,6 +559,10 @@ class _EditarServicoDialogState extends State<_EditarServicoDialog> {
   late TextEditingController _precoController;
   late TextEditingController _valorAdicionalController;
   late TextEditingController _descricaoAdicionalController;
+  late TextEditingController _duracaoController;
+  late TextEditingController _intervaloController;
+  late TextEditingController _comissaoController;
+  late String _tipoComissao;
 
   @override
   void initState() {
@@ -541,6 +582,18 @@ class _EditarServicoDialogState extends State<_EditarServicoDialog> {
     _descricaoAdicionalController = TextEditingController(
       text: widget.servico.descricaoAdicional ?? '',
     );
+    _duracaoController = TextEditingController(
+      text: widget.servico.duracaoPadraoMinutos?.toString() ?? '60',
+    );
+    _intervaloController = TextEditingController(
+      text: widget.servico.intervaloMinutos?.toString() ?? '0',
+    );
+    _comissaoController = TextEditingController(
+      text: widget.servico.tipoComissao == 'Porcentagem' 
+          ? widget.servico.porcentagemComissao.toString().replaceAll('.', ',') 
+          : widget.servico.valorComissao.toString().replaceAll('.', ','),
+    );
+    _tipoComissao = widget.servico.tipoComissao;
   }
 
   @override
@@ -550,6 +603,9 @@ class _EditarServicoDialogState extends State<_EditarServicoDialog> {
     _precoController.dispose();
     _valorAdicionalController.dispose();
     _descricaoAdicionalController.dispose();
+    _duracaoController.dispose();
+    _intervaloController.dispose();
+    _comissaoController.dispose();
     super.dispose();
   }
 
@@ -580,6 +636,9 @@ class _EditarServicoDialogState extends State<_EditarServicoDialog> {
     final valorAdicionalTexto = _valorAdicionalController.text.trim().replaceAll(',', '.');
     final valorAdicional = double.tryParse(valorAdicionalTexto) ?? 0.0;
     
+    final duracao = int.tryParse(_duracaoController.text) ?? 60;
+    final intervalo = int.tryParse(_intervaloController.text) ?? 0;
+    
     // Debug para verificar valores antes de salvar
     debugPrint('>>> SALVANDO SERVIÇO:');
     debugPrint('>>> Nome: ${_nomeController.text}');
@@ -595,6 +654,11 @@ class _EditarServicoDialogState extends State<_EditarServicoDialog> {
       preco: preco,
       valorAdicional: valorAdicional,
       descricaoAdicional: _descricaoAdicionalController.text.isEmpty ? null : _descricaoAdicionalController.text,
+      duracaoPadraoMinutos: duracao,
+      intervaloMinutos: intervalo,
+      tipoComissao: _tipoComissao,
+      porcentagemComissao: _tipoComissao == 'Porcentagem' ? (double.tryParse(_comissaoController.text.replaceAll(',', '.')) ?? 0.0) : 0.0,
+      valorComissao: _tipoComissao == 'Fixo' ? (double.tryParse(_comissaoController.text.replaceAll(',', '.')) ?? 0.0) : 0.0,
       createdAt: widget.servico.createdAt,
       updatedAt: DateTime.now(),
     );
@@ -775,6 +839,104 @@ class _EditarServicoDialogState extends State<_EditarServicoDialog> {
                   ),
                 ),
               ),
+              const SizedBox(height: 12),
+              // Linha: Duração e Intervalo
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _duracaoController,
+                      keyboardType: TextInputType.number,
+                      style: TextStyle(color: colorScheme.onSurface),
+                      decoration: InputDecoration(
+                        labelText: 'Duração (min) *',
+                        hintText: 'Ex: 40',
+                        labelStyle: TextStyle(color: colorScheme.onSurfaceVariant),
+                        filled: true,
+                        fillColor: theme.inputDecorationTheme.fillColor,
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(color: colorScheme.outline),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(color: colorScheme.primary),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TextField(
+                      controller: _intervaloController,
+                      keyboardType: TextInputType.number,
+                      style: TextStyle(color: colorScheme.onSurface),
+                      decoration: InputDecoration(
+                        labelText: 'Intervalo (min)',
+                        hintText: 'Ex: 10',
+                        labelStyle: TextStyle(color: colorScheme.onSurfaceVariant),
+                        filled: true,
+                        fillColor: theme.inputDecorationTheme.fillColor,
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(color: colorScheme.outline),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(color: colorScheme.primary),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              // Comissão
+              DropdownButtonFormField<String>(
+                value: _tipoComissao,
+                dropdownColor: theme.dialogBackgroundColor,
+                style: TextStyle(color: colorScheme.onSurface),
+                decoration: InputDecoration(
+                  labelText: 'Tipo de Comissão',
+                  labelStyle: TextStyle(color: colorScheme.onSurfaceVariant),
+                  filled: true,
+                  fillColor: theme.inputDecorationTheme.fillColor,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                items: ['Porcentagem', 'Fixo'].map((String value) {
+                  return DropdownMenuItem<String>(
+                    value: value,
+                    child: Text(value),
+                  );
+                }).toList(),
+                onChanged: (value) {
+                  setState(() {
+                    _tipoComissao = value ?? 'Porcentagem';
+                  });
+                },
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _comissaoController,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                style: TextStyle(color: colorScheme.onSurface),
+                decoration: InputDecoration(
+                  labelText: _tipoComissao == 'Porcentagem' ? 'Comissão (%)' : 'Comissão (R\$)',
+                  labelStyle: TextStyle(color: colorScheme.onSurfaceVariant),
+                  prefixText: _tipoComissao == 'Porcentagem' ? '' : 'R\$ ',
+                  suffixText: _tipoComissao == 'Porcentagem' ? '%' : '',
+                  filled: true,
+                  fillColor: theme.inputDecorationTheme.fillColor,
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: colorScheme.outline),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: colorScheme.primary),
+                  ),
+                ),
+              ),
               const SizedBox(height: 24),
               Row(
                 children: [
@@ -825,6 +987,9 @@ class _CriarServicoDialogState extends State<_CriarServicoDialog> {
   final _valorAdicionalController = TextEditingController();
   final _descricaoAdicionalController = TextEditingController();
   final _duracaoController = TextEditingController(text: '60');
+  final _intervaloController = TextEditingController(text: '0');
+  final _comissaoController = TextEditingController(text: '0');
+  String _tipoComissao = 'Porcentagem';
 
   @override
   void dispose() {
@@ -834,6 +999,8 @@ class _CriarServicoDialogState extends State<_CriarServicoDialog> {
     _valorAdicionalController.dispose();
     _descricaoAdicionalController.dispose();
     _duracaoController.dispose();
+    _intervaloController.dispose();
+    _comissaoController.dispose();
     super.dispose();
   }
 
@@ -842,6 +1009,7 @@ class _CriarServicoDialogState extends State<_CriarServicoDialog> {
     final preco = double.tryParse(_precoController.text.replaceAll(',', '.')) ?? 0.0;
     final valorAdicional = double.tryParse(_valorAdicionalController.text.replaceAll(',', '.')) ?? 0.0;
     final duracao = int.tryParse(_duracaoController.text) ?? 60;
+    final intervalo = int.tryParse(_intervaloController.text) ?? 0;
 
     if (_nomeController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -865,6 +1033,10 @@ class _CriarServicoDialogState extends State<_CriarServicoDialog> {
       valorAdicional: valorAdicional,
       descricaoAdicional: _descricaoAdicionalController.text.isEmpty ? null : _descricaoAdicionalController.text,
       duracaoPadraoMinutos: duracao,
+      intervaloMinutos: intervalo,
+      tipoComissao: _tipoComissao,
+      porcentagemComissao: _tipoComissao == 'Porcentagem' ? (double.tryParse(_comissaoController.text.replaceAll(',', '.')) ?? 0.0) : 0.0,
+      valorComissao: _tipoComissao == 'Fixo' ? (double.tryParse(_comissaoController.text.replaceAll(',', '.')) ?? 0.0) : 0.0,
       createdAt: DateTime.now(),
       updatedAt: DateTime.now(),
     );
@@ -965,6 +1137,74 @@ class _CriarServicoDialogState extends State<_CriarServicoDialog> {
                     _buildField(
                       controller: _descricaoAdicionalController,
                       label: 'Descrição do Valor Adicional',
+                    ),
+                    const SizedBox(height: 12),
+                    
+                    // Linha: Duração e Intervalo
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _buildField(
+                            controller: _duracaoController,
+                            label: 'Duração (min) *',
+                            keyboardType: TextInputType.number,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: _buildField(
+                            controller: _intervaloController,
+                            label: 'Intervalo (min)',
+                            keyboardType: TextInputType.number,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    
+                    // Linha: Tipo e Valor de Comissão
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF121212),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: Colors.white.withOpacity(0.05)),
+                            ),
+                            child: DropdownButtonFormField<String>(
+                              value: _tipoComissao,
+                              dropdownColor: const Color(0xFF1A1A1A),
+                              style: const TextStyle(color: Colors.white, fontSize: 14),
+                              decoration: const InputDecoration(
+                                labelText: 'Tipo de Comissão',
+                                labelStyle: TextStyle(color: Colors.white54, fontSize: 13),
+                                contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                                border: InputBorder.none,
+                              ),
+                              items: ['Porcentagem', 'Fixo'].map((String value) {
+                                return DropdownMenuItem<String>(
+                                  value: value,
+                                  child: Text(value),
+                                );
+                              }).toList(),
+                              onChanged: (value) {
+                                setState(() {
+                                  _tipoComissao = value ?? 'Porcentagem';
+                                });
+                              },
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: _buildField(
+                            controller: _comissaoController,
+                            label: _tipoComissao == 'Porcentagem' ? 'Comissão (%)' : 'Comissão (R\$)',
+                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          ),
+                        ),
+                      ],
                     ),
                     
                     const SizedBox(height: 24),

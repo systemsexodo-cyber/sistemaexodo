@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
-import '../services/data_service.dart';
-import '../models/mesa_comanda.dart';
-import '../models/produto.dart';
+import 'package:sistema_exodo_novo/models/adicional_produto.dart';
+import 'package:sistema_exodo_novo/services/data_service.dart';
+import 'package:sistema_exodo_novo/services/auth_service.dart';
+import 'package:sistema_exodo_novo/models/mesa_comanda.dart';
+import 'package:sistema_exodo_novo/models/produto.dart';
+import 'package:sistema_exodo_novo/models/conta_pagar.dart';
+import 'package:sistema_exodo_novo/pages/venda_direta_page.dart';
 import 'package:uuid/uuid.dart';
 
 const uuid = Uuid();
@@ -21,7 +25,14 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
   String _filtroStatus = 'Todas'; // Todas, Abertas, Fechadas
   String _filtroSetor = 'Todos'; // Todos, Cozinha, Bar
   MesaComanda? _mesaComandaSelecionada;
+  String _termoBusca = '';
+  final _buscaController = TextEditingController();
 
+  @override
+  void dispose() {
+    _buscaController.dispose();
+    super.dispose();
+  }
   @override
   Widget build(BuildContext context) {
     final dataService = Provider.of<DataService>(context, listen: true);
@@ -29,169 +40,174 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
     // Por enquanto, vamos usar uma lista em memória (depois integrar com DataService)
     // TODO: Adicionar gerenciamento de mesas/comandas no DataService
     
-    return Scaffold(
-      backgroundColor: const Color(0xFF0F0F1E),
-      body: Column(
-        children: [
-          _buildHeader(),
-          _buildFiltros(),
-          Expanded(
-            child: _mesaComandaSelecionada != null
-                ? _buildDetalhesMesaComanda(_mesaComandaSelecionada!, dataService)
-                : _buildListaMesasComandas(dataService),
-          ),
-        ],
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _abrirNovaMesaComanda(context, dataService),
-        icon: const Icon(Icons.add),
-        label: Text(_tipoSelecionado == TipoControle.mesa ? 'Nova Mesa' : 'Nova Comanda'),
-        backgroundColor: Colors.orange,
-      ),
-    );
-  }
-
-  Widget _buildHeader() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1E1E2E),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.3),
-            blurRadius: 4,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.table_restaurant, color: Colors.orange, size: 28),
-          const SizedBox(width: 12),
-          const Text(
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        backgroundColor: const Color(0xFF0F0F1E),
+        appBar: AppBar(
+          backgroundColor: const Color(0xFF1E1E2E),
+          elevation: 0,
+          title: const Text(
             'Controle de Mesas e Comandas',
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
-            ),
+            style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
           ),
-          const Spacer(),
-          // Toggle entre Mesa e Comanda
-          Container(
-            decoration: BoxDecoration(
-              color: const Color(0xFF2A2A3E),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _buildToggleButton(
-                  'Mesa',
-                  TipoControle.mesa,
-                  Icons.table_restaurant,
-                ),
-                _buildToggleButton(
-                  'Comanda',
-                  TipoControle.comanda,
-                  Icons.receipt_long,
-                ),
-              ],
-            ),
+          bottom: TabBar(
+            onTap: (index) {
+              setState(() {
+                _tipoSelecionado = index == 0 ? TipoControle.mesa : TipoControle.comanda;
+                _mesaComandaSelecionada = null;
+              });
+            },
+            indicatorColor: Colors.orange,
+            labelColor: Colors.orange,
+            unselectedLabelColor: Colors.grey,
+            tabs: const [
+              Tab(
+                icon: Icon(Icons.table_restaurant),
+                text: 'MESAS',
+              ),
+              Tab(
+                icon: Icon(Icons.receipt_long),
+                text: 'COMANDAS',
+              ),
+            ],
           ),
-        ],
+        ),
+        body: _mesaComandaSelecionada != null
+            ? _buildDetalhesMesaComanda(_mesaComandaSelecionada!, dataService)
+            : Column(
+                children: [
+                  _buildFiltros(),
+                  Expanded(
+                    child: _buildMapaInteligente(dataService),
+                  ),
+                ],
+              ),
+        floatingActionButton: FloatingActionButton.extended(
+          onPressed: () => _abrirNovaMesaComanda(context, dataService),
+          icon: const Icon(Icons.add),
+          label: Text(_tipoSelecionado == TipoControle.mesa ? 'Nova Mesa' : 'Nova Comanda'),
+          backgroundColor: _tipoSelecionado == TipoControle.mesa ? Colors.orange : Colors.purple,
+        ),
       ),
     );
   }
 
-  Widget _buildToggleButton(String label, TipoControle tipo, IconData icon) {
-    final isSelected = _tipoSelecionado == tipo;
-    return GestureDetector(
-      onTap: () {
-        setState(() {
-          _tipoSelecionado = tipo;
-          _mesaComandaSelecionada = null; // Limpar seleção ao trocar tipo
-        });
-      },
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        decoration: BoxDecoration(
-          color: isSelected ? Colors.orange : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, color: isSelected ? Colors.white : Colors.grey, size: 18),
-            const SizedBox(width: 6),
-            Text(
-              label,
-              style: TextStyle(
-                color: isSelected ? Colors.white : Colors.grey,
-                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  // Removido _buildHeader pois agora usamos AppBar com TabBar
 
   Widget _buildFiltros() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      color: const Color(0xFF1A1A2E),
-      child: Row(
+      padding: const EdgeInsets.all(16),
+      color: const Color(0xFF1E1E2E),
+      child: Column(
         children: [
-          // Filtro de Status
-          Expanded(
-            child: DropdownButton<String>(
-              value: _filtroStatus,
-              isExpanded: true,
-              dropdownColor: const Color(0xFF2A2A3E),
-              style: const TextStyle(color: Colors.white),
-              items: ['Todas', 'Abertas', 'Fechadas']
-                  .map((status) => DropdownMenuItem(
-                        value: status,
-                        child: Text(status),
-                      ))
-                  .toList(),
-              onChanged: (value) {
-                setState(() {
-                  _filtroStatus = value!;
-                });
-              },
+          // Barra de Busca
+          TextField(
+            controller: _buscaController,
+            onChanged: (value) {
+              setState(() {
+                _termoBusca = value.toLowerCase();
+              });
+            },
+            style: const TextStyle(color: Colors.white),
+            decoration: InputDecoration(
+              hintText: 'Buscar mesa ou comanda...',
+              hintStyle: const TextStyle(color: Colors.grey),
+              prefixIcon: const Icon(Icons.search, color: Colors.orange),
+              suffixIcon: _termoBusca.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.clear, color: Colors.grey),
+                      onPressed: () {
+                        _buscaController.clear();
+                        setState(() {
+                          _termoBusca = '';
+                        });
+                      },
+                    )
+                  : null,
+              filled: true,
+              fillColor: const Color(0xFF2A2A3E),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide.none,
+              ),
+              contentPadding: const EdgeInsets.symmetric(vertical: 0),
             ),
           ),
-          const SizedBox(width: 12),
-          // Filtro de Setor
-          Expanded(
-            child: DropdownButton<String>(
-              value: _filtroSetor,
-              isExpanded: true,
-              dropdownColor: const Color(0xFF2A2A3E),
-              style: const TextStyle(color: Colors.white),
-              items: ['Todos', 'Cozinha', 'Bar']
-                  .map((setor) => DropdownMenuItem(
-                        value: setor,
-                        child: Text(setor),
-                      ))
-                  .toList(),
-              onChanged: (value) {
-                setState(() {
-                  _filtroSetor = value!;
-                });
-              },
-            ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              // Filtro de Status
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF2A2A3E),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      value: _filtroStatus,
+                      isExpanded: true,
+                      dropdownColor: const Color(0xFF2A2A3E),
+                      style: const TextStyle(color: Colors.white),
+                      icon: const Icon(Icons.filter_list, color: Colors.orange, size: 18),
+                      items: ['Todas', 'Abertas', 'Fechadas']
+                          .map((status) => DropdownMenuItem(
+                                value: status,
+                                child: Text(status),
+                              ))
+                          .toList(),
+                      onChanged: (value) {
+                        setState(() {
+                          _filtroStatus = value!;
+                        });
+                      },
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              // Filtro de Setor
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF2A2A3E),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      value: _filtroSetor,
+                      isExpanded: true,
+                      dropdownColor: const Color(0xFF2A2A3E),
+                      style: const TextStyle(color: Colors.white),
+                      icon: const Icon(Icons.restaurant_menu, color: Colors.orange, size: 18),
+                      items: ['Todos', 'Cozinha', 'Bar']
+                          .map((setor) => DropdownMenuItem(
+                                value: setor,
+                                child: Text(setor),
+                              ))
+                          .toList(),
+                      onChanged: (value) {
+                        setState(() {
+                          _filtroSetor = value!;
+                        });
+                      },
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),
     );
   }
 
-  Widget _buildListaMesasComandas(DataService dataService) {
-    // Buscar mesas/comandas do DataService
-    final todasMesasComandas = dataService.mesasComandas;
+  Widget _buildMapaInteligente(DataService dataService) {
+    // Buscar mesas/comandas do DataService (excluindo a comanda virtual de auditoria do carrinho)
+    final todasMesasComandas = dataService.todasMesasComandas.where((m) => m.id != 'carrinho-deletados').toList();
     
     // Filtrar por tipo (Mesa ou Comanda)
     var mesasComandas = todasMesasComandas.where((m) => m.tipo == _tipoSelecionado).toList();
@@ -201,6 +217,10 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
       mesasComandas = mesasComandas.where((m) => m.status == 'Aberta').toList();
     } else if (_filtroStatus == 'Fechadas') {
       mesasComandas = mesasComandas.where((m) => m.status == 'Fechada').toList();
+    } else {
+      // Se o filtro for 'Todas', exibimos apenas as ativas ('Aberta') no painel principal
+      // para não lotar a interface de comandas/mesas passadas. O usuário seleciona 'Fechadas' para ver as finalizadas.
+      mesasComandas = mesasComandas.where((m) => m.status == 'Aberta').toList();
     }
     
     // Filtrar por setor (Cozinha, Bar)
@@ -210,11 +230,25 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
       mesasComandas = mesasComandas.where((m) => m.itensBar.isNotEmpty).toList();
     }
     
-    // Ordenar: abertas primeiro, depois por data de abertura (mais recente primeiro)
+    // Filtrar por busca
+    if (_termoBusca.isNotEmpty) {
+      mesasComandas = mesasComandas.where((m) {
+        return m.numero.toLowerCase().contains(_termoBusca) ||
+               (m.clienteNome?.toLowerCase().contains(_termoBusca) ?? false);
+      }).toList();
+    }
+    
+    // Ordenar: abertas primeiro, depois por número
     mesasComandas.sort((a, b) {
       if (a.status == 'Aberta' && b.status != 'Aberta') return -1;
       if (a.status != 'Aberta' && b.status == 'Aberta') return 1;
-      return b.dataAbertura.compareTo(a.dataAbertura);
+      
+      // Tentar ordenar numericamente se possível
+      final numA = int.tryParse(a.numero.replaceAll(RegExp(r'[^0-9]'), '')) ?? 1000000;
+      final numB = int.tryParse(b.numero.replaceAll(RegExp(r'[^0-9]'), '')) ?? 1000000;
+      if (numA != numB) return numA.compareTo(numB);
+      
+      return a.numero.compareTo(b.numero);
     });
     
     if (mesasComandas.isEmpty) {
@@ -231,18 +265,10 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
             ),
             const SizedBox(height: 16),
             Text(
-              'Nenhuma ${_tipoSelecionado == TipoControle.mesa ? "mesa" : "comanda"} aberta',
+              'Nenhuma ${_tipoSelecionado == TipoControle.mesa ? "mesa" : "comanda"} encontrada',
               style: TextStyle(
                 fontSize: 18,
                 color: Colors.grey.withOpacity(0.7),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Toque no botão + para criar uma nova',
-              style: TextStyle(
-                fontSize: 14,
-                color: Colors.grey.withOpacity(0.5),
               ),
             ),
           ],
@@ -250,134 +276,293 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
       );
     }
 
-    return ListView.builder(
+    // Tanto Mesa quanto Comanda agora usam GridView (Quadros)
+    return GridView.builder(
       padding: const EdgeInsets.all(16),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        childAspectRatio: 1.1,
+        crossAxisSpacing: 16,
+        mainAxisSpacing: 16,
+      ),
       itemCount: mesasComandas.length,
       itemBuilder: (context, index) {
-        final mesaComanda = mesasComandas[index];
-        return _buildCardMesaComanda(mesaComanda);
+        return _buildQuadroMesaComanda(mesasComandas[index], dataService);
       },
+    );
+  }
+
+  Widget _buildQuadroMesaComanda(MesaComanda mesaComanda, DataService dataService) {
+    final temPendentes = mesaComanda.temItensPendentes;
+    final temProntos = mesaComanda.temItensProntos;
+    final pendente = mesaComanda.totalPendente;
+    final estaPago = mesaComanda.estaTotalmentePago;
+    final isComanda = mesaComanda.tipo == TipoControle.comanda;
+    
+    Color accentColor = isComanda ? const Color(0xFF9C27B0) : const Color(0xFFFF9800);
+    if (temPendentes) accentColor = Colors.redAccent;
+    else if (temProntos) accentColor = Colors.greenAccent;
+
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            const Color(0xFF2A2A3E),
+            const Color(0xFF1E1E2E).withOpacity(0.9),
+          ],
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: accentColor.withOpacity(0.15),
+            blurRadius: 15,
+            spreadRadius: 2,
+            offset: const Offset(0, 5),
+          ),
+        ],
+        border: Border.all(
+          color: accentColor.withOpacity(0.3),
+          width: 1.5,
+        ),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(20),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: () => setState(() => _mesaComandaSelecionada = mesaComanda),
+            child: Stack(
+              children: [
+                // Detalhe decorativo de fundo
+                Positioned(
+                  top: -20,
+                  right: -20,
+                  child: Container(
+                    width: 80,
+                    height: 80,
+                    decoration: BoxDecoration(
+                      color: accentColor.withOpacity(0.05),
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: accentColor.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              isComanda ? 'COMANDA' : 'MESA',
+                              style: TextStyle(
+                                color: accentColor,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 1.2,
+                              ),
+                            ),
+                          ),
+                          Row(
+                            children: [
+                              if (temProntos)
+                                Container(
+                                  padding: const EdgeInsets.all(4),
+                                  decoration: const BoxDecoration(
+                                    color: Colors.greenAccent,
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(Icons.check, color: Colors.black, size: 10),
+                                ),
+                              const SizedBox(width: 6),
+                              IconButton(
+                                onPressed: () => _deletarMesaComanda(context, mesaComanda, dataService),
+                                icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 16),
+                                tooltip: 'Deletar',
+                                padding: EdgeInsets.zero,
+                                visualDensity: VisualDensity.compact,
+                                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                                style: IconButton.styleFrom(
+                                  backgroundColor: Colors.red.withOpacity(0.12),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        mesaComanda.numero,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 24,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: -0.5,
+                        ),
+                      ),
+                      if (mesaComanda.clienteNome != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(
+                            mesaComanda.clienteNome!,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.5),
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      const Spacer(),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '${mesaComanda.itens.length} itens',
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.4),
+                                  fontSize: 11,
+                                ),
+                              ),
+                              if (estaPago)
+                                const Text(
+                                  'QUITADO',
+                                  style: TextStyle(
+                                    color: Colors.greenAccent,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                            ],
+                          ),
+                          Text(
+                            estaPago ? 'PAID' : NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(pendente),
+                            style: TextStyle(
+                              color: estaPago ? Colors.greenAccent : Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 
   Widget _buildCardMesaComanda(MesaComanda mesaComanda) {
     final temPendentes = mesaComanda.temItensPendentes;
-    final temEmPreparo = mesaComanda.temItensEmPreparo;
     final temProntos = mesaComanda.temItensProntos;
+    final estaPago = mesaComanda.estaTotalmentePago;
+    final isComanda = mesaComanda.tipo == TipoControle.comanda;
     
-    return Card(
+    Color accentColor = isComanda ? const Color(0xFF9C27B0) : const Color(0xFFFF9800);
+    if (temPendentes) accentColor = Colors.redAccent;
+    else if (temProntos) accentColor = Colors.greenAccent;
+
+    return Container(
       margin: const EdgeInsets.only(bottom: 12),
-      color: const Color(0xFF1E1E2E),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E1E2E).withOpacity(0.6),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: accentColor.withOpacity(0.2)),
+      ),
       child: InkWell(
-        onTap: () {
-          setState(() {
-            _mesaComandaSelecionada = mesaComanda;
-          });
-        },
+        onTap: () => setState(() => _mesaComandaSelecionada = mesaComanda),
+        borderRadius: BorderRadius.circular(16),
         child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Row(
             children: [
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: Colors.orange,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      mesaComanda.numero,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
-                      ),
+              Container(
+                width: 50,
+                height: 50,
+                decoration: BoxDecoration(
+                  color: accentColor.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Center(
+                  child: Text(
+                    mesaComanda.numero.replaceAll(RegExp(r'[^0-9]'), ''),
+                    style: TextStyle(
+                      color: accentColor,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w900,
                     ),
                   ),
-                  const Spacer(),
-                  if (temPendentes)
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: Colors.red.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(4),
-                        border: Border.all(color: Colors.red),
-                      ),
-                      child: Text(
-                        '${mesaComanda.itensPendentes.length} pendente(s)',
-                        style: const TextStyle(color: Colors.red, fontSize: 12),
-                      ),
-                    ),
-                  if (temEmPreparo) ...[
-                    const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: Colors.orange.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(4),
-                        border: Border.all(color: Colors.orange),
-                      ),
-                      child: Text(
-                        '${mesaComanda.itensEmPreparo.length} em preparo',
-                        style: const TextStyle(color: Colors.orange, fontSize: 12),
-                      ),
-                    ),
-                  ],
-                  if (temProntos) ...[
-                    const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: Colors.green.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(4),
-                        border: Border.all(color: Colors.green),
-                      ),
-                      child: Text(
-                        '${mesaComanda.itensProntos.length} pronto(s)',
-                        style: const TextStyle(color: Colors.green, fontSize: 12),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-              if (mesaComanda.clienteNome != null) ...[
-                const SizedBox(height: 8),
-                Text(
-                  'Cliente: ${mesaComanda.clienteNome}',
-                  style: const TextStyle(color: Colors.grey, fontSize: 14),
                 ),
-              ],
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
                       children: [
                         Text(
-                          '${mesaComanda.itens.length} item(ns)',
-                          style: const TextStyle(color: Colors.white70, fontSize: 14),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Total: ${NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(mesaComanda.totalCalculado)}',
-                          style: const TextStyle(
-                            color: Colors.green,
-                            fontSize: 16,
+                          isComanda ? 'COMANDA' : 'MESA',
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.4),
+                            fontSize: 10,
                             fontWeight: FontWeight.bold,
+                            letterSpacing: 1,
                           ),
                         ),
+                        const SizedBox(width: 8),
+                        if (estaPago)
+                          const Text(
+                            '• PAGO',
+                            style: TextStyle(color: Colors.greenAccent, fontSize: 10, fontWeight: FontWeight.bold),
+                          ),
                       ],
                     ),
+                    const SizedBox(height: 2),
+                    Text(
+                      mesaComanda.clienteNome ?? 'Sem Cliente',
+                      style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(mesaComanda.totalPendente),
+                    style: TextStyle(
+                      color: estaPago ? Colors.greenAccent : Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
-                  Icon(
-                    Icons.chevron_right,
-                    color: Colors.grey.withOpacity(0.5),
+                  Text(
+                    '${mesaComanda.itens.length} itens',
+                    style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 11),
                   ),
                 ],
               ),
+              const SizedBox(width: 12),
+              Icon(Icons.chevron_right, color: Colors.white.withOpacity(0.2)),
             ],
           ),
         ),
@@ -456,6 +641,12 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
                         _fecharMesaComanda(context, mesaComanda, dataService);
                       } else if (value == 'editarCouvert') {
                         _editarCouvert(context, mesaComanda, dataService);
+                      } else if (value == 'limpar') {
+                        _limparMesaComanda(context, mesaComanda, dataService);
+                      } else if (value == 'receber') {
+                        _navegarParaReceber(context, mesaComanda);
+                      } else if (value == 'deletar') {
+                        _deletarMesaComanda(context, mesaComanda, dataService);
                       }
                     },
                     itemBuilder: (context) => [
@@ -476,6 +667,36 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
                             Icon(Icons.close, color: Colors.orange, size: 20),
                             SizedBox(width: 8),
                             Text('Fechar', style: TextStyle(color: Colors.orange)),
+                          ],
+                        ),
+                      ),
+                      const PopupMenuItem(
+                        value: 'receber',
+                        child: Row(
+                          children: [
+                            Icon(Icons.monetization_on, color: Colors.greenAccent, size: 20),
+                            SizedBox(width: 8),
+                            Text('Receber / Finalizar', style: TextStyle(color: Colors.greenAccent)),
+                          ],
+                        ),
+                      ),
+                      const PopupMenuItem(
+                        value: 'limpar',
+                        child: Row(
+                          children: [
+                            Icon(Icons.delete_sweep, color: Colors.redAccent, size: 20),
+                            SizedBox(width: 8),
+                            Text('Limpar Mesa (Histórico)', style: TextStyle(color: Colors.redAccent)),
+                          ],
+                        ),
+                      ),
+                      const PopupMenuItem(
+                        value: 'deletar',
+                        child: Row(
+                          children: [
+                            Icon(Icons.delete_forever, color: Colors.redAccent, size: 20),
+                            SizedBox(width: 8),
+                            Text('Deletar', style: TextStyle(color: Colors.redAccent)),
                           ],
                         ),
                       ),
@@ -514,7 +735,7 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        '${mesaComanda.quantidadePessoasCouvert} pessoa(s) × ${NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(mesaComanda.valorCouvertPorPessoa)} = ${NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(mesaComanda.valorCouvertCalculado)}',
+                        '${mesaComanda.quantidadePessoasCouvert} pessoa(s) × ${NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(mesaComanda.valorCouvertPorPessoa)} = ${NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(mesaComanda.valorCouvertCalculado)}${mesaComanda.nomeQuemPagouCouvert != null ? " • Pago por: ${mesaComanda.nomeQuemPagouCouvert}" : ""}',
                         style: const TextStyle(
                           color: Colors.white70,
                           fontSize: 14,
@@ -558,6 +779,74 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
                 ),
               ],
             ),
+          ),
+        ),
+        // Rodapé de Ações Rápidas
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: const Color(0xFF1E1E2E),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.3),
+                blurRadius: 8,
+                offset: const Offset(0, -2),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                flex: 2,
+                child: ElevatedButton.icon(
+                  onPressed: () => _navegarParaReceber(context, mesaComanda),
+                  icon: const Icon(Icons.monetization_on),
+                  label: const Text('RECEBER / FINALIZAR'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green.shade700,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 20),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              // Botão: Registrar Pagamento por Valor
+              SizedBox(
+                width: 56,
+                child: ElevatedButton(
+                  onPressed: () => _registrarPagamentoComanda(context, mesaComanda),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.teal.shade700,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 20),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: const Icon(Icons.attach_money, size: 22),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                flex: 1,
+                child: ElevatedButton.icon(
+                  onPressed: () => _limparMesaComanda(context, mesaComanda, dataService),
+                  icon: const Icon(Icons.cleaning_services),
+                  label: const Text('LIMPAR'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red.shade900,
+                    foregroundColor: Colors.white70,
+                    padding: const EdgeInsets.symmetric(vertical: 20),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       ],
@@ -661,6 +950,21 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
                     ],
                   ),
                 ),
+                // Botão Editar Observação
+                IconButton(
+                  icon: Icon(
+                    item.observacao != null && item.observacao!.isNotEmpty 
+                      ? Icons.comment 
+                      : Icons.add_comment_outlined,
+                    color: item.observacao != null && item.observacao!.isNotEmpty
+                      ? Colors.orange
+                      : Colors.grey.withOpacity(0.5),
+                    size: 20,
+                  ),
+                  onPressed: () => _editarObservacaoItemMesa(item, mesaComanda, dataService),
+                  tooltip: 'Adicionar observação ao item',
+                ),
+                const SizedBox(width: 8),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(
@@ -686,6 +990,35 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
                 ),
               ],
             ),
+            if (item.observacao != null && item.observacao!.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withOpacity(0.05),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.orange.withOpacity(0.2)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.info_outline, color: Colors.orange, size: 14),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          item.observacao!,
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.7),
+                            fontSize: 12,
+                            fontStyle: FontStyle.italic,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             const SizedBox(height: 12),
             Row(
               children: [
@@ -750,10 +1083,69 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
                   ),
               ],
             ),
+            // Botão Cancelar Item
+            if (item.status != StatusItem.cancelado) ...[
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: () => _cancelarItem(item, mesaComanda, dataService),
+                  icon: const Icon(Icons.cancel, size: 16),
+                  label: const Text('Cancelar Item'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.red,
+                    side: const BorderSide(color: Colors.red),
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _cancelarItem(ItemMesaComanda item, MesaComanda mesaComanda, DataService dataService) async {
+    final confirmar = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        title: const Text('Cancelar Item', style: TextStyle(color: Colors.red)),
+        content: Text(
+          'Deseja cancelar "${item.nome}"? Esta ação não pode ser desfeita.',
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Não', style: TextStyle(color: Colors.grey))),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            child: const Text('Sim, Cancelar'),
+          ),
+        ],
+      ),
+    );
+    if (confirmar != true) return;
+    try {
+      final authService = Provider.of<AuthService>(context, listen: false);
+      final usuarioLogado = authService.usuarioAtual?.nome ?? 'Sistema';
+      await dataService.atualizarStatusItemMesaComanda(
+        mesaComanda.id,
+        item.id,
+        StatusItem.cancelado,
+        usuarioModificou: usuarioLogado,
+        acaoRealizada: 'Item cancelado',
+      );
+      setState(() {
+        _mesaComandaSelecionada = dataService.mesasComandas.firstWhere((m) => m.id == mesaComanda.id);
+      });
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erro ao cancelar item: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
   }
 
   Future<void> _marcarEmPreparo(ItemMesaComanda item, MesaComanda mesaComanda, DataService dataService) async {
@@ -832,12 +1224,87 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
     }
   }
 
+  Future<void> _editarObservacaoItemMesa(ItemMesaComanda item, MesaComanda mesaComanda, DataService dataService) async {
+    final controller = TextEditingController(text: item.observacao ?? '');
+    final authService = Provider.of<AuthService>(context, listen: false);
+
+    await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            const Icon(Icons.notes, color: Colors.orange),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Observação: ${item.nome}',
+                style: const TextStyle(color: Colors.white, fontSize: 18),
+              ),
+            ),
+          ],
+        ),
+        content: TextField(
+          controller: controller,
+          maxLines: 3,
+          autofocus: true,
+          style: const TextStyle(color: Colors.white),
+          decoration: InputDecoration(
+            hintText: 'Ex: Bem passado, sem cebola...',
+            hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
+            filled: true,
+            fillColor: Colors.black.withOpacity(0.2),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide.none,
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('CANCELAR', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              try {
+                await dataService.atualizarObservacaoItemMesaComanda(
+                  mesaComanda.id,
+                  item.id,
+                  controller.text.trim(),
+                  usuarioModificou: authService.usuarioAtual?.nome,
+                );
+                
+                if (mounted) {
+                  Navigator.pop(context);
+                  setState(() {
+                    _mesaComandaSelecionada = dataService.mesasComandas.firstWhere((m) => m.id == mesaComanda.id);
+                  });
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Erro: $e'), backgroundColor: Colors.red),
+                  );
+                }
+              }
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+            child: const Text('SALVAR'),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _abrirNovaMesaComanda(BuildContext context, DataService dataService) {
     final numeroController = TextEditingController();
     final clienteController = TextEditingController();
     final observacaoController = TextEditingController();
     final quantidadePessoasController = TextEditingController();
     final valorCouvertPorPessoaController = TextEditingController();
+    final nomeQuemPagouCouvertController = TextEditingController();
 
     showDialog(
       context: context,
@@ -987,6 +1454,21 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
                       ),
                       style: const TextStyle(color: Colors.white),
                     ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: nomeQuemPagouCouvertController,
+                      decoration: const InputDecoration(
+                        labelText: 'Nome de quem pagou',
+                        labelStyle: TextStyle(color: Colors.grey),
+                        enabledBorder: UnderlineInputBorder(
+                          borderSide: BorderSide(color: Colors.grey),
+                        ),
+                        focusedBorder: UnderlineInputBorder(
+                          borderSide: BorderSide(color: Colors.orange),
+                        ),
+                      ),
+                      style: const TextStyle(color: Colors.white),
+                    ),
                   ],
                 ),
               ),
@@ -999,20 +1481,25 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
             child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
           ),
           ElevatedButton(
-            onPressed: numeroExiste || numeroController.text.trim().isEmpty
+            onPressed: numeroExiste
                 ? null
                 : () async {
-                    // Validação final antes de criar (dupla verificação)
-                    final numeroFinal = numeroController.text.trim();
+                    // Se o número estiver vazio, gerar um automaticamente
+                    String numeroFinal = numeroController.text.trim();
                     if (numeroFinal.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Por favor, informe o número'),
-                    backgroundColor: Colors.red,
-                  ),
-                );
-                return;
-              }
+                      final totalDesseTipo = dataService.mesasComandas
+                          .where((m) => m.tipo == _tipoSelecionado)
+                          .length;
+                      final prefixo = _tipoSelecionado == TipoControle.mesa ? 'MESA' : 'CMD';
+                      numeroFinal = '$prefixo-${(totalDesseTipo + 1).toString().padLeft(2, '0')}';
+                      
+                      // Garantir que o gerado não existe (evitar colisão se deletou algum)
+                      int tentativa = 1;
+                      while (dataService.mesasComandas.any((m) => m.numero == numeroFinal)) {
+                        numeroFinal = '$prefixo-${(totalDesseTipo + 1 + tentativa).toString().padLeft(2, '0')}';
+                        tentativa++;
+                      }
+                    }
 
                     // Verificar se número já existe (em mesas ou comandas)
                     final numeroExisteFinal = dataService.mesasComandas.any(
@@ -1036,6 +1523,9 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
               final valorPorPessoaFinal = valorCouvertPorPessoaController.text.trim().isEmpty
                   ? null
                   : double.tryParse(valorCouvertPorPessoaController.text.trim().replaceAll(',', '.'));
+              final nomeQuemPagouFinal = nomeQuemPagouCouvertController.text.trim().isEmpty
+                  ? null
+                  : nomeQuemPagouCouvertController.text.trim();
 
               final novaMesaComanda = MesaComanda(
                 id: uuid.v4(),
@@ -1051,6 +1541,7 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
                     : observacaoController.text.trim(),
                 quantidadePessoasCouvert: quantidadePessoasFinal,
                 valorCouvertPorPessoa: valorPorPessoaFinal,
+                nomeQuemPagouCouvert: nomeQuemPagouFinal,
               );
 
               try {
@@ -1093,6 +1584,9 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
       text: mesaComanda.valorCouvertPorPessoa != null
           ? mesaComanda.valorCouvertPorPessoa!.toStringAsFixed(2).replaceAll('.', ',')
           : '',
+    );
+    final nomeQuemPagouController = TextEditingController(
+      text: mesaComanda.nomeQuemPagouCouvert ?? '',
     );
 
     await showDialog(
@@ -1139,8 +1633,7 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
                     ),
                     style: const TextStyle(color: Colors.white),
                   ),
-                  const SizedBox(height: 24),
-                  TextField(
+                       TextField(
                     controller: valorCouvertPorPessoaController,
                     keyboardType: const TextInputType.numberWithOptions(decimal: true),
                     onChanged: (value) => setDialogState(() {}),
@@ -1151,6 +1644,21 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
                         borderSide: BorderSide(color: Colors.grey),
                       ),
                       focusedBorder: const UnderlineInputBorder(
+                        borderSide: BorderSide(color: Colors.orange),
+                      ),
+                    ),
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  const SizedBox(height: 24),
+                  TextField(
+                    controller: nomeQuemPagouController,
+                    decoration: const InputDecoration(
+                      labelText: 'Nome de quem pagou',
+                      labelStyle: TextStyle(color: Colors.grey),
+                      enabledBorder: UnderlineInputBorder(
+                        borderSide: BorderSide(color: Colors.grey),
+                      ),
+                      focusedBorder: UnderlineInputBorder(
                         borderSide: BorderSide(color: Colors.orange),
                       ),
                     ),
@@ -1203,14 +1711,18 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
                   final valorPorPessoaFinal = valorCouvertPorPessoaController.text.trim().isEmpty
                       ? null
                       : double.tryParse(valorCouvertPorPessoaController.text.trim().replaceAll(',', '.'));
+                  final nomeFinal = nomeQuemPagouController.text.trim().isEmpty
+                      ? null
+                      : nomeQuemPagouController.text.trim();
 
-                  // Validar se pelo menos um campo está preenchido
+                  // Validar se pelo menos um campo está preenchido (exceto o nome que é opcional)
                   if (quantidadePessoasFinal == null && valorPorPessoaFinal == null) {
                     // Se ambos estiverem vazios, remover o couvert
                     try {
                       final mesaAtualizada = mesaComanda.copyWith(
                         quantidadePessoasCouvert: null,
                         valorCouvertPorPessoa: null,
+                        nomeQuemPagouCouvert: null,
                       );
                       await dataService.updateMesaComanda(mesaAtualizada);
                       if (context.mounted) {
@@ -1238,21 +1750,11 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
                     return;
                   }
 
-                  // Validar que ambos os campos devem estar preenchidos
-                  if (quantidadePessoasFinal == null || valorPorPessoaFinal == null || quantidadePessoasFinal <= 0 || valorPorPessoaFinal <= 0) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Informe a quantidade de pessoas e o valor por pessoa'),
-                        backgroundColor: Colors.red,
-                      ),
-                    );
-                    return;
-                  }
-
                   try {
                     final mesaAtualizada = mesaComanda.copyWith(
                       quantidadePessoasCouvert: quantidadePessoasFinal,
                       valorCouvertPorPessoa: valorPorPessoaFinal,
+                      nomeQuemPagouCouvert: nomeFinal,
                     );
                     await dataService.updateMesaComanda(mesaAtualizada);
                     if (context.mounted) {
@@ -1262,7 +1764,7 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
                       });
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
-                          content: Text('Couvert atualizado: ${quantidadePessoasFinal} pessoa(s) × ${NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(valorPorPessoaFinal)}'),
+                          content: Text('Couvert atualizado!'),
                           backgroundColor: Colors.green,
                         ),
                       );
@@ -1321,12 +1823,13 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
     }
 
     try {
-      final mesaComandaFechada = mesaComanda.copyWith(
-        status: 'Fechada',
-        dataFechamento: DateTime.now(),
+      // IMPORTANTE: Usar limparMesaComanda para salvar o histórico de consumo
+      // antes de fechar. Isso garante que a venda apareça no Histórico de Vendas.
+      final authService = Provider.of<AuthService>(context, listen: false);
+      await dataService.limparMesaComanda(
+        mesaComanda.id,
+        usuario: authService.usuarioAtual?.nome,
       );
-
-      await dataService.updateMesaComanda(mesaComandaFechada);
 
       if (context.mounted) {
         setState(() {
@@ -1335,7 +1838,7 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
 
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('${mesaComanda.numero} fechada com sucesso!'),
+            content: Text('${mesaComanda.numero} fechada com sucesso! Histórico salvo.'),
             backgroundColor: Colors.green,
           ),
         );
@@ -1352,519 +1855,768 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
     }
   }
 
+  void _navegarParaReceber(BuildContext context, MesaComanda mesaComanda) {
+    // Mostrar dialog com opções: Selecionar Itens ou Pagar por Valor
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        final valorController = TextEditingController();
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) {
+            final totalPendente = mesaComanda.totalCalculado - mesaComanda.totalPago;
+            return AlertDialog(
+              backgroundColor: const Color(0xFF1E1E2E),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              title: Row(
+                children: [
+                  const Icon(Icons.monetization_on, color: Colors.greenAccent, size: 24),
+                  const SizedBox(width: 10),
+                  Text(
+                    'Receber - ${mesaComanda.numero}',
+                    style: const TextStyle(color: Colors.white, fontSize: 16),
+                  ),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Resumo do pendente
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.05),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text('Pendente:', style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 13)),
+                        Text(
+                          'R\$ ${totalPendente.toStringAsFixed(2)}',
+                          style: const TextStyle(color: Colors.greenAccent, fontSize: 16, fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  // Botão 1: Selecionar Itens
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => VendaDiretaPage(mesaComanda: mesaComanda),
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.shopping_cart, size: 20),
+                      label: const Text('Selecionar Itens', style: TextStyle(fontSize: 14)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.blueAccent,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  // Botão 2: Pagar por Valor
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.greenAccent.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.greenAccent.withOpacity(0.3)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Pagar por Valor (ex: cliente deixa R\$ 100,00)',
+                          style: TextStyle(color: Colors.greenAccent.withOpacity(0.8), fontSize: 12, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: valorController,
+                                autofocus: true,
+                                style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                decoration: InputDecoration(
+                                  prefixText: 'R\$ ',
+                                  prefixStyle: const TextStyle(color: Colors.greenAccent, fontSize: 18),
+                                  hintText: '0,00',
+                                  hintStyle: TextStyle(color: Colors.white.withOpacity(0.2)),
+                                  filled: true,
+                                  fillColor: Colors.black26,
+                                  isDense: true,
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                    borderSide: BorderSide.none,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            ElevatedButton(
+                              onPressed: () {
+                                final valor = double.tryParse(valorController.text.replaceAll(',', '.')) ?? 0;
+                                if (valor <= 0) return;
+                                Navigator.pop(ctx);
+                                _processarPagamentoValor(context, mesaComanda, valor);
+                              },
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.greenAccent,
+                                foregroundColor: Colors.black,
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              ),
+                              child: const Text('PAGAR', style: TextStyle(fontWeight: FontWeight.bold)),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        // Valores rápidos
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: [20, 50, 100, 150, 200].map((v) {
+                            return GestureDetector(
+                              onTap: () => setDialogState(() => valorController.text = v.toStringAsFixed(2)),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withOpacity(0.08),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Text('R\$ $v', style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('CANCELAR', style: TextStyle(color: Colors.white54)),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  /// Processa pagamento por valor livre para mesa/comanda
+  void _processarPagamentoValor(BuildContext context, MesaComanda mesaComanda, double valor) {
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final usuarioLogado = authService.usuarioAtual?.nome ?? 'Sistema';
+    final totalPendente = mesaComanda.totalCalculado - mesaComanda.totalPago;
+    final valorFinal = valor > totalPendente ? totalPendente : valor;
+
+    // Dialog de seleção de forma de pagamento
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        String formaSelecionada = 'Dinheiro';
+        final List<Map<String, dynamic>> formas = [
+          {'nome': 'Dinheiro', 'icone': Icons.money, 'cor': Colors.green},
+          {'nome': 'PIX', 'icone': Icons.qr_code, 'cor': Colors.teal},
+          {'nome': 'Cartão de Crédito', 'icone': Icons.credit_card, 'cor': Colors.blue},
+          {'nome': 'Cartão de Débito', 'icone': Icons.credit_card, 'cor': Colors.orange},
+          {'nome': 'Boleto', 'icone': Icons.receipt, 'cor': Colors.purple},
+          {'nome': 'Crediário', 'icone': Icons.store, 'cor': Colors.amber},
+          {'nome': 'Fiado', 'icone': Icons.pending, 'cor': Colors.redAccent},
+          {'nome': 'Alimentação', 'icone': Icons.restaurant, 'cor': Colors.lightGreen},
+          {'nome': 'Transferência', 'icone': Icons.account_balance, 'cor': Colors.cyan},
+        ];
+
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF1E1E2E),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              title: Row(
+                children: [
+                  const Icon(Icons.monetization_on, color: Colors.greenAccent, size: 24),
+                  const SizedBox(width: 10),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Registrar Pagamento', style: TextStyle(color: Colors.white, fontSize: 16)),
+                      Text(
+                        'R\$ ${valorFinal.toStringAsFixed(2)}',
+                        style: const TextStyle(color: Colors.greenAccent, fontSize: 20, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    'Como o cliente vai pagar?',
+                    style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 13),
+                  ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: formas.map((f) {
+                      final isSelected = formaSelecionada == f['nome'];
+                      return GestureDetector(
+                        onTap: () => setDialogState(() => formaSelecionada = f['nome']),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: isSelected ? (f['cor'] as Color).withOpacity(0.3) : Colors.white.withOpacity(0.05),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: isSelected ? (f['cor'] as Color) : Colors.white10,
+                              width: isSelected ? 2 : 1,
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(f['icone'] as IconData, color: isSelected ? (f['cor'] as Color) : Colors.white54, size: 18),
+                              const SizedBox(width: 6),
+                              Text(
+                                f['nome'] as String,
+                                style: TextStyle(
+                                  color: isSelected ? Colors.white : Colors.white70,
+                                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('CANCELAR', style: TextStyle(color: Colors.white54)),
+                ),
+                ElevatedButton(
+                  onPressed: () async {
+                    Navigator.pop(ctx);
+                    // Registrar pagamento direto na comanda
+                    final pagamento = RegistroPagamento(
+                      id: uuid.v4(),
+                      valor: valorFinal,
+                      dataPagamento: DateTime.now(),
+                      formaPagamento: formaSelecionada,
+                      observacao: 'Pagamento por valor - $formaSelecionada',
+                      pessoaPagou: usuarioLogado,
+                    );
+                    final novosPagamentos = List<RegistroPagamento>.from(mesaComanda.historicoPagamentos)..add(pagamento);
+                    final mesaAtualizada = mesaComanda.copyWith(
+                      historicoPagamentos: novosPagamentos,
+                    );
+                    await dataService.updateMesaComanda(mesaAtualizada);
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Pagamento de R\$ ${valorFinal.toStringAsFixed(2)} registrado ($formaSelecionada)'),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                    }
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.greenAccent,
+                    foregroundColor: Colors.black,
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  child: const Text('CONFIRMAR PAGAMENTO', style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  /// Dialog direto para registrar pagamento na comanda (botão $ no rodapé)
+  void _registrarPagamentoComanda(BuildContext context, MesaComanda mesaComanda) {
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final usuarioLogado = authService.usuarioAtual?.nome ?? 'Sistema';
+    final totalPendente = mesaComanda.totalCalculado - mesaComanda.totalPago;
+    final valorController = TextEditingController(text: totalPendente.toStringAsFixed(2));
+    String formaSelecionada = 'Dinheiro';
+
+    final List<Map<String, dynamic>> formas = [
+      {'nome': 'Dinheiro', 'icone': Icons.money, 'cor': Colors.green},
+      {'nome': 'PIX', 'icone': Icons.qr_code, 'cor': Colors.teal},
+      {'nome': 'Cartão de Crédito', 'icone': Icons.credit_card, 'cor': Colors.blue},
+      {'nome': 'Cartão de Débito', 'icone': Icons.credit_card, 'cor': Colors.orange},
+      {'nome': 'Boleto', 'icone': Icons.receipt, 'cor': Colors.purple},
+      {'nome': 'Crediário', 'icone': Icons.store, 'cor': Colors.amber},
+      {'nome': 'Fiado', 'icone': Icons.pending, 'cor': Colors.redAccent},
+      {'nome': 'Alimentação', 'icone': Icons.restaurant, 'cor': Colors.lightGreen},
+      {'nome': 'Transferência', 'icone': Icons.account_balance, 'cor': Colors.cyan},
+    ];
+
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) {
+            final valor = double.tryParse(valorController.text.replaceAll(',', '.')) ?? 0;
+            return AlertDialog(
+              backgroundColor: const Color(0xFF1E1E2E),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              title: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.attach_money, color: Colors.tealAccent, size: 24),
+                      const SizedBox(width: 10),
+                      const Text('Registrar Pagamento', style: TextStyle(color: Colors.white, fontSize: 16)),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.05),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text('Pendente:', style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 13)),
+                        Text(
+                          'R\$ ${totalPendente.toStringAsFixed(2)}',
+                          style: const TextStyle(color: Colors.greenAccent, fontSize: 16, fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // Campo de valor
+                    Text('Valor a pagar:', style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 13)),
+                    const SizedBox(height: 6),
+                    TextField(
+                      controller: valorController,
+                      autofocus: true,
+                      style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      onChanged: (_) => setDialogState(() {}),
+                      decoration: InputDecoration(
+                        prefixText: 'R\$ ',
+                        prefixStyle: const TextStyle(color: Colors.tealAccent, fontSize: 22),
+                        hintText: '0,00',
+                        hintStyle: TextStyle(color: Colors.white.withOpacity(0.2)),
+                        filled: true,
+                        fillColor: Colors.black26,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide.none,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    // Valores rápidos
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [20, 50, 100, 150, 200, totalPendente].map((v) {
+                        final isTotal = v == totalPendente;
+                        return GestureDetector(
+                          onTap: () => setDialogState(() => valorController.text = v.toStringAsFixed(2)),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: isTotal ? Colors.tealAccent.withOpacity(0.2) : Colors.white.withOpacity(0.08),
+                              borderRadius: BorderRadius.circular(8),
+                              border: isTotal ? Border.all(color: Colors.tealAccent.withOpacity(0.5)) : null,
+                            ),
+                            child: Text(
+                              isTotal ? 'TOTAL' : 'R\$ $v',
+                              style: TextStyle(
+                                color: isTotal ? Colors.tealAccent : Colors.white70,
+                                fontSize: 12,
+                                fontWeight: isTotal ? FontWeight.bold : FontWeight.normal,
+                              ),
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                    const SizedBox(height: 16),
+                    // Forma de pagamento
+                    Text('Forma de pagamento:', style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 13)),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: formas.map((f) {
+                        final isSelected = formaSelecionada == f['nome'];
+                        return GestureDetector(
+                          onTap: () => setDialogState(() => formaSelecionada = f['nome']),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: isSelected ? (f['cor'] as Color).withOpacity(0.3) : Colors.white.withOpacity(0.05),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: isSelected ? (f['cor'] as Color) : Colors.white10,
+                                width: isSelected ? 2 : 1,
+                              ),
+                            ),
+                            child: Text(
+                              f['nome'] as String,
+                              style: TextStyle(
+                                color: isSelected ? Colors.white : Colors.white60,
+                                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('CANCELAR', style: TextStyle(color: Colors.white54)),
+                ),
+                ElevatedButton(
+                  onPressed: valor > 0
+                      ? () async {
+                          Navigator.pop(ctx);
+                          final pagamento = RegistroPagamento(
+                            id: uuid.v4(),
+                            valor: valor,
+                            dataPagamento: DateTime.now(),
+                            formaPagamento: formaSelecionada,
+                            observacao: 'Pagamento por valor - $formaSelecionada',
+                            pessoaPagou: usuarioLogado,
+                          );
+                          final novosPagamentos = List<RegistroPagamento>.from(mesaComanda.historicoPagamentos)..add(pagamento);
+                          final mesaAtualizada = mesaComanda.copyWith(
+                            historicoPagamentos: novosPagamentos,
+                          );
+                          await dataService.updateMesaComanda(mesaAtualizada);
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Pagamento de R\$ ${valor.toStringAsFixed(2)} registrado ($formaSelecionada)'),
+                                backgroundColor: Colors.green,
+                              ),
+                            );
+                          }
+                        }
+                      : null,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.tealAccent,
+                    foregroundColor: Colors.black,
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  child: const Text('CONFIRMAR', style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _limparMesaComanda(BuildContext context, MesaComanda mesaComanda, DataService dataService) async {
+    final confirmar = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.red),
+            SizedBox(width: 8),
+            Text('Limpar Mesa?', style: TextStyle(color: Colors.white)),
+          ],
+        ),
+        content: Text(
+          'Deseja limpar a ${mesaComanda.numero}?\n\nO consumo atual será salvo no histórico de pedidos, e a mesa ficará disponível novamente.',
+          style: const TextStyle(color: Colors.grey),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Sim, Limpar e Salvar'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmar == true) {
+      try {
+        final authService = Provider.of<AuthService>(context, listen: false);
+        await dataService.limparMesaComanda(
+          mesaComanda.id, 
+          usuario: authService.usuarioAtual?.nome,
+        );
+        
+        if (context.mounted) {
+          setState(() {
+            _mesaComandaSelecionada = null;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('${mesaComanda.numero} limpa com sucesso! Histórico salvo.'),
+              backgroundColor: Colors.blue,
+            ),
+          );
+        }
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Erro ao limpar mesa: $e'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    }
+  }
+
+  /// Deleta uma mesa/comanda mantendo o registro no Histórico de Operações
+  /// (auditoria: quem deletou e quando). Não gera venda, apenas registra.
+  Future<void> _deletarMesaComanda(
+    BuildContext context,
+    MesaComanda mesaComanda,
+    DataService dataService,
+  ) async {
+    final isComanda = mesaComanda.tipo == TipoControle.comanda;
+    final label = isComanda ? 'comanda' : 'mesa';
+    final temItensNaoFinalizados =
+        mesaComanda.temItensPendentes || mesaComanda.temItensEmPreparo;
+    final total = mesaComanda.totalCalculado;
+    final comandasVinculadas = isComanda
+        ? 0
+        : dataService.mesasComandas
+            .where((c) => c.tipo == TipoControle.comanda && c.mesaId == mesaComanda.id)
+            .length;
+
+    final confirmar = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            const Icon(Icons.delete_forever, color: Colors.redAccent),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Deletar ${isComanda ? "Comanda" : "Mesa"}?',
+                style: const TextStyle(color: Colors.white),
+              ),
+            ),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Você está prestes a deletar a $label ${mesaComanda.numero}.',
+                style: const TextStyle(color: Colors.white70),
+              ),
+              if (mesaComanda.clienteNome != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    'Cliente: ${mesaComanda.clienteNome}',
+                    style: const TextStyle(color: Colors.grey),
+                  ),
+                ),
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  'Itens: ${mesaComanda.itens.length} • Total: ${NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(total)}',
+                  style: const TextStyle(color: Colors.grey),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(Icons.history, color: Colors.orange, size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'O registro ficará salvo no Histórico de Operações com quem deletou e quando. Esta $label não poderá mais ser usada ou restaurada.',
+                        style: const TextStyle(color: Colors.white70, fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (comandasVinculadas > 0) ...[
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.purple.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.purple.withOpacity(0.4)),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(Icons.receipt_long, color: Colors.purple, size: 18),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Esta mesa tem $comandasVinculadas comanda(s) vinculada(s), que também serão deletadas e registradas no histórico.',
+                          style: const TextStyle(color: Colors.white70, fontSize: 12),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              if (temItensNaoFinalizados) ...[
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.red.withOpacity(0.3)),
+                  ),
+                  child: const Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(Icons.warning_amber_rounded, color: Colors.red, size: 18),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Atenção: ainda há itens pendentes ou em preparo. Eles não serão cobrados nem gerarão venda.',
+                          style: TextStyle(color: Colors.redAccent, fontSize: 12),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade800),
+            child: const Text('Sim, Deletar'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmar != true) return;
+
+    try {
+      final authService = Provider.of<AuthService>(context, listen: false);
+      await dataService.marcarMesaComandaDeletada(
+        mesaComanda.id,
+        usuario: authService.usuarioAtual?.nome,
+      );
+
+      if (context.mounted) {
+        setState(() {
+          if (_mesaComandaSelecionada?.id == mesaComanda.id) {
+            _mesaComandaSelecionada = null;
+          }
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '${isComanda ? "Comanda" : "Mesa"} ${mesaComanda.numero} deletada. Registro salvo no Histórico de Operações.',
+            ),
+            backgroundColor: Colors.red.shade800,
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erro ao deletar: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   Future<void> _adicionarProdutosAMesaComanda(
     BuildContext context,
     MesaComanda mesaComanda,
     DataService dataService,
   ) async {
-    final buscaController = TextEditingController();
-    final produtosSelecionados = <String, Map<String, dynamic>>{};
-    String termoBusca = '';
+    // Sugestão de couvert removida (não é mais obrigatório ao adicionar produtos)
 
-    await showDialog(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) {
-          final produtosFiltrados = termoBusca.isEmpty
-              ? dataService.produtos
-              : dataService.produtos.where((p) {
-                  final buscaLower = termoBusca.toLowerCase();
-                  return p.nome.toLowerCase().contains(buscaLower) ||
-                      (p.codigo != null && p.codigo!.toLowerCase().contains(buscaLower));
-                }).toList();
-
-          return AlertDialog(
-            backgroundColor: const Color(0xFF1E1E2E),
-            title: const Text(
-              'Adicionar Produtos',
-              style: TextStyle(color: Colors.white),
-            ),
-            content: SizedBox(
-              width: double.maxFinite,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // Campo de busca
-                  TextField(
-                    controller: buscaController,
-                    autofocus: true,
-                    decoration: InputDecoration(
-                      hintText: 'Buscar produto...',
-                      hintStyle: const TextStyle(color: Colors.grey),
-                      prefixIcon: const Icon(Icons.search, color: Colors.orange),
-                      suffixIcon: termoBusca.isNotEmpty
-                          ? IconButton(
-                              icon: const Icon(Icons.clear, color: Colors.grey),
-                              onPressed: () {
-                                buscaController.clear();
-                                setDialogState(() {
-                                  termoBusca = '';
-                                });
-                              },
-                            )
-                          : null,
-                      filled: true,
-                      fillColor: const Color(0xFF2A2A3E),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide: const BorderSide(color: Colors.grey),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide: const BorderSide(color: Colors.orange),
-                      ),
-                    ),
-                    style: const TextStyle(color: Colors.white),
-                    onChanged: (value) {
-                      setDialogState(() {
-                        termoBusca = value;
-                      });
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                  // Lista de produtos
-                  Flexible(
-                    child: produtosFiltrados.isEmpty
-                        ? Center(
-                            child: Text(
-                              termoBusca.isEmpty
-                                  ? 'Nenhum produto cadastrado'
-                                  : 'Nenhum produto encontrado',
-                              style: const TextStyle(color: Colors.grey),
-                            ),
-                          )
-                        : ListView.builder(
-                            shrinkWrap: true,
-                            itemCount: produtosFiltrados.length,
-                            itemBuilder: (context, index) {
-                              final produto = produtosFiltrados[index];
-                              final quantidade = produtosSelecionados[produto.id]?['quantidade'] ?? 0;
-                              final isSelected = quantidade > 0;
-
-                              return Card(
-                                color: isSelected
-                                    ? Colors.orange.withOpacity(0.2)
-                                    : const Color(0xFF2A2A3E),
-                                margin: const EdgeInsets.only(bottom: 8),
-                                child: ListTile(
-                                  title: Text(
-                                    produto.nome,
-                                    style: TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                                    ),
-                                  ),
-                                  subtitle: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      if (produto.codigo != null)
-                                        Text(
-                                          'Código: ${produto.codigo}',
-                                          style: const TextStyle(color: Colors.grey, fontSize: 12),
-                                        ),
-                                      Text(
-                                        'Preço: ${NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(produto.precoAtual)}',
-                                        style: const TextStyle(color: Colors.green, fontSize: 12),
-                                      ),
-                                      if (produto.paraCozinha == true || produto.paraBar == true)
-                                        Row(
-                                          children: [
-                                            if (produto.paraCozinha == true)
-                                              Container(
-                                                margin: const EdgeInsets.only(top: 4, right: 4),
-                                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                                decoration: BoxDecoration(
-                                                  color: Colors.orange.withOpacity(0.2),
-                                                  borderRadius: BorderRadius.circular(4),
-                                                ),
-                                                child: const Text(
-                                                  'Cozinha',
-                                                  style: TextStyle(color: Colors.orange, fontSize: 10),
-                                                ),
-                                              ),
-                                            if (produto.paraBar == true)
-                                              Container(
-                                                margin: const EdgeInsets.only(top: 4),
-                                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                                decoration: BoxDecoration(
-                                                  color: Colors.blue.withOpacity(0.2),
-                                                  borderRadius: BorderRadius.circular(4),
-                                                ),
-                                                child: const Text(
-                                                  'Bar',
-                                                  style: TextStyle(color: Colors.blue, fontSize: 10),
-                                                ),
-                                              ),
-                                          ],
-                                        ),
-                                    ],
-                                  ),
-                                  trailing: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      if (isSelected) ...[
-                                        IconButton(
-                                          icon: const Icon(Icons.remove_circle, color: Colors.red),
-                                          onPressed: () {
-                                            setDialogState(() {
-                                              if (quantidade > 1) {
-                                                produtosSelecionados[produto.id] = {
-                                                  'produto': produto,
-                                                  'quantidade': quantidade - 1,
-                                                };
-                                              } else {
-                                                produtosSelecionados.remove(produto.id);
-                                              }
-                                            });
-                                          },
-                                        ),
-                                        Text(
-                                          '$quantidade',
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 16,
-                                          ),
-                                        ),
-                                      ],
-                                      IconButton(
-                                        icon: Icon(
-                                          isSelected ? Icons.add_circle : Icons.add_circle_outline,
-                                          color: Colors.greenAccent,
-                                        ),
-                                        onPressed: () {
-                                          setDialogState(() {
-                                            final quantidadeAtual = produtosSelecionados[produto.id]?['quantidade'] ?? 0;
-                                            // Usar categoria padrão do produto ou 'outros' se não tiver
-                                            final categoriaPadrao = produto.paraCozinha == true
-                                                ? 'cozinha'
-                                                : produto.paraBar == true
-                                                    ? 'bar'
-                                                    : 'outros';
-                                            produtosSelecionados[produto.id] = {
-                                              'produto': produto,
-                                              'quantidade': quantidadeAtual + 1,
-                                              'categoria': produtosSelecionados[produto.id]?['categoria'] ?? categoriaPadrao,
-                                            };
-                                          });
-                                        },
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                  ),
-                  // Resumo dos produtos selecionados
-                  if (produtosSelecionados.isNotEmpty) ...[
-                    const Divider(color: Colors.grey),
-                    const SizedBox(height: 8),
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.orange.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Produtos selecionados:',
-                            style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold),
-                          ),
-                          const SizedBox(height: 8),
-                          ...produtosSelecionados.entries.map((entry) {
-                            final item = entry.value;
-                            final produto = item['produto'] as Produto;
-                            final quantidade = item['quantidade'] as int;
-                            final categoria = item['categoria'] as String? ?? 'outros'; // 'cozinha', 'bar', 'outros'
-                            final total = produto.precoAtual * quantidade;
-                            
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 8),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(
-                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          '$quantidade x ${produto.nome}',
-                                          style: const TextStyle(color: Colors.white, fontSize: 12),
-                                        ),
-                                      ),
-                                      Text(
-                                        NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(total),
-                                        style: const TextStyle(color: Colors.green, fontSize: 12),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 4),
-                                  // Seletor de categoria
-                                  Row(
-                                    children: [
-                                      Expanded(
-                                        child: GestureDetector(
-                                          onTap: () {
-                                            setDialogState(() {
-                                              produtosSelecionados[entry.key] = {
-                                                ...item,
-                                                'categoria': 'cozinha',
-                                              };
-                                            });
-                                          },
-                                          child: Container(
-                                            padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
-                                            decoration: BoxDecoration(
-                                              color: categoria == 'cozinha'
-                                                  ? Colors.orange.withOpacity(0.3)
-                                                  : Colors.transparent,
-                                              borderRadius: BorderRadius.circular(6),
-                                              border: Border.all(
-                                                color: categoria == 'cozinha'
-                                                    ? Colors.orange
-                                                    : Colors.grey.withOpacity(0.3),
-                                              ),
-                                            ),
-                                            child: Row(
-                                              mainAxisAlignment: MainAxisAlignment.center,
-                                              children: [
-                                                Icon(
-                                                  Icons.restaurant,
-                                                  size: 14,
-                                                  color: categoria == 'cozinha'
-                                                      ? Colors.orange
-                                                      : Colors.grey,
-                                                ),
-                                                const SizedBox(width: 4),
-                                                Text(
-                                                  'Cozinha',
-                                                  style: TextStyle(
-                                                    color: categoria == 'cozinha'
-                                                        ? Colors.orange
-                                                        : Colors.grey,
-                                                    fontSize: 11,
-                                                    fontWeight: categoria == 'cozinha'
-                                                        ? FontWeight.bold
-                                                        : FontWeight.normal,
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                      const SizedBox(width: 6),
-                                      Expanded(
-                                        child: GestureDetector(
-                                          onTap: () {
-                                            setDialogState(() {
-                                              produtosSelecionados[entry.key] = {
-                                                ...item,
-                                                'categoria': 'bar',
-                                              };
-                                            });
-                                          },
-                                          child: Container(
-                                            padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
-                                            decoration: BoxDecoration(
-                                              color: categoria == 'bar'
-                                                  ? Colors.blue.withOpacity(0.3)
-                                                  : Colors.transparent,
-                                              borderRadius: BorderRadius.circular(6),
-                                              border: Border.all(
-                                                color: categoria == 'bar'
-                                                    ? Colors.blue
-                                                    : Colors.grey.withOpacity(0.3),
-                                              ),
-                                            ),
-                                            child: Row(
-                                              mainAxisAlignment: MainAxisAlignment.center,
-                                              children: [
-                                                Icon(
-                                                  Icons.local_bar,
-                                                  size: 14,
-                                                  color: categoria == 'bar'
-                                                      ? Colors.blue
-                                                      : Colors.grey,
-                                                ),
-                                                const SizedBox(width: 4),
-                                                Text(
-                                                  'Bar',
-                                                  style: TextStyle(
-                                                    color: categoria == 'bar'
-                                                        ? Colors.blue
-                                                        : Colors.grey,
-                                                    fontSize: 11,
-                                                    fontWeight: categoria == 'bar'
-                                                        ? FontWeight.bold
-                                                        : FontWeight.normal,
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                      const SizedBox(width: 6),
-                                      Expanded(
-                                        child: GestureDetector(
-                                          onTap: () {
-                                            setDialogState(() {
-                                              produtosSelecionados[entry.key] = {
-                                                ...item,
-                                                'categoria': 'outros',
-                                              };
-                                            });
-                                          },
-                                          child: Container(
-                                            padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
-                                            decoration: BoxDecoration(
-                                              color: categoria == 'outros'
-                                                  ? Colors.grey.withOpacity(0.3)
-                                                  : Colors.transparent,
-                                              borderRadius: BorderRadius.circular(6),
-                                              border: Border.all(
-                                                color: categoria == 'outros'
-                                                    ? Colors.grey
-                                                    : Colors.grey.withOpacity(0.3),
-                                              ),
-                                            ),
-                                            child: Row(
-                                              mainAxisAlignment: MainAxisAlignment.center,
-                                              children: [
-                                                Icon(
-                                                  Icons.inventory,
-                                                  size: 14,
-                                                  color: categoria == 'outros'
-                                                      ? Colors.grey
-                                                      : Colors.grey.withOpacity(0.5),
-                                                ),
-                                                const SizedBox(width: 4),
-                                                Text(
-                                                  'Outros',
-                                                  style: TextStyle(
-                                                    color: categoria == 'outros'
-                                                        ? Colors.white
-                                                        : Colors.grey,
-                                                    fontSize: 11,
-                                                    fontWeight: categoria == 'outros'
-                                                        ? FontWeight.bold
-                                                        : FontWeight.normal,
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                            );
-                          }),
-                          const Divider(color: Colors.grey),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              const Text(
-                                'Total:',
-                                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                              ),
-                              Text(
-                                NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(
-                                  produtosSelecionados.values.fold<double>(
-                                    0.0,
-                                    (sum, item) => sum + ((item['produto'] as Produto).precoAtual * (item['quantidade'] as int)),
-                                  ),
-                                ),
-                                style: const TextStyle(
-                                  color: Colors.green,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 16,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
-              ),
-              ElevatedButton(
-                onPressed: produtosSelecionados.isEmpty
-                    ? null
-                    : () async {
-                        try {
-                          final novosItens = <ItemMesaComanda>[];
-
-                          for (final item in produtosSelecionados.values) {
-                            final produto = item['produto'] as Produto;
-                            final quantidade = item['quantidade'] as int;
-                            final categoria = item['categoria'] as String? ?? 'outros';
-
-                            novosItens.add(ItemMesaComanda(
-                              id: uuid.v4(),
-                              itemId: produto.id,
-                              nome: produto.nome,
-                              quantidade: quantidade,
-                              preco: produto.precoAtual,
-                              isServico: false,
-                              paraCozinha: categoria == 'cozinha',
-                              paraBar: categoria == 'bar',
-                              status: StatusItem.pendente,
-                              dataHora: DateTime.now(),
-                            ));
-                          }
-
-                          final mesaComandaAtualizada = mesaComanda.copyWith(
-                            itens: [...mesaComanda.itens, ...novosItens],
-                          );
-
-                          await dataService.updateMesaComanda(mesaComandaAtualizada);
-
-                          if (context.mounted) {
-                            Navigator.pop(context);
-                            setState(() {
-                              _mesaComandaSelecionada = mesaComandaAtualizada;
-                            });
-
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('${novosItens.length} produto(s) adicionado(s) à ${mesaComanda.numero}'),
-                                backgroundColor: Colors.green,
-                              ),
-                            );
-                          }
-                        } catch (e) {
-                          if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('Erro ao adicionar produtos: $e'),
-                                backgroundColor: Colors.red,
-                              ),
-                            );
-                          }
-                        }
-                      },
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
-                child: Text('Adicionar (${produtosSelecionados.values.fold<int>(0, (sum, item) => sum + (item['quantidade'] as int))})'),
-              ),
-            ],
-          );
-        },
-      ),
-    );
+    // Navegar para o PDV (VendaDiretaPage) para gerenciar produtos, observações e adicionais.
+    if (context.mounted) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => VendaDiretaPage(mesaComanda: mesaComanda),
+        ),
+      );
+    }
   }
 }
 

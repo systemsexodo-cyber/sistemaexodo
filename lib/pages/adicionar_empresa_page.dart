@@ -8,14 +8,17 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:path_provider/path_provider.dart';
 import '../services/auth_service.dart';
+import '../services/impressao_service.dart';
 import '../services/certificado_service.dart';
 import '../services/certificado_backend_service.dart';
 import '../services/windows_certificate_service.dart';
 import '../models/empresa.dart';
 import '../models/tela_sistema.dart';
+import '../models/forma_pagamento.dart';
 import '../theme.dart';
 import '../services/data_service.dart';
 import '../services/whatsapp_service.dart';
+import 'package:sistema_exodo_novo/pages/whatsapp_gerenciamento_page.dart';
 
 /// Página para adicionar ou editar uma empresa
 class AdicionarEmpresaPage extends StatefulWidget {
@@ -58,7 +61,39 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
   String? _certificadoDigitalNome;
   String? _certificadoDigitalBytes; // Bytes em base64 (fallback se não conseguir salvar arquivo)
   String? _certificadoWindowsThumbprint; // Thumbprint do certificado do Windows
+  final _ultimoNumeroNFCeController = TextEditingController(); // Novo: controle de numeração
   bool _ambienteHomologacao = true; // Padrão: homologação
+  final _bridgeNfceUrlController = TextEditingController(text: 'http://localhost:8000');
+
+  final _bridgeNfceKeyController = TextEditingController();
+  
+  // Fiscal / Contabilidade
+  final _emailContabilidadeController = TextEditingController();
+  bool _envioFiscalAutomatico = false;
+  bool _incluirTaxaEntregaNfce = true;
+  bool _incluirServicoGarcomNfce = true;
+  
+  // Customizações de Impressão NFC-e
+
+  final _nfceMargemEsquerdaController = TextEditingController(text: '5.0');
+  final _nfceLarguraBobinaController = TextEditingController(text: '80.0');
+  final _nfceMargemDireitaController = TextEditingController(text: '15.0');
+  final _nfceFonteEscalaController = TextEditingController(text: '1.0');
+
+  // Customizações de Impressão Comanda/Mesa
+  final _comandaMargemEsqController = TextEditingController(text: '10.0');
+  final _comandaMargemDirController = TextEditingController(text: '15.0');
+  final _comandaMargemVController = TextEditingController(text: '10.0');
+  final _comandaLarguraBobinaController = TextEditingController(text: '80.0');
+  final _comandaFonteTituloController = TextEditingController(text: '14.0');
+  final _comandaFonteCorpoController = TextEditingController(text: '9.0');
+  final _comandaFonteStatusController = TextEditingController(text: '8.0');
+  bool _comandaNegrito = true;
+  bool _mostrarEnderecoCupom = true; // Exibir endereco de entrega no cupom nao fiscal
+  // Janela de seleção de impressora (estilo Windows) antes de imprimir
+  bool _mostrarDialogoImpressora = false;
+  String _impressoraSelecionada = ''; // Última impressora escolhida (padrão)
+
   
   Color _corPrimaria = Colors.blueAccent;
   Color _corSecundaria = Colors.blue;
@@ -71,9 +106,22 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
   final _whatsappApiKeyController = TextEditingController();
   final _whatsappInstanceNameController = TextEditingController();
   bool _whatsappAtivo = false;
+  Map<String, Map<String, dynamic>> _pagamentosConfig = {};
+  List<String> _perfisDePreco = [];
+  List<Map<String, dynamic>> _configPerfisPreco = [];
+  final _novoPerfilController = TextEditingController();
+  String _whatsappTipo = 'evolution'; // 'evolution' ou 'twilio'
   bool _moduloPet = false;
   String? _whatsappConnectionState; // 'open', 'close', ou null
   bool _whatsappTestando = false;
+
+  // Configurações de visibilidade dos botões do PDV
+  bool _mostrarBotaoCliente = true;
+  bool _mostrarBotaoVendedor = true;
+  bool _mostrarBotaoEntregas = true;
+  bool _mostrarBotaoHistorico = true;
+  bool _mostrarBotaoCentral = true;
+  bool _mostrarBotaoDespesa = true;
 
   bool _isLoading = false;
 
@@ -136,6 +184,36 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
     _cscIdTokenController.text = empresa.cscIdToken ?? '';
     _serieNFCeController.text = empresa.serieNFCe ?? '1';
     _ambienteHomologacao = empresa.ambienteHomologacao ?? true;
+    _ultimoNumeroNFCeController.text = empresa.configuracoes?['ultimo_numero_nfce']?.toString() ?? '';
+
+    _bridgeNfceUrlController.text = empresa.configuracoes?['bridgeNfceUrl'] as String? ?? 'http://localhost:8000';
+    _bridgeNfceKeyController.text = empresa.configuracoes?['bridgeNfceKey'] as String? ?? '';
+
+    _nfceMargemEsquerdaController.text = empresa.configuracoes?['nfceMargemEsquerda']?.toString() ?? '5.0';
+    _nfceLarguraBobinaController.text = empresa.configuracoes?['nfceLarguraBobina']?.toString() ?? '80.0';
+    _nfceMargemDireitaController.text = empresa.configuracoes?['nfceMargemDireita']?.toString() ?? '15.0';
+    _nfceFonteEscalaController.text = empresa.configuracoes?['nfceFonteEscala']?.toString() ?? '1.0';
+    _comandaMargemEsqController.text = empresa.configuracoes?['comandaMargemEsq']?.toString() ?? 
+                                       empresa.configuracoes?['comandaMargemH']?.toString() ?? '10.0';
+    _comandaMargemDirController.text = empresa.configuracoes?['comandaMargemDir']?.toString() ?? 
+                                       empresa.configuracoes?['comandaMargemH']?.toString() ?? '15.0';
+    _comandaMargemVController.text = empresa.configuracoes?['comandaMargemV']?.toString() ?? '10.0';
+    _comandaLarguraBobinaController.text = empresa.configuracoes?['comandaLarguraBobina']?.toString() ?? '80.0';
+    _comandaFonteTituloController.text = empresa.configuracoes?['comandaFonteTitulo']?.toString() ?? '14.0';
+    _comandaFonteCorpoController.text = empresa.configuracoes?['comandaFonteCorpo']?.toString() ?? '9.0';
+    _comandaFonteStatusController.text = empresa.configuracoes?['comandaFonteStatus']?.toString() ?? '8.0';
+    _comandaNegrito = empresa.configuracoes?['comandaNegrito'] ?? true;
+    _mostrarEnderecoCupom = empresa.configuracoes?['mostrarEnderecoCupom'] ?? true;
+    _mostrarDialogoImpressora = empresa.configuracoes?['mostrarDialogoImpressora'] ?? false;
+    _impressoraSelecionada = (empresa.configuracoes?['impressoraSelecionada'] as String?) ?? '';
+    if (_impressoraSelecionada.isEmpty) {
+      ImpressaoService.getUltimaImpressora(empresaId: empresa.id).then((val) {
+        if (val != null && val.isNotEmpty && mounted) {
+          setState(() => _impressoraSelecionada = val);
+        }
+      });
+    }
+
     
     // Converter cores hex para Color
     if (empresa.corPrimaria != null && empresa.corPrimaria!.isNotEmpty) {
@@ -155,8 +233,59 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
     _whatsappApiKeyController.text = empresa.whatsappApiKey ?? '';
     _whatsappInstanceNameController.text = empresa.whatsappInstanceName ?? '';
     _whatsappAtivo = empresa.whatsappAtivo;
+    _whatsappTipo = empresa.whatsappTipo ?? 'evolution';
     _moduloPet = empresa.moduloPet;
+    _perfisDePreco = List.from(empresa.perfisDePreco);
+    
+    if (empresa.configuracoes?['perfis_preco'] != null) {
+      _configPerfisPreco = List<Map<String, dynamic>>.from(
+        (empresa.configuracoes!['perfis_preco'] as List).map((e) => Map<String, dynamic>.from(e as Map))
+      );
+      // Força a sincronização dos nomes
+      _perfisDePreco = _configPerfisPreco.map((c) => c['nome'] as String).toList();
+    } else {
+      // Retrocompatibilidade
+      _configPerfisPreco = _perfisDePreco.map((p) => <String, dynamic>{
+        'nome': p,
+        'tipo': 'fixo',
+        'valor': 0.0,
+      }).toList();
+    }
+    
+    // Fiscal / Contabilidade
+    _emailContabilidadeController.text = empresa.emailContabilidade ?? '';
+    _envioFiscalAutomatico = empresa.envioFiscalAutomatico;
+    _incluirTaxaEntregaNfce = empresa.incluirTaxaEntregaNfce;
+    _incluirServicoGarcomNfce = empresa.incluirServicoGarcomNfce;
+    
+    // Configurações de visibilidade dos botões do PDV
+    _mostrarBotaoCliente = empresa.configuracoes?['mostrarBotaoCliente'] ?? true;
+    _mostrarBotaoVendedor = empresa.configuracoes?['mostrarBotaoVendedor'] ?? true;
+    _mostrarBotaoEntregas = empresa.configuracoes?['mostrarBotaoEntregas'] ?? true;
+    _mostrarBotaoHistorico = empresa.configuracoes?['mostrarBotaoHistorico'] ?? true;
+    _mostrarBotaoCentral = empresa.configuracoes?['mostrarBotaoCentral'] ?? true;
+    _mostrarBotaoDespesa = empresa.configuracoes?['mostrarBotaoDespesa'] ?? true;
+    
+    // Configurações de Senha do Administrador e Segurança
+    _senhaAdminController.text = empresa.configuracoes?['senha_admin'] ?? '';
+    _exigirSenhaAlterarPedido = empresa.configuracoes?['exigir_senha_alterar_pedido'] ?? false;
+    _exigirSenhaCancelarPedido = empresa.configuracoes?['exigir_senha_cancelar_pedido'] ?? false;
+
+    if (empresa.configuracoes?['pagamentos'] != null) {
+      _pagamentosConfig = Map<String, Map<String, dynamic>>.from(
+        (empresa.configuracoes!['pagamentos'] as Map).map(
+          (key, value) => MapEntry(key.toString(), Map<String, dynamic>.from(value as Map)),
+        ),
+      );
+    } else {
+      _pagamentosConfig = {};
+    }
   }
+
+  // Senha do Administrador e Segurança
+  final _senhaAdminController = TextEditingController();
+  bool _exigirSenhaAlterarPedido = false;
+  bool _exigirSenhaCancelarPedido = false;
 
   @override
   void dispose() {
@@ -183,10 +312,22 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
     _whatsappApiUrlController.dispose();
     _whatsappApiKeyController.dispose();
     _whatsappInstanceNameController.dispose();
+    _ultimoNumeroNFCeController.dispose();
+    _emailContabilidadeController.dispose();
+
+    _bridgeNfceUrlController.dispose();
+    _bridgeNfceKeyController.dispose();
+
+    _nfceMargemEsquerdaController.dispose();
+    _nfceLarguraBobinaController.dispose();
+    _nfceMargemDireitaController.dispose();
+    _nfceFonteEscalaController.dispose();
+    _senhaAdminController.dispose();
+
     super.dispose();
   }
 
-  Future<void> _salvar() async {
+  Future<void> _salvar({bool fecharTela = true}) async {
     if (!_formKey.currentState!.validate()) {
       return;
     }
@@ -196,6 +337,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
 
     try {
       final authService = Provider.of<AuthService>(context, listen: false);
+      final dataService = Provider.of<DataService>(context, listen: false);
       final agora = DateTime.now();
 
       debugPrint('>>> [AdicionarEmpresa] Criando objeto Empresa...');
@@ -274,6 +416,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
           : _serieNFCeController.text.trim(),
       ambienteHomologacao: _ambienteHomologacao,
       telasPermitidas: _telasPermitidas.isEmpty ? null : _telasPermitidas,
+      perfisDePreco: _perfisDePreco,
       whatsappApiUrl: _whatsappApiUrlController.text.trim().isEmpty
           ? null
           : _whatsappApiUrlController.text.trim(),
@@ -283,16 +426,59 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
       whatsappInstanceName: _whatsappInstanceNameController.text.trim().isEmpty
           ? null
           : _whatsappInstanceNameController.text.trim(),
+      whatsappTipo: _whatsappTipo,
       whatsappAtivo: _whatsappAtivo,
       moduloPet: _moduloPet,
+      emailContabilidade: _emailContabilidadeController.text.trim().isEmpty ? null : _emailContabilidadeController.text.trim(),
+      envioFiscalAutomatico: _envioFiscalAutomatico,
+      incluirTaxaEntregaNfce: _incluirTaxaEntregaNfce,
+      incluirServicoGarcomNfce: _incluirServicoGarcomNfce,
       configuracoes: {
         ...?widget.empresa?.configuracoes, // Preservar outras configurações
+        if (_crt != null) 'crt': _crt, // Código de Regime Tributário (1=Simples Nacional, 2=SN excesso, 3=Regime Normal)
         if (_certificadoDigitalBytes != null)
           'certificadoDigitalBytes': _certificadoDigitalBytes,
         if (_certificadoWindowsThumbprint != null)
           'certificadoWindowsThumbprint': _certificadoWindowsThumbprint,
         if (_certificadoWindowsThumbprint != null && _certificadoDigitalNome != null)
           'certificadoWindowsSubject': _certificadoDigitalNome,
+        'bridgeNfceUrl': _bridgeNfceUrlController.text.trim(),
+        'bridgeNfceKey': _bridgeNfceKeyController.text.trim(),
+
+        'nfceMargemEsquerda': double.tryParse(_nfceMargemEsquerdaController.text.trim()) ?? 5.0,
+        'nfceLarguraBobina': double.tryParse(_nfceLarguraBobinaController.text.trim()) ?? 80.0,
+        'nfceMargemDireita': double.tryParse(_nfceMargemDireitaController.text.trim()) ?? 15.0,
+        'nfceFonteEscala': double.tryParse(_nfceFonteEscalaController.text.trim()) ?? 1.0,
+
+        'comandaMargemEsq': double.tryParse(_comandaMargemEsqController.text.trim()) ?? 10.0,
+        'comandaMargemDir': double.tryParse(_comandaMargemDirController.text.trim()) ?? 15.0,
+        'comandaMargemV': double.tryParse(_comandaMargemVController.text.trim()) ?? 10.0,
+        'comandaLarguraBobina': double.tryParse(_comandaLarguraBobinaController.text.trim()) ?? 80.0,
+        'comandaFonteTitulo': double.tryParse(_comandaFonteTituloController.text.trim()) ?? 14.0,
+        'comandaFonteCorpo': double.tryParse(_comandaFonteCorpoController.text.trim()) ?? 9.0,
+        'comandaFonteStatus': double.tryParse(_comandaFonteStatusController.text.trim()) ?? 8.0,
+        'comandaNegrito': _comandaNegrito,
+        'mostrarEnderecoCupom': _mostrarEnderecoCupom,
+        'mostrarDialogoImpressora': _mostrarDialogoImpressora,
+        'impressoraSelecionada': _impressoraSelecionada,
+
+        'ultimo_numero_nfce': _ultimoNumeroNFCeController.text.trim().isEmpty ? null : _ultimoNumeroNFCeController.text.trim(),
+        
+        // Configurações de visibilidade dos botões do PDV
+        'mostrarBotaoCliente': _mostrarBotaoCliente,
+        'mostrarBotaoVendedor': _mostrarBotaoVendedor,
+        'mostrarBotaoEntregas': _mostrarBotaoEntregas,
+        'mostrarBotaoHistorico': _mostrarBotaoHistorico,
+        'mostrarBotaoCentral': _mostrarBotaoCentral,
+        'mostrarBotaoDespesa': _mostrarBotaoDespesa,
+        
+        // Senha do Administrador e Segurança
+        'senha_admin': _senhaAdminController.text.trim(),
+        'exigir_senha_alterar_pedido': _exigirSenhaAlterarPedido,
+        'exigir_senha_cancelar_pedido': _exigirSenhaCancelarPedido,
+        
+        'perfis_preco': _configPerfisPreco,
+        'pagamentos': _pagamentosConfig,
       },
     );
 
@@ -300,6 +486,16 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
       debugPrint('>>> [AdicionarEmpresa] Razão Social: ${empresa.razaoSocial}');
       debugPrint('>>> [AdicionarEmpresa] Certificado presente: ${empresa.configuracoes?['certificadoDigitalBytes'] != null ? "SIM" : "NÃO"}');
       
+      // =====================================================================
+      // MIGRAÇÃO DE IMPOSTOS AO TROCAR O REGIME TRIBUTÁRIO
+      // =====================================================================
+      final crtAnterior = widget.empresa?.configuracoes?['crt']?.toString() ?? widget.empresa?.crt?.toString();
+      final regimeAnterior = crtAnterior == '3' ? 'normal' : 'simples';
+      final regimeNovo = _crt == 3 ? 'normal' : 'simples';
+      // Guard: só migra se houver empresa, se o usuário escolheu um regime (_crt != null)
+      // e se o regime realmente mudou.
+      final trocouRegime = widget.empresa != null && _crt != null && regimeAnterior != regimeNovo;
+
       if (widget.empresa == null) {
         debugPrint('>>> [AdicionarEmpresa] Adicionando nova empresa...');
         await authService.adicionarEmpresa(empresa);
@@ -308,11 +504,45 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
         debugPrint('>>> [AdicionarEmpresa] Atualizando empresa existente...');
         await authService.atualizarEmpresa(empresa);
         debugPrint('>>> [AdicionarEmpresa] ✓ Empresa atualizada com sucesso');
+
+        // Se o regime mudou, migrar os impostos de todos os produtos
+        // (CSOSN <-> CST e perfil equivalente) automaticamente.
+        if (trocouRegime) {
+          debugPrint('>>> [AdicionarEmpresa] Regime alterado: $regimeAnterior -> $regimeNovo. Migrando impostos dos produtos...');
+          final alterados = await dataService.migrarImpostosProdutosPorRegime(
+            paraSimples: regimeNovo == 'simples',
+          );
+          debugPrint('>>> [AdicionarEmpresa] ✓ Migração concluída: $alterados produto(s) alterado(s)');
+
+          // Sincronizar o regime atualizado no DataService para que o filtro de
+          // perfis e os dropdowns reflitam o novo regime imediatamente.
+          dataService.setEmpresaAtual(empresa);
+
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  'Regime alterado para ${regimeNovo == 'simples' ? 'Simples Nacional' : 'Regime Normal'}: impostos de $alterados produto(s) migrados (CSOSN ↔ CST).',
+                ),
+                backgroundColor: Colors.orange.shade800,
+                duration: const Duration(seconds: 6),
+              ),
+            );
+          }
+        }
       }
 
-      if (mounted) {
+      if (mounted && fecharTela) {
         debugPrint('>>> [AdicionarEmpresa] Fechando página e retornando...');
         Navigator.pop(context, true);
+      } else if (mounted && !fecharTela) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✓ Tabela de preço salva!'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
+        );
       }
     } catch (e, stackTrace) {
       debugPrint('>>> [AdicionarEmpresa] ❌ ERRO ao salvar empresa: $e');
@@ -534,8 +764,23 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
 
               const SizedBox(height: 24),
 
-              // Configurações NFC-e
-              _buildSectionTitle('Configurações NFC-e (Opcional)'),
+              _buildSectionTitle('Configurações NFC-e (Executável local)'),
+              _buildTextField(
+                controller: _bridgeNfceUrlController,
+                label: 'URL do Emissor Local (Bridge)',
+                icon: Icons.lan,
+                hintText: 'http://localhost:8000',
+                helperText: 'URL do emissor NFC-e rodando localmente (padrão: http://localhost:8000)',
+              ),
+              const SizedBox(height: 8),
+              _buildTextField(
+                controller: _bridgeNfceKeyController,
+                label: 'Chave de API do Emissor',
+                icon: Icons.key,
+                obscureText: true,
+                helperText: 'Chave gerada pelo executável (veja no log do bridge)',
+              ),
+              const SizedBox(height: 16),
               _buildCertificadoUpload(),
               const SizedBox(height: 16),
               _buildTextField(
@@ -560,6 +805,50 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                 helperText: 'Identificador do token CSC',
               ),
               const SizedBox(height: 16),
+              const SizedBox(height: 16),
+              _buildSectionTitle('Ajustes de Impressão (NFC-e Térmica)'),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildTextField(
+                      controller: _nfceMargemEsquerdaController,
+                      label: 'Margem Esq. (mm)',
+                      icon: Icons.format_align_left,
+                      hintText: '5.0',
+                      keyboardType: TextInputType.number,
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: _buildTextField(
+                      controller: _nfceMargemDireitaController,
+                      label: 'Margem Dir. (mm)',
+                      icon: Icons.format_align_right,
+                      hintText: '15.0',
+                      keyboardType: TextInputType.number,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              _buildTextField(
+                controller: _nfceLarguraBobinaController,
+                label: 'Largura da Bobina (mm)',
+                icon: Icons.print,
+                hintText: '80.0 ou 58.0',
+                helperText: 'A largura do papel da sua impressora. Geralmente 80.0 (maiorinha) ou 58.0 (pequena/maquininha).',
+                keyboardType: TextInputType.number,
+              ),
+              const SizedBox(height: 16),
+              _buildTextField(
+                controller: _nfceFonteEscalaController,
+                label: 'Escala da Fonte (Padrão: 1.0)',
+                icon: Icons.format_size,
+                hintText: '1.0',
+                helperText: 'Ex: 0.8 para diminuir 20%, 1.2 para aumentar 20%',
+                keyboardType: TextInputType.number,
+              ),
+              const SizedBox(height: 16),
               // Série da NFC-e
               _buildTextField(
                 controller: _serieNFCeController,
@@ -567,6 +856,15 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                 icon: Icons.confirmation_number,
                 hintText: 'Ex: 1',
                 helperText: 'Série da NFC-e (padrão: 1). Cada empresa deve ter sua própria série.',
+                keyboardType: TextInputType.number,
+              ),
+              const SizedBox(height: 16),
+              _buildTextField(
+                controller: _ultimoNumeroNFCeController,
+                label: 'Último número da NFC-e emitido',
+                icon: Icons.numbers_rounded,
+                hintText: 'Ex: 125',
+                helperText: 'O sistema somará +1 para a próxima nota (ex: 126). Só altere se a SEFAZ estiver em um número diferente.',
                 keyboardType: TextInputType.number,
               ),
               const SizedBox(height: 16),
@@ -698,6 +996,194 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
               ),
 
               const SizedBox(height: 24),
+              _buildSectionTitle('Fiscal / Contabilidade'),
+              _buildTextField(
+                controller: _emailContabilidadeController,
+                label: 'E-mail do Contador (Contabilidade)',
+                icon: Icons.alternate_email,
+                hintText: 'exemplo@contabilidade.com.br',
+                helperText: 'E-mail para onde os XMLs e relatórios serão enviados.',
+              ),
+              SwitchListTile(
+                title: const Text('Envio Fiscal Automático', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                subtitle: const Text('Enviar arquivos no dia 1 de cada mês automaticamente ao abrir o sistema.', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                value: _envioFiscalAutomatico,
+                onChanged: (bool value) {
+                  setState(() {
+                    _envioFiscalAutomatico = value;
+                  });
+                },
+                activeColor: Colors.orange,
+                secondary: const Icon(Icons.auto_awesome, color: Colors.orange),
+                contentPadding: EdgeInsets.zero,
+              ),
+              const SizedBox(height: 8),
+              _buildSectionTitle('Emissão Fiscal (NFC-e / NF-e)'),
+              SwitchListTile(
+                title: const Text('Incluir Taxa de Entrega na NFC-e', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                subtitle: const Text('Se ativo, a taxa de entrega será somada ao valor total da nota fiscal. Se desativo, a taxa fica apenas no cupom.', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                value: _incluirTaxaEntregaNfce,
+                onChanged: (bool value) {
+                  setState(() {
+                    _incluirTaxaEntregaNfce = value;
+                  });
+                },
+                activeColor: Colors.greenAccent,
+                secondary: const Icon(Icons.delivery_dining, color: Colors.greenAccent),
+                contentPadding: EdgeInsets.zero,
+              ),
+              SwitchListTile(
+                title: const Text('Incluir Serviço do Garçom (10%) na NFC-e', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                subtitle: const Text('Se ativo, a taxa de serviço (garçom) será somada ao valor total da nota fiscal. Se desativo, fica apenas no cupom.', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                value: _incluirServicoGarcomNfce,
+                onChanged: (bool value) {
+                  setState(() {
+                    _incluirServicoGarcomNfce = value;
+                  });
+                },
+                activeColor: Colors.amberAccent,
+                secondary: const Icon(Icons.restaurant, color: Colors.amberAccent),
+                contentPadding: EdgeInsets.zero,
+              ),
+
+              const SizedBox(height: 24),
+
+              _buildSectionTitle('Ajuste de Todas as Impressões (Geral)'),
+              SwitchListTile(
+                title: const Text('Sempre Perguntar a Impressora ao Imprimir (Windows)', style: TextStyle(color: Colors.white)),
+                subtitle: const Text('Ao imprimir, abre uma janela para escolher ou confirmar a impressora. A escolha fica salva como padrão — e você pode trocar quando quiser.', style: TextStyle(color: Colors.white60, fontSize: 11)),
+                value: _mostrarDialogoImpressora,
+                onChanged: (value) => setState(() => _mostrarDialogoImpressora = value),
+                activeColor: Colors.blueAccent,
+                contentPadding: EdgeInsets.zero,
+              ),
+              const SizedBox(height: 8),
+              ListTile(
+                leading: const Icon(Icons.print, color: Colors.blueAccent),
+                title: Text(
+                  _impressoraSelecionada.isEmpty
+                      ? 'Impressora Padrão (Toque para selecionar)'
+                      : _impressoraSelecionada,
+                  style: const TextStyle(color: Colors.white, fontSize: 14),
+                ),
+                subtitle: const Text(
+                  'Clique para selecionar ou trocar a impressora padrão',
+                  style: TextStyle(color: Colors.white60, fontSize: 11),
+                ),
+                trailing: const Icon(Icons.chevron_right, color: Colors.white54),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                tileColor: Colors.white.withOpacity(0.05),
+                onTap: () async {
+                  // Portal: define a impressora padrão da EMPRESA (compartilhada entre máquinas)
+                  final escolhida = await ImpressaoService.selecionarImpressoraPadrao(
+                    context,
+                    empresa: widget.empresa,
+                    somenteLocal: false,
+                  );
+                  if (escolhida != null && mounted) {
+                    setState(() => _impressoraSelecionada = escolhida);
+                    await ImpressaoService.salvarUltimaImpressora(
+                      escolhida,
+                      empresaId: widget.empresa?.id,
+                    );
+                  }
+                },
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildTextField(
+                      controller: _comandaMargemEsqController,
+                      label: 'Margem Esquerda',
+                      icon: Icons.format_align_left,
+                      hintText: '10.0',
+                      keyboardType: TextInputType.number,
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: _buildTextField(
+                      controller: _comandaMargemDirController,
+                      label: 'Margem Direita',
+                      icon: Icons.format_align_right,
+                      hintText: '15.0',
+                      keyboardType: TextInputType.number,
+                      helperText: 'Aumente se o valor estiver cortando à direita.',
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              _buildTextField(
+                controller: _comandaMargemVController,
+                label: 'Margem Superior/Inferior',
+                icon: Icons.height,
+                hintText: '10.0',
+                keyboardType: TextInputType.number,
+              ),
+              const SizedBox(height: 16),
+              _buildTextField(
+                controller: _comandaLarguraBobinaController,
+                label: 'Largura Física da Bobina (mm)',
+                icon: Icons.print,
+                hintText: '80.0 ou 58.0',
+                helperText: 'Largura do papel da impressora. Padrão: 80.0 (grande) ou 58.0 (pequena).',
+                keyboardType: TextInputType.number,
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildTextField(
+                      controller: _comandaFonteTituloController,
+                      label: 'Tam. Fonte Título',
+                      icon: Icons.title,
+                      hintText: '14.0',
+                      keyboardType: TextInputType.number,
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: _buildTextField(
+                      controller: _comandaFonteCorpoController,
+                      label: 'Tam. Fonte Itens',
+                      icon: Icons.text_fields,
+                      hintText: '9.0',
+                      keyboardType: TextInputType.number,
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: _buildTextField(
+                      controller: _comandaFonteStatusController,
+                      label: 'Tam. Fonte Info',
+                      icon: Icons.info_outline,
+                      hintText: '8.0',
+                      keyboardType: TextInputType.number,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              SwitchListTile(
+                title: const Text('Usar Negrito nos Textos Principais', style: TextStyle(color: Colors.white)),
+                subtitle: const Text('Melhora a leitura em algumas impressoras térmicas', style: TextStyle(color: Colors.white60, fontSize: 11)),
+                value: _comandaNegrito,
+                onChanged: (value) => setState(() => _comandaNegrito = value),
+                activeColor: Colors.purple,
+                contentPadding: EdgeInsets.zero,
+              ),
+              const SizedBox(height: 8),
+              SwitchListTile(
+                title: const Text('Mostrar Endereço de Entrega no Cupom', style: TextStyle(color: Colors.white)),
+                subtitle: const Text('Quando a venda for DELIVERY, exibe o endereço de entrega destacado no cupom não fiscal', style: TextStyle(color: Colors.white60, fontSize: 11)),
+                value: _mostrarEnderecoCupom,
+                onChanged: (value) => setState(() => _mostrarEnderecoCupom = value),
+                activeColor: Colors.orange,
+                contentPadding: EdgeInsets.zero,
+              ),
+              const SizedBox(height: 24),
 
               // Cores (opcional)
               _buildSectionTitle('Personalização (Opcional)'),
@@ -723,6 +1209,9 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                 },
               ),
 
+              const SizedBox(height: 24),
+
+              _buildPerfisDePreco(),
               const SizedBox(height: 24),
 
               // Configurações de Módulos
@@ -862,33 +1351,66 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                       const Divider(color: Colors.white24),
                       const SizedBox(height: 16),
                       
+                      // Seletor de Tipo
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.05),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.white12),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Serviço de WhatsApp:',
+                              style: TextStyle(color: Colors.white70, fontSize: 13),
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                _buildTipoWhatsAppChip('evolution', 'Evolution API (Gratuito/Self-host)'),
+                                const SizedBox(width: 8),
+                                _buildTipoWhatsAppChip('twilio', 'Twilio Bridge (Pagamento p/ uso)'),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      
                       // URL da API
                       _buildTextField(
                         controller: _whatsappApiUrlController,
-                        label: 'URL da Evolution API',
+                        label: _whatsappTipo == 'evolution' ? 'URL da Evolution API' : 'URL da Ponte no Render',
                         icon: Icons.link,
-                        hintText: 'https://sua-api.up.railway.app',
-                        helperText: 'URL da sua instância Evolution API no Railway',
+                        hintText: _whatsappTipo == 'evolution' ? 'https://sua-api.up.railway.app' : 'https://seu-bridge.onrender.com',
+                        helperText: _whatsappTipo == 'evolution' 
+                          ? 'URL da sua instância Evolution' 
+                          : 'URL do serviço que você criou no Render',
                       ),
                       
                       // API Key
                       _buildTextField(
                         controller: _whatsappApiKeyController,
-                        label: 'API Key',
+                        label: _whatsappTipo == 'evolution' ? 'API Key' : 'BRIDGE_API_SECRET',
                         icon: Icons.vpn_key,
-                        hintText: 'Sua API Key',
-                        helperText: 'Chave de autenticação da Evolution API',
+                        hintText: _whatsappTipo == 'evolution' ? 'Sua API Key' : 'Sua senha do Bridge',
+                        helperText: _whatsappTipo == 'evolution' 
+                          ? 'Chave de autenticação' 
+                          : 'A senha que você configurou no Render',
                         obscureText: true,
                       ),
                       
-                      // Nome da Instância
-                      _buildTextField(
-                        controller: _whatsappInstanceNameController,
-                        label: 'Nome da Instância',
-                        icon: Icons.phone_android,
-                        hintText: 'empresa_principal',
-                        helperText: 'Nome da instância criada na Evolution API',
-                      ),
+                      // Nome da Instância (Opcional para Twilio)
+                      if (_whatsappTipo == 'evolution') 
+                        _buildTextField(
+                          controller: _whatsappInstanceNameController,
+                          label: 'Nome da Instância',
+                          icon: Icons.phone_android,
+                          hintText: 'empresa_principal',
+                          helperText: 'Nome da instância criada na Evolution API',
+                        ),
                       
                       const SizedBox(height: 16),
                       
@@ -903,119 +1425,39 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                                 padding: const EdgeInsets.symmetric(vertical: 12),
                                 side: BorderSide(color: Colors.green.shade400),
                               ),
-                              icon: _whatsappTestando
-                                  ? SizedBox(
-                                      width: 16,
-                                      height: 16,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: Colors.green.shade400,
-                                      ),
-                                    )
-                                  : Icon(Icons.wifi_find, color: Colors.green.shade400),
-                              label: Text(
-                                _whatsappTestando ? 'Testando...' : 'Testar Conexão',
-                                style: TextStyle(color: Colors.green.shade400),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          // Botão Ver QR Code
-                          Expanded(
-                            child: OutlinedButton.icon(
-                              onPressed: _whatsappTestando ? null : _mostrarQRCodeWhatsApp,
-                              style: OutlinedButton.styleFrom(
-                                padding: const EdgeInsets.symmetric(vertical: 12),
-                                side: BorderSide(color: Colors.blue.shade400),
-                              ),
-                              icon: Icon(Icons.qr_code, color: Colors.blue.shade400),
-                              label: Text(
-                                'Ver QR Code',
-                                style: TextStyle(color: Colors.blue.shade400),
-                              ),
+                              icon: _whatsappTestando 
+                                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                                : const Icon(Icons.refresh, color: Colors.green),
+                              label: const Text('TESTAR CONEXÃO', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
                             ),
                           ),
                         ],
                       ),
                       
+                      // Botão para Gerenciamento Avançado
+                      const SizedBox(height: 16),
+                      ElevatedButton.icon(
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => WhatsAppGerenciamentoPage()),
+                          );
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF25D366),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        icon: const Icon(Icons.qr_code_scanner),
+                        label: const Text('ABRIR PAINEL DE CONEXÃO (QR CODE)', style: TextStyle(fontWeight: FontWeight.bold)),
+                      ),
+
                       const SizedBox(height: 12),
-
-                      // Botões Avançados (Desconectar/Deletar)
-                      if (_whatsappConnectionState == 'open') ...[
-                        Row(
-                          children: [
-                            Expanded(
-                              child: OutlinedButton.icon(
-                                onPressed: _whatsappTestando ? null : _desconectarWhatsApp,
-                                style: OutlinedButton.styleFrom(
-                                  padding: const EdgeInsets.symmetric(vertical: 12),
-                                  side: const BorderSide(color: Colors.orange),
-                                ),
-                                icon: const Icon(Icons.logout, color: Colors.orange, size: 18),
-                                label: const Text(
-                                  'Desconectar',
-                                  style: TextStyle(color: Colors.orange, fontSize: 13),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: OutlinedButton.icon(
-                                onPressed: _whatsappTestando ? null : _deletarInstanciaWhatsApp,
-                                style: OutlinedButton.styleFrom(
-                                  padding: const EdgeInsets.symmetric(vertical: 12),
-                                  side: const BorderSide(color: Colors.redAccent),
-                                ),
-                                icon: const Icon(Icons.delete_forever, color: Colors.redAccent, size: 18),
-                                label: const Text(
-                                  'Limpar Instância',
-                                  style: TextStyle(color: Colors.redAccent, fontSize: 13),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                      ],
-
-                      // Informações sobre como configurar
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.05),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Icon(Icons.info_outline, size: 16, color: Colors.white54),
-                                const SizedBox(width: 8),
-                                Text(
-                                  'Como configurar:',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.white70,
-                                    fontSize: 13,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              '1. Crie uma conta no Railway (railway.app)\n'
-                              '2. Deploy o template "Evolution API"\n'
-                              '3. Copie a URL e API Key geradas\n'
-                              '4. Crie uma instância e escaneie o QR Code',
-                              style: TextStyle(
-                                color: Colors.white54,
-                                fontSize: 12,
-                                height: 1.5,
-                              ),
-                            ),
-                          ],
-                        ),
+                      const Text(
+                        'Recomendamos utilizar o painel de conexão acima para configurar seu aparelho via QR Code.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.white38, fontSize: 11),
                       ),
                     ],
                   ],
@@ -1103,6 +1545,283 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                         return _buildCategoriaTelas(categoria, telas);
                       }),
                     ],
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 32),
+
+              // Configuração de Visibilidade dos Botões do PDV
+              _buildSectionTitle('Botões da Barra de Ferramentas (PDV)'),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.orange.shade900.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: Colors.orange.shade400.withOpacity(0.5),
+                    width: 1.5,
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.tune, color: Colors.orange.shade300, size: 24),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Visibilidade dos Botões',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'Defina quais botões aparecem na tela de vendas',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.white70,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    const Divider(color: Colors.white24),
+                    const SizedBox(height: 8),
+                    
+                    // Botão Cliente
+                    _buildBotaoToggle(
+                      icon: Icons.person,
+                      label: 'Cliente',
+                      value: _mostrarBotaoCliente,
+                      onChanged: (value) => setState(() => _mostrarBotaoCliente = value),
+                      color: Colors.green,
+                    ),
+                    
+                    // Botão Vendedor
+                    _buildBotaoToggle(
+                      icon: Icons.badge,
+                      label: 'Vendedor',
+                      value: _mostrarBotaoVendedor,
+                      onChanged: (value) => setState(() => _mostrarBotaoVendedor = value),
+                      color: Colors.purple,
+                    ),
+                    
+                    // Botão Entregas
+                    _buildBotaoToggle(
+                      icon: Icons.delivery_dining,
+                      label: 'Entregas',
+                      value: _mostrarBotaoEntregas,
+                      onChanged: (value) => setState(() => _mostrarBotaoEntregas = value),
+                      color: Colors.orange,
+                    ),
+                    
+                    // Botão Histórico
+                    _buildBotaoToggle(
+                      icon: Icons.history,
+                      label: 'Histórico',
+                      value: _mostrarBotaoHistorico,
+                      onChanged: (value) => setState(() => _mostrarBotaoHistorico = value),
+                      color: Colors.amber,
+                    ),
+                    
+                    // Botão Central
+                    _buildBotaoToggle(
+                      icon: Icons.assignment,
+                      label: 'Central',
+                      value: _mostrarBotaoCentral,
+                      onChanged: (value) => setState(() => _mostrarBotaoCentral = value),
+                      color: Colors.blue,
+                    ),
+                    
+                    // Botão Despesa
+                    _buildBotaoToggle(
+                      icon: Icons.money_off,
+                      label: 'Despesa',
+                      value: _mostrarBotaoDespesa,
+                      onChanged: (value) => setState(() => _mostrarBotaoDespesa = value),
+                      color: Colors.red,
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 32),
+
+              // Segurança e Senha do Administrador
+
+                    const SizedBox(height: 24),
+                    _buildSectionTitle('Formas de Pagamento (PDV)'),
+                    Card(
+                      color: Colors.white.withOpacity(0.05),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Configure quais formas de pagamento estarão ativas no PDV e se elas possuem descontos/acréscimos automáticos.',
+                              style: TextStyle(color: Colors.white70),
+                            ),
+                            const SizedBox(height: 16),
+                            ...TipoPagamento.values.map((tipo) {
+                              final nome = tipo.nome;
+                              final config = _pagamentosConfig[tipo.name] ?? {'ativo': true, 'descontoPerc': 0.0, 'acrescimoPerc': 0.0};
+                              final bool isAtivo = config['ativo'] ?? true;
+                              
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: 16.0),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      flex: 2,
+                                      child: SwitchListTile(
+                                        title: Text(nome, style: const TextStyle(color: Colors.white)),
+                                        value: isAtivo,
+                                        activeColor: ExodoTheme.primaryColor,
+                                        onChanged: (v) {
+                                          setState(() {
+                                            _pagamentosConfig[tipo.name] = {
+                                              ...config,
+                                              'ativo': v,
+                                            };
+                                          });
+                                        },
+                                      ),
+                                    ),
+                                    Expanded(
+                                      flex: 1,
+                                      child: TextFormField(
+                                        enabled: isAtivo,
+                                        initialValue: (config['descontoPerc'] ?? 0.0).toString(),
+                                        style: const TextStyle(color: Colors.white),
+                                        decoration: const InputDecoration(
+                                          labelText: 'Desconto (%)',
+                                          labelStyle: TextStyle(color: Colors.white54),
+                                          enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+                                        ),
+                                        keyboardType: TextInputType.number,
+                                        onChanged: (v) {
+                                          final val = double.tryParse(v.replaceAll(',', '.')) ?? 0.0;
+                                          _pagamentosConfig[tipo.name] = {
+                                            ...config,
+                                            'descontoPerc': val,
+                                          };
+                                        },
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      flex: 1,
+                                      child: TextFormField(
+                                        enabled: isAtivo,
+                                        initialValue: (config['acrescimoPerc'] ?? 0.0).toString(),
+                                        style: const TextStyle(color: Colors.white),
+                                        decoration: const InputDecoration(
+                                          labelText: 'Acréscimo (%)',
+                                          labelStyle: TextStyle(color: Colors.white54),
+                                          enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+                                        ),
+                                        keyboardType: TextInputType.number,
+                                        onChanged: (v) {
+                                          final val = double.tryParse(v.replaceAll(',', '.')) ?? 0.0;
+                                          _pagamentosConfig[tipo.name] = {
+                                            ...config,
+                                            'acrescimoPerc': val,
+                                          };
+                                        },
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            }).toList(),
+                          ],
+                        ),
+                      ),
+                    ),
+              _buildSectionTitle('Segurança e Senha do Administrador'),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.red.shade900.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: Colors.red.shade400.withOpacity(0.4),
+                    width: 1.5,
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.gpp_good_outlined, color: Colors.red.shade300, size: 24),
+                        const SizedBox(width: 12),
+                        const Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Controle Anti-Fraude / Senha Master',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                ),
+                              ),
+                              SizedBox(height: 4),
+                              Text(
+                                'Exigir senha de admin para operações críticas no PDV',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.white70,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    const Divider(color: Colors.white24),
+                    const SizedBox(height: 12),
+                    _buildTextField(
+                      controller: _senhaAdminController,
+                      label: 'Senha do Administrador (Master) *',
+                      icon: Icons.vpn_key_rounded,
+                      obscureText: true,
+                      helperText: 'Senha solicitada aos funcionários para autorizar alterações',
+                    ),
+                    const SizedBox(height: 12),
+                    // Toggle Exigir senha para alterar pedido
+                    _buildBotaoToggle(
+                      icon: Icons.edit_document,
+                      label: 'Exigir Senha para Alterar Pedido Pago/Fiado',
+                      value: _exigirSenhaAlterarPedido,
+                      onChanged: (value) => setState(() => _exigirSenhaAlterarPedido = value),
+                      color: Colors.redAccent,
+                    ),
+                    const SizedBox(height: 8),
+                    // Toggle Exigir senha para cancelar pedido
+                    _buildBotaoToggle(
+                      icon: Icons.cancel_presentation,
+                      label: 'Exigir Senha para Cancelar Pedidos',
+                      value: _exigirSenhaCancelarPedido,
+                      onChanged: (value) => setState(() => _exigirSenhaCancelarPedido = value),
+                      color: Colors.redAccent,
+                    ),
                   ],
                 ),
               ),
@@ -1458,6 +2177,351 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
             child: Text('Fechar'),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildTipoWhatsAppChip(String value, String label) {
+    final isSelected = _whatsappTipo == value;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => setState(() => _whatsappTipo = value),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          decoration: BoxDecoration(
+            color: isSelected ? Colors.green.withOpacity(0.2) : Colors.white.withOpacity(0.05),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: isSelected ? Colors.green : Colors.white12,
+              width: isSelected ? 2 : 1,
+            ),
+          ),
+          child: Center(
+            child: Text(
+              label,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: isSelected ? Colors.green.shade200 : Colors.white54,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                fontSize: 11,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Widget para toggle de visibilidade de botões do PDV
+  
+  Widget _buildPerfisDePreco() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Perfis de Preço (Clientes)',
+          style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'Defina os perfis de preço para os clientes. Ex: Revenda, Atacado, VIP.',
+          style: TextStyle(color: Colors.white70, fontSize: 14),
+        ),
+        const SizedBox(height: 16),
+        OutlinedButton.icon(
+          onPressed: _abrirModalNovoPerfilPreco,
+          icon: const Icon(Icons.add),
+          label: const Text('Adicionar Tabela de Preço'),
+          style: OutlinedButton.styleFrom(foregroundColor: Colors.blueAccent),
+        ),
+        const SizedBox(height: 16),
+        if (_configPerfisPreco.isEmpty)
+          const Text('Nenhum perfil cadastrado.', style: TextStyle(color: Colors.white54, fontStyle: FontStyle.italic))
+        else
+          ListView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: _configPerfisPreco.length,
+            itemBuilder: (context, index) {
+              final config = _configPerfisPreco[index];
+              final nome = config['nome'] as String;
+              final isDesconto = config['tipo'] == 'desconto';
+              // Usar num? para aceitar tanto int (vindo do Postgres/Supabase p/ números
+              // inteiros, ex: 5) quanto double (salvo localmente) — evita o crash
+              // "type 'int' is not a subtype of type 'double?'".
+              final valor = (config['valor'] as num?)?.toDouble() ?? 0.0;
+              
+              return Card(
+                color: Colors.white.withOpacity(0.05),
+                margin: const EdgeInsets.only(bottom: 8),
+                child: ListTile(
+                  title: Text(nome, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  subtitle: Text(
+                    isDesconto 
+                      ? 'Desconto Global: ${valor.toStringAsFixed(1)}%' 
+                      : (config['tipo'] == 'acrescimo' 
+                          ? 'Acréscimo Global: ${valor.toStringAsFixed(1)}%' 
+                          : 'Preço Fixo no Cadastro do Produto'),
+                    style: TextStyle(
+                      color: isDesconto 
+                          ? Colors.greenAccent 
+                          : (config['tipo'] == 'acrescimo' ? Colors.redAccent : Colors.orangeAccent)
+                    ),
+                  ),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.delete, color: Colors.redAccent),
+                    onPressed: () {
+                      setState(() {
+                        _configPerfisPreco.removeAt(index);
+                        _perfisDePreco.remove(nome);
+                      });
+                      // Auto-salvar após remover sem fechar a tela
+                      _salvar(fecharTela: false);
+                    },
+                  ),
+                ),
+              );
+            },
+          ),
+      ],
+    );
+  }
+
+  void _abrirModalNovoPerfilPreco() {
+    final nomeController = TextEditingController();
+    final valorController = TextEditingController();
+    final qtdMinimaController = TextEditingController();
+    String tipoSelecionado = 'fixo'; // 'fixo' ou 'desconto'
+    String tipoQtdSelecionado = 'carrinho'; // 'carrinho' ou 'item'
+    List<String> formasSelecionadas = [];
+
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setStateModal) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF1E1E2E),
+              title: const Text('Nova Tabela de Preço', style: TextStyle(color: Colors.white)),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    TextField(
+                      controller: nomeController,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: const InputDecoration(
+                        labelText: 'Nome do Perfil (ex: Revenda, VIP)',
+                        labelStyle: TextStyle(color: Colors.white70),
+                        enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    const Text('Tipo de Regra', style: TextStyle(color: Colors.white70)),
+                    RadioListTile<String>(
+                      title: const Text('Preço Fixo no Produto', style: TextStyle(color: Colors.white, fontSize: 14)),
+                      value: 'fixo',
+                      groupValue: tipoSelecionado,
+                      activeColor: Colors.blueAccent,
+                      onChanged: (v) => setStateModal(() => tipoSelecionado = v!),
+                    ),
+                    RadioListTile<String>(
+                      title: const Text('Desconto Global (%)', style: TextStyle(color: Colors.white, fontSize: 14)),
+                      value: 'desconto',
+                      groupValue: tipoSelecionado,
+                      activeColor: Colors.blueAccent,
+                      onChanged: (v) => setStateModal(() => tipoSelecionado = v!),
+                    ),
+                    RadioListTile<String>(
+                      title: const Text('Acréscimo Global (%)', style: TextStyle(color: Colors.white, fontSize: 14)),
+                      value: 'acrescimo',
+                      groupValue: tipoSelecionado,
+                      activeColor: Colors.blueAccent,
+                      onChanged: (v) => setStateModal(() => tipoSelecionado = v!),
+                    ),
+                    if (tipoSelecionado == 'desconto' || tipoSelecionado == 'acrescimo') ...[
+                      const SizedBox(height: 16),
+                      TextField(
+                        controller: valorController,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        style: TextStyle(color: tipoSelecionado == 'desconto' ? Colors.greenAccent : Colors.redAccent),
+                        decoration: InputDecoration(
+                          labelText: tipoSelecionado == 'desconto' ? 'Desconto (%)' : 'Acréscimo (%)',
+                          labelStyle: const TextStyle(color: Colors.white70),
+                          enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+                        ),
+                      ),
+                    ],
+                    
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 16),
+                      child: Divider(color: Colors.white24),
+                    ),
+                    
+                    const Text('Regras Opcionais', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Preencha apenas se quiser restringir o uso desta tabela.',
+                      style: TextStyle(color: Colors.white54, fontSize: 12),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: qtdMinimaController,
+                      keyboardType: TextInputType.number,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: const InputDecoration(
+                        labelText: 'Qtd. Mínima (Deixe vazio p/ não usar)',
+                        labelStyle: TextStyle(color: Colors.white70),
+                        enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    RadioListTile<String>(
+                      title: const Text('Contabilizar pelo Total do Carrinho', style: TextStyle(color: Colors.white, fontSize: 13)),
+                      value: 'carrinho',
+                      groupValue: tipoQtdSelecionado,
+                      activeColor: Colors.blueAccent,
+                      contentPadding: EdgeInsets.zero,
+                      onChanged: (v) => setStateModal(() => tipoQtdSelecionado = v!),
+                    ),
+                    RadioListTile<String>(
+                      title: const Text('Contabilizar Por Item/Produto', style: TextStyle(color: Colors.white, fontSize: 13)),
+                      value: 'item',
+                      groupValue: tipoQtdSelecionado,
+                      activeColor: Colors.blueAccent,
+                      contentPadding: EdgeInsets.zero,
+                      onChanged: (v) => setStateModal(() => tipoQtdSelecionado = v!),
+                    ),
+                    const SizedBox(height: 24),
+                    const Text('Formas de Pagamento Aceitas', style: TextStyle(color: Colors.white70)),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: TipoPagamento.values.map((tipo) {
+                        final isSelected = formasSelecionadas.contains(tipo.name);
+                        return FilterChip(
+                          label: Text(tipo.nome, style: TextStyle(color: isSelected ? Colors.white : Colors.white70)),
+                          selected: isSelected,
+                          selectedColor: ExodoTheme.primaryColor.withOpacity(0.3),
+                          checkmarkColor: Colors.white,
+                          backgroundColor: Colors.white.withOpacity(0.05),
+                          onSelected: (bool selected) {
+                            setStateModal(() {
+                              if (selected) {
+                                formasSelecionadas.add(tipo.name);
+                              } else {
+                                formasSelecionadas.remove(tipo.name);
+                              }
+                            });
+                          },
+                        );
+                      }).toList(),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Cancelar', style: TextStyle(color: Colors.white70)),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    final nome = nomeController.text.trim();
+                    if (nome.isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Por favor, informe o nome da tabela.')),
+                      );
+                      return;
+                    }
+                    
+                    if (_configPerfisPreco.any((p) => (p['nome'] as String).toLowerCase() == nome.toLowerCase())) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Já existe um perfil com esse nome.')),
+                      );
+                      return;
+                    }
+
+                    final valor = (tipoSelecionado == 'desconto' || tipoSelecionado == 'acrescimo')
+                        ? (double.tryParse(valorController.text.replaceAll(',', '.')) ?? 0.0) 
+                        : 0.0;
+                        
+                    final qtdMinima = int.tryParse(qtdMinimaController.text) ?? 0;
+
+                    setState(() {
+                      _perfisDePreco.add(nome);
+                      _configPerfisPreco.add(<String, dynamic>{
+                        'nome': nome,
+                        'tipo': tipoSelecionado,
+                        'valor': valor,
+                        if (qtdMinima > 0) 'quantidade_minima': qtdMinima,
+                        if (qtdMinima > 0) 'tipo_quantidade_minima': tipoQtdSelecionado,
+                        if (formasSelecionadas.isNotEmpty) 'formas_pagamento': formasSelecionadas,
+                      });
+                    });
+                    
+                    Navigator.pop(ctx);
+                    
+                    // Auto-salvar sem fechar a tela
+                    _salvar(fecharTela: false);
+                  },
+                  child: const Text('Adicionar'),
+                ),
+              ],
+            );
+          }
+        );
+      },
+    );
+  }
+
+  Widget _buildBotaoToggle({
+    required IconData icon,
+    required String label,
+    required bool value,
+    required Function(bool) onChanged,
+    required Color color,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: InkWell(
+        onTap: () => onChanged(!value),
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: value ? color.withOpacity(0.15) : Colors.white.withOpacity(0.05),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: value ? color.withOpacity(0.5) : Colors.white12,
+              width: value ? 1.5 : 1,
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(icon, color: value ? color : Colors.white54, size: 20),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    color: value ? Colors.white : Colors.white70,
+                    fontWeight: value ? FontWeight.bold : FontWeight.normal,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+              Switch(
+                value: value,
+                onChanged: onChanged,
+                activeColor: color,
+                activeTrackColor: color.withOpacity(0.3),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

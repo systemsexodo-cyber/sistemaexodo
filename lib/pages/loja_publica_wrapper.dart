@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
+import 'package:sistema_exodo_novo/models/empresa.dart';
 import 'package:sistema_exodo_novo/services/data_service.dart';
 import 'package:sistema_exodo_novo/services/auth_service.dart';
 import 'package:sistema_exodo_novo/services/carrinho_service.dart';
@@ -35,13 +36,14 @@ class LojaPublicaWrapper extends StatefulWidget {
 
 class _LojaPublicaWrapperState extends State<LojaPublicaWrapper> {
   bool _dadosCarregados = false;
+  bool _estaCarregando = false; // Guarda para evitar loop infinito
   String? _empresaIdConfigurada;
   String? _ultimoSlugProcessado;
 
   @override
   void initState() {
     super.initState();
-    print('>>> [LojaPublicaWrapper] @INIT - Slug: ${widget.slugEmpresa}');
+    print('>>> [LojaPublicaWrapper] @INIT - Slug: ${widget.slugEmpresa} | ForceAgendamento: ${widget.forceAgendamento}');
     _carregarDados();
   }
 
@@ -56,62 +58,101 @@ class _LojaPublicaWrapperState extends State<LojaPublicaWrapper> {
 
   // Monitorar mudanças no AuthService para reagir quando as empresas carregarem
   @override
+  /// Preserva as configurações locais da empresa atual (perfis tributários, perfis
+  /// de preço, bridge, certificado etc.) ao substituir a empresa do DataService
+  /// pela versão fresca do Supabase nas páginas públicas.
+  Empresa _preservarConfigsLocais(DataService dataService, Empresa remota) {
+    final local = dataService.empresaAtual;
+    // Só mescla quando é a MESMA empresa (evita vazar configs de uma empresa em outra).
+    if (local == null || local.id != remota.id) return remota;
+    final configLocal = local.configuracoes ?? {};
+    final configRemota = remota.configuracoes ?? {};
+    final merged = <String, dynamic>{...configRemota};
+    for (final entry in configLocal.entries) {
+      if (!merged.containsKey(entry.key) || merged[entry.key] == null) {
+        merged[entry.key] = entry.value;
+      }
+    }
+    if ((configLocal['perfis_tributarios'] as List?)?.isNotEmpty == true) {
+      merged['perfis_tributarios'] = configLocal['perfis_tributarios'];
+    }
+    if ((configLocal['perfis_preco'] as List?)?.isNotEmpty == true) {
+      merged['perfis_preco'] = configLocal['perfis_preco'];
+    }
+    return remota.copyWith(configuracoes: merged);
+  }
+
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // Se ainda não carregamos os dados OU se carregamos o padrão mas as empresas acabaram de chegar, tentar de novo
+    
+    // Evitar disparar se já estamos carregando ou se já terminou com sucesso
+    if (_estaCarregando || _dadosCarregados) return;
+
     final authService = Provider.of<AuthService>(context);
-    // Retentar se ainda não carregamos com sucesso ou se estamos no fallback '1' mas mais empresas chegaram
-    if (!_dadosCarregados || (_empresaIdConfigurada == null)) {
-      if (authService.empresas.isNotEmpty) {
-        debugPrint('>>> [LojaPublicaWrapper] @CHANGES - Empresas chegaram, tentando carregar...');
-        _carregarDados();
-      }
+    // Retentar apenas se as empresas chegaram e ainda não configuramos o ID
+    if (_empresaIdConfigurada == null && authService.empresas.isNotEmpty) {
+      debugPrint('>>> [LojaPublicaWrapper] @CHANGES - Empresas chegaram, disparando carregamento...');
+      _carregarDados();
     }
   }
 
   Future<void> _carregarDados() async {
+    if (_estaCarregando) return;
+    
+    setState(() {
+      _estaCarregando = true;
+    });
+
     final dataService = Provider.of<DataService>(context, listen: false);
     final authService = Provider.of<AuthService>(context, listen: false);
     
     final currentSlug = widget.slugEmpresa;
     _ultimoSlugProcessado = currentSlug;
 
+    String? empresaIdParaUsar;
+
     try {
-      // 1. Aguardar carregamento inicial das empresas
-      // Se temos um slug, vale a pena esperar um pouco mais
-      int tentativas = 0;
-      int maxTentativas = (currentSlug != null && currentSlug.isNotEmpty) ? 20 : 10; // Esperar até 10s se tiver slug
-      
-      // Se temos um slug, vale a pena esperar as empresas chegarem
-      while (tentativas < maxTentativas) {
-        // Se já temos empresas, tentar encontrar a solicitada
-        if (authService.empresas.isNotEmpty) {
-           final slugDeteccaoLocal = widget.slugEmpresa;
-           if (slugDeteccaoLocal != null && slugDeteccaoLocal.isNotEmpty) {
-              final detectada = authService.obterEmpresaPorSlug(slugDeteccaoLocal);
-              if (detectada != null) break; // Encontramos!
-           } else if (slugDeteccaoLocal == null || slugDeteccaoLocal.isEmpty) {
-              break; // Sem slug, qualquer empresa (ou nenhuma) serve
-           }
-        }
-        
-        // Se ainda está carregando inicial ou a lista está vazia, esperamos
-        if (authService.isCarregandoDados || authService.empresas.isEmpty) {
-          await Future.delayed(const Duration(milliseconds: 500));
-          tentativas++;
+      // 1. Tentar encontrar a empresa solicitada IMEDIATAMENTE (Otimizado)
+      if (currentSlug != null && currentSlug.isNotEmpty) {
+        final detectada = await authService.buscarEmpresaPorSlugAsync(currentSlug);
+        if (detectada != null) {
+          print('>>> [LojaPublica] ✅ Empresa detectada via Busca Direta: ${detectada.nomeExibicao}');
+          empresaIdParaUsar = detectada.id;
+          dataService.setEmpresaAtual(_preservarConfigsLocais(dataService, detectada)); 
         } else {
-          // Se não está carregando e já temos empresas (e não achamos o slug no break acima),
-          // vamos dar uma última chance (mais 1s) caso o sync do Firebase ainda esteja rolando
-          await Future.delayed(const Duration(seconds: 1));
-          break;
+          // Retentativa rápida para casos de latência do Firebase (o "não encontrada ainda" do usuário)
+          debugPrint('>>> [LojaPublica] ⏳ Slug não encontrado de primeira, aguardando 1.5s para retentar...');
+          await Future.delayed(const Duration(milliseconds: 1500));
+          final detectada2 = await authService.buscarEmpresaPorSlugAsync(currentSlug);
+          if (detectada2 != null) {
+            print('>>> [LojaPublica] ✅ Empresa detectada na Retentativa: ${detectada2.nomeExibicao}');
+            empresaIdParaUsar = detectada2.id;
+            dataService.setEmpresaAtual(_preservarConfigsLocais(dataService, detectada2));
+          }
+        }
+      }
+
+      // 2. Se ainda não achamos, vamos esperar um pouco se o AuthService ainda estiver carregando a lista global
+      if (empresaIdParaUsar == null) {
+        int tentativas = 0;
+        int maxTentativas = 8; // Reduzido para 4s total de espera passiva
+        
+        while (tentativas < maxTentativas) {
+          if (authService.empresas.isNotEmpty) break;
+          
+          if (authService.isCarregandoDados) {
+            await Future.delayed(const Duration(milliseconds: 500));
+            tentativas++;
+          } else {
+            break;
+          }
         }
       }
       
-      String? empresaIdParaUsar;
       String? slugDeteccao = currentSlug;
       
-      // Detecção redundante da URL se o widget não recebeu o slug
-      if (slugDeteccao == null || slugDeteccao.isEmpty) {
+      // Detecção redundante da URL se o widget não recebeu o slug (Fallback Web)
+      if (empresaIdParaUsar == null && (slugDeteccao == null || slugDeteccao.isEmpty)) {
         if (kIsWeb) {
           final String path = html_helper.getWindowPathname();
           final segments = path.split('/').where((s) => s.isNotEmpty).toList();
@@ -126,7 +167,10 @@ class _LojaPublicaWrapperState extends State<LojaPublicaWrapper> {
                 'clientes', 'produtos', 'servicos', 'pedidos', 'venda-direta', 'pdv',
                 'entrada-mercadorias', 'contas-pagar', 'agenda-contas', 'cozinha-bar',
                 'mesas', 'links-vendedores', 'vendedor-dashboard', 'funcionarios',
-                'personalizar-loja', 'agenda-pet', 'gerenciar-imagens'
+                'personalizar-loja', 'agenda-pet', 'gerenciar-imagens', 'servico',
+                'caixa', 'comissoes', 'entregas', 'empresas', 'taxas-entrega', 
+                'gerenciar-permissoes', 'historico-vendas', 'historico-operacoes',
+                'gerenciar-usuarios', 'trocas-devolucoes', 'configuracoes-agenda'
               };
               if (!reservados.contains(first)) {
                 slugDeteccao = first;
@@ -136,30 +180,29 @@ class _LojaPublicaWrapperState extends State<LojaPublicaWrapper> {
         }
       }
 
-      print('>>> [LojaPublica] Buscando empresa para slug: "$slugDeteccao"');
-
-      // 2. Localizar Empresa
-      if (slugDeteccao != null && slugDeteccao.isNotEmpty) {
-        final empresaPorSlug = authService.obterEmpresaPorSlug(slugDeteccao);
+      // 3. Localizar Empresa se ainda não temos o ID
+      if (empresaIdParaUsar == null && slugDeteccao != null && slugDeteccao.isNotEmpty) {
+        print('>>> [LojaPublica] Buscando empresa para slug: "$slugDeteccao" (Fase Final)');
+        final empresaPorSlug = await authService.buscarEmpresaPorSlugAsync(slugDeteccao);
         if (empresaPorSlug != null) {
           empresaIdParaUsar = empresaPorSlug.id;
-          dataService.setEmpresaAtual(empresaPorSlug); // SETAR OBJETO COMPLETO
+          dataService.setEmpresaAtual(_preservarConfigsLocais(dataService, empresaPorSlug));
           print('>>> [LojaPublica] ✅ Empresa encontrada por slug: ${empresaPorSlug.nomeExibicao} (ID: $empresaIdParaUsar)');
         } else {
           print('>>> [LojaPublica] ⚠ Slug "$slugDeteccao" não encontrado em ${authService.empresas.length} empresas');
         }
       }
 
-      // 3. Fallback se não encontrar pelo slug
+      // 4. Fallback final se não encontrar pelo slug
       if (empresaIdParaUsar == null) {
         if (authService.empresas.isNotEmpty) {
           // Se tiver um slug mas não achamos, vamos tentar achar por ID direto
           if (slugDeteccao != null) {
              final porId = authService.empresas.any((e) => e.id == slugDeteccao);
              if (porId) {
-                empresaIdParaUsar = slugDeteccao;
                 final empObj = authService.empresas.firstWhere((e) => e.id == slugDeteccao);
-                dataService.setEmpresaAtual(empObj);
+                empresaIdParaUsar = empObj.id;
+                dataService.setEmpresaAtual(_preservarConfigsLocais(dataService, empObj));
                 print('>>> [LojaPublica] ✅ Empresa encontrada por ID direto: ${empObj.nomeExibicao} ($empresaIdParaUsar)');
               }
           }
@@ -168,11 +211,11 @@ class _LojaPublicaWrapperState extends State<LojaPublicaWrapper> {
             // Se ainda assim não achamos e o usuário não especificou slug, usar a primeira
             if (slugDeteccao == null || slugDeteccao.isEmpty) {
               empresaIdParaUsar = authService.empresas.first.id;
+              dataService.setEmpresaAtual(_preservarConfigsLocais(dataService, authService.empresas.first));
               print('>>> [LojaPublica] ⚠ Usando primeira empresa como padrão: $empresaIdParaUsar');
             } else {
               // SE ESPECIFICOU SLUG E NÃO ACHAMOS, É UM ERRO!
               print('>>> [LojaPublica] ❌ ERRO: Empresa "$slugDeteccao" não encontrada!');
-              // Não vamos usar o fallback '1' se o slug for inválido
             }
           }
         } else {
@@ -181,17 +224,17 @@ class _LojaPublicaWrapperState extends State<LojaPublicaWrapper> {
         }
       }
 
-      // 4. Configurar DataService
+      // 5. Configurar DataService definitivamente
       if (empresaIdParaUsar != null && empresaIdParaUsar.isNotEmpty) {
-        if (dataService.empresaIdAtual != empresaIdParaUsar) {
+        if (dataService.currentEmpresaId != empresaIdParaUsar) {
           print('>>> [LojaPublica] Definindo nova empresa no DataService: $empresaIdParaUsar');
-          await dataService.definirEmpresaAtual(empresaIdParaUsar).timeout(
+          await dataService.definirEmpresaAtual(empresaIdParaUsar, modoLeve: true).timeout(
             const Duration(seconds: 25),
             onTimeout: () => print('>>> [LojaPublica] Timeout definirEmpresaAtual'),
           );
         } else {
           print('>>> [LojaPublica] Empresa já ativa, apenas recarregando...');
-          await dataService.recarregarDados().timeout(
+          await dataService.recarregarDados(modoLeve: true).timeout(
             const Duration(seconds: 25),
             onTimeout: () => print('>>> [LojaPublica] Timeout recarregarDados'),
           );
@@ -202,6 +245,7 @@ class _LojaPublicaWrapperState extends State<LojaPublicaWrapper> {
         setState(() {
           _empresaIdConfigurada = empresaIdParaUsar;
           _dadosCarregados = true;
+          _estaCarregando = false;
         });
 
         // REFORÇO DE URL: Se for Web, garantir que o link original NÃO mude para '/'
@@ -222,7 +266,8 @@ class _LojaPublicaWrapperState extends State<LojaPublicaWrapper> {
       print('>>> [LojaPublica] ❌ Erro crítico no carregamento: $e');
       if (mounted) setState(() {
         _dadosCarregados = true;
-        _empresaIdConfigurada = _empresaIdConfigurada ?? '1'; // Fallback de emergência apenas em erro
+        _estaCarregando = false;
+        // Não definir fallback '1' aqui se temos um slug, para mostrar a tela de erro correta
       });
     }
   }
@@ -288,10 +333,14 @@ class _LojaPublicaWrapperState extends State<LojaPublicaWrapper> {
       } catch (_) {}
     }
 
+    debugPrint('>>> [LojaPublicaWrapper] build() -> isAgendamento: $isAgendamento | forceAgendamento: ${widget.forceAgendamento}');
+
     Widget child;
     if (isAgendamento) {
+      debugPrint('>>> [LojaPublicaWrapper] Renderizando AgendamentoPublicoPage');
       child = AgendamentoPublicoPage(slugEmpresa: widget.slugEmpresa);
     } else {
+      debugPrint('>>> [LojaPublicaWrapper] Renderizando LojaPublicaPage');
       child = LojaPublicaPage(
         codigoLink: widget.codigoLink.isNotEmpty ? widget.codigoLink : null,
       );

@@ -14,15 +14,18 @@ import '../models/forma_pagamento.dart';
 import '../models/agendamento_servico.dart';
 import '../models/venda_balcao.dart';
 import '../models/item_material.dart';
+import '../models/endereco_cliente.dart';
 import '../services/data_service.dart';
+import '../services/auth_service.dart';
+import '../services/supabase_service.dart';
 import '../theme.dart';
 import 'venda_direta_page.dart';
 import 'lancar_pedido_page.dart';
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
-import '../services/image_storage_service.dart';
 import 'dart:typed_data';
+import '../widgets/sync_status_widget.dart';
 
 /// Widget simplificado para carregar imagem - SEM verificação prévia que pode bloquear
 /// PROTEÇÃO CONTRA CRASH: Todos os erros são capturados
@@ -44,13 +47,13 @@ class _ImageNetworkWithTimeout extends StatelessWidget {
     // PROTEÇÃO CRÍTICA: Envolver tudo em try-catch para evitar crash
     try {
       debugPrint('>>> [ImageNetwork] Tentando carregar: $imageUrl');
-      
+
       // Validar URL antes de tentar carregar
       if (imageUrl.isEmpty) {
         debugPrint('>>> [ImageNetwork] ⚠️ URL vazia');
         return _buildErrorWidget('URL vazia');
       }
-      
+
       return Image.network(
         imageUrl,
         width: width,
@@ -83,9 +86,12 @@ class _ImageNetworkWithTimeout extends StatelessWidget {
               return child;
             }
             final progress = loadingProgress.expectedTotalBytes != null
-                ? loadingProgress.cumulativeBytesLoaded / loadingProgress.expectedTotalBytes!
+                ? loadingProgress.cumulativeBytesLoaded /
+                      loadingProgress.expectedTotalBytes!
                 : 0.0;
-            debugPrint('>>> [ImageNetwork] Carregando... ${(progress * 100).toStringAsFixed(1)}%');
+            debugPrint(
+              '>>> [ImageNetwork] Carregando... ${(progress * 100).toStringAsFixed(1)}%',
+            );
             return Container(
               width: width,
               height: height,
@@ -114,7 +120,9 @@ class _ImageNetworkWithTimeout extends StatelessWidget {
             return _buildErrorWidget('Erro ao carregar');
           } catch (e) {
             // PROTEÇÃO CRÍTICA: Se até o errorBuilder falhar, retornar widget seguro
-            debugPrint('>>> [ImageNetwork] ❌❌❌ ERRO CRÍTICO no errorBuilder: $e');
+            debugPrint(
+              '>>> [ImageNetwork] ❌❌❌ ERRO CRÍTICO no errorBuilder: $e',
+            );
             return _buildErrorWidget('Erro crítico');
           }
         },
@@ -146,10 +154,7 @@ class _ImageNetworkWithTimeout extends StatelessWidget {
             const SizedBox(height: 4),
             Text(
               mensagem,
-              style: const TextStyle(
-                color: Colors.red,
-                fontSize: 10,
-              ),
+              style: const TextStyle(color: Colors.red, fontSize: 10),
               textAlign: TextAlign.center,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
@@ -169,9 +174,18 @@ class _ImageNetworkWithTimeout extends StatelessWidget {
   }
 }
 
+/// Classe auxiliar para informações de pagamento pendente
+class _PagamentoPendenteInfo {
+  final Pedido pedido;
+  final PagamentoPedido pagamento;
+
+  _PagamentoPendenteInfo({required this.pedido, required this.pagamento});
+}
+
 class ClienteDetalhesPage extends StatefulWidget {
   final Cliente? cliente;
-  final int? abaInicial; // Índice da aba inicial (0=Dados, 1=Endereço, 2=Adicional, 3=Pet, 4=Financeiro)
+  final int?
+  abaInicial; // Índice da aba inicial (0=Dados, 1=Endereço, 2=Adicional, 3=Pet, 4=Financeiro)
   final String? petIdParaEditar; // ID do pet para editar (opcional)
 
   const ClienteDetalhesPage({
@@ -192,6 +206,7 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
   bool _isLoading = false;
 
   // Controladores
+  final _codigoController = TextEditingController();
   final _nomeController = TextEditingController();
   final _nomeFantasiaController = TextEditingController();
   final _cpfCnpjController = TextEditingController();
@@ -212,54 +227,266 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
   final _profissaoController = TextEditingController();
   final _observacoesController = TextEditingController();
   final _limiteCreditoController = TextEditingController();
+  final _saldoDevedorController = TextEditingController();
+  final _creditoInicialController = TextEditingController();
 
   TipoPessoa _tipoPessoa = TipoPessoa.fisica;
   DateTime? _dataNascimento;
   bool _ativo = true;
   bool _bloqueado = false;
-  
-  // Pets
+  bool _habilitaTaxiDog = false;
+  String? _perfilPrecoSelecionado;
+
+  // Pets e Endereços
   List<Pet> _pets = [];
+  List<EnderecoCliente> _enderecos = [];
   final ImagePicker _imagePicker = ImagePicker();
   bool _uploadingFoto = false; // Flag para controlar upload de foto
 
-  bool get _isEditing => widget.cliente != null && widget.cliente!.id.isNotEmpty;
-  
+  bool get _isEditing =>
+      widget.cliente != null && widget.cliente!.id.isNotEmpty;
 
-  /// Retorna a URL permanente do Firebase ou null se falhar
+  Widget _buildSecaoTitulo(String titulo, IconData icon) {
+    return Row(
+      children: [
+        Icon(icon, color: Colors.orange, size: 20),
+        const SizedBox(width: 8),
+        Text(
+          titulo,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ],
+    );
+  }
+
+  
+  Widget _buildDropdownPerfilPreco() {
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final perfis = dataService.empresaAtual?.perfisDePreco ?? [];
+    
+    if (perfis.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return DropdownButtonFormField<String>(
+      value: _perfilPrecoSelecionado,
+      dropdownColor: const Color(0xFF1E1E2E),
+      style: const TextStyle(color: Colors.white),
+      decoration: const InputDecoration(
+        labelText: 'Perfil de Preço (Atacarejo/Revenda)',
+        labelStyle: TextStyle(color: Colors.white70),
+        enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+        focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white)),
+        prefixIcon: Icon(Icons.price_change, color: Colors.white54),
+      ),
+      items: [
+        const DropdownMenuItem(
+          value: null,
+          child: Text('Padrão (Sem Perfil)'),
+        ),
+        ...perfis.map((p) => DropdownMenuItem(
+          value: p,
+          child: Text(p),
+        ))
+      ],
+      onChanged: (v) => setState(() => _perfilPrecoSelecionado = v),
+    );
+  }
+
+  Widget _buildCampoTexto({
+    required TextEditingController controller,
+    required String label,
+    IconData? icon,
+    bool required = false,
+    TextInputType keyboardType = TextInputType.text,
+    List<TextInputFormatter>? inputFormatters,
+    String? hintText,
+    String? prefixText,
+    int maxLines = 1,
+    Function(String)? onChanged,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: TextFormField(
+        controller: controller,
+        cursorColor: Colors.blue,
+        style: const TextStyle(color: Colors.white),
+        keyboardType: keyboardType,
+        inputFormatters: inputFormatters,
+        maxLines: maxLines,
+        onChanged: onChanged,
+        decoration: InputDecoration(
+          labelText: label,
+          labelStyle: const TextStyle(color: Colors.white70),
+          hintText: hintText,
+          hintStyle: const TextStyle(color: Colors.white38),
+          prefixText: prefixText,
+          prefixStyle: const TextStyle(color: Colors.white),
+          prefixIcon: icon != null ? Icon(icon, color: Colors.blue) : null,
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: Colors.white.withOpacity(0.1)),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: Colors.blue, width: 2),
+          ),
+          filled: true,
+          fillColor: Colors.white.withOpacity(0.05),
+        ),
+        validator: required
+            ? (value) {
+                if (value == null || value.isEmpty) {
+                  return 'Campo obrigatório';
+                }
+                return null;
+              }
+            : null,
+      ),
+    );
+  }
+
+  Widget _buildCampoData({
+    required String label,
+    required DateTime? value,
+    required Function(DateTime?) onChanged,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(color: Colors.white70, fontSize: 13),
+          ),
+          const SizedBox(height: 8),
+          InkWell(
+            onTap: () async {
+              final date = await showDatePicker(
+                context: context,
+                initialDate: value ?? DateTime.now(),
+                firstDate: DateTime(1900),
+                lastDate: DateTime(2100),
+              );
+              if (date != null) onChanged(date);
+            },
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.05),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.white.withOpacity(0.1)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.calendar_today, color: Colors.blue, size: 20),
+                  const SizedBox(width: 8),
+                  Text(
+                    value != null
+                        ? DateFormat('dd/MM/yyyy').format(value)
+                        : 'Selecionar data',
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOpcaoTipo(TipoPessoa tipo, String label, IconData icone) {
+    final isSelected = _tipoPessoa == tipo;
+    return GestureDetector(
+      onTap: () => setState(() => _tipoPessoa = tipo),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? Colors.blue.withOpacity(0.2)
+              : Colors.white.withOpacity(0.05),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isSelected ? Colors.blue : Colors.white.withOpacity(0.1),
+            width: isSelected ? 2 : 1,
+          ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              icone,
+              color: isSelected ? Colors.blue : Colors.white54,
+              size: 24,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              label,
+              style: TextStyle(
+                color: isSelected ? Colors.white : Colors.white70,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+              ),
+            ),
+            if (isSelected) ...[
+              const SizedBox(width: 8),
+              const Icon(Icons.check_circle, color: Colors.blue, size: 18),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Retorna a URL permanente do Supabase ou null se falhar
   /// [onProgress] callback opcional para atualizar progresso (recebe progresso de 0.0 a 1.0)
-  Future<String?> _uploadFotoPet(String localPath, String petId, String clienteId, {Function(double)? onProgress}) async {
+  Future<String?> _uploadFotoPet(
+    String localPath,
+    String petId,
+    String clienteId, {
+    Function(double)? onProgress,
+  }) async {
     try {
-      debugPrint('>>> [Upload Foto Pet] ========================================');
-      debugPrint('>>> [Upload Foto Pet] INICIANDO UPLOAD');
+      debugPrint(
+        '>>> [Upload Foto Pet] ========================================',
+      );
+      debugPrint('>>> [Upload Foto Pet] INICIANDO UPLOAD (SUPABASE)');
       debugPrint('>>> [Upload Foto Pet] Pet ID: $petId');
       debugPrint('>>> [Upload Foto Pet] Cliente ID: $clienteId');
       debugPrint('>>> [Upload Foto Pet] Caminho local: $localPath');
-      
+
       final dataService = Provider.of<DataService>(context, listen: false);
-      final empresaId = dataService.empresaIdAtual;
-      
+      final empresaId = dataService.currentEmpresaId;
+
       if (empresaId == null) {
         debugPrint('>>> [Upload Foto Pet] ❌ ERRO: Empresa ID não encontrado');
-        throw Exception('Empresa ID não encontrado. Certifique-se de que uma empresa está selecionada.');
+        throw Exception(
+          'Empresa ID não encontrado. Certifique-se de que uma empresa está selecionada.',
+        );
       }
-      
+
       debugPrint('>>> [Upload Foto Pet] Empresa ID: $empresaId');
-      
+
       _uploadingFoto = true;
-      
-      final nomeArquivo = 'pet_${petId}_${DateTime.now().millisecondsSinceEpoch}';
+
+      final nomeArquivo =
+          'pet_${petId}_${DateTime.now().millisecondsSinceEpoch}.jpg';
       final caminhoStorage = 'pets/$empresaId/$clienteId/$nomeArquivo';
-      
+
       debugPrint('>>> [Upload Foto Pet] Caminho no storage: $caminhoStorage');
-      
+
       // Ler bytes do arquivo
       Uint8List imageBytes;
       if (kIsWeb && localPath.startsWith('blob:')) {
         // Web: converter blob URL para bytes
-        final response = await http.get(Uri.parse(localPath)).timeout(
-          const Duration(seconds: 10),
-        );
+        final response = await http
+            .get(Uri.parse(localPath))
+            .timeout(const Duration(seconds: 10));
         imageBytes = response.bodyBytes;
       } else if (!kIsWeb) {
         // Mobile: ler arquivo local
@@ -268,71 +495,43 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
       } else {
         throw Exception('Caminho de arquivo não suportado: $localPath');
       }
-      
+
       if (imageBytes.isEmpty) {
-        throw Exception('Arquivo de imagem vazio');
+        throw Exception('Dados de imagem vazios');
       }
-      
-      // Obter nome do pet para salvar
-      final pet = widget.cliente?.pets.firstWhere(
-        (p) => p.id == petId,
-        orElse: () => Pet(
-          id: petId,
-          nome: 'Pet',
-          especie: '',
-          raca: '',
-          dataNascimento: DateTime.now(),
-          createdAt: DateTime.now(),
-          updatedAt: DateTime.now(),
-        ),
-      );
-      
-      // Usar armazenamento GRATUITO no Firestore
-      debugPrint('>>> [Upload Foto Pet] Chamando ImageStorageService (GRATUITO)...');
+
       if (onProgress != null) onProgress(0.3);
-      
-      final url = await ImageStorageService.salvarImagemERetornarUrl(
-        imageBytes: imageBytes,
-        empresaId: empresaId,
-        categoria: 'pets',
-        nome: '${pet?.nome ?? "Pet"} - ${widget.cliente?.nome ?? "Cliente"}',
-        metadata: {
-          'pet_id': petId,
-          'cliente_id': clienteId,
-          'empresa_id': empresaId,
-        },
+
+      // Upload para Supabase
+      final publicUrl = await SupabaseService.instance.uploadImage(
+        'imagens',
+        caminhoStorage,
+        kIsWeb ? imageBytes : File(localPath),
+        contentType: 'image/jpeg',
       );
-      
+
       if (onProgress != null) onProgress(1.0);
-      
-      if (url != null) {
-        debugPrint('>>> [Upload Foto Pet] ✅ Upload concluído com sucesso!');
-        debugPrint('>>> [Upload Foto Pet] URL: $url');
+
+      if (publicUrl != null) {
+        debugPrint('>>> [Upload Foto Pet] ✅ UPLOAD CONCLUÍDO (SUPABASE)');
+        debugPrint('>>> [Upload Foto Pet] URL pública: $publicUrl');
       } else {
-        debugPrint('>>> [Upload Foto Pet] ❌ Upload retornou null (falhou)');
-        throw Exception('Upload falhou - retornou null');
+        throw Exception('Upload para Supabase falhou (URL retornada como null)');
       }
-      
-      debugPrint('>>> [Upload Foto Pet] ========================================');
-      return url;
+
+      return publicUrl;
     } catch (e, stackTrace) {
-      debugPrint('>>> [Upload Foto Pet] ❌❌❌ ERRO AO FAZER UPLOAD ❌❌❌');
-      debugPrint('>>> [Upload Foto Pet] Erro: $e');
-      debugPrint('>>> [Upload Foto Pet] StackTrace: $stackTrace');
-      debugPrint('>>> [Upload Foto Pet] ========================================');
+      debugPrint('>>> [Upload Foto Pet] ❌ ERRO: $e');
+      debugPrint('>>> [Upload Foto Pet] $stackTrace');
       
-      // Mostrar erro ao usuário
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Erro ao enviar foto: ${e.toString()}'),
             backgroundColor: Colors.red,
-            duration: const Duration(seconds: 5),
           ),
         );
       }
-      
-      // Em caso de erro, retornar null para que não seja salvo um caminho inválido
       return null;
     } finally {
       _uploadingFoto = false;
@@ -346,7 +545,7 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
     // Mas a aba Pet só deve aparecer se o módulo Pet estiver ativo
     final dataService = Provider.of<DataService>(context, listen: false);
     final isModuloPet = dataService.empresaAtual?.moduloPet ?? false;
-    
+
     int numTabs = 3; // Dados, Endereço, Adicional
     if (isModuloPet) numTabs++; // + Pet
     if (widget.cliente != null) numTabs++; // + Financeiro
@@ -357,7 +556,7 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
       initialIndex: widget.abaInicial ?? 0, // Usar aba inicial se fornecida
     );
     _carregarDados();
-    
+
     // Se tem petIdParaEditar, abrir diálogo de edição após carregar dados
     if (widget.petIdParaEditar != null && widget.cliente != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -365,7 +564,7 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
       });
     }
   }
-  
+
   void _abrirEdicaoPetPorId(String petId) {
     final index = _pets.indexWhere((p) => p.id == petId);
     if (index != -1) {
@@ -373,9 +572,24 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
     }
   }
 
+  String _gerarProximoCodigoCliente(DataService dataService) {
+    int maiorCodigo = 0;
+    for (final c in dataService.clientes) {
+      final codStr = c.dadosExtras?['codigo']?.toString();
+      if (codStr != null) {
+        final codInt = int.tryParse(codStr.replaceAll(RegExp(r'[^\d]'), ''));
+        if (codInt != null && codInt > maiorCodigo) {
+          maiorCodigo = codInt;
+        }
+      }
+    }
+    return (maiorCodigo > 0 ? maiorCodigo + 1 : 1).toString();
+  }
+
   void _carregarDados() {
     if (widget.cliente != null) {
       final c = widget.cliente!;
+      _codigoController.text = c.dadosExtras?['codigo']?.toString() ?? '';
       _nomeController.text = c.nome;
       _nomeFantasiaController.text = c.nomeFantasia ?? '';
       _tipoPessoa = c.tipoPessoa;
@@ -386,14 +600,21 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
       _telefone2Controller.text = c.telefone2 ?? '';
       _whatsappController.text = c.whatsapp ?? '';
       // Separar tipo de logradouro e nome do logradouro
-      final enderecoCompleto = c.endereco ?? '';
-      if (enderecoCompleto.startsWith('Rua ') || enderecoCompleto.startsWith('rua ')) {
+      final enderecoCompleto = (c.endereco ?? '').trim();
+      final lowerEnd = enderecoCompleto.toLowerCase();
+
+      if (lowerEnd.startsWith('rua ')) {
         _tipoLogradouro = 'Rua';
-        _enderecoController.text = enderecoCompleto.replaceFirst(RegExp(r'^[Rr]ua\s+'), '');
-      } else if (enderecoCompleto.startsWith('Avenida ') || enderecoCompleto.startsWith('avenida ') || 
-                 enderecoCompleto.startsWith('Av. ') || enderecoCompleto.startsWith('av. ')) {
+        _enderecoController.text = enderecoCompleto.substring(4);
+      } else if (lowerEnd.startsWith('r. ')) {
+        _tipoLogradouro = 'Rua';
+        _enderecoController.text = enderecoCompleto.substring(3);
+      } else if (lowerEnd.startsWith('avenida ')) {
         _tipoLogradouro = 'Avenida';
-        _enderecoController.text = enderecoCompleto.replaceFirst(RegExp(r'^[Aa]venida\s+|^[Aa]v\.\s+'), '');
+        _enderecoController.text = enderecoCompleto.substring(8);
+      } else if (lowerEnd.startsWith('av. ')) {
+        _tipoLogradouro = 'Avenida';
+        _enderecoController.text = enderecoCompleto.substring(4);
       } else {
         _tipoLogradouro = 'Rua';
         _enderecoController.text = enderecoCompleto;
@@ -408,16 +629,31 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
       _dataNascimento = c.dataNascimento;
       _profissaoController.text = c.profissao ?? '';
       _observacoesController.text = c.observacoes ?? '';
+      _perfilPrecoSelecionado = c.perfilPreco;
       _limiteCreditoController.text = c.limiteCredito?.toStringAsFixed(2) ?? '';
+      _saldoDevedorController.text = c.saldoDevedor.toStringAsFixed(2);
+      
+      // Carregar creditoInicial a partir de dadosExtras
+      final creditoInicialVal = c.dadosExtras?['credito_inicial'];
+      _creditoInicialController.text = creditoInicialVal != null 
+          ? double.parse(creditoInicialVal.toString()).toStringAsFixed(2) 
+          : '0.00';
+          
       _ativo = c.ativo;
       _bloqueado = c.bloqueado;
+      _habilitaTaxiDog = c.habilitaTaxiDog;
       _pets = List.from(c.pets);
+      _enderecos = List.from(c.enderecos);
+    } else {
+      final dataService = Provider.of<DataService>(context, listen: false);
+      _codigoController.text = _gerarProximoCodigoCliente(dataService);
     }
   }
 
   @override
   void dispose() {
     _tabController.dispose();
+    _codigoController.dispose();
     _nomeController.dispose();
     _nomeFantasiaController.dispose();
     _cpfCnpjController.dispose();
@@ -437,6 +673,8 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
     _profissaoController.dispose();
     _observacoesController.dispose();
     _limiteCreditoController.dispose();
+    _saldoDevedorController.dispose();
+    _creditoInicialController.dispose();
     super.dispose();
   }
 
@@ -461,12 +699,14 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                 tooltip: 'Excluir cliente',
                 onPressed: _confirmarExclusao,
               ),
+            const SyncStatusWidget(),
           ],
           bottom: PreferredSize(
             preferredSize: const Size.fromHeight(50),
             child: Consumer<DataService>(
               builder: (context, dataService, _) {
-                final isModuloPet = dataService.empresaAtual?.moduloPet ?? false;
+                final isModuloPet =
+                    dataService.empresaAtual?.moduloPet ?? false;
                 return TabBar(
                   controller: _tabController,
                   indicatorColor: Colors.greenAccent,
@@ -477,7 +717,8 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                     const Tab(icon: Icon(Icons.person), text: 'Dados'),
                     const Tab(icon: Icon(Icons.location_on), text: 'Endereço'),
                     const Tab(icon: Icon(Icons.info), text: 'Adicional'),
-                    if (isModuloPet) const Tab(icon: Icon(Icons.pets), text: 'Pet'),
+                    if (isModuloPet)
+                      const Tab(icon: Icon(Icons.pets), text: 'Pet'),
                     if (_isEditing)
                       const Tab(
                         icon: Icon(Icons.account_balance_wallet),
@@ -562,6 +803,12 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
               icon: Icons.store,
             ),
           ],
+          const SizedBox(height: 12),
+          _buildCampoTexto(
+            controller: _codigoController,
+            label: 'Código do Cliente',
+            icon: Icons.vpn_key_rounded,
+          ),
           const SizedBox(height: 12),
           Row(
             children: [
@@ -682,23 +929,36 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                     labelStyle: const TextStyle(color: Colors.white70),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(color: Colors.white.withOpacity(0.3)),
+                      borderSide: BorderSide(
+                        color: Colors.white.withOpacity(0.3),
+                      ),
                     ),
                     enabledBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(color: Colors.white.withOpacity(0.3)),
+                      borderSide: BorderSide(
+                        color: Colors.white.withOpacity(0.3),
+                      ),
                     ),
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(color: Colors.white, width: 2),
+                      borderSide: const BorderSide(
+                        color: Colors.white,
+                        width: 2,
+                      ),
                     ),
                     filled: true,
                     fillColor: Colors.white.withOpacity(0.1),
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 16,
+                    ),
                   ),
                   dropdownColor: const Color(0xFF1E1E2E),
                   style: const TextStyle(color: Colors.white),
-                  icon: const Icon(Icons.arrow_drop_down, color: Colors.white70),
+                  icon: const Icon(
+                    Icons.arrow_drop_down,
+                    color: Colors.white70,
+                  ),
                   items: const [
                     DropdownMenuItem(
                       value: 'Rua',
@@ -706,7 +966,10 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                     ),
                     DropdownMenuItem(
                       value: 'Avenida',
-                      child: Text('Avenida', style: TextStyle(color: Colors.white)),
+                      child: Text(
+                        'Avenida',
+                        style: TextStyle(color: Colors.white),
+                      ),
                     ),
                   ],
                   onChanged: (value) {
@@ -790,7 +1053,251 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
             hintText: 'Próximo a...',
             maxLines: 2,
           ),
+
+          const SizedBox(height: 32),
+          _buildSecaoTitulo(
+            'Endereços Adicionais (Delivery)',
+            Icons.delivery_dining,
+          ),
+          const SizedBox(height: 12),
+
+          if (_enderecos.isEmpty)
+            _buildEmptyAddressesState()
+          else
+            ..._enderecos.asMap().entries.map(
+              (entry) => _buildEnderecoCard(entry.key, entry.value),
+            ),
+
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _mostrarDialogAddEndereco,
+              icon: const Icon(Icons.add_location_alt, color: Colors.blue),
+              label: const Text(
+                'ADICIONAR ENDEREÇO DE ENTREGA',
+                style: TextStyle(color: Colors.blue),
+              ),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                side: const BorderSide(color: Colors.blue),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyAddressesState() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withOpacity(0.1)),
+      ),
+      child: const Row(
+        children: [
+          Icon(Icons.info_outline, color: Colors.white54),
+          SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              'Nenhum endereço adicional cadastrado para delivery.',
+              style: TextStyle(color: Colors.white54, fontSize: 13),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEnderecoCard(int index, EnderecoCliente end) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withOpacity(0.2)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: Colors.blue.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(
+              end.tipo == 'Trabalho'
+                  ? Icons.work
+                  : (end.tipo == 'Casa' ? Icons.home : Icons.location_on),
+              color: Colors.blue,
+              size: 20,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${end.tipo}: ${end.logradouro}, ${end.numero}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                ),
+                Text(
+                  '${end.bairro}, ${end.cidade} - ${end.uf}',
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.6),
+                    fontSize: 12,
+                  ),
+                ),
+                if (end.complemento != null && end.complemento!.isNotEmpty)
+                  Text(
+                    'Comp: ${end.complemento}',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.6),
+                      fontSize: 12,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(
+              Icons.delete_outline,
+              color: Colors.redAccent,
+              size: 20,
+            ),
+            onPressed: () {
+              setState(() {
+                _enderecos.removeAt(index);
+              });
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _mostrarDialogAddEndereco() {
+    final logradouroController = TextEditingController();
+    final numeroController = TextEditingController();
+    final bairroController = TextEditingController();
+    final cidadeController = TextEditingController();
+    final ufController = TextEditingController(text: 'SP');
+    final cepController = TextEditingController();
+    final complementoController = TextEditingController();
+    String tipo = 'Casa';
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: const Color(0xFF1E1E2E),
+          title: const Text(
+            'Novo Endereço de Entrega',
+            style: TextStyle(color: Colors.white),
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<String>(
+                  value: tipo,
+                  dropdownColor: const Color(0xFF1E1E2E),
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(labelText: 'Tipo'),
+                  items: ['Casa', 'Trabalho', 'Outro']
+                      .map((t) => DropdownMenuItem(value: t, child: Text(t)))
+                      .toList(),
+                  onChanged: (v) => setDialogState(() => tipo = v!),
+                ),
+                TextField(
+                  controller: logradouroController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(labelText: 'Logradouro'),
+                ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: numeroController,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: const InputDecoration(labelText: 'Número'),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextField(
+                        controller: bairroController,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: const InputDecoration(labelText: 'Bairro'),
+                      ),
+                    ),
+                  ],
+                ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: cidadeController,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: const InputDecoration(labelText: 'Cidade'),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      width: 60,
+                      child: TextField(
+                        controller: ufController,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: const InputDecoration(labelText: 'UF'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                if (logradouroController.text.isNotEmpty) {
+                  setState(() {
+                    _enderecos.add(
+                      EnderecoCliente(
+                        id: DateTime.now().millisecondsSinceEpoch.toString(),
+                        tipo: tipo,
+                        logradouro: logradouroController.text,
+                        numero: numeroController.text,
+                        bairro: bairroController.text,
+                        cidade: cidadeController.text,
+                        uf: ufController.text,
+                        cep: cepController.text,
+                        complemento: complementoController.text,
+                      ),
+                    );
+                  });
+                  Navigator.pop(context);
+                }
+              },
+              child: const Text('Adicionar'),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -830,14 +1337,45 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
           ],
 
           // Crédito
-          _buildSecaoTitulo('Crédito', Icons.account_balance_wallet),
+          _buildSecaoTitulo('Perfil de Preços / Precificação', Icons.price_change),
           const SizedBox(height: 12),
-          _buildCampoTexto(
-            controller: _limiteCreditoController,
-            label: 'Limite de Crédito (R\$)',
-            icon: Icons.attach_money,
-            keyboardType: TextInputType.numberWithOptions(decimal: true),
-            prefixText: 'R\$ ',
+          _buildDropdownPerfilPreco(),
+          const SizedBox(height: 24),
+
+          _buildSecaoTitulo('Crédito e Saldos Iniciais', Icons.account_balance_wallet),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: _buildCampoTexto(
+                  controller: _limiteCreditoController,
+                  label: 'Limite de Crédito (R\$)',
+                  icon: Icons.attach_money,
+                  keyboardType: TextInputType.numberWithOptions(decimal: true),
+                  prefixText: 'R\$ ',
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildCampoTexto(
+                  controller: _saldoDevedorController,
+                  label: 'Saldo Devedor Inicial (Fiado) (R\$)',
+                  icon: Icons.money_off,
+                  keyboardType: TextInputType.numberWithOptions(decimal: true),
+                  prefixText: 'R\$ ',
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildCampoTexto(
+                  controller: _creditoInicialController,
+                  label: 'Crédito Inicial (Adiantamento) (R\$)',
+                  icon: Icons.account_balance,
+                  keyboardType: TextInputType.numberWithOptions(decimal: true),
+                  prefixText: 'R\$ ',
+                ),
+              ),
+            ],
           ),
 
           const SizedBox(height: 24),
@@ -884,6 +1422,23 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                   value: _bloqueado,
                   activeThumbColor: Colors.redAccent,
                   onChanged: (value) => setState(() => _bloqueado = value),
+                ),
+                const Divider(color: Colors.white12),
+                SwitchListTile(
+                  title: const Text(
+                    'Habilita Taxi Dog',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                  subtitle: Text(
+                    _habilitaTaxiDog
+                        ? 'Cliente pode agendar com Taxi Dog no agendamento online'
+                        : 'Opções de Taxi Dog ocultas no agendamento online',
+                    style: TextStyle(color: Colors.white.withOpacity(0.5)),
+                  ),
+                  value: _habilitaTaxiDog,
+                  activeThumbColor: Colors.blueAccent,
+                  onChanged: (value) =>
+                      setState(() => _habilitaTaxiDog = value),
                 ),
               ],
             ),
@@ -942,7 +1497,11 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                 padding: const EdgeInsets.all(40.0),
                 child: Column(
                   children: [
-                    Icon(Icons.pets, size: 64, color: Colors.white.withOpacity(0.5)),
+                    Icon(
+                      Icons.pets,
+                      size: 64,
+                      color: Colors.white.withOpacity(0.5),
+                    ),
                     const SizedBox(height: 16),
                     Text(
                       'Nenhum pet cadastrado',
@@ -1016,19 +1575,23 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
             ? (() {
                 try {
                   final fotoPath = pet.fotoPath!;
-                  
+
                   // Verificar se é URL (HTTP, HTTPS, blob ou data URL)
-                  if (fotoPath.startsWith('http://') || 
-                      fotoPath.startsWith('https://') || 
+                  if (fotoPath.startsWith('http://') ||
+                      fotoPath.startsWith('https://') ||
                       fotoPath.startsWith('blob:') ||
                       fotoPath.startsWith('data:image')) {
                     // URL do Firebase, blob URL ou data URL (web)
                     String imageUrl = fotoPath;
-                    if (imageUrl.startsWith('https://') && !imageUrl.contains('?')) {
+                    if (imageUrl.startsWith('https://') &&
+                        !imageUrl.contains('?')) {
                       // Adicionar timestamp para forçar reload (cache busting)
-                      imageUrl = '$imageUrl?t=${pet.updatedAt.millisecondsSinceEpoch}';
+                      imageUrl =
+                          '$imageUrl?t=${pet.updatedAt.millisecondsSinceEpoch}';
                     }
-                    debugPrint('>>> [Exibir Imagem Pet] Carregando URL: ${fotoPath.startsWith('data:') ? 'data:image...' : imageUrl}');
+                    debugPrint(
+                      '>>> [Exibir Imagem Pet] Carregando URL: ${fotoPath.startsWith('data:') ? 'data:image...' : imageUrl}',
+                    );
                     return ClipRRect(
                       borderRadius: BorderRadius.circular(8),
                       child: _ImageNetworkWithTimeout(
@@ -1051,7 +1614,9 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                           height: 60,
                           fit: BoxFit.cover,
                           errorBuilder: (context, error, stackTrace) {
-                            debugPrint('>>> Erro ao carregar foto do pet: $error');
+                            debugPrint(
+                              '>>> Erro ao carregar foto do pet: $error',
+                            );
                             return Container(
                               width: 60,
                               height: 60,
@@ -1059,7 +1624,11 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                                 color: Colors.blue.withOpacity(0.3),
                                 borderRadius: BorderRadius.circular(8),
                               ),
-                              child: const Icon(Icons.pets, color: Colors.white70, size: 32),
+                              child: const Icon(
+                                Icons.pets,
+                                color: Colors.white70,
+                                size: 32,
+                              ),
                             );
                           },
                         ),
@@ -1073,12 +1642,18 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                           color: Colors.blue.withOpacity(0.3),
                           borderRadius: BorderRadius.circular(8),
                         ),
-                        child: const Icon(Icons.pets, color: Colors.white70, size: 32),
+                        child: const Icon(
+                          Icons.pets,
+                          color: Colors.white70,
+                          size: 32,
+                        ),
                       );
                     }
                   } else {
                     // Web com caminho local (não suportado)
-                    debugPrint('>>> [Web] Caminho local não suportado: $fotoPath');
+                    debugPrint(
+                      '>>> [Web] Caminho local não suportado: $fotoPath',
+                    );
                     return Container(
                       width: 60,
                       height: 60,
@@ -1086,7 +1661,11 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                         color: Colors.orange.withOpacity(0.3),
                         borderRadius: BorderRadius.circular(8),
                       ),
-                      child: const Icon(Icons.pets, color: Colors.white70, size: 32),
+                      child: const Icon(
+                        Icons.pets,
+                        color: Colors.white70,
+                        size: 32,
+                      ),
                     );
                   }
                 } catch (e) {
@@ -1099,7 +1678,11 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                     color: Colors.blue.withOpacity(0.3),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: const Icon(Icons.pets, color: Colors.white70, size: 32),
+                  child: const Icon(
+                    Icons.pets,
+                    color: Colors.white70,
+                    size: 32,
+                  ),
                 );
               })()
             : Container(
@@ -1122,7 +1705,11 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (pet.especie != null) Text('${pet.especie}${pet.raca != null ? ' - ${pet.raca}' : ''}', style: const TextStyle(color: Colors.white70)),
+            if (pet.especie != null)
+              Text(
+                '${pet.especie}${pet.raca != null ? ' - ${pet.raca}' : ''}',
+                style: const TextStyle(color: Colors.white70),
+              ),
             if (pet.tamanho != null || pet.peso != null)
               Text(
                 [
@@ -1159,14 +1746,26 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
   }
 
   Future<void> _mostrarDialogPet({Pet? petExistente, int? index}) async {
-    final nomeController = TextEditingController(text: petExistente?.nome ?? '');
-    final especieController = TextEditingController(text: petExistente?.especie ?? '');
-    final racaController = TextEditingController(text: petExistente?.raca ?? '');
-    final tamanhoController = TextEditingController(text: petExistente?.tamanho ?? '');
-    final pesoController = TextEditingController(text: petExistente?.peso?.toString() ?? '');
+    final nomeController = TextEditingController(
+      text: petExistente?.nome ?? '',
+    );
+    final especieController = TextEditingController(
+      text: petExistente?.especie ?? '',
+    );
+    final racaController = TextEditingController(
+      text: petExistente?.raca ?? '',
+    );
+    final tamanhoController = TextEditingController(
+      text: petExistente?.tamanho ?? '',
+    );
+    final pesoController = TextEditingController(
+      text: petExistente?.peso?.toString() ?? '',
+    );
     final corController = TextEditingController(text: petExistente?.cor ?? '');
-    final observacoesController = TextEditingController(text: petExistente?.observacoes ?? '');
-    
+    final observacoesController = TextEditingController(
+      text: petExistente?.observacoes ?? '',
+    );
+
     String? fotoPath = petExistente?.fotoPath;
     DateTime? dataNascimento = petExistente?.dataNascimento;
     String? sexo = petExistente?.sexo;
@@ -1177,7 +1776,9 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
       builder: (context) => StatefulBuilder(
         builder: (context, setStateDialog) => Dialog(
           backgroundColor: const Color(0xFF1E1E2E),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
           child: Container(
             width: MediaQuery.of(context).size.width * 0.95,
             constraints: BoxConstraints(
@@ -1191,7 +1792,9 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                   padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
                     color: Colors.orange.withOpacity(0.2),
-                    borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(20),
+                    ),
                   ),
                   child: Row(
                     children: [
@@ -1227,59 +1830,98 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                             onTap: () async {
                               // No desktop/PC, usar file_picker que funciona melhor
                               // No web, também usar file_picker mas com withData para obter bytes diretamente
-                              if (!kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
+                              if (!kIsWeb &&
+                                  (Platform.isWindows ||
+                                      Platform.isLinux ||
+                                      Platform.isMacOS)) {
                                 try {
-                                  FilePickerResult? result = await FilePicker.platform.pickFiles(
-                                    type: FileType.image,
-                                    allowMultiple: false,
-                                  );
-                                  
-                                  if (result != null && result.files.isNotEmpty) {
+                                  FilePickerResult? result = await FilePicker
+                                      .platform
+                                      .pickFiles(
+                                        type: FileType.image,
+                                        allowMultiple: false,
+                                      );
+
+                                  if (result != null &&
+                                      result.files.isNotEmpty) {
                                     final selectedFile = result.files.single;
-                                    debugPrint('>>> [FilePicker] Arquivo selecionado:');
-                                    debugPrint('>>> [FilePicker] Nome: ${selectedFile.name}');
-                                    debugPrint('>>> [FilePicker] Tamanho: ${selectedFile.size} bytes');
-                                    debugPrint('>>> [FilePicker] Path: ${selectedFile.path}');
-                                    debugPrint('>>> [FilePicker] Bytes disponíveis: ${selectedFile.bytes != null}');
-                                    
+                                    debugPrint(
+                                      '>>> [FilePicker] Arquivo selecionado:',
+                                    );
+                                    debugPrint(
+                                      '>>> [FilePicker] Nome: ${selectedFile.name}',
+                                    );
+                                    debugPrint(
+                                      '>>> [FilePicker] Tamanho: ${selectedFile.size} bytes',
+                                    );
+                                    debugPrint(
+                                      '>>> [FilePicker] Path: ${selectedFile.path}',
+                                    );
+                                    debugPrint(
+                                      '>>> [FilePicker] Bytes disponíveis: ${selectedFile.bytes != null}',
+                                    );
+
                                     try {
                                       String? caminhoFinal;
-                                      
+
                                       // Tentar usar bytes diretamente se disponível (mais confiável)
-                                      if (selectedFile.bytes != null && selectedFile.bytes!.isNotEmpty) {
+                                      if (selectedFile.bytes != null &&
+                                          selectedFile.bytes!.isNotEmpty) {
                                         final bytes = selectedFile.bytes!;
-                                        debugPrint('>>> [FilePicker] Usando bytes diretamente: ${bytes.length} bytes');
-                                        
+                                        debugPrint(
+                                          '>>> [FilePicker] Usando bytes diretamente: ${bytes.length} bytes',
+                                        );
+
                                         // Salvar bytes em arquivo permanente
-                                        final appDir = await getApplicationDocumentsDirectory();
-                                        final fotosDir = Directory('${appDir.path}/fotos_pets');
+                                        final appDir =
+                                            await getApplicationDocumentsDirectory();
+                                        final fotosDir = Directory(
+                                          '${appDir.path}/fotos_pets',
+                                        );
                                         if (!await fotosDir.exists()) {
-                                          await fotosDir.create(recursive: true);
+                                          await fotosDir.create(
+                                            recursive: true,
+                                          );
                                         }
-                                        
+
                                         // Detectar extensão pelo nome ou usar .jpg como padrão
-                                        String extension = path.extension(selectedFile.name).toLowerCase();
-                                        if (extension.isEmpty || extension == '.') {
+                                        String extension = path
+                                            .extension(selectedFile.name)
+                                            .toLowerCase();
+                                        if (extension.isEmpty ||
+                                            extension == '.') {
                                           // Tentar detectar pelo conteúdo (primeiros bytes)
                                           if (bytes.length >= 4) {
                                             // PNG: 89 50 4E 47
-                                            if (bytes[0] == 0x89 && bytes[1] == 0x50 && 
-                                                bytes[2] == 0x4E && bytes[3] == 0x47) {
+                                            if (bytes[0] == 0x89 &&
+                                                bytes[1] == 0x50 &&
+                                                bytes[2] == 0x4E &&
+                                                bytes[3] == 0x47) {
                                               extension = '.png';
                                             }
                                             // JPEG: FF D8 FF
-                                            else if (bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF) {
+                                            else if (bytes[0] == 0xFF &&
+                                                bytes[1] == 0xD8 &&
+                                                bytes[2] == 0xFF) {
                                               extension = '.jpg';
                                             }
                                             // GIF: 47 49 46 38
-                                            else if (bytes[0] == 0x47 && bytes[1] == 0x49 && 
-                                                     bytes[2] == 0x46 && bytes[3] == 0x38) {
+                                            else if (bytes[0] == 0x47 &&
+                                                bytes[1] == 0x49 &&
+                                                bytes[2] == 0x46 &&
+                                                bytes[3] == 0x38) {
                                               extension = '.gif';
                                             }
                                             // WebP: RIFF...WEBP
-                                            else if (bytes.length >= 12 && 
-                                                     String.fromCharCodes(bytes.sublist(0, 4)) == 'RIFF' &&
-                                                     String.fromCharCodes(bytes.sublist(8, 12)) == 'WEBP') {
+                                            else if (bytes.length >= 12 &&
+                                                String.fromCharCodes(
+                                                      bytes.sublist(0, 4),
+                                                    ) ==
+                                                    'RIFF' &&
+                                                String.fromCharCodes(
+                                                      bytes.sublist(8, 12),
+                                                    ) ==
+                                                    'WEBP') {
                                               extension = '.webp';
                                             } else {
                                               extension = '.jpg'; // Padrão
@@ -1288,74 +1930,125 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                                             extension = '.jpg';
                                           }
                                         }
-                                        
-                                        final nomeArquivo = 'pet_${DateTime.now().millisecondsSinceEpoch}$extension';
-                                        final destinoFile = File('${fotosDir.path}/$nomeArquivo');
-                                        
+
+                                        final nomeArquivo =
+                                            'pet_${DateTime.now().millisecondsSinceEpoch}$extension';
+                                        final destinoFile = File(
+                                          '${fotosDir.path}/$nomeArquivo',
+                                        );
+
                                         // Salvar bytes no arquivo
                                         await destinoFile.writeAsBytes(bytes);
                                         caminhoFinal = destinoFile.path;
-                                        debugPrint('>>> [FilePicker] Foto salva em: $caminhoFinal');
-                                      } 
+                                        debugPrint(
+                                          '>>> [FilePicker] Foto salva em: $caminhoFinal',
+                                        );
+                                      }
                                       // Se não tiver bytes, usar path
-                                      else if (selectedFile.path != null && selectedFile.path!.isNotEmpty) {
-                                        final sourceFile = File(selectedFile.path!);
+                                      else if (selectedFile.path != null &&
+                                          selectedFile.path!.isNotEmpty) {
+                                        final sourceFile = File(
+                                          selectedFile.path!,
+                                        );
                                         if (await sourceFile.exists()) {
-                                          debugPrint('>>> [FilePicker] Usando path: ${selectedFile.path}');
-                                          
+                                          debugPrint(
+                                            '>>> [FilePicker] Usando path: ${selectedFile.path}',
+                                          );
+
                                           // Copiar arquivo para diretório permanente
-                                          final appDir = await getApplicationDocumentsDirectory();
-                                          final fotosDir = Directory('${appDir.path}/fotos_pets');
+                                          final appDir =
+                                              await getApplicationDocumentsDirectory();
+                                          final fotosDir = Directory(
+                                            '${appDir.path}/fotos_pets',
+                                          );
                                           if (!await fotosDir.exists()) {
-                                            await fotosDir.create(recursive: true);
+                                            await fotosDir.create(
+                                              recursive: true,
+                                            );
                                           }
-                                          
-                                          final extension = path.extension(selectedFile.path!).toLowerCase();
-                                          final nomeArquivo = 'pet_${DateTime.now().millisecondsSinceEpoch}${extension.isEmpty ? '.jpg' : extension}';
-                                          final destinoFile = File('${fotosDir.path}/$nomeArquivo');
-                                          
+
+                                          final extension = path
+                                              .extension(selectedFile.path!)
+                                              .toLowerCase();
+                                          final nomeArquivo =
+                                              'pet_${DateTime.now().millisecondsSinceEpoch}${extension.isEmpty ? '.jpg' : extension}';
+                                          final destinoFile = File(
+                                            '${fotosDir.path}/$nomeArquivo',
+                                          );
+
                                           // Copiar arquivo
-                                          await sourceFile.copy(destinoFile.path);
+                                          await sourceFile.copy(
+                                            destinoFile.path,
+                                          );
                                           caminhoFinal = destinoFile.path;
-                                          debugPrint('>>> [FilePicker] Foto copiada para: $caminhoFinal');
+                                          debugPrint(
+                                            '>>> [FilePicker] Foto copiada para: $caminhoFinal',
+                                          );
                                         } else {
-                                          throw Exception('Arquivo não existe: ${selectedFile.path}');
+                                          throw Exception(
+                                            'Arquivo não existe: ${selectedFile.path}',
+                                          );
                                         }
                                       } else {
-                                        throw Exception('Nenhum caminho ou bytes disponíveis no arquivo selecionado');
+                                        throw Exception(
+                                          'Nenhum caminho ou bytes disponíveis no arquivo selecionado',
+                                        );
                                       }
-                                      
+
                                       // Verificar se arquivo foi salvo corretamente
-                                      final fileVerificacao = File(caminhoFinal);
+                                      final fileVerificacao = File(
+                                        caminhoFinal,
+                                      );
                                       if (await fileVerificacao.exists()) {
-                                        final tamanho = await fileVerificacao.length();
-                                        debugPrint('>>> [FilePicker] Arquivo verificado: $caminhoFinal (${tamanho} bytes)');
-                                        
+                                        final tamanho = await fileVerificacao
+                                            .length();
+                                        debugPrint(
+                                          '>>> [FilePicker] Arquivo verificado: $caminhoFinal (${tamanho} bytes)',
+                                        );
+
                                         setStateDialog(() {
                                           fotoPath = caminhoFinal;
                                         });
-                                        
+
                                         if (mounted) {
-                                          ScaffoldMessenger.of(context).showSnackBar(
+                                          ScaffoldMessenger.of(
+                                            context,
+                                          ).showSnackBar(
                                             SnackBar(
-                                              content: Text('Foto selecionada e salva com sucesso! (${(tamanho / 1024).toStringAsFixed(1)} KB)'),
+                                              content: Text(
+                                                'Foto selecionada e salva com sucesso! (${(tamanho / 1024).toStringAsFixed(1)} KB)',
+                                              ),
                                               backgroundColor: Colors.green,
-                                              duration: const Duration(seconds: 2),
+                                              duration: const Duration(
+                                                seconds: 2,
+                                              ),
                                             ),
                                           );
                                         }
                                       } else {
-                                        throw Exception('Arquivo não foi salvo corretamente em: $caminhoFinal');
+                                        throw Exception(
+                                          'Arquivo não foi salvo corretamente em: $caminhoFinal',
+                                        );
                                       }
                                     } catch (e, stackTrace) {
-                                      debugPrint('>>> [FilePicker] Erro ao processar foto: $e');
-                                      debugPrint('>>> [FilePicker] StackTrace: $stackTrace');
+                                      debugPrint(
+                                        '>>> [FilePicker] Erro ao processar foto: $e',
+                                      );
+                                      debugPrint(
+                                        '>>> [FilePicker] StackTrace: $stackTrace',
+                                      );
                                       if (mounted) {
-                                        ScaffoldMessenger.of(context).showSnackBar(
+                                        ScaffoldMessenger.of(
+                                          context,
+                                        ).showSnackBar(
                                           SnackBar(
-                                            content: Text('Erro ao processar foto: $e'),
+                                            content: Text(
+                                              'Erro ao processar foto: $e',
+                                            ),
                                             backgroundColor: Colors.red,
-                                            duration: const Duration(seconds: 4),
+                                            duration: const Duration(
+                                              seconds: 4,
+                                            ),
                                           ),
                                         );
                                       }
@@ -1366,7 +2059,9 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                                   if (mounted) {
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       SnackBar(
-                                        content: Text('Erro ao selecionar foto: $e'),
+                                        content: Text(
+                                          'Erro ao selecionar foto: $e',
+                                        ),
                                         backgroundColor: Colors.red,
                                       ),
                                     );
@@ -1376,95 +2071,127 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                                 // No web/Chrome, usar FilePicker com withData para obter bytes diretamente
                                 // Isso evita problemas com blob URLs que expiram rapidamente
                                 try {
-                                  debugPrint('>>> [Web/Chrome] Usando FilePicker com withData');
-                                  FilePickerResult? result = await FilePicker.platform.pickFiles(
+                                  debugPrint(
+                                    '>>> [Web/Chrome] Usando FilePicker com withData',
+                                  );
+                                  FilePickerResult?
+                                  result = await FilePicker.platform.pickFiles(
                                     type: FileType.image,
-                                    withData: true, // IMPORTANTE: Obter bytes diretamente
+                                    withData:
+                                        true, // IMPORTANTE: Obter bytes diretamente
                                     allowMultiple: false,
                                   );
-                                  
-                                  if (result != null && result.files.isNotEmpty) {
+
+                                  if (result != null &&
+                                      result.files.isNotEmpty) {
                                     final selectedFile = result.files.first;
-                                    
-                                    if (selectedFile.bytes != null && selectedFile.bytes!.isNotEmpty) {
-                                      debugPrint('>>> [Web/Chrome] ✅ Bytes obtidos: ${selectedFile.bytes!.length} bytes');
-                                      
+
+                                    if (selectedFile.bytes != null &&
+                                        selectedFile.bytes!.isNotEmpty) {
+                                      debugPrint(
+                                        '>>> [Web/Chrome] ✅ Bytes obtidos: ${selectedFile.bytes!.length} bytes',
+                                      );
+
                                       // Usar ImageUploadService.uploadImageFromBytes para fazer upload direto
                                       // Isso evita problemas com blob URLs que expiram
                                       if (widget.cliente != null) {
-                                        final petId = petExistente?.id ?? DateTime.now().millisecondsSinceEpoch.toString();
-                                        final empresaId = Provider.of<DataService>(context, listen: false).empresaIdAtual;
-                                        
+                                        final petId =
+                                            petExistente?.id ??
+                                            DateTime.now()
+                                                .millisecondsSinceEpoch
+                                                .toString();
+                                        final empresaId =
+                                            Provider.of<DataService>(
+                                              context,
+                                              listen: false,
+                                            ).currentEmpresaId;
+
                                         if (empresaId != null) {
                                           // Fazer upload IMEDIATAMENTE usando bytes
-                                          debugPrint('>>> [Web/Chrome] Fazendo upload IMEDIATO dos bytes...');
-                                          final progressNotifier = ValueNotifier<double>(0.0);
-                                          
+                                          debugPrint(
+                                            '>>> [Web/Chrome] Fazendo upload IMEDIATO dos bytes...',
+                                          );
+                                          final progressNotifier =
+                                              ValueNotifier<double>(0.0);
+
                                           // Mostrar progresso
                                           showDialog(
                                             context: context,
                                             barrierDismissible: false,
                                             builder: (context) => AlertDialog(
-                                              backgroundColor: const Color(0xFF1E1E2E),
+                                              backgroundColor: const Color(
+                                                0xFF1E1E2E,
+                                              ),
                                               content: Column(
                                                 mainAxisSize: MainAxisSize.min,
                                                 children: [
                                                   const CircularProgressIndicator(),
                                                   const SizedBox(height: 16),
-                                                  ValueListenableBuilder<double>(
-                                                    valueListenable: progressNotifier,
-                                                    builder: (context, progress, _) {
-                                                      return Text(
-                                                        'Fazendo upload... ${(progress * 100).toStringAsFixed(0)}%',
-                                                        style: const TextStyle(color: Colors.white),
-                                                      );
-                                                    },
+                                                  ValueListenableBuilder<
+                                                    double
+                                                  >(
+                                                    valueListenable:
+                                                        progressNotifier,
+                                                    builder:
+                                                        (context, progress, _) {
+                                                          return Text(
+                                                            'Fazendo upload... ${(progress * 100).toStringAsFixed(0)}%',
+                                                            style:
+                                                                const TextStyle(
+                                                                  color: Colors
+                                                                      .white,
+                                                                ),
+                                                          );
+                                                        },
                                                   ),
                                                 ],
                                               ),
                                             ),
                                           );
-                                          
+
                                           String? url;
                                           try {
                                             // Usar armazenamento GRATUITO no Firestore
                                             progressNotifier.value = 0.3;
-                                            final pet = widget.cliente!.pets.firstWhere(
-                                              (p) => p.id == petId,
-                                              orElse: () => Pet(
-                                                id: petId,
-                                                nome: 'Pet',
-                                                especie: '',
-                                                raca: '',
-                                                dataNascimento: DateTime.now(),
-                                                createdAt: DateTime.now(),
-                                                updatedAt: DateTime.now(),
-                                              ),
-                                            );
-                                            
-                                            url = await ImageStorageService.salvarImagemERetornarUrl(
+                                            final pet = widget.cliente!.pets
+                                                .firstWhere(
+                                                  (p) => p.id == petId,
+                                                  orElse: () => Pet(
+                                                    id: petId,
+                                                    nome: 'Pet',
+                                                    especie: '',
+                                                    raca: '',
+                                                    dataNascimento:
+                                                        DateTime.now(),
+                                                    createdAt: DateTime.now(),
+                                                    updatedAt: DateTime.now(),
+                                                  ),
+                                                );
+
+                                            url = await SupabaseService.instance.uploadImageFromBytes(
                                               imageBytes: selectedFile.bytes!,
-                                              empresaId: empresaId,
-                                              categoria: 'pets',
-                                              nome: '${pet.nome} - ${widget.cliente!.nome}',
-                                              metadata: {
-                                                'pet_id': petId,
-                                                'cliente_id': widget.cliente!.id,
-                                                'empresa_id': empresaId,
-                                              },
+                                              storagePath: 'pets/${empresaId}/${widget.cliente!.id}/${petId}.jpg',
+                                              contentType: 'image/jpeg',
+                                              onProgress: (p) => progressNotifier.value = p,
                                             ).timeout(
-                                              const Duration(seconds: 30),
+                                              const Duration(seconds: 45),
                                               onTimeout: () {
-                                                debugPrint('>>> [Web/Chrome] ⚠️ Timeout no upload após 30 segundos');
+                                                debugPrint(
+                                                  '>>> [Web/Chrome] ⚠️ Timeout no upload após 45 segundos',
+                                                );
                                                 if (mounted) Navigator.pop(context);
                                                 return null;
                                               },
                                             );
-                                            
+
                                             progressNotifier.value = 1.0;
                                           } catch (e, stackTrace) {
-                                            debugPrint('>>> [Web/Chrome] ❌ Erro durante upload: $e');
-                                            debugPrint('>>> [Web/Chrome] StackTrace: $stackTrace');
+                                            debugPrint(
+                                              '>>> [Web/Chrome] ❌ Erro durante upload: $e',
+                                            );
+                                            debugPrint(
+                                              '>>> [Web/Chrome] StackTrace: $stackTrace',
+                                            );
                                             url = null;
                                           } finally {
                                             // GARANTIR que o diálogo seja fechado sempre
@@ -1472,32 +2199,48 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                                               try {
                                                 Navigator.pop(context);
                                               } catch (e) {
-                                                debugPrint('>>> [Web/Chrome] Erro ao fechar diálogo: $e');
+                                                debugPrint(
+                                                  '>>> [Web/Chrome] Erro ao fechar diálogo: $e',
+                                                );
                                               }
                                             }
                                           }
-                                          
+
                                           if (url != null && url.isNotEmpty) {
-                                            debugPrint('>>> [Web/Chrome] ✅ Upload concluído: $url');
+                                            debugPrint(
+                                              '>>> [Web/Chrome] ✅ Upload concluído: $url',
+                                            );
                                             setStateDialog(() {
                                               fotoPath = url;
                                             });
                                             if (mounted) {
-                                              ScaffoldMessenger.of(context).showSnackBar(
+                                              ScaffoldMessenger.of(
+                                                context,
+                                              ).showSnackBar(
                                                 const SnackBar(
-                                                  content: Text('Foto enviada com sucesso!'),
+                                                  content: Text(
+                                                    'Foto enviada com sucesso!',
+                                                  ),
                                                   backgroundColor: Colors.green,
                                                 ),
                                               );
                                             }
                                           } else {
-                                            debugPrint('>>> [Web/Chrome] ❌ Upload falhou - URL é null ou vazia');
+                                            debugPrint(
+                                              '>>> [Web/Chrome] ❌ Upload falhou - URL é null ou vazia',
+                                            );
                                             if (mounted) {
-                                              ScaffoldMessenger.of(context).showSnackBar(
+                                              ScaffoldMessenger.of(
+                                                context,
+                                              ).showSnackBar(
                                                 const SnackBar(
-                                                  content: Text('Erro ao enviar foto. Verifique se o Firebase Storage está configurado corretamente.'),
+                                                  content: Text(
+                                                    'Erro ao enviar foto. Verifique se o Firebase Storage está configurado corretamente.',
+                                                  ),
                                                   backgroundColor: Colors.red,
-                                                  duration: Duration(seconds: 5),
+                                                  duration: Duration(
+                                                    seconds: 5,
+                                                  ),
                                                 ),
                                               );
                                             }
@@ -1505,15 +2248,21 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                                         }
                                       }
                                     } else {
-                                      throw Exception('Não foi possível obter bytes do arquivo');
+                                      throw Exception(
+                                        'Não foi possível obter bytes do arquivo',
+                                      );
                                     }
                                   }
                                 } catch (e) {
-                                  debugPrint('>>> [Web/Chrome] Erro ao selecionar foto: $e');
+                                  debugPrint(
+                                    '>>> [Web/Chrome] Erro ao selecionar foto: $e',
+                                  );
                                   if (mounted) {
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       SnackBar(
-                                        content: Text('Erro ao selecionar foto: $e'),
+                                        content: Text(
+                                          'Erro ao selecionar foto: $e',
+                                        ),
                                         backgroundColor: Colors.red,
                                       ),
                                     );
@@ -1525,16 +2274,24 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                                   context: context,
                                   builder: (context) => AlertDialog(
                                     backgroundColor: const Color(0xFF1E1E2E),
-                                    title: const Text('Selecionar foto', style: TextStyle(color: Colors.white)),
-                                    content: const Text('Escolha a origem da foto', style: TextStyle(color: Colors.white70)),
+                                    title: const Text(
+                                      'Selecionar foto',
+                                      style: TextStyle(color: Colors.white),
+                                    ),
+                                    content: const Text(
+                                      'Escolha a origem da foto',
+                                      style: TextStyle(color: Colors.white70),
+                                    ),
                                     actions: [
                                       TextButton.icon(
-                                        onPressed: () => Navigator.pop(context, 'galeria'),
+                                        onPressed: () =>
+                                            Navigator.pop(context, 'galeria'),
                                         icon: const Icon(Icons.photo_library),
                                         label: const Text('Galeria'),
                                       ),
                                       TextButton.icon(
-                                        onPressed: () => Navigator.pop(context, 'camera'),
+                                        onPressed: () =>
+                                            Navigator.pop(context, 'camera'),
                                         icon: const Icon(Icons.camera_alt),
                                         label: const Text('Câmera'),
                                       ),
@@ -1545,15 +2302,18 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                                     ],
                                   ),
                                 );
-                                
+
                                 if (action != null) {
                                   try {
-                                    final XFile? image = await _imagePicker.pickImage(
-                                      source: action == 'camera' ? ImageSource.camera : ImageSource.gallery,
-                                      maxWidth: 800,
-                                      maxHeight: 800,
-                                      imageQuality: 85,
-                                    );
+                                    final XFile? image = await _imagePicker
+                                        .pickImage(
+                                          source: action == 'camera'
+                                              ? ImageSource.camera
+                                              : ImageSource.gallery,
+                                          maxWidth: 800,
+                                          maxHeight: 800,
+                                          imageQuality: 85,
+                                        );
                                     if (image != null) {
                                       setStateDialog(() {
                                         fotoPath = image.path;
@@ -1561,9 +2321,13 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                                     }
                                   } catch (e) {
                                     if (mounted) {
-                                      ScaffoldMessenger.of(context).showSnackBar(
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
                                         SnackBar(
-                                          content: Text('Erro ao selecionar foto: $e'),
+                                          content: Text(
+                                            'Erro ao selecionar foto: $e',
+                                          ),
                                           backgroundColor: Colors.red,
                                         ),
                                       );
@@ -1578,30 +2342,46 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                               decoration: BoxDecoration(
                                 color: Colors.orange.withOpacity(0.2),
                                 borderRadius: BorderRadius.circular(16),
-                                border: Border.all(color: Colors.orange.withOpacity(0.5), width: 2),
+                                border: Border.all(
+                                  color: Colors.orange.withOpacity(0.5),
+                                  width: 2,
+                                ),
                               ),
                               child: fotoPath != null && fotoPath!.isNotEmpty
                                   ? Builder(
-                                      key: ValueKey(fotoPath), // Key única para forçar rebuild quando foto mudar
+                                      key: ValueKey(
+                                        fotoPath,
+                                      ), // Key única para forçar rebuild quando foto mudar
                                       builder: (context) {
                                         try {
-                                          debugPrint('>>> [Preview] Tentando exibir foto: $fotoPath');
-                                          
+                                          debugPrint(
+                                            '>>> [Preview] Tentando exibir foto: $fotoPath',
+                                          );
+
                                           // Verificar se é URL (HTTP, HTTPS ou blob)
-                                          if (fotoPath!.startsWith('http://') || 
-                                              fotoPath!.startsWith('https://') || 
+                                          if (fotoPath!.startsWith('http://') ||
+                                              fotoPath!.startsWith(
+                                                'https://',
+                                              ) ||
                                               fotoPath!.startsWith('blob:')) {
                                             // URL do Firebase ou blob URL (web)
                                             try {
-                                              debugPrint('>>> [Preview] É URL (${fotoPath!.startsWith('blob:') ? 'blob' : 'http/https'}), usando Image.network');
+                                              debugPrint(
+                                                '>>> [Preview] É URL (${fotoPath!.startsWith('blob:') ? 'blob' : 'http/https'}), usando Image.network',
+                                              );
                                               // Adicionar cache busting para forçar reload quando a URL mudar
                                               String imageUrl = fotoPath!;
-                                              if (imageUrl.startsWith('https://') && !imageUrl.contains('?')) {
+                                              if (imageUrl.startsWith(
+                                                    'https://',
+                                                  ) &&
+                                                  !imageUrl.contains('?')) {
                                                 // Adicionar timestamp para forçar reload (cache busting)
-                                                imageUrl = '$imageUrl?t=${DateTime.now().millisecondsSinceEpoch}';
+                                                imageUrl =
+                                                    '$imageUrl?t=${DateTime.now().millisecondsSinceEpoch}';
                                               }
                                               return ClipRRect(
-                                                borderRadius: BorderRadius.circular(14),
+                                                borderRadius:
+                                                    BorderRadius.circular(14),
                                                 child: Stack(
                                                   fit: StackFit.expand,
                                                   children: [
@@ -1612,62 +2392,121 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                                                       height: 150,
                                                       cacheWidth: 150,
                                                       cacheHeight: 150,
-                                                      loadingBuilder: (context, child, loadingProgress) {
-                                                        try {
-                                                          if (loadingProgress == null) return child;
-                                                          return Container(
-                                                            color: Colors.orange.withOpacity(0.2),
-                                                            child: Center(
-                                                              child: CircularProgressIndicator(
-                                                                value: loadingProgress.expectedTotalBytes != null
-                                                                    ? loadingProgress.cumulativeBytesLoaded / loadingProgress.expectedTotalBytes!
-                                                                    : null,
-                                                                color: Colors.orange,
-                                                              ),
-                                                            ),
-                                                          );
-                                                        } catch (e) {
-                                                          debugPrint('>>> [Preview] Erro no loadingBuilder: $e');
-                                                          return Container(color: Colors.orange.withOpacity(0.2));
-                                                        }
-                                                      },
-                                                      errorBuilder: (context, error, stackTrace) {
-                                                        try {
-                                                          debugPrint('>>> [Preview] Erro ao carregar foto da URL: $error');
-                                                          return _buildPreviewErrorWidget();
-                                                        } catch (e) {
-                                                          debugPrint('>>> [Preview] ❌ Erro no errorBuilder: $e');
-                                                          return Container(color: Colors.red.withOpacity(0.2));
-                                                        }
-                                                      },
+                                                      loadingBuilder:
+                                                          (
+                                                            context,
+                                                            child,
+                                                            loadingProgress,
+                                                          ) {
+                                                            try {
+                                                              if (loadingProgress ==
+                                                                  null)
+                                                                return child;
+                                                              return Container(
+                                                                color: Colors
+                                                                    .orange
+                                                                    .withOpacity(
+                                                                      0.2,
+                                                                    ),
+                                                                child: Center(
+                                                                  child: CircularProgressIndicator(
+                                                                    value:
+                                                                        loadingProgress.expectedTotalBytes !=
+                                                                            null
+                                                                        ? loadingProgress.cumulativeBytesLoaded /
+                                                                              loadingProgress.expectedTotalBytes!
+                                                                        : null,
+                                                                    color: Colors
+                                                                        .orange,
+                                                                  ),
+                                                                ),
+                                                              );
+                                                            } catch (e) {
+                                                              debugPrint(
+                                                                '>>> [Preview] Erro no loadingBuilder: $e',
+                                                              );
+                                                              return Container(
+                                                                color: Colors
+                                                                    .orange
+                                                                    .withOpacity(
+                                                                      0.2,
+                                                                    ),
+                                                              );
+                                                            }
+                                                          },
+                                                      errorBuilder:
+                                                          (
+                                                            context,
+                                                            error,
+                                                            stackTrace,
+                                                          ) {
+                                                            try {
+                                                              debugPrint(
+                                                                '>>> [Preview] Erro ao carregar foto da URL: $error',
+                                                              );
+                                                              return _buildPreviewErrorWidget();
+                                                            } catch (e) {
+                                                              debugPrint(
+                                                                '>>> [Preview] ❌ Erro no errorBuilder: $e',
+                                                              );
+                                                              return Container(
+                                                                color: Colors
+                                                                    .red
+                                                                    .withOpacity(
+                                                                      0.2,
+                                                                    ),
+                                                              );
+                                                            }
+                                                          },
                                                     ),
                                                     Positioned(
                                                       bottom: 8,
                                                       right: 8,
                                                       child: Container(
-                                                        padding: const EdgeInsets.all(6),
+                                                        padding:
+                                                            const EdgeInsets.all(
+                                                              6,
+                                                            ),
                                                         decoration: BoxDecoration(
-                                                          color: Colors.black.withOpacity(0.6),
-                                                          borderRadius: BorderRadius.circular(20),
+                                                          color: Colors.black
+                                                              .withOpacity(0.6),
+                                                          borderRadius:
+                                                              BorderRadius.circular(
+                                                                20,
+                                                              ),
                                                         ),
-                                                        child: const Icon(Icons.edit, color: Colors.white, size: 18),
+                                                        child: const Icon(
+                                                          Icons.edit,
+                                                          color: Colors.white,
+                                                          size: 18,
+                                                        ),
                                                       ),
                                                     ),
                                                   ],
                                                 ),
                                               );
                                             } catch (e, stackTrace) {
-                                              debugPrint('>>> [Preview] ❌ Erro ao processar URL: $e');
-                                              debugPrint('>>> [Preview] StackTrace: $stackTrace');
+                                              debugPrint(
+                                                '>>> [Preview] ❌ Erro ao processar URL: $e',
+                                              );
+                                              debugPrint(
+                                                '>>> [Preview] StackTrace: $stackTrace',
+                                              );
                                               return _buildPreviewErrorWidget();
                                             }
-                                          } else if (fotoPath != null && fotoPath!.startsWith('data:image')) {
+                                          } else if (fotoPath != null &&
+                                              fotoPath!.startsWith(
+                                                'data:image',
+                                              )) {
                                             // Data URL (usado pelo ImageStorageService)
                                             try {
                                               final dataUrl = fotoPath!;
-                                              debugPrint('>>> [Preview] É data URL, usando Image.network');
+                                              debugPrint(
+                                                '>>> [Preview] É data URL, usando Image.network',
+                                              );
                                               return ClipRRect(
-                                                borderRadius: BorderRadius.circular(14),
+                                                borderRadius:
+                                                    BorderRadius.circular(14),
                                                 child: Stack(
                                                   fit: StackFit.expand,
                                                   children: [
@@ -1676,114 +2515,210 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                                                       fit: BoxFit.cover,
                                                       width: 150,
                                                       height: 150,
-                                                      errorBuilder: (context, error, stackTrace) {
-                                                        try {
-                                                          debugPrint('>>> [Preview] Erro ao carregar data URL: $error');
-                                                          return _buildPreviewErrorWidget();
-                                                        } catch (e) {
-                                                          debugPrint('>>> [Preview] ❌ Erro no errorBuilder: $e');
-                                                          return Container(color: Colors.red.withOpacity(0.2));
-                                                        }
-                                                      },
+                                                      errorBuilder:
+                                                          (
+                                                            context,
+                                                            error,
+                                                            stackTrace,
+                                                          ) {
+                                                            try {
+                                                              debugPrint(
+                                                                '>>> [Preview] Erro ao carregar data URL: $error',
+                                                              );
+                                                              return _buildPreviewErrorWidget();
+                                                            } catch (e) {
+                                                              debugPrint(
+                                                                '>>> [Preview] ❌ Erro no errorBuilder: $e',
+                                                              );
+                                                              return Container(
+                                                                color: Colors
+                                                                    .red
+                                                                    .withOpacity(
+                                                                      0.2,
+                                                                    ),
+                                                              );
+                                                            }
+                                                          },
                                                     ),
                                                     Positioned(
                                                       bottom: 8,
                                                       right: 8,
                                                       child: Container(
-                                                        padding: const EdgeInsets.all(6),
+                                                        padding:
+                                                            const EdgeInsets.all(
+                                                              6,
+                                                            ),
                                                         decoration: BoxDecoration(
-                                                          color: Colors.black.withOpacity(0.6),
-                                                          borderRadius: BorderRadius.circular(20),
+                                                          color: Colors.black
+                                                              .withOpacity(0.6),
+                                                          borderRadius:
+                                                              BorderRadius.circular(
+                                                                20,
+                                                              ),
                                                         ),
-                                                        child: const Icon(Icons.edit, color: Colors.white, size: 18),
+                                                        child: const Icon(
+                                                          Icons.edit,
+                                                          color: Colors.white,
+                                                          size: 18,
+                                                        ),
                                                       ),
                                                     ),
                                                   ],
                                                 ),
                                               );
                                             } catch (e, stackTrace) {
-                                              debugPrint('>>> [Preview] ❌ Erro ao processar data URL: $e');
-                                              debugPrint('>>> [Preview] StackTrace: $stackTrace');
+                                              debugPrint(
+                                                '>>> [Preview] ❌ Erro ao processar data URL: $e',
+                                              );
+                                              debugPrint(
+                                                '>>> [Preview] StackTrace: $stackTrace',
+                                              );
                                               return _buildPreviewErrorWidget();
                                             }
-                                          } else if (!kIsWeb && fotoPath != null) {
+                                          } else if (!kIsWeb &&
+                                              fotoPath != null) {
                                             // Caminho local apenas para mobile/desktop (não web)
                                             try {
-                                              debugPrint('>>> [Preview] É caminho local, usando Image.file: $fotoPath');
+                                              debugPrint(
+                                                '>>> [Preview] É caminho local, usando Image.file: $fotoPath',
+                                              );
                                               final file = File(fotoPath!);
                                               // Verificar se arquivo existe
                                               if (file.existsSync()) {
                                                 return ClipRRect(
-                                                  borderRadius: BorderRadius.circular(14),
+                                                  borderRadius:
+                                                      BorderRadius.circular(14),
                                                   child: Stack(
                                                     fit: StackFit.expand,
                                                     children: [
                                                       Image.file(
                                                         file,
-                                                        key: ValueKey('${fotoPath}_${DateTime.now().millisecondsSinceEpoch}'),
+                                                        key: ValueKey(
+                                                          '${fotoPath}_${DateTime.now().millisecondsSinceEpoch}',
+                                                        ),
                                                         fit: BoxFit.cover,
                                                         width: 150,
                                                         height: 150,
-                                                        errorBuilder: (context, error, stackTrace) {
-                                                          try {
-                                                            debugPrint('>>> [Preview] Erro ao carregar arquivo local: $error');
-                                                            return _buildPreviewErrorWidget();
-                                                          } catch (e) {
-                                                            debugPrint('>>> [Preview] ❌ Erro no errorBuilder: $e');
-                                                            return Container(color: Colors.red.withOpacity(0.2));
-                                                          }
-                                                        },
+                                                        errorBuilder:
+                                                            (
+                                                              context,
+                                                              error,
+                                                              stackTrace,
+                                                            ) {
+                                                              try {
+                                                                debugPrint(
+                                                                  '>>> [Preview] Erro ao carregar arquivo local: $error',
+                                                                );
+                                                                return _buildPreviewErrorWidget();
+                                                              } catch (e) {
+                                                                debugPrint(
+                                                                  '>>> [Preview] ❌ Erro no errorBuilder: $e',
+                                                                );
+                                                                return Container(
+                                                                  color: Colors
+                                                                      .red
+                                                                      .withOpacity(
+                                                                        0.2,
+                                                                      ),
+                                                                );
+                                                              }
+                                                            },
                                                       ),
                                                       Positioned(
                                                         bottom: 8,
                                                         right: 8,
                                                         child: Container(
-                                                          padding: const EdgeInsets.all(6),
+                                                          padding:
+                                                              const EdgeInsets.all(
+                                                                6,
+                                                              ),
                                                           decoration: BoxDecoration(
-                                                            color: Colors.black.withOpacity(0.6),
-                                                            borderRadius: BorderRadius.circular(20),
+                                                            color: Colors.black
+                                                                .withOpacity(
+                                                                  0.6,
+                                                                ),
+                                                            borderRadius:
+                                                                BorderRadius.circular(
+                                                                  20,
+                                                                ),
                                                           ),
-                                                          child: const Icon(Icons.edit, color: Colors.white, size: 18),
+                                                          child: const Icon(
+                                                            Icons.edit,
+                                                            color: Colors.white,
+                                                            size: 18,
+                                                          ),
                                                         ),
                                                       ),
                                                     ],
                                                   ),
                                                 );
                                               } else {
-                                                debugPrint('>>> [Preview] Arquivo não existe: $fotoPath');
-                                                return _buildPreviewErrorWidget('Arquivo não encontrado');
+                                                debugPrint(
+                                                  '>>> [Preview] Arquivo não existe: $fotoPath',
+                                                );
+                                                return _buildPreviewErrorWidget(
+                                                  'Arquivo não encontrado',
+                                                );
                                               }
                                             } catch (e, stackTrace) {
-                                              debugPrint('>>> [Preview] ❌ Erro ao processar arquivo: $e');
-                                              debugPrint('>>> [Preview] StackTrace: $stackTrace');
+                                              debugPrint(
+                                                '>>> [Preview] ❌ Erro ao processar arquivo: $e',
+                                              );
+                                              debugPrint(
+                                                '>>> [Preview] StackTrace: $stackTrace',
+                                              );
                                               return _buildPreviewErrorWidget();
                                             }
                                           } else {
                                             // Web com caminho local (não suportado)
-                                            debugPrint('>>> [Preview] Web não suporta arquivo local: $fotoPath');
+                                            debugPrint(
+                                              '>>> [Preview] Web não suporta arquivo local: $fotoPath',
+                                            );
                                             return Column(
-                                              mainAxisAlignment: MainAxisAlignment.center,
+                                              mainAxisAlignment:
+                                                  MainAxisAlignment.center,
                                               children: [
-                                                const Icon(Icons.add_a_photo, size: 48, color: Colors.orange),
+                                                const Icon(
+                                                  Icons.add_a_photo,
+                                                  size: 48,
+                                                  color: Colors.orange,
+                                                ),
                                                 const SizedBox(height: 8),
                                                 Text(
                                                   'Adicionar foto',
-                                                  style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 12),
+                                                  style: TextStyle(
+                                                    color: Colors.white
+                                                        .withOpacity(0.7),
+                                                    fontSize: 12,
+                                                  ),
                                                 ),
                                               ],
                                             );
                                           }
                                         } catch (e, stackTrace) {
-                                          debugPrint('>>> [Preview] Erro ao carregar foto do pet: $e');
-                                          debugPrint('>>> [Preview] StackTrace: $stackTrace');
+                                          debugPrint(
+                                            '>>> [Preview] Erro ao carregar foto do pet: $e',
+                                          );
+                                          debugPrint(
+                                            '>>> [Preview] StackTrace: $stackTrace',
+                                          );
                                           return Column(
-                                            mainAxisAlignment: MainAxisAlignment.center,
+                                            mainAxisAlignment:
+                                                MainAxisAlignment.center,
                                             children: [
-                                              const Icon(Icons.add_a_photo, size: 48, color: Colors.orange),
+                                              const Icon(
+                                                Icons.add_a_photo,
+                                                size: 48,
+                                                color: Colors.orange,
+                                              ),
                                               const SizedBox(height: 8),
                                               Text(
                                                 'Adicionar foto',
-                                                style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 12),
+                                                style: TextStyle(
+                                                  color: Colors.white
+                                                      .withOpacity(0.7),
+                                                  fontSize: 12,
+                                                ),
                                               ),
                                             ],
                                           );
@@ -1791,13 +2726,23 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                                       },
                                     )
                                   : Column(
-                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
                                       children: [
-                                        const Icon(Icons.add_a_photo, size: 48, color: Colors.orange),
+                                        const Icon(
+                                          Icons.add_a_photo,
+                                          size: 48,
+                                          color: Colors.orange,
+                                        ),
                                         const SizedBox(height: 8),
                                         Text(
                                           'Adicionar foto',
-                                          style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 12),
+                                          style: TextStyle(
+                                            color: Colors.white.withOpacity(
+                                              0.7,
+                                            ),
+                                            fontSize: 12,
+                                          ),
                                         ),
                                       ],
                                     ),
@@ -1805,7 +2750,7 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                           ),
                         ),
                         const SizedBox(height: 24),
-                        
+
                         // Dados básicos
                         _buildSecaoTitulo('Dados Básicos', Icons.info),
                         const SizedBox(height: 12),
@@ -1837,7 +2782,7 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                           ],
                         ),
                         const SizedBox(height: 24),
-                        
+
                         // Características físicas
                         _buildSecaoTitulo('Características', Icons.straighten),
                         const SizedBox(height: 12),
@@ -1857,7 +2802,10 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                                 controller: pesoController,
                                 label: 'Peso (kg)',
                                 icon: Icons.monitor_weight,
-                                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
+                                      decimal: true,
+                                    ),
                               ),
                             ),
                           ],
@@ -1877,7 +2825,8 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                               child: _buildCampoData(
                                 label: 'Data de Nascimento',
                                 value: dataNascimento,
-                                onChanged: (date) => setStateDialog(() => dataNascimento = date),
+                                onChanged: (date) =>
+                                    setStateDialog(() => dataNascimento = date),
                               ),
                             ),
                           ],
@@ -1888,7 +2837,10 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                           decoration: InputDecoration(
                             labelText: 'Sexo',
                             labelStyle: const TextStyle(color: Colors.white70),
-                            prefixIcon: const Icon(Icons.wc, color: Colors.white54),
+                            prefixIcon: const Icon(
+                              Icons.wc,
+                              color: Colors.white54,
+                            ),
                             filled: true,
                             fillColor: const Color(0xFF181A1B),
                             border: OutlineInputBorder(
@@ -1897,24 +2849,48 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                             ),
                             enabledBorder: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide(color: Colors.white.withOpacity(0.1)),
+                              borderSide: BorderSide(
+                                color: Colors.white.withOpacity(0.1),
+                              ),
                             ),
                             focusedBorder: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(12),
-                              borderSide: const BorderSide(color: Colors.orange, width: 2),
+                              borderSide: const BorderSide(
+                                color: Colors.orange,
+                                width: 2,
+                              ),
                             ),
                           ),
                           dropdownColor: const Color(0xFF23272A),
                           style: const TextStyle(color: Colors.white),
                           items: const [
-                            DropdownMenuItem(value: null, child: Text('Não informado', style: TextStyle(color: Colors.white70))),
-                            DropdownMenuItem(value: 'M', child: Text('Macho', style: TextStyle(color: Colors.white))),
-                            DropdownMenuItem(value: 'F', child: Text('Fêmea', style: TextStyle(color: Colors.white))),
+                            DropdownMenuItem(
+                              value: null,
+                              child: Text(
+                                'Não informado',
+                                style: TextStyle(color: Colors.white70),
+                              ),
+                            ),
+                            DropdownMenuItem(
+                              value: 'M',
+                              child: Text(
+                                'Macho',
+                                style: TextStyle(color: Colors.white),
+                              ),
+                            ),
+                            DropdownMenuItem(
+                              value: 'F',
+                              child: Text(
+                                'Fêmea',
+                                style: TextStyle(color: Colors.white),
+                              ),
+                            ),
                           ],
-                          onChanged: (value) => setStateDialog(() => sexo = value),
+                          onChanged: (value) =>
+                              setStateDialog(() => sexo = value),
                         ),
                         const SizedBox(height: 24),
-                        
+
                         // Observações
                         _buildSecaoTitulo('Observações', Icons.notes),
                         const SizedBox(height: 12),
@@ -1934,7 +2910,9 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                   padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
                     color: Colors.black.withOpacity(0.3),
-                    borderRadius: const BorderRadius.vertical(bottom: Radius.circular(20)),
+                    borderRadius: const BorderRadius.vertical(
+                      bottom: Radius.circular(20),
+                    ),
                   ),
                   child: Row(
                     children: [
@@ -1965,298 +2943,460 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                       Expanded(
                         flex: 2,
                         child: ElevatedButton.icon(
-                          onPressed: _uploadingFoto ? null : () async {
-                            if (nomeController.text.trim().isEmpty) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('Nome do pet é obrigatório'),
-                                  backgroundColor: Colors.red,
-                                ),
-                              );
-                              return;
-                            }
-                            
-                            // Mostrar loading com feedback de progresso
-                            final progressNotifier = ValueNotifier<double>(0.0);
-                            
-                            showDialog(
-                              context: context,
-                              barrierDismissible: false,
-                              builder: (ctx) {
-                                return ValueListenableBuilder<double>(
-                                  valueListenable: progressNotifier,
-                                  builder: (context, progress, _) {
-                                    return AlertDialog(
-                                      backgroundColor: const Color(0xFF1E1E2E),
-                                      title: const Text(
-                                        'Salvando pet...',
-                                        style: TextStyle(color: Colors.white),
-                                      ),
-                                      content: Column(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          if (fotoPath != null && fotoPath!.isNotEmpty) ...[
-                                            const Text(
-                                              'Enviando foto para o servidor...',
-                                              style: TextStyle(color: Colors.white70, fontSize: 12),
-                                              textAlign: TextAlign.center,
-                                            ),
-                                            const SizedBox(height: 16),
-                                            if (progress > 0 && progress < 1) ...[
-                                              LinearProgressIndicator(
-                                                value: progress,
-                                                backgroundColor: Colors.white24,
-                                                valueColor: const AlwaysStoppedAnimation<Color>(Colors.orange),
-                                              ),
-                                              const SizedBox(height: 8),
-                                              Text(
-                                                '${(progress * 100).toStringAsFixed(0)}%',
-                                                style: const TextStyle(color: Colors.white70, fontSize: 11),
-                                              ),
-                                            ] else ...[
-                                              const CircularProgressIndicator(color: Colors.orange),
-                                            ],
-                                            const SizedBox(height: 8),
-                                            const Text(
-                                              'Aguarde, isso pode levar alguns segundos...',
-                                              style: TextStyle(color: Colors.white54, fontSize: 11),
-                                              textAlign: TextAlign.center,
-                                            ),
-                                          ] else ...[
-                                            const CircularProgressIndicator(color: Colors.orange),
-                                          ],
-                                        ],
+                          onPressed: _uploadingFoto
+                              ? null
+                              : () async {
+                                  if (nomeController.text.trim().isEmpty) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                          'Nome do pet é obrigatório',
+                                        ),
+                                        backgroundColor: Colors.red,
                                       ),
                                     );
-                                  },
-                                );
-                              },
-                            );
-                            
-                            try {
-                              String? fotoPathFinal = fotoPath;
-                              
-                              // Fazer upload da foto se houver (sempre para blob URLs e caminhos locais)
-                              if (fotoPath != null && fotoPath!.isNotEmpty && widget.cliente != null) {
-                                try {
-                                  final petId = petExistente?.id ?? DateTime.now().millisecondsSinceEpoch.toString();
-                                  debugPrint('>>> [Salvar Pet] Iniciando upload da foto do pet: $petId');
-                                  debugPrint('>>> [Salvar Pet] Caminho/URL: $fotoPath');
-                                  
-                                  // Se já é uma URL HTTPS do Firebase, verificar se está acessível
-                                  if (fotoPath!.startsWith('https://')) {
-                                    debugPrint('>>> [Salvar Pet] Verificando URL do Firebase: $fotoPath');
-                                    try {
-                                      final testResponse = await http.head(Uri.parse(fotoPath!)).timeout(
-                                        const Duration(seconds: 5),
+                                    return;
+                                  }
+
+                                  // Mostrar loading com feedback de progresso
+                                  final progressNotifier =
+                                      ValueNotifier<double>(0.0);
+
+                                  showDialog(
+                                    context: context,
+                                    barrierDismissible: false,
+                                    builder: (ctx) {
+                                      return ValueListenableBuilder<double>(
+                                        valueListenable: progressNotifier,
+                                        builder: (context, progress, _) {
+                                          return AlertDialog(
+                                            backgroundColor: const Color(
+                                              0xFF1E1E2E,
+                                            ),
+                                            title: const Text(
+                                              'Salvando pet...',
+                                              style: TextStyle(
+                                                color: Colors.white,
+                                              ),
+                                            ),
+                                            content: Column(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                if (fotoPath != null &&
+                                                    fotoPath!.isNotEmpty) ...[
+                                                  const Text(
+                                                    'Enviando foto para o servidor...',
+                                                    style: TextStyle(
+                                                      color: Colors.white70,
+                                                      fontSize: 12,
+                                                    ),
+                                                    textAlign: TextAlign.center,
+                                                  ),
+                                                  const SizedBox(height: 16),
+                                                  if (progress > 0 &&
+                                                      progress < 1) ...[
+                                                    LinearProgressIndicator(
+                                                      value: progress,
+                                                      backgroundColor:
+                                                          Colors.white24,
+                                                      valueColor:
+                                                          const AlwaysStoppedAnimation<
+                                                            Color
+                                                          >(Colors.orange),
+                                                    ),
+                                                    const SizedBox(height: 8),
+                                                    Text(
+                                                      '${(progress * 100).toStringAsFixed(0)}%',
+                                                      style: const TextStyle(
+                                                        color: Colors.white70,
+                                                        fontSize: 11,
+                                                      ),
+                                                    ),
+                                                  ] else ...[
+                                                    const CircularProgressIndicator(
+                                                      color: Colors.orange,
+                                                    ),
+                                                  ],
+                                                  const SizedBox(height: 8),
+                                                  const Text(
+                                                    'Aguarde, isso pode levar alguns segundos...',
+                                                    style: TextStyle(
+                                                      color: Colors.white54,
+                                                      fontSize: 11,
+                                                    ),
+                                                    textAlign: TextAlign.center,
+                                                  ),
+                                                ] else ...[
+                                                  const CircularProgressIndicator(
+                                                    color: Colors.orange,
+                                                  ),
+                                                ],
+                                              ],
+                                            ),
+                                          );
+                                        },
                                       );
-                                      if (testResponse.statusCode == 200) {
-                                        debugPrint('>>> [Salvar Pet] ✅ URL verificada e acessível');
-                                        fotoPathFinal = fotoPath;
+                                    },
+                                  );
+
+                                  try {
+                                    String? fotoPathFinal = fotoPath;
+
+                                    // Fazer upload da foto se houver (sempre para blob URLs e caminhos locais)
+                                    if (fotoPath != null &&
+                                        fotoPath!.isNotEmpty &&
+                                        widget.cliente != null) {
+                                      try {
+                                        final petId =
+                                            petExistente?.id ??
+                                            DateTime.now()
+                                                .millisecondsSinceEpoch
+                                                .toString();
+                                        debugPrint(
+                                          '>>> [Salvar Pet] Iniciando upload da foto do pet: $petId',
+                                        );
+                                        debugPrint(
+                                          '>>> [Salvar Pet] Caminho/URL: $fotoPath',
+                                        );
+
+                                        // Se já é uma URL HTTPS do Supabase, verificar se está acessível
+                                        if (fotoPath!.startsWith('https://')) {
+                                          debugPrint(
+                                            '>>> [Salvar Pet] Verificando URL do Supabase: $fotoPath',
+                                          );
+                                          try {
+                                            final testResponse = await http
+                                                .head(Uri.parse(fotoPath!))
+                                                .timeout(
+                                                  const Duration(seconds: 5),
+                                                );
+                                            if (testResponse.statusCode ==
+                                                200) {
+                                              debugPrint(
+                                                '>>> [Salvar Pet] ✅ URL verificada e acessível',
+                                              );
+                                              fotoPathFinal = fotoPath;
+                                            } else {
+                                              debugPrint(
+                                                '>>> [Salvar Pet] ⚠️ URL retornou status ${testResponse.statusCode}, tentando upload novamente',
+                                              );
+                                              fotoPathFinal =
+                                                  await _uploadFotoPet(
+                                                    fotoPath!,
+                                                    petId,
+                                                    widget.cliente!.id,
+                                                    onProgress: (progress) {
+                                                      progressNotifier.value =
+                                                          progress;
+                                                    },
+                                                  ).timeout(
+                                                    const Duration(
+                                                      seconds: 150,
+                                                    ),
+                                                    onTimeout: () {
+                                                      debugPrint(
+                                                        '>>> [Salvar Pet] Timeout no upload',
+                                                      );
+                                                      return null;
+                                                    },
+                                                  );
+                                            }
+                                          } catch (e) {
+                                            debugPrint(
+                                              '>>> [Salvar Pet] ⚠️ Erro ao verificar URL: $e, tentando upload',
+                                            );
+                                            fotoPathFinal =
+                                                await _uploadFotoPet(
+                                                  fotoPath!,
+                                                  petId,
+                                                  widget.cliente!.id,
+                                                  onProgress: (progress) {
+                                                    progressNotifier.value =
+                                                        progress;
+                                                  },
+                                                ).timeout(
+                                                  const Duration(seconds: 150),
+                                                  onTimeout: () {
+                                                    debugPrint(
+                                                      '>>> [Salvar Pet] Timeout no upload',
+                                                    );
+                                                    return null;
+                                                  },
+                                                );
+                                          }
+                                        } else {
+                                          // Fazer upload (converte blob URLs e arquivos locais para Firebase Storage)
+                                          fotoPathFinal =
+                                              await _uploadFotoPet(
+                                                fotoPath!,
+                                                petId,
+                                                widget.cliente!.id,
+                                                onProgress: (progress) {
+                                                  progressNotifier.value =
+                                                      progress;
+                                                },
+                                              ).timeout(
+                                                const Duration(
+                                                  seconds: 150,
+                                                ), // Timeout total aumentado para 2.5 minutos
+                                                onTimeout: () {
+                                                  debugPrint(
+                                                    '>>> [Salvar Pet] Timeout total no upload',
+                                                  );
+                                                  return null;
+                                                },
+                                              );
+                                          debugPrint(
+                                            '>>> [Salvar Pet] Resultado do upload: $fotoPathFinal',
+                                          );
+
+                                          if (fotoPathFinal == null) {
+                                            debugPrint(
+                                              '>>> [Salvar Pet] ⚠️ Upload falhou ou foi cancelado',
+                                            );
+                                            // Se for arquivo local (não web), manter o caminho local
+                                            if (!kIsWeb &&
+                                                fotoPath != null &&
+                                                !fotoPath!.startsWith('http') &&
+                                                !fotoPath!.startsWith(
+                                                  'blob:',
+                                                )) {
+                                              final file = File(fotoPath!);
+                                              if (await file.exists()) {
+                                                debugPrint(
+                                                  '>>> [Salvar Pet] ✅ Mantendo caminho local: $fotoPath',
+                                                );
+                                                fotoPathFinal =
+                                                    fotoPath; // Manter caminho local
+                                              } else {
+                                                debugPrint(
+                                                  '>>> [Salvar Pet] ❌ Arquivo local não existe mais: $fotoPath',
+                                                );
+                                                fotoPathFinal = null;
+                                              }
+                                            } else {
+                                              debugPrint(
+                                                '>>> [Salvar Pet] Não é possível manter caminho local (web/blob) - continuando sem foto',
+                                              );
+                                              fotoPathFinal =
+                                                  null; // Não salvar caminho inválido
+                                            }
+                                          }
+                                        }
+                                      } catch (e, stackTrace) {
+                                        debugPrint(
+                                          '>>> [Salvar Pet] Erro no upload da foto: $e',
+                                        );
+                                        debugPrint(
+                                          '>>> [Salvar Pet] StackTrace: $stackTrace',
+                                        );
+                                        // Se upload falhar, não salvar foto (melhor do que salvar caminho inválido)
+                                        fotoPathFinal = null;
+                                      }
+                                    }
+
+                                    // VALIDAÇÃO: Verificar se fotoPathFinal foi definido corretamente
+                                    if (fotoPathFinal == null &&
+                                        fotoPath != null &&
+                                        fotoPath!.isNotEmpty) {
+                                      debugPrint(
+                                        '>>> [Salvar Pet] ⚠️ ATENÇÃO: fotoPathFinal é null mas fotoPath não é vazio',
+                                      );
+                                      debugPrint(
+                                        '>>> [Salvar Pet] fotoPath original: $fotoPath',
+                                      );
+                                      debugPrint(
+                                        '>>> [Salvar Pet] Isso pode indicar que o upload falhou silenciosamente',
+                                      );
+                                    }
+
+                                    debugPrint(
+                                      '>>> [Salvar Pet] Criando objeto Pet com fotoPathFinal: $fotoPathFinal',
+                                    );
+
+                                    final pet = Pet(
+                                      id:
+                                          petExistente?.id ??
+                                          DateTime.now().millisecondsSinceEpoch
+                                              .toString(),
+                                      nome: nomeController.text.trim(),
+                                      especie:
+                                          especieController.text.trim().isEmpty
+                                          ? null
+                                          : especieController.text.trim(),
+                                      raca: racaController.text.trim().isEmpty
+                                          ? null
+                                          : racaController.text.trim(),
+                                      tamanho:
+                                          tamanhoController.text.trim().isEmpty
+                                          ? null
+                                          : tamanhoController.text.trim(),
+                                      peso: pesoController.text.trim().isEmpty
+                                          ? null
+                                          : double.tryParse(
+                                              pesoController.text.replaceAll(
+                                                ',',
+                                                '.',
+                                              ),
+                                            ),
+                                      cor: corController.text.trim().isEmpty
+                                          ? null
+                                          : corController.text.trim(),
+                                      sexo: sexo,
+                                      dataNascimento: dataNascimento,
+                                      observacoes:
+                                          observacoesController.text
+                                              .trim()
+                                              .isEmpty
+                                          ? null
+                                          : observacoesController.text.trim(),
+                                      fotoPath: fotoPathFinal,
+                                      createdAt:
+                                          petExistente?.createdAt ??
+                                          DateTime.now(),
+                                      updatedAt: DateTime.now(),
+                                    );
+
+                                    debugPrint(
+                                      '>>> [Salvar Pet] Pet criado com fotoPath: ${pet.fotoPath}',
+                                    );
+
+                                    setState(() {
+                                      if (index != null) {
+                                        _pets[index] = pet;
                                       } else {
-                                        debugPrint('>>> [Salvar Pet] ⚠️ URL retornou status ${testResponse.statusCode}, tentando upload novamente');
-                                        fotoPathFinal = await _uploadFotoPet(
-                                          fotoPath!,
-                                          petId,
-                                          widget.cliente!.id,
-                                          onProgress: (progress) {
-                                            progressNotifier.value = progress;
-                                          },
-                                        ).timeout(
-                                          const Duration(seconds: 150),
-                                          onTimeout: () {
-                                            debugPrint('>>> [Salvar Pet] Timeout no upload');
-                                            return null;
-                                          },
+                                        _pets.add(pet);
+                                      }
+                                    });
+
+                                    // Salvar o cliente no Supabase após atualizar o pet
+                                    if (widget.cliente != null) {
+                                      try {
+                                        final dataService =
+                                            Provider.of<DataService>(
+                                              context,
+                                              listen: false,
+                                            );
+                                        final clienteAtualizado = Cliente(
+                                          id: widget.cliente!.id,
+                                          nome: widget.cliente!.nome,
+                                          nomeFantasia:
+                                              widget.cliente!.nomeFantasia,
+                                          tipoPessoa:
+                                              widget.cliente!.tipoPessoa,
+                                          cpfCnpj: widget.cliente!.cpfCnpj,
+                                          rgIe: widget.cliente!.rgIe,
+                                          email: widget.cliente!.email,
+                                          telefone: widget.cliente!.telefone,
+                                          telefone2: widget.cliente!.telefone2,
+                                          whatsapp: widget.cliente!.whatsapp,
+                                          endereco: widget.cliente!.endereco,
+                                          numero: widget.cliente!.numero,
+                                          complemento:
+                                              widget.cliente!.complemento,
+                                          bairro: widget.cliente!.bairro,
+                                          cidade: widget.cliente!.cidade,
+                                          estado: widget.cliente!.estado,
+                                          cep: widget.cliente!.cep,
+                                          pontoReferencia:
+                                              widget.cliente!.pontoReferencia,
+                                          dataNascimento:
+                                              widget.cliente!.dataNascimento,
+                                          profissao: widget.cliente!.profissao,
+                                          observacoes:
+                                              widget.cliente!.observacoes,
+                                          pets: _pets,
+                                          limiteCredito:
+                                              widget.cliente!.limiteCredito,
+                                          bloqueado: widget.cliente!.bloqueado,
+                                          ativo: widget.cliente!.ativo,
+                                          createdAt: widget.cliente!.createdAt,
+                                          updatedAt: DateTime.now(),
+                                        );
+                                        dataService.updateCliente(
+                                          clienteAtualizado,
+                                        );
+                                        debugPrint(
+                                          '>>> [Salvar Pet] Cliente atualizado no Supabase com a nova foto do pet',
+                                        );
+                                      } catch (e) {
+                                        debugPrint(
+                                          '>>> [Salvar Pet] Erro ao salvar cliente no Supabase: $e',
                                         );
                                       }
-                                    } catch (e) {
-                                      debugPrint('>>> [Salvar Pet] ⚠️ Erro ao verificar URL: $e, tentando upload');
-                                      fotoPathFinal = await _uploadFotoPet(
-                                        fotoPath!,
-                                        petId,
-                                        widget.cliente!.id,
-                                        onProgress: (progress) {
-                                          progressNotifier.value = progress;
-                                        },
-                                      ).timeout(
-                                        const Duration(seconds: 150),
-                                        onTimeout: () {
-                                          debugPrint('>>> [Salvar Pet] Timeout no upload');
-                                          return null;
-                                        },
-                                      );
                                     }
-                                  } else {
-                                    // Fazer upload (converte blob URLs e arquivos locais para Firebase Storage)
-                                    fotoPathFinal = await _uploadFotoPet(
-                                      fotoPath!,
-                                      petId,
-                                      widget.cliente!.id,
-                                      onProgress: (progress) {
-                                        progressNotifier.value = progress;
-                                      },
-                                    ).timeout(
-                                      const Duration(seconds: 150), // Timeout total aumentado para 2.5 minutos
-                                      onTimeout: () {
-                                        debugPrint('>>> [Salvar Pet] Timeout total no upload');
-                                        return null;
-                                      },
-                                    );
-                                    debugPrint('>>> [Salvar Pet] Resultado do upload: $fotoPathFinal');
-                                    
-                                    if (fotoPathFinal == null) {
-                                      debugPrint('>>> [Salvar Pet] ⚠️ Upload falhou ou foi cancelado');
-                                      // Se for arquivo local (não web), manter o caminho local
-                                      if (!kIsWeb && fotoPath != null && !fotoPath!.startsWith('http') && !fotoPath!.startsWith('blob:')) {
-                                        final file = File(fotoPath!);
-                                        if (await file.exists()) {
-                                          debugPrint('>>> [Salvar Pet] ✅ Mantendo caminho local: $fotoPath');
-                                          fotoPathFinal = fotoPath; // Manter caminho local
-                                        } else {
-                                          debugPrint('>>> [Salvar Pet] ❌ Arquivo local não existe mais: $fotoPath');
-                                          fotoPathFinal = null;
-                                        }
+
+                                    nomeController.dispose();
+                                    especieController.dispose();
+                                    racaController.dispose();
+                                    tamanhoController.dispose();
+                                    pesoController.dispose();
+                                    corController.dispose();
+                                    observacoesController.dispose();
+
+                                    // Fechar diálogo de loading primeiro
+                                    if (mounted) Navigator.pop(context);
+
+                                    // Fechar diálogo do pet
+                                    if (mounted) Navigator.pop(context);
+
+                                    if (mounted) {
+                                      // Mostrar mensagem de sucesso
+                                      final mensagem = petExistente != null
+                                          ? 'Pet atualizado com sucesso!'
+                                          : 'Pet adicionado com sucesso!';
+                                      if (fotoPathFinal == null &&
+                                          fotoPath != null &&
+                                          fotoPath!.isNotEmpty) {
+                                        // Upload falhou mas pet foi salvo
+                                        ScaffoldMessenger.of(
+                                          context,
+                                        ).showSnackBar(
+                                          SnackBar(
+                                            content: Text(
+                                              '$mensagem\nAviso: A foto não foi enviada (timeout ou erro de conexão).',
+                                            ),
+                                            backgroundColor: Colors.orange,
+                                            duration: const Duration(
+                                              seconds: 4,
+                                            ),
+                                          ),
+                                        );
                                       } else {
-                                        debugPrint('>>> [Salvar Pet] Não é possível manter caminho local (web/blob) - continuando sem foto');
-                                        fotoPathFinal = null; // Não salvar caminho inválido
+                                        ScaffoldMessenger.of(
+                                          context,
+                                        ).showSnackBar(
+                                          SnackBar(
+                                            content: Text(mensagem),
+                                            backgroundColor: Colors.green,
+                                          ),
+                                        );
                                       }
                                     }
+                                  } catch (e) {
+                                    // Fechar loading em caso de erro
+                                    if (mounted) Navigator.pop(context);
+
+                                    if (mounted) {
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            'Erro ao salvar pet: $e',
+                                          ),
+                                          backgroundColor: Colors.red,
+                                        ),
+                                      );
+                                    }
                                   }
-                                } catch (e, stackTrace) {
-                                  debugPrint('>>> [Salvar Pet] Erro no upload da foto: $e');
-                                  debugPrint('>>> [Salvar Pet] StackTrace: $stackTrace');
-                                  // Se upload falhar, não salvar foto (melhor do que salvar caminho inválido)
-                                  fotoPathFinal = null;
-                                }
-                              }
-                              
-                              // VALIDAÇÃO: Verificar se fotoPathFinal foi definido corretamente
-                              if (fotoPathFinal == null && fotoPath != null && fotoPath!.isNotEmpty) {
-                                debugPrint('>>> [Salvar Pet] ⚠️ ATENÇÃO: fotoPathFinal é null mas fotoPath não é vazio');
-                                debugPrint('>>> [Salvar Pet] fotoPath original: $fotoPath');
-                                debugPrint('>>> [Salvar Pet] Isso pode indicar que o upload falhou silenciosamente');
-                              }
-                              
-                              debugPrint('>>> [Salvar Pet] Criando objeto Pet com fotoPathFinal: $fotoPathFinal');
-                              
-                              final pet = Pet(
-                                id: petExistente?.id ?? DateTime.now().millisecondsSinceEpoch.toString(),
-                                nome: nomeController.text.trim(),
-                                especie: especieController.text.trim().isEmpty ? null : especieController.text.trim(),
-                                raca: racaController.text.trim().isEmpty ? null : racaController.text.trim(),
-                                tamanho: tamanhoController.text.trim().isEmpty ? null : tamanhoController.text.trim(),
-                                peso: pesoController.text.trim().isEmpty ? null : double.tryParse(pesoController.text.replaceAll(',', '.')),
-                                cor: corController.text.trim().isEmpty ? null : corController.text.trim(),
-                                sexo: sexo,
-                                dataNascimento: dataNascimento,
-                                observacoes: observacoesController.text.trim().isEmpty ? null : observacoesController.text.trim(),
-                                fotoPath: fotoPathFinal,
-                                createdAt: petExistente?.createdAt ?? DateTime.now(),
-                                updatedAt: DateTime.now(),
-                              );
-                              
-                              debugPrint('>>> [Salvar Pet] Pet criado com fotoPath: ${pet.fotoPath}');
-                              
-                              setState(() {
-                                if (index != null) {
-                                  _pets[index] = pet;
-                                } else {
-                                  _pets.add(pet);
-                                }
-                              });
-                              
-                              // Salvar o cliente no Firebase após atualizar o pet
-                              if (widget.cliente != null) {
-                                try {
-                                  final dataService = Provider.of<DataService>(context, listen: false);
-                                  final clienteAtualizado = Cliente(
-                                    id: widget.cliente!.id,
-                                    nome: widget.cliente!.nome,
-                                    nomeFantasia: widget.cliente!.nomeFantasia,
-                                    tipoPessoa: widget.cliente!.tipoPessoa,
-                                    cpfCnpj: widget.cliente!.cpfCnpj,
-                                    rgIe: widget.cliente!.rgIe,
-                                    email: widget.cliente!.email,
-                                    telefone: widget.cliente!.telefone,
-                                    telefone2: widget.cliente!.telefone2,
-                                    whatsapp: widget.cliente!.whatsapp,
-                                    endereco: widget.cliente!.endereco,
-                                    numero: widget.cliente!.numero,
-                                    complemento: widget.cliente!.complemento,
-                                    bairro: widget.cliente!.bairro,
-                                    cidade: widget.cliente!.cidade,
-                                    estado: widget.cliente!.estado,
-                                    cep: widget.cliente!.cep,
-                                    pontoReferencia: widget.cliente!.pontoReferencia,
-                                    dataNascimento: widget.cliente!.dataNascimento,
-                                    profissao: widget.cliente!.profissao,
-                                    observacoes: widget.cliente!.observacoes,
-                                    pets: _pets,
-                                    limiteCredito: widget.cliente!.limiteCredito,
-                                    bloqueado: widget.cliente!.bloqueado,
-                                    ativo: widget.cliente!.ativo,
-                                    createdAt: widget.cliente!.createdAt,
-                                    updatedAt: DateTime.now(),
-                                  );
-                                  dataService.updateCliente(clienteAtualizado);
-                                  debugPrint('>>> [Salvar Pet] Cliente atualizado no Firebase com a nova foto do pet');
-                                } catch (e) {
-                                  debugPrint('>>> [Salvar Pet] Erro ao salvar cliente no Firebase: $e');
-                                }
-                              }
-                              
-                              nomeController.dispose();
-                              especieController.dispose();
-                              racaController.dispose();
-                              tamanhoController.dispose();
-                              pesoController.dispose();
-                              corController.dispose();
-                              observacoesController.dispose();
-                              
-                              // Fechar diálogo de loading primeiro
-                              if (mounted) Navigator.pop(context);
-                              
-                              // Fechar diálogo do pet
-                              if (mounted) Navigator.pop(context);
-                              
-                              if (mounted) {
-                                // Mostrar mensagem de sucesso
-                                final mensagem = petExistente != null ? 'Pet atualizado com sucesso!' : 'Pet adicionado com sucesso!';
-                                if (fotoPathFinal == null && fotoPath != null && fotoPath!.isNotEmpty) {
-                                  // Upload falhou mas pet foi salvo
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text('$mensagem\nAviso: A foto não foi enviada (timeout ou erro de conexão).'),
-                                      backgroundColor: Colors.orange,
-                                      duration: const Duration(seconds: 4),
-                                    ),
-                                  );
-                                } else {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text(mensagem),
-                                      backgroundColor: Colors.green,
-                                    ),
-                                  );
-                                }
-                              }
-                            } catch (e) {
-                              // Fechar loading em caso de erro
-                              if (mounted) Navigator.pop(context);
-                              
-                              if (mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text('Erro ao salvar pet: $e'),
-                                    backgroundColor: Colors.red,
-                                  ),
-                                );
-                              }
-                            }
-                          },
-                          icon: Icon(petExistente != null ? Icons.save : Icons.add),
-                          label: Text(petExistente != null ? 'Salvar' : 'Adicionar'),
+                                },
+                          icon: Icon(
+                            petExistente != null ? Icons.save : Icons.add,
+                          ),
+                          label: Text(
+                            petExistente != null ? 'Salvar' : 'Adicionar',
+                          ),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.orange,
                             foregroundColor: Colors.white,
@@ -2278,112 +3418,7 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
     );
   }
 
-  Widget _buildSecaoTitulo(String titulo, IconData icon) {
-    return Row(
-      children: [
-        Icon(icon, color: Colors.orange, size: 20),
-        const SizedBox(width: 8),
-        Text(
-          titulo,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      ],
-    );
-  }
 
-  Widget _buildCampoTexto({
-    required TextEditingController controller,
-    required String label,
-    IconData? icon,
-    String? hintText,
-    TextInputType? keyboardType,
-    List<TextInputFormatter>? inputFormatters,
-    String? prefixText,
-    int maxLines = 1,
-    bool required = false,
-  }) {
-    return TextField(
-      controller: controller,
-      keyboardType: keyboardType,
-      inputFormatters: inputFormatters,
-      maxLines: maxLines,
-      style: const TextStyle(color: Colors.white),
-      decoration: InputDecoration(
-        labelText: label + (required ? ' *' : ''),
-        hintText: hintText,
-        labelStyle: const TextStyle(color: Colors.white70),
-        hintStyle: TextStyle(color: Colors.white.withOpacity(0.4)),
-        prefixIcon: icon != null ? Icon(icon, color: Colors.white54) : null,
-        prefixText: prefixText,
-        prefixStyle: const TextStyle(color: Colors.white),
-        filled: true,
-        fillColor: const Color(0xFF181A1B),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide.none,
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: Colors.white.withOpacity(0.1)),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Colors.orange, width: 2),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildCampoData({
-    required String label,
-    required DateTime? value,
-    required Function(DateTime?) onChanged,
-  }) {
-    return InkWell(
-      onTap: () async {
-        final date = await showDatePicker(
-          context: context,
-          initialDate: value ?? DateTime.now(),
-          firstDate: DateTime(2000),
-          lastDate: DateTime.now(),
-        );
-        if (date != null) {
-          onChanged(date);
-        }
-      },
-      child: InputDecorator(
-        decoration: InputDecoration(
-          labelText: label,
-          labelStyle: const TextStyle(color: Colors.white70),
-          prefixIcon: const Icon(Icons.calendar_today, color: Colors.white54),
-          filled: true,
-          fillColor: const Color(0xFF181A1B),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide.none,
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(color: Colors.white.withOpacity(0.1)),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: Colors.orange, width: 2),
-          ),
-        ),
-        child: Text(
-          value != null ? DateFormat('dd/MM/yyyy').format(value) : 'Selecionar data',
-          style: TextStyle(
-            color: value != null ? Colors.white : Colors.white.withOpacity(0.5),
-          ),
-        ),
-      ),
-    );
-  }
 
   void _confirmarExclusaoPet(int index) {
     showDialog(
@@ -2391,7 +3426,10 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF1E1E2E),
         title: const Text('Excluir Pet', style: TextStyle(color: Colors.white)),
-        content: Text('Deseja excluir ${_pets[index].nome}?', style: const TextStyle(color: Colors.white70)),
+        content: Text(
+          'Deseja excluir ${_pets[index].nome}?',
+          style: const TextStyle(color: Colors.white70),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -2408,48 +3446,6 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
             child: const Text('Excluir'),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildOpcaoTipo(TipoPessoa tipo, String label, IconData icone) {
-    final isSelected = _tipoPessoa == tipo;
-    return GestureDetector(
-      onTap: () => setState(() => _tipoPessoa = tipo),
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
-        decoration: BoxDecoration(
-          color: isSelected
-              ? Colors.blue.withOpacity(0.2)
-              : Colors.white.withOpacity(0.05),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: isSelected ? Colors.blue : Colors.white.withOpacity(0.1),
-            width: isSelected ? 2 : 1,
-          ),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              icone,
-              color: isSelected ? Colors.blue : Colors.white54,
-              size: 24,
-            ),
-            const SizedBox(width: 8),
-            Text(
-              label,
-              style: TextStyle(
-                color: isSelected ? Colors.white : Colors.white70,
-                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-              ),
-            ),
-            if (isSelected) ...[
-              const SizedBox(width: 8),
-              const Icon(Icons.check_circle, color: Colors.blue, size: 18),
-            ],
-          ],
-        ),
       ),
     );
   }
@@ -2691,8 +3687,8 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
 
       final cliente = Cliente(
         id: (_isEditing)
-          ? widget.cliente!.id
-          : DateTime.now().millisecondsSinceEpoch.toString(),
+            ? widget.cliente!.id
+            : DateTime.now().millisecondsSinceEpoch.toString(),
         nome: _nomeController.text.trim(),
         nomeFantasia: _nomeFantasiaController.text.trim().isEmpty
             ? null
@@ -2746,10 +3742,25 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
             ? null
             : _observacoesController.text.trim(),
         pets: _pets,
+        enderecos: _enderecos,
+        perfilPreco: _perfilPrecoSelecionado,
         limiteCredito: double.tryParse(
           _limiteCreditoController.text.replaceAll(',', '.'),
         ),
+        saldoDevedor: double.tryParse(
+          _saldoDevedorController.text.replaceAll(',', '.'),
+        ) ?? 0.0,
+        dadosExtras: {
+          ...?widget.cliente?.dadosExtras,
+          'credito_inicial': double.tryParse(
+            _creditoInicialController.text.replaceAll(',', '.'),
+          ) ?? 0.0,
+          'codigo': _codigoController.text.trim().isEmpty
+              ? null
+              : _codigoController.text.trim(),
+        },
         bloqueado: _bloqueado,
+        habilitaTaxiDog: _habilitaTaxiDog,
         ativo: _ativo,
         createdAt: widget.cliente?.createdAt ?? DateTime.now(),
         updatedAt: DateTime.now(),
@@ -2863,7 +3874,10 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
           ..sort((a, b) => b.dataVenda.compareTo(a.dataVenda));
 
     // Calcular estatísticas financeiras
-    final estatisticas = _calcularEstatisticasFinanceiras(pedidosCliente, vendasBalcaoCliente);
+    final estatisticas = _calcularEstatisticasFinanceiras(
+      pedidosCliente,
+      vendasBalcaoCliente,
+    );
 
     // Separar pagamentos pendentes (a prazo)
     final pagamentosPendentes = <_PagamentoPendenteInfo>[];
@@ -2894,13 +3908,21 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
       return dataB.compareTo(dataA);
     });
 
-    // Buscar agendamentos de vacina do cliente
-    final agendamentosVacina = dataService.agendamentosServico
-        .where((a) => a.clienteId == widget.cliente?.id && 
-                      ((a.servicoId?.startsWith('vacina_') ?? false) || 
-                       (a.observacoes != null && a.observacoes!.toLowerCase().contains('vacina'))))
-        .toList()
-      ..sort((a, b) => b.dataAgendamento.compareTo(a.dataAgendamento));
+    // Buscar todos os agendamentos do cliente (não apenas vacinas)
+    final todosAgendamentos =
+        dataService.agendamentosServico
+            .where((a) => a.clienteId == widget.cliente?.id)
+            .toList()
+          ..sort((a, b) => b.dataAgendamento.compareTo(a.dataAgendamento));
+
+    final agendamentosVacina = todosAgendamentos
+        .where(
+          (a) =>
+              (a.servicoId?.startsWith('vacina_') ?? false) ||
+              (a.observacoes != null &&
+                  a.observacoes!.toLowerCase().contains('vacina')),
+        )
+        .toList();
 
     // Buscar materiais consumidos dos pedidos do cliente
     final materiaisConsumidos = <Map<String, dynamic>>[];
@@ -2913,7 +3935,9 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
         });
       }
     }
-    materiaisConsumidos.sort((a, b) => (b['data'] as DateTime).compareTo(a['data'] as DateTime));
+    materiaisConsumidos.sort(
+      (a, b) => (b['data'] as DateTime).compareTo(a['data'] as DateTime),
+    );
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
@@ -2921,7 +3945,7 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Dashboard Financeiro
-          _buildDashboardFinanceiro(estatisticas, formatoMoeda),
+          _buildDashboardFinanceiro(estatisticas, formatoMoeda, dataService),
 
           const SizedBox(height: 24),
 
@@ -2997,6 +4021,19 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                   ),
                 ),
 
+          // Histórico de Agendamentos (Serviços)
+          _buildSecaoTitulo('Histórico de Agendamentos', Icons.calendar_today),
+          const SizedBox(height: 12),
+          if (todosAgendamentos.isEmpty)
+            _buildSemHistorico()
+          else
+            ...todosAgendamentos
+                .take(15)
+                .map(
+                  (agendamento) =>
+                      _buildCardAgendamentoHistorico(agendamento, formatoData),
+                ),
+
           const SizedBox(height: 24),
 
           // Histórico de Vacinas
@@ -3008,16 +4045,17 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
             ...agendamentosVacina
                 .take(10)
                 .map(
-                  (agendamento) => _buildCardVacinaHistorico(
-                    agendamento,
-                    formatoData,
-                  ),
+                  (agendamento) =>
+                      _buildCardVacinaHistorico(agendamento, formatoData),
                 ),
 
           const SizedBox(height: 24),
 
           // Histórico de Materiais Consumidos
-          _buildSecaoTitulo('Histórico de Materiais Consumidos', Icons.inventory),
+          _buildSecaoTitulo(
+            'Histórico de Materiais Consumidos',
+            Icons.inventory,
+          ),
           const SizedBox(height: 12),
           if (materiaisConsumidos.isEmpty)
             _buildSemHistorico()
@@ -3038,7 +4076,10 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
     );
   }
 
-  Map<String, dynamic> _calcularEstatisticasFinanceiras(List<Pedido> pedidos, List<VendaBalcao> vendas) {
+  Map<String, dynamic> _calcularEstatisticasFinanceiras(
+    List<Pedido> pedidos,
+    List<VendaBalcao> vendas,
+  ) {
     double totalCompras = 0;
     double totalPago = 0;
     double totalPendente = 0;
@@ -3080,16 +4121,25 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
     // Incluir vendas balcão (geralmente são pagas na hora, exceto canceladas)
     for (final venda in vendas) {
       if (venda.cancelado) continue;
-      
+
       totalCompras += venda.valorTotal;
-      totalPago += venda.valorTotal; // Vendas balcão no sistema geralmente são recebidas no ato
-      
+      totalPago += (venda.valorRecebido ?? 0); 
+
+      if (venda.tipoPagamento == TipoPagamento.fiado) {
+        final pendente = venda.valorTotal - (venda.valorRecebido ?? 0);
+        if (pendente > 0) {
+          totalPendente += pendente;
+          qtdPagamentosPendentes++;
+        }
+      }
+
       if (ultimaCompra == null || venda.dataVenda.isAfter(ultimaCompra)) {
         ultimaCompra = venda.dataVenda;
       }
     }
 
-    int qtdTotalTransacoes = qtdPedidos + vendas.where((v) => !v.cancelado).length;
+    int qtdTotalTransacoes =
+        qtdPedidos + vendas.where((v) => !v.cancelado).length;
 
     // Score de crédito baseado no histórico
     int scoreCredito = 100;
@@ -3113,79 +4163,128 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
       'diasMaiorAtraso': diasMaiorAtraso,
       'ultimaCompra': ultimaCompra,
       'scoreCredito': scoreCredito,
-      'ticketMedio': qtdTotalTransacoes > 0 ? totalCompras / qtdTotalTransacoes : 0.0,
+      'ticketMedio': qtdTotalTransacoes > 0
+          ? totalCompras / qtdTotalTransacoes
+          : 0.0,
     };
   }
 
   Widget _buildDashboardFinanceiro(
     Map<String, dynamic> stats,
     NumberFormat formatoMoeda,
+    DataService dataService,
   ) {
     final totalCompras = stats['totalCompras'] as double;
     final totalPago = stats['totalPago'] as double;
     final totalPendente = stats['totalPendente'] as double;
     final totalVencido = stats['totalVencido'] as double;
 
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            const Color(0xFF1a237e).withOpacity(0.8),
-            const Color(0xFF283593).withOpacity(0.8),
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+    return Column(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                const Color(0xFF1a237e).withOpacity(0.8),
+                const Color(0xFF283593).withOpacity(0.8),
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Column(
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('DASHBOARD FINANCEIRO', style: TextStyle(color: Colors.white54, fontSize: 10, fontWeight: FontWeight.bold)),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      TextButton.icon(
+                        onPressed: () => _mostrarDialogExtrato(dataService),
+                        icon: const Icon(Icons.receipt_long, color: Colors.cyanAccent, size: 18),
+                        label: const Text('VER EXTRATO', style: TextStyle(color: Colors.cyanAccent, fontSize: 11, fontWeight: FontWeight.bold)),
+                        style: TextButton.styleFrom(
+                          backgroundColor: Colors.white10,
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                      ),
+                      TextButton.icon(
+                        onPressed: () => _mostrarDialogAjustarCredito(dataService),
+                        icon: const Icon(Icons.balance, color: Colors.orangeAccent, size: 18),
+                        label: const Text('AJUSTAR CRÉDITO', style: TextStyle(color: Colors.orangeAccent, fontSize: 11, fontWeight: FontWeight.bold)),
+                        style: TextButton.styleFrom(
+                          backgroundColor: Colors.white10,
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                      ),
+                      TextButton.icon(
+                        onPressed: () => _quitarSaldoDevedor(dataService),
+                        icon: const Icon(Icons.add_circle, color: Colors.greenAccent, size: 18),
+                        label: const Text('RECEBER VALOR', style: TextStyle(color: Colors.greenAccent, fontSize: 11, fontWeight: FontWeight.bold)),
+                        style: TextButton.styleFrom(
+                          backgroundColor: Colors.white10,
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildStatFinanceiro(
+                      'Total Compras',
+                      formatoMoeda.format(totalCompras),
+                      Icons.shopping_cart,
+                      Colors.blue,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildStatFinanceiro(
+                      'Total Pago',
+                      formatoMoeda.format(totalPago),
+                      Icons.check_circle,
+                      Colors.green,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildStatFinanceiro(
+                      'Pendente',
+                      formatoMoeda.format(totalPendente),
+                      Icons.schedule,
+                      Colors.orange,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildStatFinanceiro(
+                      'Vencido',
+                      formatoMoeda.format(totalVencido),
+                      Icons.warning,
+                      totalVencido > 0 ? Colors.red : Colors.grey,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: _buildStatFinanceiro(
-                  'Total Compras',
-                  formatoMoeda.format(totalCompras),
-                  Icons.shopping_cart,
-                  Colors.blue,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildStatFinanceiro(
-                  'Total Pago',
-                  formatoMoeda.format(totalPago),
-                  Icons.check_circle,
-                  Colors.green,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: _buildStatFinanceiro(
-                  'Pendente',
-                  formatoMoeda.format(totalPendente),
-                  Icons.schedule,
-                  Colors.orange,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildStatFinanceiro(
-                  'Vencido',
-                  formatoMoeda.format(totalVencido),
-                  Icons.warning,
-                  totalVencido > 0 ? Colors.red : Colors.grey,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
+      ],
     );
   }
 
@@ -3600,6 +4699,371 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
     );
   }
 
+  void _quitarSaldoDevedor(DataService dataService) {
+    if (widget.cliente == null) return;
+    final saldo = widget.cliente!.saldoDevedor;
+    if (saldo <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Este cliente não possui saldo devedor.')),
+      );
+      return;
+    }
+
+    final valorController = TextEditingController(text: saldo.toStringAsFixed(2));
+    TipoPagamento formaSelecionada = TipoPagamento.dinheiro;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            backgroundColor: const Color(0xFF1E1E2E),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: const Text('Receber Valor (Fiado)', style: TextStyle(color: Colors.white)),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                  TextField(
+                    controller: valorController,
+                    style: const TextStyle(color: Colors.white),
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(
+                      labelText: 'Valor a Receber',
+                      labelStyle: TextStyle(color: Colors.white70),
+                      prefixText: r'R$ ',
+                      prefixStyle: TextStyle(color: Colors.white),
+                    ),
+                  ),
+                const SizedBox(height: 20),
+                const Text('Forma de Pagamento:', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [TipoPagamento.dinheiro, TipoPagamento.pix, TipoPagamento.cartaoDebito, TipoPagamento.cartaoCredito].map((tipo) {
+                    final isSelected = formaSelecionada == tipo;
+                    return ChoiceChip(
+                      label: Text(tipo.nome),
+                      selected: isSelected,
+                      onSelected: (v) => setDialogState(() => formaSelecionada = tipo),
+                      selectedColor: Colors.blueAccent.withOpacity(0.3),
+                      labelStyle: TextStyle(color: isSelected ? Colors.blueAccent : Colors.white70),
+                    );
+                  }).toList(),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
+              ElevatedButton(
+                onPressed: () async {
+                  final valor = double.tryParse(valorController.text.replaceAll(',', '.')) ?? 0;
+                  if (valor <= 0) return;
+
+                  // 1. Atualizar saldo do cliente e log de extrato
+                  final novoSaldo = (widget.cliente!.saldoDevedor - valor).clamp(0.0, double.infinity);
+                  
+                  final log = {
+                    'tipo': 'recebimento_fiado',
+                    'data': DateTime.now().toIso8601String(),
+                    'valor': valor,
+                    'descricao': 'Recebimento de fiado via ${formaSelecionada.nome}',
+                    'saldo_devedor_anterior': widget.cliente!.saldoDevedor,
+                    'saldo_devedor_atual': novoSaldo,
+                  };
+                  
+                  final listExtrato = List<Map<String, dynamic>>.from(widget.cliente!.dadosExtras?['extrato_financeiro'] ?? []);
+                  listExtrato.add(log);
+                  
+                  final dadosExtrasAtualizados = Map<String, dynamic>.from(widget.cliente!.dadosExtras ?? {});
+                  dadosExtrasAtualizados['extrato_financeiro'] = listExtrato;
+
+                  final clienteAtualizado = widget.cliente!.copyWith(
+                    saldoDevedor: novoSaldo,
+                    dadosExtras: dadosExtrasAtualizados,
+                    updatedAt: DateTime.now(),
+                  );
+                  dataService.updateCliente(clienteAtualizado);
+
+                  // 2. Registrar no Caixa como Suprimento para aparecer no Histórico
+                  if (dataService.caixaAberto) {
+                    final authService = Provider.of<AuthService>(context, listen: false);
+                    final operador = authService.usuarioAtual?.nome ?? 'Sistema';
+
+                    await dataService.registrarSuprimento(
+                      valor: valor,
+                      motivo: '[RECEBIMENTO FIADO] ${widget.cliente!.nome}',
+                      observacao: 'Recebido via ${formaSelecionada.nome}',
+                      responsavel: operador,
+                    );
+                  }
+
+                },
+                child: const Text('Confirmar'),
+              ),
+            ],
+          );
+        }
+      ),
+    );
+  }
+
+  void _mostrarDialogAjustarCredito(DataService dataService) {
+    if (widget.cliente == null) return;
+    final creditoAtual = double.tryParse(widget.cliente!.dadosExtras?['credito_inicial']?.toString() ?? '0.0') ?? 0.0;
+    
+    final valorController = TextEditingController();
+    final motivoController = TextEditingController();
+    String operacao = 'adicionar'; // 'adicionar' ou 'remover'
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            backgroundColor: const Color(0xFF1E1E2E),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: const Text('Ajustar Crédito do Cliente', style: TextStyle(color: Colors.white)),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Saldo de Crédito Atual: R\$ ${creditoAtual.toStringAsFixed(2)}',
+                    style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 14),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text('Tipo de Operação:', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ChoiceChip(
+                          label: const Center(child: Text('Adicionar Crédito')),
+                          selected: operacao == 'adicionar',
+                          onSelected: (v) => setDialogState(() => operacao = 'adicionar'),
+                          selectedColor: Colors.green.withOpacity(0.2),
+                          labelStyle: TextStyle(color: operacao == 'adicionar' ? Colors.greenAccent : Colors.white70),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: ChoiceChip(
+                          label: const Center(child: Text('Retirar Crédito')),
+                          selected: operacao == 'remover',
+                          onSelected: (v) => setDialogState(() => operacao = 'remover'),
+                          selectedColor: Colors.red.withOpacity(0.2),
+                          labelStyle: TextStyle(color: operacao == 'remover' ? Colors.redAccent : Colors.white70),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: valorController,
+                    style: const TextStyle(color: Colors.white),
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(
+                      labelText: 'Valor do Ajuste (R\$)',
+                      labelStyle: TextStyle(color: Colors.white70),
+                      prefixText: r'R$ ',
+                      prefixStyle: TextStyle(color: Colors.white),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: motivoController,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(
+                      labelText: 'Motivo/Observação',
+                      labelStyle: TextStyle(color: Colors.white70),
+                      hintText: 'Ex: Troca de mercadoria, correção de saldo...',
+                      hintStyle: TextStyle(color: Colors.white38, fontSize: 12),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
+              ElevatedButton(
+                onPressed: () {
+                  final valor = double.tryParse(valorController.text.replaceAll(',', '.')) ?? 0;
+                  if (valor <= 0) return;
+
+                  double novoCredito = creditoAtual;
+                  if (operacao == 'adicionar') {
+                    novoCredito += valor;
+                  } else {
+                    novoCredito = (creditoAtual - valor).clamp(0.0, double.infinity);
+                  }
+
+                  // Registrar extrato
+                  final log = {
+                    'tipo': operacao == 'adicionar' ? 'adicao_credito' : 'retirada_credito',
+                    'data': DateTime.now().toIso8601String(),
+                    'valor': valor,
+                    'descricao': motivoController.text.trim().isEmpty 
+                        ? (operacao == 'adicionar' ? 'Crédito Adicionado' : 'Crédito Retirado')
+                        : motivoController.text.trim(),
+                    'credito_anterior': creditoAtual,
+                    'credito_atual': novoCredito,
+                  };
+
+                  final listExtrato = List<Map<String, dynamic>>.from(widget.cliente!.dadosExtras?['extrato_financeiro'] ?? []);
+                  listExtrato.add(log);
+
+                  final dadosExtrasAtualizados = Map<String, dynamic>.from(widget.cliente!.dadosExtras ?? {});
+                  dadosExtrasAtualizados['credito_inicial'] = novoCredito;
+                  dadosExtrasAtualizados['extrato_financeiro'] = listExtrato;
+
+                  final clienteAtualizado = widget.cliente!.copyWith(
+                    dadosExtras: dadosExtrasAtualizados,
+                    updatedAt: DateTime.now(),
+                  );
+
+                  dataService.updateCliente(clienteAtualizado);
+
+                  Navigator.pop(ctx);
+                  setState(() {
+                    _carregarDados();
+                  });
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('✓ Crédito ajustado com sucesso para R\$ ${novoCredito.toStringAsFixed(2)}!'),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                },
+                child: const Text('Salvar Ajuste'),
+              ),
+            ],
+          );
+        }
+      ),
+    );
+  }
+
+  void _mostrarDialogExtrato(DataService dataService) {
+    if (widget.cliente == null) return;
+    
+    // Obter todos os logs de extrato_financeiro em dadosExtras
+    final listExtrato = List<Map<String, dynamic>>.from(widget.cliente!.dadosExtras?['extrato_financeiro'] ?? [])
+      ..sort((a, b) => DateTime.parse(b['data'].toString()).compareTo(DateTime.parse(a['data'].toString())));
+      
+    final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+    final formatoData = DateFormat('dd/MM/yyyy HH:mm');
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            const Icon(Icons.receipt_long, color: Colors.cyanAccent, size: 24),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Extrato Financeiro - ${widget.cliente!.nome}',
+                style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+        content: Container(
+          width: MediaQuery.of(context).size.width * 0.8,
+          height: MediaQuery.of(context).size.height * 0.6,
+          child: listExtrato.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.inbox, size: 48, color: Colors.white.withOpacity(0.3)),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Nenhuma movimentação de crédito/fiado encontrada.',
+                        style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 13),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  ),
+                )
+              : ListView.separated(
+                  itemCount: listExtrato.length,
+                  separatorBuilder: (context, index) => const Divider(color: Colors.white12),
+                  itemBuilder: (context, index) {
+                    final log = listExtrato[index];
+                    final tipo = log['tipo']?.toString() ?? '';
+                    final dataStr = log['data']?.toString() ?? '';
+                    final data = DateTime.parse(dataStr);
+                    final valor = double.tryParse(log['valor']?.toString() ?? '0.0') ?? 0.0;
+                    final descricao = log['descricao']?.toString() ?? 'Lançamento';
+                    
+                    Color corValor;
+                    IconData iconeLog;
+                    String prefixo = '';
+                    
+                    if (tipo == 'adicao_credito' || tipo == 'recebimento_fiado') {
+                      corValor = Colors.greenAccent;
+                      iconeLog = Icons.arrow_upward;
+                      prefixo = '+ ';
+                    } else {
+                      corValor = Colors.redAccent;
+                      iconeLog = Icons.arrow_downward;
+                      prefixo = '- ';
+                    }
+
+                    return ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: corValor.withOpacity(0.15),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(iconeLog, color: corValor, size: 18),
+                      ),
+                      title: Text(
+                        descricao,
+                        style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                      ),
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const SizedBox(height: 4),
+                          Text(formatoData.format(data), style: const TextStyle(color: Colors.white54, fontSize: 11)),
+                          if (log['saldo_devedor_atual'] != null)
+                            Text(
+                              'Saldo devedor: ${formatoMoeda.format(log['saldo_devedor_atual'])}', 
+                              style: const TextStyle(color: Colors.white38, fontSize: 11)
+                            ),
+                          if (log['credito_atual'] != null)
+                            Text(
+                              'Saldo crédito: ${formatoMoeda.format(log['credito_atual'])}', 
+                              style: const TextStyle(color: Colors.white38, fontSize: 11)
+                            ),
+                        ],
+                      ),
+                      trailing: Text(
+                        '$prefixo${formatoMoeda.format(valor)}',
+                        style: TextStyle(color: corValor, fontWeight: FontWeight.w900, fontSize: 14),
+                      ),
+                    );
+                  },
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Fechar', style: TextStyle(color: Colors.white70)),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _marcarComoRecebido(
     DataService dataService,
     Pedido pedido,
@@ -3856,6 +5320,10 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
         return Icons.handshake;
       case TipoPagamento.outro:
         return Icons.more_horiz;
+      case TipoPagamento.alimentacao:
+        return Icons.restaurant;
+      case TipoPagamento.transferencia:
+        return Icons.swap_horiz;
     }
   }
 
@@ -3877,6 +5345,10 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
         return Colors.red;
       case TipoPagamento.outro:
         return Colors.grey;
+      case TipoPagamento.alimentacao:
+        return Colors.teal;
+      case TipoPagamento.transferencia:
+        return Colors.blueAccent;
     }
   }
 
@@ -3966,7 +5438,9 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
         color: Colors.white.withOpacity(0.05),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: venda.cancelado ? Colors.red.withOpacity(0.3) : Colors.white.withOpacity(0.1),
+          color: venda.cancelado
+              ? Colors.red.withOpacity(0.3)
+              : Colors.white.withOpacity(0.1),
         ),
       ),
       child: ListTile(
@@ -3974,7 +5448,9 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
         leading: Container(
           padding: const EdgeInsets.all(8),
           decoration: BoxDecoration(
-            color: (venda.cancelado ? Colors.red : Colors.orange).withOpacity(0.2),
+            color: (venda.cancelado ? Colors.red : Colors.orange).withOpacity(
+              0.2,
+            ),
             borderRadius: BorderRadius.circular(8),
           ),
           child: Icon(
@@ -4119,9 +5595,14 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                 if (agendamento.status.isNotEmpty) ...[
                   const SizedBox(height: 4),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
                     decoration: BoxDecoration(
-                      color: _getCorStatusVacina(agendamento.status).withOpacity(0.2),
+                      color: _getCorStatusVacina(
+                        agendamento.status,
+                      ).withOpacity(0.2),
                       borderRadius: BorderRadius.circular(4),
                     ),
                     child: Text(
@@ -4206,7 +5687,8 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                     fontSize: 11,
                   ),
                 ),
-                if (material.observacao != null && material.observacao!.isNotEmpty) ...[
+                if (material.observacao != null &&
+                    material.observacao!.isNotEmpty) ...[
                   const SizedBox(height: 4),
                   Text(
                     material.observacao!,
@@ -4224,15 +5706,89 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
       ),
     );
   }
+
+  Widget _buildCardAgendamentoHistorico(
+    AgendamentoServico agendamento,
+    DateFormat formatoData,
+  ) {
+    final statusColor = _getStatusColor(agendamento.status);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withOpacity(0.1)),
+      ),
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        leading: Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: statusColor.withOpacity(0.2),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(Icons.calendar_today, color: statusColor),
+        ),
+        title: Text(
+          agendamento.servicoNome ?? 'Serviço',
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.bold,
+          ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${formatoData.format(agendamento.dataAgendamento)} às ${DateFormat('HH:mm').format(agendamento.dataAgendamento)}',
+              style: const TextStyle(color: Colors.white70),
+            ),
+            if (agendamento.petNome != null)
+              Text(
+                'Pet: ${agendamento.petNome}',
+                style: const TextStyle(color: Colors.white60, fontSize: 12),
+              ),
+          ],
+        ),
+        trailing: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: statusColor.withOpacity(0.2),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: statusColor.withOpacity(0.5)),
+          ),
+          child: Text(
+            agendamento.status,
+            style: TextStyle(
+              color: statusColor,
+              fontSize: 10,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Color _getStatusColor(String status) {
+    switch (status) {
+      case 'Concluído':
+        return Colors.greenAccent;
+      case 'Cancelado':
+        return Colors.redAccent;
+      case 'Em Andamento':
+        return Colors.blueAccent;
+      case 'Aguardando Confirmação':
+        return Colors.orangeAccent;
+      default:
+        return Colors.yellowAccent;
+    }
+  }
 }
 
-/// Classe auxiliar para informações de pagamento pendente
-class _PagamentoPendenteInfo {
-  final Pedido pedido;
-  final PagamentoPedido pagamento;
-
-  _PagamentoPendenteInfo({required this.pedido, required this.pagamento});
-}
 
 /// Formatter para transformar texto em maiúsculas
 class UpperCaseTextFormatter extends TextInputFormatter {
@@ -4423,7 +5979,7 @@ class _PedidoHistoricoExpandivelState
                     ...widget.pedido.servicos.map(
                       (item) => _buildItemPedido(
                         item.descricao,
-                        1,
+                        1.0,
                         item.valor,
                         widget.formatoMoeda,
                         Icons.build,
@@ -4448,7 +6004,11 @@ class _PedidoHistoricoExpandivelState
                         padding: const EdgeInsets.only(bottom: 6),
                         child: Row(
                           children: [
-                            Icon(Icons.inventory, size: 16, color: Colors.blue.withOpacity(0.7)),
+                            Icon(
+                              Icons.inventory,
+                              size: 16,
+                              color: Colors.blue.withOpacity(0.7),
+                            ),
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text(
@@ -4524,7 +6084,7 @@ class _PedidoHistoricoExpandivelState
 
   Widget _buildItemPedido(
     String nome,
-    int quantidade,
+    double quantidade,
     double preco,
     NumberFormat formatoMoeda,
     IconData icone,
@@ -4543,7 +6103,7 @@ class _PedidoHistoricoExpandivelState
             ),
           ),
           Text(
-            '${quantidade}x',
+            '${quantidade.toStringAsFixed(quantidade.truncateToDouble() == quantidade ? 0 : 2)}x',
             style: TextStyle(
               color: Colors.white.withOpacity(0.5),
               fontSize: 12,

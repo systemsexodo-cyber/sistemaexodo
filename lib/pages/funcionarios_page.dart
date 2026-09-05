@@ -5,6 +5,10 @@ import 'package:sistema_exodo_novo/models/usuario.dart';
 import 'package:sistema_exodo_novo/services/data_service.dart';
 import 'package:sistema_exodo_novo/services/auth_service.dart';
 import 'package:sistema_exodo_novo/theme.dart';
+import 'package:sistema_exodo_novo/widgets/sync_status_widget.dart';
+import 'comissoes_page.dart';
+import 'motoristas_page.dart';
+import 'vendedor_dashboard_page.dart';
 
 class FuncionariosPage extends StatefulWidget {
   const FuncionariosPage({super.key});
@@ -14,6 +18,88 @@ class FuncionariosPage extends StatefulWidget {
 }
 
 class _FuncionariosPageState extends State<FuncionariosPage> {
+  final TextEditingController _buscaController = TextEditingController();
+  final GlobalKey<_FuncionariosListTabState> _funcionariosTabKey =
+      GlobalKey<_FuncionariosListTabState>();
+  String _termoBusca = '';
+  bool _mostrarBusca = false;
+
+  @override
+  void dispose() {
+    _buscaController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DefaultTabController(
+      length: 4,
+      child: AppTheme.appBackground(
+        child: Scaffold(
+          backgroundColor: Colors.transparent,
+          appBar: AppBar(
+            title: const Text('Gestão de Colaboradores'),
+            backgroundColor: Colors.transparent,
+            elevation: 0,
+            bottom: const TabBar(
+              isScrollable: true,
+              tabs: [
+                Tab(icon: Icon(Icons.people), text: 'Funcionários'),
+                Tab(icon: Icon(Icons.motorcycle), text: 'Motoboy/Motorista'),
+                Tab(icon: Icon(Icons.monetization_on), text: 'Comissões'),
+                Tab(icon: Icon(Icons.dashboard_customize), text: 'Dashboard'),
+              ],
+            ),
+            actions: [
+              const SyncStatusWidget(),
+              IconButton(
+                icon: Icon(
+                  _mostrarBusca ? Icons.search_off : Icons.search,
+                  color: _mostrarBusca
+                      ? Colors.greenAccent
+                      : Theme.of(context).colorScheme.onPrimary,
+                ),
+                tooltip: _mostrarBusca ? 'Fechar busca' : 'Buscar funcionários',
+                onPressed: () {
+                  setState(() {
+                    _mostrarBusca = !_mostrarBusca;
+                    if (!_mostrarBusca) {
+                      _termoBusca = '';
+                      _buscaController.clear();
+                    }
+                  });
+                },
+              ),
+              IconButton(
+                icon: const Icon(Icons.add),
+                tooltip: 'Adicionar funcionário',
+                onPressed: () =>
+                    _funcionariosTabKey.currentState?._mostrarDialogoCriarFuncionario(),
+              ),
+            ],
+          ),
+          body: TabBarView(
+            children: [
+              _FuncionariosListTab(key: _funcionariosTabKey),
+              const MotoristasPage(isEmbedded: true),
+              const ComissoesPage(),
+              const VendedorDashboardPage(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FuncionariosListTab extends StatefulWidget {
+  const _FuncionariosListTab({super.key});
+
+  @override
+  State<_FuncionariosListTab> createState() => _FuncionariosListTabState();
+}
+
+class _FuncionariosListTabState extends State<_FuncionariosListTab> {
   final TextEditingController _buscaController = TextEditingController();
   String _termoBusca = '';
   bool _mostrarBusca = false;
@@ -29,50 +115,8 @@ class _FuncionariosPageState extends State<FuncionariosPage> {
     final dataService = Provider.of<DataService>(context);
     final funcionarios = _filtrarFuncionarios(dataService.funcionarios);
 
-    return AppTheme.appBackground(
-      child: Scaffold(
-        backgroundColor: Colors.transparent,
-        appBar: AppBar(
-          title: const Text('Funcionários / Vendedores'),
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          leading: Navigator.canPop(context)
-              ? IconButton(
-                  icon: Icon(
-                    Icons.arrow_back,
-                    color: Theme.of(context).colorScheme.onPrimary,
-                  ),
-                  onPressed: () => Navigator.of(context).pop(),
-                )
-              : null,
-          actions: [
-            IconButton(
-              icon: Icon(
-                _mostrarBusca ? Icons.search_off : Icons.search,
-                color: _mostrarBusca
-                    ? Colors.greenAccent
-                    : Theme.of(context).colorScheme.onPrimary,
-              ),
-              tooltip: _mostrarBusca ? 'Fechar busca' : 'Buscar funcionários',
-              onPressed: () {
-                setState(() {
-                  _mostrarBusca = !_mostrarBusca;
-                  if (!_mostrarBusca) {
-                    _termoBusca = '';
-                    _buscaController.clear();
-                  }
-                });
-              },
-            ),
-            IconButton(
-              icon: const Icon(Icons.add),
-              tooltip: 'Adicionar funcionário',
-              onPressed: () => _mostrarDialogoCriarFuncionario(),
-            ),
-          ],
-        ),
-        body: Column(
-          children: [
+    return Column(
+      children: [
             // Barra de busca
             if (_mostrarBusca)
               Container(
@@ -213,6 +257,17 @@ class _FuncionariosPageState extends State<FuncionariosPage> {
                                       color: Colors.red,
                                     ),
                                   ),
+                                if (funcionario.porcentagemComissao > 0 || funcionario.valorComissao > 0)
+                                  Text(
+                                    funcionario.tipoComissao == 'Porcentagem'
+                                        ? '💰 Comissão: ${funcionario.porcentagemComissao.toStringAsFixed(1)}%'
+                                        : '💰 Comissão: R\$ ${funcionario.valorComissao.toStringAsFixed(2)}',
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.greenAccent,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
                               ],
                             ),
                             trailing: Row(
@@ -241,9 +296,7 @@ class _FuncionariosPageState extends State<FuncionariosPage> {
                       },
                     ),
             ),
-          ],
-        ),
-      ),
+      ],
     );
   }
 
@@ -265,8 +318,11 @@ class _FuncionariosPageState extends State<FuncionariosPage> {
     final emailController = TextEditingController();
     final senhaController = TextEditingController();
     final observacoesController = TextEditingController();
+    final comissaoController = TextEditingController(text: '0');
+    String tipoComissao = 'Porcentagem';
     bool ativo = true;
     bool temAcesso = false;
+    bool garcom = false;
     bool obscureSenha = true;
 
     showDialog(
@@ -276,7 +332,7 @@ class _FuncionariosPageState extends State<FuncionariosPage> {
           return AlertDialog(
             backgroundColor: const Color(0xFF10151B),
             title: const Text(
-              'Cadastrar Funcionário / Vendedor',
+              'Cadastrar Funcionário / Garçom / Vendedor',
               style: TextStyle(color: Colors.white),
             ),
             content: SingleChildScrollView(
@@ -315,56 +371,7 @@ class _FuncionariosPageState extends State<FuncionariosPage> {
                     ),
                     keyboardType: TextInputType.emailAddress,
                   ),
-                  const SizedBox(height: 16),
-                  CheckboxListTile(
-                    title: const Text(
-                      'Permitir acesso ao sistema',
-                      style: TextStyle(color: Colors.white),
-                    ),
-                    subtitle: const Text(
-                      'O funcionário poderá fazer login e ver seus pedidos/comissões',
-                      style: TextStyle(color: Colors.white54, fontSize: 12),
-                    ),
-                    value: temAcesso,
-                    onChanged: (value) {
-                      setState(() {
-                        temAcesso = value ?? false;
-                      });
-                    },
-                  ),
-                  if (temAcesso) ...[
-                    const SizedBox(height: 16),
-                    TextFormField(
-                      controller: senhaController,
-                      style: const TextStyle(color: Colors.white),
-                      decoration: const InputDecoration(
-                        labelText: 'Senha para login *',
-                        labelStyle: TextStyle(color: Colors.white70),
-                        border: OutlineInputBorder(),
-                        helperText: 'Senha que o funcionário usará para fazer login',
-                        helperMaxLines: 2,
-                      ),
-                      obscureText: obscureSenha,
-                      keyboardType: TextInputType.visiblePassword,
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Checkbox(
-                          value: obscureSenha,
-                          onChanged: (value) {
-                            setState(() {
-                              obscureSenha = value ?? true;
-                            });
-                          },
-                        ),
-                        const Text(
-                          'Mostrar senha',
-                          style: TextStyle(color: Colors.white70, fontSize: 12),
-                        ),
-                      ],
-                    ),
-                  ],
+
                   const SizedBox(height: 16),
                   TextFormField(
                     controller: observacoesController,
@@ -375,6 +382,41 @@ class _FuncionariosPageState extends State<FuncionariosPage> {
                       border: OutlineInputBorder(),
                     ),
                     maxLines: 3,
+                  ),
+                  const SizedBox(height: 16),
+                  DropdownButtonFormField<String>(
+                    value: tipoComissao,
+                    dropdownColor: const Color(0xFF10151B),
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(
+                      labelText: 'Tipo de Comissão',
+                      labelStyle: TextStyle(color: Colors.white70),
+                      border: OutlineInputBorder(),
+                    ),
+                    items: ['Porcentagem', 'Fixo'].map((String value) {
+                      return DropdownMenuItem<String>(
+                        value: value,
+                        child: Text(value),
+                      );
+                    }).toList(),
+                    onChanged: (value) {
+                      setState(() {
+                        tipoComissao = value ?? 'Porcentagem';
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  TextFormField(
+                    controller: comissaoController,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      labelText: tipoComissao == 'Porcentagem' ? 'Porcentagem de Comissão (%)' : 'Valor Fixo de Comissão (R\$)',
+                      labelStyle: const TextStyle(color: Colors.white70),
+                      border: const OutlineInputBorder(),
+                      suffixText: tipoComissao == 'Porcentagem' ? '%' : 'R\$',
+                      helperText: 'Será cobrada em cima do valor do serviço',
+                    ),
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
                   ),
                   const SizedBox(height: 16),
                   CheckboxListTile(
@@ -389,6 +431,44 @@ class _FuncionariosPageState extends State<FuncionariosPage> {
                       });
                     },
                   ),
+                  const SizedBox(height: 8),
+                  CheckboxListTile(
+                    title: const Text(
+                      '👨‍🍳 Garçom (acesso restrito: mesas/comandas + suas vendas e ranking)',
+                      style: TextStyle(color: Colors.white, fontSize: 13),
+                    ),
+                    subtitle: const Text(
+                      'Cria login próprio; ao entrar, vê apenas as telas de mesas/comandas e suas comissões.',
+                      style: TextStyle(color: Colors.white54, fontSize: 11),
+                    ),
+                    value: garcom,
+                    onChanged: (value) {
+                      setState(() {
+                        garcom = value ?? false;
+                        if (garcom) temAcesso = true; // Garçom precisa de login
+                      });
+                    },
+                  ),
+                  if (garcom) ...[
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: senhaController,
+                      obscureText: obscureSenha,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: InputDecoration(
+                        labelText: 'Senha de acesso *',
+                        labelStyle: const TextStyle(color: Colors.white70),
+                        border: const OutlineInputBorder(),
+                        suffixIcon: IconButton(
+                          icon: Icon(
+                            obscureSenha ? Icons.visibility_off : Icons.visibility,
+                            color: Colors.white54,
+                          ),
+                          onPressed: () => setState(() => obscureSenha = !obscureSenha),
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -409,7 +489,7 @@ class _FuncionariosPageState extends State<FuncionariosPage> {
                     return;
                   }
 
-                  if (temAcesso && senhaController.text.trim().isEmpty) {
+                  if ((temAcesso || garcom) && senhaController.text.trim().isEmpty) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
                         content: Text('Informe uma senha para o acesso ao sistema'),
@@ -427,12 +507,16 @@ class _FuncionariosPageState extends State<FuncionariosPage> {
                     emailController.text.trim().isEmpty
                         ? null
                         : emailController.text.trim(),
-                    temAcesso ? senhaController.text.trim() : null,
+                    (temAcesso || garcom) ? senhaController.text.trim() : null,
                     observacoesController.text.trim().isEmpty
                         ? null
                         : observacoesController.text.trim(),
                     ativo,
-                    temAcesso,
+                    temAcesso || garcom,
+                    garcom,
+                    tipoComissao == 'Porcentagem' ? (double.tryParse(comissaoController.text.replaceAll(',', '.')) ?? 0.0) : 0.0,
+                    tipoComissao,
+                    tipoComissao == 'Fixo' ? (double.tryParse(comissaoController.text.replaceAll(',', '.')) ?? 0.0) : 0.0,
                   );
                   Navigator.pop(context);
                 },
@@ -452,8 +536,15 @@ class _FuncionariosPageState extends State<FuncionariosPage> {
     final senhaController = TextEditingController(text: '');
     final observacoesController =
         TextEditingController(text: funcionario.observacoes ?? '');
+    final comissaoController = TextEditingController(
+      text: funcionario.tipoComissao == 'Porcentagem' 
+          ? funcionario.porcentagemComissao.toString() 
+          : funcionario.valorComissao.toString()
+    );
+    String tipoComissao = funcionario.tipoComissao;
     bool ativo = funcionario.ativo;
     bool temAcesso = funcionario.temAcesso;
+    bool garcom = funcionario.garcom;
     bool obscureSenha = true;
 
     showDialog(
@@ -501,58 +592,7 @@ class _FuncionariosPageState extends State<FuncionariosPage> {
                     ),
                     keyboardType: TextInputType.emailAddress,
                   ),
-                  const SizedBox(height: 16),
-                  CheckboxListTile(
-                    title: const Text(
-                      'Permitir acesso ao sistema',
-                      style: TextStyle(color: Colors.white),
-                    ),
-                    subtitle: const Text(
-                      'O funcionário poderá fazer login e ver seus pedidos/comissões',
-                      style: TextStyle(color: Colors.white54, fontSize: 12),
-                    ),
-                    value: temAcesso,
-                    onChanged: (value) {
-                      setState(() {
-                        temAcesso = value ?? false;
-                      });
-                    },
-                  ),
-                  if (temAcesso) ...[
-                    const SizedBox(height: 16),
-                    TextFormField(
-                      controller: senhaController,
-                      style: const TextStyle(color: Colors.white),
-                      decoration: InputDecoration(
-                        labelText: funcionario.temAcesso ? 'Nova senha (deixe em branco para manter)' : 'Senha para login *',
-                        labelStyle: const TextStyle(color: Colors.white70),
-                        border: const OutlineInputBorder(),
-                        helperText: funcionario.temAcesso 
-                            ? 'Deixe em branco para manter a senha atual'
-                            : 'Senha que o funcionário usará para fazer login',
-                        helperMaxLines: 2,
-                      ),
-                      obscureText: obscureSenha,
-                      keyboardType: TextInputType.visiblePassword,
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Checkbox(
-                          value: obscureSenha,
-                          onChanged: (value) {
-                            setState(() {
-                              obscureSenha = value ?? true;
-                            });
-                          },
-                        ),
-                        const Text(
-                          'Mostrar senha',
-                          style: TextStyle(color: Colors.white70, fontSize: 12),
-                        ),
-                      ],
-                    ),
-                  ],
+
                   const SizedBox(height: 16),
                   TextFormField(
                     controller: observacoesController,
@@ -565,6 +605,41 @@ class _FuncionariosPageState extends State<FuncionariosPage> {
                     maxLines: 3,
                   ),
                   const SizedBox(height: 16),
+                  DropdownButtonFormField<String>(
+                    value: tipoComissao,
+                    dropdownColor: const Color(0xFF10151B),
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(
+                      labelText: 'Tipo de Comissão',
+                      labelStyle: TextStyle(color: Colors.white70),
+                      border: OutlineInputBorder(),
+                    ),
+                    items: ['Porcentagem', 'Fixo'].map((String value) {
+                      return DropdownMenuItem<String>(
+                        value: value,
+                        child: Text(value),
+                      );
+                    }).toList(),
+                    onChanged: (value) {
+                      setState(() {
+                        tipoComissao = value ?? 'Porcentagem';
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  TextFormField(
+                    controller: comissaoController,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      labelText: tipoComissao == 'Porcentagem' ? 'Porcentagem de Comissão (%)' : 'Valor Fixo de Comissão (R\$)',
+                      labelStyle: const TextStyle(color: Colors.white70),
+                      border: const OutlineInputBorder(),
+                      suffixText: tipoComissao == 'Porcentagem' ? '%' : 'R\$',
+                      helperText: 'Será cobrada em cima do valor do serviço',
+                    ),
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  ),
+                  const SizedBox(height: 16),
                   CheckboxListTile(
                     title: const Text(
                       'Ativo',
@@ -574,6 +649,20 @@ class _FuncionariosPageState extends State<FuncionariosPage> {
                     onChanged: (value) {
                       setState(() {
                         ativo = value ?? true;
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  CheckboxListTile(
+                    title: const Text(
+                      '👨‍🍳 Garçom (acesso restrito: mesas/comandas + suas vendas e ranking)',
+                      style: TextStyle(color: Colors.white, fontSize: 13),
+                    ),
+                    value: garcom,
+                    onChanged: (value) {
+                      setState(() {
+                        garcom = value ?? false;
+                        if (garcom) temAcesso = true; // Garçom precisa de login
                       });
                     },
                   ),
@@ -624,7 +713,11 @@ class _FuncionariosPageState extends State<FuncionariosPage> {
                       ? null
                       : observacoesController.text.trim(),
                   ativo,
-                  temAcesso,
+                  temAcesso || garcom,
+                  garcom,
+                  tipoComissao == 'Porcentagem' ? (double.tryParse(comissaoController.text.replaceAll(',', '.')) ?? 0.0) : 0.0,
+                  tipoComissao,
+                  tipoComissao == 'Fixo' ? (double.tryParse(comissaoController.text.replaceAll(',', '.')) ?? 0.0) : 0.0,
                 );
               },
               child: const Text('Salvar'),
@@ -644,6 +737,10 @@ class _FuncionariosPageState extends State<FuncionariosPage> {
     String? observacoes,
     bool ativo,
     bool temAcesso,
+    bool garcom,
+    double porcentagemComissao,
+    String tipoComissao,
+    double valorComissao,
   ) async {
     final dataService = Provider.of<DataService>(context, listen: false);
     final authService = Provider.of<AuthService>(context, listen: false);
@@ -659,6 +756,9 @@ class _FuncionariosPageState extends State<FuncionariosPage> {
       observacoes: observacoes,
       ativo: ativo,
       temAcesso: temAcesso,
+      porcentagemComissao: porcentagemComissao,
+      tipoComissao: tipoComissao,
+      valorComissao: valorComissao,
       createdAt: DateTime.now(),
       updatedAt: DateTime.now(),
     );
@@ -680,6 +780,7 @@ class _FuncionariosPageState extends State<FuncionariosPage> {
             tipo: TipoUsuario.vendedor,
             empresaId: empresaId,
             funcionarioId: funcionarioId,
+            garcom: garcom,
             ativo: ativo,
             isMaster: false,
             createdAt: DateTime.now(),
@@ -722,6 +823,10 @@ class _FuncionariosPageState extends State<FuncionariosPage> {
     String? observacoes,
     bool ativo,
     bool temAcesso,
+    bool garcom,
+    double porcentagemComissao,
+    String tipoComissao,
+    double valorComissao,
   ) async {
     final dataService = Provider.of<DataService>(context, listen: false);
     final authService = Provider.of<AuthService>(context, listen: false);
@@ -734,6 +839,10 @@ class _FuncionariosPageState extends State<FuncionariosPage> {
       observacoes: observacoes,
       ativo: ativo,
       temAcesso: temAcesso,
+      garcom: garcom,
+      porcentagemComissao: porcentagemComissao,
+      tipoComissao: tipoComissao,
+      valorComissao: valorComissao,
       updatedAt: DateTime.now(),
     );
 
@@ -770,6 +879,7 @@ class _FuncionariosPageState extends State<FuncionariosPage> {
             tipo: TipoUsuario.vendedor,
             empresaId: empresaId,
             funcionarioId: funcionario.id,
+            garcom: garcom,
             ativo: ativo,
             isMaster: false,
             createdAt: DateTime.now(),
@@ -785,6 +895,7 @@ class _FuncionariosPageState extends State<FuncionariosPage> {
             senha: senha != null && senha.isNotEmpty ? senha : usuarioExistente.senha,
             telefone: telefone,
             ativo: ativo,
+            garcom: garcom,
             updatedAt: DateTime.now(),
           );
           await authService.atualizarUsuario(usuarioAtualizado);

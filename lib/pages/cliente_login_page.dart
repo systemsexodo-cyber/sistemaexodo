@@ -72,120 +72,155 @@ class _ClienteLoginPageState extends State<ClienteLoginPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Entrar'),
-        centerTitle: true,
-      ),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24.0),
-          child: Form(
-            key: _formKey,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const SizedBox(height: 40),
-                Icon(
-                  Icons.person,
-                  size: 80,
-                  color: Theme.of(context).colorScheme.primary,
-                ),
-                const SizedBox(height: 24),
-                const Text(
-                  'Bem-vindo de volta!',
-                  style: TextStyle(
-                    fontSize: 28,
-                    fontWeight: FontWeight.bold,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Entre com sua conta para continuar',
-                  style: TextStyle(
-                    fontSize: 16,
-                    color: Colors.grey[600],
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 40),
-                TextFormField(
-                  controller: _emailController,
-                  keyboardType: TextInputType.emailAddress,
-                  decoration: const InputDecoration(
-                    labelText: 'Email',
-                    prefixIcon: Icon(Icons.email),
-                    border: OutlineInputBorder(),
-                  ),
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'Por favor, informe seu email';
-                    }
-                    if (!value.contains('@')) {
-                      return 'Email inválido';
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 16),
-                TextFormField(
-                  controller: _senhaController,
-                  obscureText: _obscurePassword,
-                  decoration: InputDecoration(
-                    labelText: 'Senha',
-                    prefixIcon: const Icon(Icons.lock),
-                    suffixIcon: IconButton(
-                      icon: Icon(
-                        _obscurePassword ? Icons.visibility : Icons.visibility_off,
-                      ),
-                      onPressed: () {
-                        setState(() => _obscurePassword = !_obscurePassword);
-                      },
-                    ),
-                    border: const OutlineInputBorder(),
-                  ),
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'Por favor, informe sua senha';
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 32),
-                ElevatedButton(
-                  onPressed: _isLoading ? null : _fazerLogin,
-                  style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                  child: _isLoading
-                      ? const SizedBox(
-                          height: 20,
-                          width: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Text(
-                          'Entrar',
-                          style: TextStyle(fontSize: 16),
-                        ),
-                ),
-                const SizedBox(height: 24),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Text('Não tem uma conta? '),
-                    TextButton(
-                      onPressed: _irParaCadastro,
-                      child: const Text('Cadastre-se'),
-                    ),
-                  ],
-                ),
-              ],
+      backgroundColor: const Color(0xFF0F172A),
+      body: Stack(
+        children: [
+          // Efeito de Fundo Aurora
+          Positioned(
+            top: -100,
+            right: -50,
+            child: Container(
+              width: 300,
+              height: 300,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: RadialGradient(colors: [Colors.blue.withOpacity(0.15), Colors.transparent]),
+              ),
             ),
           ),
+          
+          SafeArea(
+            child: Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(32.0),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 400),
+                  child: Form(
+                    key: _formKey,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        // BOTÃO VOLTAR
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: IconButton(
+                            icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 20),
+                            onPressed: () => Navigator.pop(context),
+                          ),
+                        ),
+                        
+                        const SizedBox(height: 20),
+                        
+                        // CABEÇALHO
+                        const Icon(Icons.person_pin_rounded, size: 60, color: Colors.blueAccent),
+                        const SizedBox(height: 24),
+                        const Text(
+                          'Bem-vindo!',
+                          style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: Colors.white),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Faça login para continuar suas compras',
+                          style: TextStyle(fontSize: 14, color: Colors.white.withOpacity(0.5)),
+                          textAlign: TextAlign.center,
+                        ),
+                        
+                        const SizedBox(height: 48),
+                        
+                        // CAMPO EMAIL
+                        _buildGlassInput(
+                          controller: _emailController,
+                          label: 'Seu Email',
+                          icon: Icons.email_outlined,
+                          type: TextInputType.emailAddress,
+                        ),
+                        
+                        const SizedBox(height: 20),
+                        
+                        // CAMPO SENHA
+                        _buildGlassInput(
+                          controller: _senhaController,
+                          label: 'Sua Senha',
+                          icon: Icons.lock_outline_rounded,
+                          isPassword: true,
+                        ),
+                        
+                        const SizedBox(height: 40),
+                        
+                        // BOTÃO LOGAR
+                        SizedBox(
+                          height: 56,
+                          child: ElevatedButton(
+                            onPressed: _isLoading ? null : _fazerLogin,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.blueAccent,
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                              elevation: 8,
+                              shadowColor: Colors.blueAccent.withOpacity(0.4),
+                            ),
+                            child: _isLoading
+                                ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                                : const Text('ENTRAR AGORA', style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1)),
+                          ),
+                        ),
+                        
+                        const SizedBox(height: 32),
+                        
+                        // LINK CADASTRO
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text('Ainda não é cliente? ', style: TextStyle(color: Colors.white.withOpacity(0.5))),
+                            TextButton(
+                              onPressed: _irParaCadastro,
+                              child: const Text('Cadastre-se aqui', style: TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.bold)),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGlassInput({
+    required TextEditingController controller,
+    required String label,
+    required IconData icon,
+    bool isPassword = false,
+    TextInputType type = TextInputType.text,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withOpacity(0.1)),
+      ),
+      child: TextFormField(
+        controller: controller,
+        obscureText: isPassword ? _obscurePassword : false,
+        keyboardType: type,
+        style: const TextStyle(color: Colors.white),
+        decoration: InputDecoration(
+          labelText: label,
+          labelStyle: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 14),
+          prefixIcon: Icon(icon, color: Colors.blueAccent.withOpacity(0.7), size: 20),
+          suffixIcon: isPassword ? IconButton(
+            icon: Icon(_obscurePassword ? Icons.visibility_off_rounded : Icons.visibility_rounded, color: Colors.white24, size: 20),
+            onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+          ) : null,
+          border: InputBorder.none,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
         ),
+        validator: (v) => v == null || v.isEmpty ? 'Informe este campo' : null,
       ),
     );
   }

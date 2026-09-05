@@ -9,12 +9,14 @@ class CozinhaBarListaItens extends StatelessWidget {
   final String setor;
   final Function(ItemMesaComanda, MesaComanda)? onMarcarEmPreparo;
   final Function(ItemMesaComanda, MesaComanda)? onMarcarPronto;
+  final Function(ItemMesaComanda, MesaComanda)? onDesmarcarPronto;
 
   const CozinhaBarListaItens({
     super.key,
     required this.setor,
     this.onMarcarEmPreparo,
     this.onMarcarPronto,
+    this.onDesmarcarPronto,
   });
 
   @override
@@ -32,18 +34,27 @@ class CozinhaBarListaItens extends StatelessWidget {
     for (final mesaComanda in mesasComandasAbertas) {
       List<ItemMesaComanda> itensFiltrados;
       
-      if (setor == 'Cozinha') {
-        itensFiltrados = mesaComanda.itensCozinha;
-      } else if (setor == 'Bar') {
-        itensFiltrados = mesaComanda.itensBar;
-      } else {
+      if (setor == 'Todos') {
         itensFiltrados = mesaComanda.itens;
+      } else {
+        // Filtra por departamento: usa o `local` do item (nome do departamento)
+        // com fallback para os flags antigos paraCozinha/paraBar.
+        itensFiltrados = mesaComanda.itens.where((i) {
+          final local = (i.local ?? '').trim();
+          if (local.isNotEmpty) {
+            return local.toLowerCase() == setor.toLowerCase();
+          }
+          if (setor.toLowerCase() == 'cozinha') return i.paraCozinha == true;
+          if (setor.toLowerCase() == 'bar') return i.paraBar == true;
+          return false;
+        }).toList();
       }
 
       for (final item in itensFiltrados) {
-        // Incluir itens pendentes, em preparo ou cancelados (para mostrar na cozinha)
+        // Incluir itens pendentes, em preparo, prontos ou cancelados
         if (item.status == StatusItem.pendente || 
             item.status == StatusItem.emPreparo || 
+            item.status == StatusItem.pronto ||
             item.status == StatusItem.cancelado) {
           todosItens.add({
             'item': item,
@@ -105,6 +116,7 @@ class CozinhaBarListaItens extends StatelessWidget {
             dataService: dataService,
             onMarcarEmPreparo: onMarcarEmPreparo,
             onMarcarPronto: onMarcarPronto,
+            onDesmarcarPronto: onDesmarcarPronto,
           );
         },
       ),

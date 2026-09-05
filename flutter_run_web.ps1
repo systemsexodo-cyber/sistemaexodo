@@ -25,30 +25,40 @@ Write-Host ""
 # Opções de dispositivo disponíveis
 $devices = @{
     "web-server" = "Servidor web (não abre navegador automaticamente)"
-    "chrome" = "Google Chrome"
-    "edge" = "Microsoft Edge"
+    "chrome"     = "Google Chrome"
+    "edge"       = "Microsoft Edge"
 }
 
 if ($devices.ContainsKey($Device)) {
     Write-Host "🌐 Dispositivo selecionado: $Device" -ForegroundColor Yellow
     Write-Host "   $($devices[$Device])" -ForegroundColor Gray
-} else {
+}
+else {
     Write-Host "⚠️  Dispositivo '$Device' não reconhecido. Usando 'web-server'." -ForegroundColor Yellow
     $Device = "web-server"
 }
 
 Write-Host ""
+Write-Host "🧹 Limpando processos e temporários..." -ForegroundColor Cyan
+Stop-Process -Name chrome -Force -ErrorAction SilentlyContinue
+Stop-Process -Name flutter -Force -ErrorAction SilentlyContinue
+Stop-Process -Name dart -Force -ErrorAction SilentlyContinue
+Get-ChildItem -Path $env:TEMP -Filter "flutter_tools.*" -Directory | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+
 Write-Host "▶️  Iniciando Flutter..." -ForegroundColor Green
+
 Write-Host ""
 
 # Executar Flutter
 if ($Device -eq "web-server") {
     Write-Host "💡 Dica: Após iniciar, abra manualmente:" -ForegroundColor Cyan
-    Write-Host "   http://localhost:PORT (o PORT será exibido na saída)" -ForegroundColor Gray
+    Write-Host "   http://localhost:8080" -ForegroundColor Gray
     Write-Host ""
+    flutter run -d $Device --web-port 8080
 }
-
-flutter run -d $Device
+else {
+    flutter run -d $Device --web-port 8080
+}
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host ""

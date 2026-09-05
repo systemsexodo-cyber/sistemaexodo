@@ -32,24 +32,24 @@ class ComissaoVendedor {
 
   factory ComissaoVendedor.fromMap(Map<String, dynamic> map) {
     return ComissaoVendedor(
-      id: map['id'] as String,
+      id: map['id']?.toString() ?? '',
       linkVendedorId: map['linkVendedorId'] as String,
       funcionarioId: map['funcionarioId'] as String,
       funcionarioNome: map['funcionarioNome'] as String,
       pedidoId: map['pedidoId'] as String,
       pedidoNumero: map['pedidoNumero'] as String,
-      valorPedido: (map['valorPedido'] ?? 0.0).toDouble(),
-      percentualComissao: (map['percentualComissao'] ?? 0.0).toDouble(),
-      valorComissao: (map['valorComissao'] ?? 0.0).toDouble(),
+      valorPedido: double.tryParse(map['valorPedido']?.toString() ?? '') ?? 0.0,
+      percentualComissao: double.tryParse(map['percentualComissao']?.toString() ?? '') ?? 0.0,
+      valorComissao: double.tryParse(map['valorComissao']?.toString() ?? '') ?? 0.0,
       status: map['status'] ?? 'Pendente',
       dataPagamento: map['dataPagamento'] != null
-          ? DateTime.parse(map['dataPagamento'] as String)
+          ? (map['dataPagamento'] is DateTime ? map['dataPagamento'] as DateTime : DateTime.parse(map['dataPagamento'].toString()))
           : null,
       createdAt: map['createdAt'] != null
-          ? DateTime.parse(map['createdAt'] as String)
+          ? (map['createdAt'] is DateTime ? map['createdAt'] as DateTime : DateTime.parse(map['createdAt'].toString()))
           : DateTime.now(),
       updatedAt: map['updatedAt'] != null
-          ? DateTime.parse(map['updatedAt'] as String)
+          ? (map['updatedAt'] is DateTime ? map['updatedAt'] as DateTime : DateTime.parse(map['updatedAt'].toString()))
           : DateTime.now(),
     );
   }

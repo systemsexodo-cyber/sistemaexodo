@@ -24,6 +24,8 @@ desktop.ini
 *.tmp
 *.temp
 *.log
+bridge_log.txt
+**/bridge_log.txt
 *.swp
 *.swo
 *~
@@ -89,9 +91,62 @@ $RECYCLE.BIN/
 *.tar.gz
 .pontos_restauracao/
 
-
 # dependencias
 node_modules/
 .npm/
 pnpm-lock.yaml
 yarn.lock
+
+# Credenciais (Segurança)
+gdrive_service_account.json
+gdrive_client_id.json
+gdrive_token.json
+.aider*
+
+# Python / ambiente virtual
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# Logs e temporários
+logs/
+tmp/
+
+# Backups e dados locais
+.backups_versionamento/
+backups_postgresql/
+backups_usuarios/
+XML_EMITIDOS/
+
+# Cópia antiga duplicada do projeto
+Sistema Exodo/
+
+# Instalações locais / build
+postgresql/
+dist_build/
+build_sinc/
+installer_flutter/
+backend_nfce/dist/
+/dist/
+
+# Ferramentas locais / temp
+.continue/
+%TEMP%*
+.env.txt
+senha supabase.txt
+analyze.txt
+crash_db.txt
+Userscharles*.txt
+
+# Certificados digitais (não subir para o repositório)
+*.pfx
+*.p12
+*.key
+
+# Arquivos descartáveis
+flutter_03.png
+backup_trocas_devolucoes_corrompidas_*.csv
+
+# Scripts descartáveis de desenvolvimento na raiz
+scratch_*.py

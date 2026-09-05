@@ -55,17 +55,29 @@ class NFCeFocusService {
         'presenca_comprador': '1',
         'itens': produtos.map((p) {
           final qtd = quantidades[p.id] ?? 1.0;
+        
+          String cfopFinal = p.cfop?.replaceAll(RegExp(r'[^0-9]'), '') ?? '5102';
+          String csosnFinal = p.csosn?.replaceAll(RegExp(r'[^0-9]'), '') ?? '';
+          // Validação CFOP × CSOSN (Rejeição SEFAZ 386)
+          if (empresa.crt != 3 && csosnFinal.isNotEmpty) {
+            final correcao = _corrigirCfopCsosn(cfopFinal, csosnFinal);
+            cfopFinal = correcao['cfop']!;
+            csosnFinal = correcao['csosn']!;
+          } else if ((csosnFinal == '500' || p.icmsCst == '60') && (cfopFinal == '5102' || cfopFinal == '5101')) {
+            cfopFinal = '5405';
+          }
+          final valorUnitario = p.aplicarPromocoes(p.preco, quantidade: qtd);
           return {
             'codigo_produto': p.codigo ?? p.id,
             'descricao': p.nome,
-            'ncm': p.ncm ?? '00000000',
-            'cfop': p.cfop ?? '5102',
+            'ncm': p.ncm?.replaceAll(RegExp(r'[^0-9]'), '') ?? '00000000',
+            'cfop': cfopFinal,
             'unidade_comercial': p.unidade,
             'quantidade_comercial': qtd.toStringAsFixed(3),
-            'valor_unitario_comercial': p.precoAtual.toStringAsFixed(2),
-            'valor_total': (p.precoAtual * qtd).toStringAsFixed(2),
+            'valor_unitario_comercial': valorUnitario.toStringAsFixed(2),
+            'valor_total': (valorUnitario * qtd).toStringAsFixed(2),
             'icms_origem': p.origem ?? '0',
-            'icms_situacao_tributaria': p.csosn ?? p.icmsCst ?? '102',
+            'icms_situacao_tributaria': (empresa.crt == 3) ? (p.icmsCst ?? '00') : (p.csosn ?? '102'),
             'icms_aliquota': (p.icmsAliquota ?? 0).toStringAsFixed(2),
           };
         }).toList(),
@@ -99,18 +111,28 @@ class NFCeFocusService {
           // Converter produtos para NFCeItem
           final itens = produtos.map((p) {
             final qtd = quantidades[p.id] ?? 1.0;
+            
+            String cfopFinal = p.cfop?.replaceAll(RegExp(r'[^0-9]'), '') ?? '5102';
+            final csosnRaw = p.csosn?.replaceAll(RegExp(r'[^0-9]'), '') ?? '';
+            final cstRaw = p.icmsCst?.replaceAll(RegExp(r'[^0-9]'), '') ?? '';
+            
+            if ((csosnRaw == '500' || cstRaw == '60') && (cfopFinal == '5102' || cfopFinal == '5101')) {
+              cfopFinal = '5405';
+            }
+
             return NFCeItem(
               produtoId: p.id,
               codigo: p.codigo ?? p.id,
               descricao: p.nome,
               quantidade: qtd,
-              valorUnitario: p.precoAtual,
-              valorTotal: p.precoAtual * qtd,
-              ncm: p.ncm ?? '00000000',
-              cfop: p.cfop ?? '5102',
+              valorUnitario: p.aplicarPromocoes(p.preco, quantidade: qtd),
+              valorTotal: p.aplicarPromocoes(p.preco, quantidade: qtd) * qtd,
+              ncm: p.ncm?.replaceAll(RegExp(r'[^0-9]'), '') ?? '00000000',
+              cfop: cfopFinal,
               unidade: p.unidade,
               origem: p.origem ?? '0',
-              csosn: p.csosn ?? p.icmsCst ?? '102',
+              csosn: p.csosn ?? (empresa.crt == 3 ? null : '102'),
+              icmsCst: p.icmsCst ?? (empresa.crt == 3 ? '00' : null),
               icmsAliquota: p.icmsAliquota,
             );
           }).toList();
@@ -152,6 +174,35 @@ class NFCeFocusService {
       '99': '99', // Outros
     };
     return map[tipo] ?? '99';
+  }
+
+  /// Valida e corrige combinações CFOP × CSOSN incompatíveis (Rejeição 386).
+  static Map<String, String> _corrigirCfopCsosn(String cfop, String csosn) {
+    String cfopCorrigido = cfop;
+    String csosnCorrigido = csosn;
+
+    // CFOPs aceitos para CSOSNs de tributação / imune / não-tributada
+    final cfopsTributados = {'5102', '1102', '6102', '7102', '5101', '1101', '6101', '7101'};
+    // CFOPs aceitos para CSOSN 500 (substituição tributária)
+    final cfopsSt = {'5405', '1551', '5551', '6551', '7551', '5403', '1403', '6403'};
+    // CSOSNs que usam CFOPs de tributação (inclui imune 300 e não-tributada 400)
+    final csosnsTributados = {'101', '102', '103', '201', '202', '203', '300', '400', '600'};
+
+    if (csosnsTributados.contains(csosn)) {
+      if (!cfopsTributados.contains(cfop)) {
+        cfopCorrigido = '5102';
+      }
+    } else if (csosn == '500') {
+      if (!cfopsSt.contains(cfop) && !cfopsTributados.contains(cfop)) {
+        cfopCorrigido = '5405';
+      }
+    } else if (csosn == '900') {
+      // CSOSN Outros → aceita qualquer CFOP
+    } else if (cfop == '5949' && csosn != '900') {
+      csosnCorrigido = '900';
+    }
+
+    return {'cfop': cfopCorrigido, 'csosn': csosnCorrigido};
   }
 }
 

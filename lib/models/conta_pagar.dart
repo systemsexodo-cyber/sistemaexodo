@@ -20,12 +20,14 @@ class RegistroPagamento {
 
   factory RegistroPagamento.fromMap(Map<String, dynamic> map) {
     return RegistroPagamento(
-      id: map['id'] ?? '',
+      id: map['id']?.toString() ?? '',
       valor: (map['valor'] ?? 0).toDouble(),
-      dataPagamento: DateTime.parse(map['dataPagamento']),
+      dataPagamento: map['dataPagamento'] != null
+          ? DateTime.parse(map['dataPagamento'])
+          : DateTime.now(),
       formaPagamento: map['formaPagamento'],
       observacao: map['observacao'],
-      itensPagos: map['itensPagos'] != null 
+      itensPagos: map['itensPagos'] != null
           ? List<String>.from(map['itensPagos'])
           : null,
       pessoaPagou: map['pessoaPagou'],
@@ -110,6 +112,7 @@ class ContaPagar {
   final DateTime? dataPagamento;
   final DateTime dataCriacao;
   final DateTime updatedAt;
+  final DateTime createdAt;
   
   // Relacionamentos
   final String? notaEntradaId; // ID da nota de entrada (se tipo = notaEntrada)
@@ -149,6 +152,7 @@ class ContaPagar {
     this.dataPagamento,
     DateTime? dataCriacao,
     DateTime? updatedAt,
+    DateTime? createdAt,
     this.notaEntradaId,
     this.notaEntradaNumero,
     this.fornecedorId,
@@ -165,6 +169,7 @@ class ContaPagar {
   }) : status = status ?? StatusContaPagar.pendente,
        dataCriacao = dataCriacao ?? DateTime.now(),
        updatedAt = updatedAt ?? DateTime.now(),
+       createdAt = createdAt ?? DateTime.now(),
        historicoPagamentos = historicoPagamentos ?? [];
 
   /// Verifica se a conta está vencida
@@ -241,7 +246,8 @@ class ContaPagar {
       dataVencimento: dataVencimento ?? this.dataVencimento,
       dataPagamento: dataPagamento ?? this.dataPagamento,
       dataCriacao: dataCriacao ?? this.dataCriacao,
-      updatedAt: updatedAt ?? DateTime.now(),
+      updatedAt: updatedAt ?? this.updatedAt,
+      createdAt: createdAt ?? this.createdAt,
       notaEntradaId: notaEntradaId ?? this.notaEntradaId,
       notaEntradaNumero: notaEntradaNumero ?? this.notaEntradaNumero,
       fornecedorId: fornecedorId ?? this.fornecedorId,
@@ -286,13 +292,14 @@ class ContaPagar {
       'ativo': ativo,
       'usuarioCriacao': usuarioCriacao,
       'usuarioPagamento': usuarioPagamento,
+      'createdAt': createdAt.toIso8601String(),
     };
   }
 
   /// Cria a partir de um Map (do Firestore)
   factory ContaPagar.fromMap(Map<String, dynamic> map) {
     return ContaPagar(
-      id: map['id'] ?? '',
+      id: map['id']?.toString() ?? '',
       numero: map['numero'],
       tipo: TipoContaPagar.values.firstWhere(
         (e) => e.name == map['tipo'],
@@ -324,9 +331,9 @@ class ContaPagar {
         orElse: () => StatusContaPagar.pendente,
       ),
       formaPagamento: map['formaPagamento'],
-      historicoPagamentos: map['historicoPagamentos'] != null
-          ? (map['historicoPagamentos'] as List)
-              .map((p) => RegistroPagamento.fromMap(p))
+      historicoPagamentos: map['historicoPagamentos'] != null && map['historicoPagamentos'] is List
+          ? (map['historicoPagamentos'] as List<dynamic>)
+              .map((p) => RegistroPagamento.fromMap(p as Map<String, dynamic>))
               .toList()
           : [],
       recorrente: map['recorrente'] ?? false,
@@ -337,6 +344,7 @@ class ContaPagar {
       ativo: map['ativo'] ?? true,
       usuarioCriacao: map['usuarioCriacao'],
       usuarioPagamento: map['usuarioPagamento'],
+      createdAt: map['createdAt'] != null ? DateTime.parse(map['createdAt']) : DateTime.now(),
     );
   }
 }

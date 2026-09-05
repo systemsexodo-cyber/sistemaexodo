@@ -4,6 +4,7 @@ import 'package:uuid/uuid.dart';
 import '../models/taxa_entrega.dart';
 import '../services/data_service.dart';
 import '../theme.dart';
+import '../widgets/sync_status_widget.dart';
 
 /// Página para gerenciar taxas de entrega por bairro
 class TaxasEntregaPage extends StatefulWidget {
@@ -35,10 +36,16 @@ class _TaxasEntregaPageState extends State<TaxasEntregaPage> {
           title: const Text('Taxas de Entrega'),
           actions: [
             IconButton(
+              icon: const Icon(Icons.settings),
+              tooltip: 'Configurar Taxa por KM',
+              onPressed: () => _mostrarConfiguracaoKm(context, dataService),
+            ),
+            IconButton(
               icon: const Icon(Icons.search),
               tooltip: 'Buscar',
               onPressed: () => _mostrarBusca(context),
             ),
+            const SyncStatusWidget(),
           ],
         ),
         body: Column(
@@ -317,6 +324,281 @@ class _TaxasEntregaPageState extends State<TaxasEntregaPage> {
             child: const Text('Buscar'),
           ),
         ],
+      ),
+    );
+  }
+
+  void _mostrarConfiguracaoKm(BuildContext context, DataService dataService) {
+    if (dataService.empresaAtual == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Empresa não selecionada!'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    final config = dataService.empresaAtual?.configuracoes?['taxa_km_config'] as Map<String, dynamic>?;
+    bool habilitar = config?['habilitar'] as bool? ?? false;
+    
+    final valorBaseController = TextEditingController(
+      text: (config?['valor_base'] as num?)?.toDouble().toStringAsFixed(2) ?? '5.00',
+    );
+    final valorKmController = TextEditingController(
+      text: (config?['valor_km'] as num?)?.toDouble().toStringAsFixed(2) ?? '1.50',
+    );
+    final valorMaximoController = TextEditingController(
+      text: config?['valor_maximo'] != null ? (config!['valor_maximo'] as num).toDouble().toStringAsFixed(2) : '',
+    );
+    final distanciaController = TextEditingController(
+      text: config?['distancia_maxima'] != null ? (config!['distancia_maxima'] as num).toDouble().toString() : '',
+    );
+    final freteGratisController = TextEditingController(
+      text: config?['valor_minimo_frete_gratis'] != null ? (config!['valor_minimo_frete_gratis'] as num).toDouble().toStringAsFixed(2) : '',
+    );
+    final googleApiKeyController = TextEditingController(
+      text: config?['google_maps_api_key'] as String? ?? '',
+    );
+
+    final formKey = GlobalKey<FormState>();
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            backgroundColor: const Color(0xFF1E1E2E),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.green.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.add_road, color: Colors.greenAccent, size: 24),
+                ),
+                const SizedBox(width: 12),
+                const Text('Configurar Taxa por KM', style: TextStyle(color: Colors.white, fontSize: 18)),
+              ],
+            ),
+            content: SizedBox(
+              width: 450,
+              child: SingleChildScrollView(
+                child: Form(
+                  key: formKey,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SwitchListTile(
+                        title: const Text('Habilitar Taxa por KM', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+                        subtitle: const Text('Calcula a taxa por distância caso o bairro não tenha taxa fixa.', style: TextStyle(color: Colors.white54, fontSize: 11)),
+                        value: habilitar,
+                        activeColor: Colors.greenAccent,
+                        contentPadding: EdgeInsets.zero,
+                        onChanged: (val) {
+                          setDialogState(() {
+                            habilitar = val;
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                      const Divider(color: Colors.white10),
+                      const SizedBox(height: 12),
+                      
+                      // Só habilita inputs se estiver ativo
+                      Opacity(
+                        opacity: habilitar ? 1.0 : 0.4,
+                        child: AbsorbPointer(
+                          absorbing: !habilitar,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: TextFormField(
+                                      controller: valorBaseController,
+                                      style: const TextStyle(color: Colors.white),
+                                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                      decoration: InputDecoration(
+                                        labelText: 'Valor Fixo (Saída) *',
+                                        labelStyle: const TextStyle(color: Colors.white70, fontSize: 12),
+                                        prefixText: r'R$ ',
+                                        filled: true,
+                                        fillColor: Colors.black26,
+                                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+                                      ),
+                                      validator: (value) {
+                                        if (habilitar && (value == null || value.trim().isEmpty)) {
+                                          return 'Obrigatório';
+                                        }
+                                        return null;
+                                      },
+                                    ),
+                                  ),
+                                  const SizedBox(width: 16),
+                                  Expanded(
+                                    child: TextFormField(
+                                      controller: valorKmController,
+                                      style: const TextStyle(color: Colors.white),
+                                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                      decoration: InputDecoration(
+                                        labelText: 'Valor por KM *',
+                                        labelStyle: const TextStyle(color: Colors.white70, fontSize: 12),
+                                        prefixText: r'R$ ',
+                                        filled: true,
+                                        fillColor: Colors.black26,
+                                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+                                      ),
+                                      validator: (value) {
+                                        if (habilitar && (value == null || value.trim().isEmpty)) {
+                                          return 'Obrigatório';
+                                        }
+                                        return null;
+                                      },
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 16),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: TextFormField(
+                                      controller: valorMaximoController,
+                                      style: const TextStyle(color: Colors.white),
+                                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                      decoration: InputDecoration(
+                                        labelText: 'Taxa Máxima',
+                                        labelStyle: const TextStyle(color: Colors.white70, fontSize: 12),
+                                        prefixText: r'R$ ',
+                                        filled: true,
+                                        fillColor: Colors.black26,
+                                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+                                        helperText: 'Opcional (teto de valor)',
+                                        helperStyle: const TextStyle(color: Colors.white30, fontSize: 10),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 16),
+                                  Expanded(
+                                    child: TextFormField(
+                                      controller: distanciaController,
+                                      style: const TextStyle(color: Colors.white),
+                                      keyboardType: TextInputType.number,
+                                      decoration: InputDecoration(
+                                        labelText: 'Distância Limite',
+                                        labelStyle: const TextStyle(color: Colors.white70, fontSize: 12),
+                                        suffixText: 'km',
+                                        filled: true,
+                                        fillColor: Colors.black26,
+                                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+                                        helperText: 'Distância máxima de entrega',
+                                        helperStyle: const TextStyle(color: Colors.white30, fontSize: 10),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 16),
+                              TextFormField(
+                                controller: freteGratisController,
+                                style: const TextStyle(color: Colors.white),
+                                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                decoration: InputDecoration(
+                                  labelText: 'Frete Grátis acima de',
+                                  labelStyle: const TextStyle(color: Colors.white70, fontSize: 12),
+                                  prefixText: r'R$ ',
+                                  filled: true,
+                                  fillColor: Colors.black26,
+                                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+                                  helperText: 'Valor mínimo do pedido para isentar taxa',
+                                  helperStyle: const TextStyle(color: Colors.white30, fontSize: 10),
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                              TextFormField(
+                                controller: googleApiKeyController,
+                                style: const TextStyle(color: Colors.white),
+                                decoration: InputDecoration(
+                                  labelText: 'Chave de API do Google Maps',
+                                  labelStyle: const TextStyle(color: Colors.white70, fontSize: 12),
+                                  filled: true,
+                                  fillColor: Colors.black26,
+                                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+                                  helperText: 'Opcional. Calcula a rota de carro pelas ruas (street routing).',
+                                  helperStyle: const TextStyle(color: Colors.white30, fontSize: 10),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+              ),
+              ElevatedButton(
+                onPressed: () async {
+                  if (formKey.currentState?.validate() == true) {
+                    final double base = double.tryParse(valorBaseController.text.replaceAll(',', '.')) ?? 5.0;
+                    final double km = double.tryParse(valorKmController.text.replaceAll(',', '.')) ?? 1.5;
+                    final double? maximo = valorMaximoController.text.isNotEmpty ? double.tryParse(valorMaximoController.text.replaceAll(',', '.')) : null;
+                    final double? dist = distanciaController.text.isNotEmpty ? double.tryParse(distanciaController.text.replaceAll(',', '.')) : null;
+                    final double? gratis = freteGratisController.text.isNotEmpty ? double.tryParse(freteGratisController.text.replaceAll(',', '.')) : null;
+
+                    final empresa = dataService.empresaAtual!;
+                    final novasConfiguracoes = Map<String, dynamic>.from(empresa.configuracoes ?? {});
+                    novasConfiguracoes['taxa_km_config'] = {
+                      'habilitar': habilitar,
+                      'valor_base': base,
+                      'valor_km': km,
+                      'valor_maximo': maximo,
+                      'distancia_maxima': dist,
+                      'valor_minimo_frete_gratis': gratis,
+                      'google_maps_api_key': googleApiKeyController.text.trim(),
+                    };
+
+                    final empresaAtualizada = empresa.copyWith(configuracoes: novasConfiguracoes);
+                    
+                    try {
+                      await dataService.atualizarDadosEmpresa(empresaAtualizada);
+                      Navigator.pop(context);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Configurações salvas com sucesso!'),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                    } catch (e) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Erro ao salvar configurações: $e'),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                    }
+                  }
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.greenAccent,
+                  foregroundColor: Colors.black,
+                ),
+                child: const Text('Salvar'),
+              ),
+            ],
+          );
+        },
       ),
     );
   }

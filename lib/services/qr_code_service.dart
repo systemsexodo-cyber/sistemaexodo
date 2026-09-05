@@ -19,7 +19,7 @@ class QRCodeService {
     // Formato: URL?chNFe=CHAVE&nVersao=100&tpAmb=AMBIENTE&cDest=CSC&dhEmi=DATA&vNF=VALOR&vICMS=0.00&digVal=DIGEST&cIdToken=TOKEN
     
     final tpAmb = ambienteHomologacao ? '2' : '1';
-    final dhEmi = dataEmissao.toUtc().toIso8601String();
+    final dhEmi = _formatarDataSefaz(dataEmissao);
     final vNF = valorTotal.toStringAsFixed(2);
     
     // Calcular digest value (hash SHA-1 da chave de acesso)
@@ -64,6 +64,20 @@ class QRCodeService {
     // TODO: Implementar geração de imagem do QR Code
     // Usar QrPainter para desenhar em um canvas
     throw UnimplementedError('Geração de imagem QR Code ainda não implementada');
+  }
+
+  /// Formata data no formato exigido pela SEFAZ: AAAA-MM-DDThh:mm:ssTZD (Ex: 2026-07-11T11:41:51-03:00)
+  static String _formatarDataSefaz(DateTime dt) {
+    final local = dt.toLocal();
+    final offset = local.timeZoneOffset;
+    final offsetSign = offset.isNegative ? '-' : '+';
+    final offsetHours = offset.inHours.abs().toString().padLeft(2, '0');
+    final offsetMinutes = (offset.inMinutes.abs() % 60).toString().padLeft(2, '0');
+    
+    final datePart = "${local.year}-${local.month.toString().padLeft(2, '0')}-${local.day.toString().padLeft(2, '0')}";
+    final timePart = "${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}:${local.second.toString().padLeft(2, '0')}";
+    
+    return "${datePart}T$timePart$offsetSign$offsetHours:$offsetMinutes";
   }
 }
 

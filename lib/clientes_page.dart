@@ -5,6 +5,7 @@ import 'package:sistema_exodo_novo/services/data_service.dart';
 import 'package:sistema_exodo_novo/theme.dart';
 import 'package:sistema_exodo_novo/pages/cliente_detalhes_page.dart';
 import 'package:sistema_exodo_novo/widgets/permission_widget.dart';
+import 'package:sistema_exodo_novo/widgets/sync_status_widget.dart';
 import 'package:sistema_exodo_novo/models/permissao.dart';
 
 class ClientesPage extends StatefulWidget {
@@ -16,11 +17,29 @@ class ClientesPage extends StatefulWidget {
 
 class _ClientesPageState extends State<ClientesPage> {
   final TextEditingController _buscaController = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
   String _termoBusca = '';
   String _filtroStatus = 'Todos'; // Todos, Ativos, Inativos, Bloqueados
 
   @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_onScroll);
+  }
+
+  void _onScroll() {
+    // Quando chegar perto do fim da lista (200px antes)
+    if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 200) {
+      final service = p.Provider.of<DataService>(context, listen: false);
+      if (service.temMaisClientes && !service.carregandoMaisClientes) {
+        service.carregarMaisClientes();
+      }
+    }
+  }
+
+  @override
   void dispose() {
+    _scrollController.dispose();
     _buscaController.dispose();
     super.dispose();
   }
@@ -80,6 +99,7 @@ class _ClientesPageState extends State<ClientesPage> {
                 )
               : null,
           actions: [
+            const SyncStatusWidget(),
             IconButton(
               icon: const Icon(Icons.filter_list),
               tooltip: 'Filtros',
@@ -100,9 +120,13 @@ class _ClientesPageState extends State<ClientesPage> {
               child: clientesFiltrados.isEmpty
                   ? _buildListaVazia()
                   : ListView.builder(
+                      controller: _scrollController,
                       padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
-                      itemCount: clientesFiltrados.length,
+                      itemCount: clientesFiltrados.length + (service.temMaisClientes ? 1 : 0),
                       itemBuilder: (context, index) {
+                        if (index == clientesFiltrados.length) {
+                          return _buildLoadingPaginacao();
+                        }
                         return _buildCardCliente(clientesFiltrados[index]);
                       },
                     ),
@@ -665,5 +689,19 @@ class _ClientesPageState extends State<ClientesPage> {
     if (mounted) {
       setState(() {});
     }
+  }
+  Widget _buildLoadingPaginacao() {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 32),
+      alignment: Alignment.center,
+      child: const SizedBox(
+        width: 24,
+        height: 24,
+        child: CircularProgressIndicator(
+          strokeWidth: 2,
+          valueColor: AlwaysStoppedAnimation<Color>(Colors.greenAccent),
+        ),
+      ),
+    );
   }
 }

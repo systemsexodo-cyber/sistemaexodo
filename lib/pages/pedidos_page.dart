@@ -13,13 +13,19 @@ import '../models/usuario.dart';
 import '../models/link_vendedor.dart';
 import '../theme.dart';
 import 'lancar_pedido_page.dart';
+import '../models/delivery_info.dart';
 import 'entregas_page.dart';
 import 'pdv_page.dart';
 import 'entrega_detalhes_page.dart';
 import 'venda_direta_page.dart';
 import '../services/pedido_pdf_service.dart';
+import '../services/producao_pdf_service.dart';
 import '../services/auth_service.dart';
 import '../models/empresa.dart';
+import '../widgets/sync_status_widget.dart';
+import 'criar_romaneio_page.dart';
+import 'romaneios_page.dart';
+
 
 class PedidosPage extends StatefulWidget {
   const PedidosPage({super.key});
@@ -35,6 +41,8 @@ class _PedidosPageState extends State<PedidosPage> {
   bool _mostrarBusca = false;
   DateTime? _dataInicioFiltro; // Filtro de data inicial
   DateTime? _dataFimFiltro; // Filtro de data final
+  bool _modoSelecao = false;
+  final Set<String> _selecionadosIds = {};
 
   final List<String> _statusDisponiveis = [
     'Todos',
@@ -76,25 +84,60 @@ class _PedidosPageState extends State<PedidosPage> {
                 )
               : null,
           actions: [
-            // Botão de busca
-            IconButton(
-              icon: Icon(
-                _mostrarBusca ? Icons.search_off : Icons.search,
-                color: _mostrarBusca
-                    ? Colors.greenAccent
-                    : Theme.of(context).colorScheme.onPrimary,
+            if (_modoSelecao) ...[
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 16),
+                  child: Text(
+                    '${_selecionadosIds.length} selecionado(s)',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
               ),
-              tooltip: _mostrarBusca ? 'Fechar busca' : 'Buscar pedidos',
-              onPressed: () {
-                setState(() {
-                  _mostrarBusca = !_mostrarBusca;
-                  if (!_mostrarBusca) {
-                    _termoBusca = '';
-                    _buscaController.clear();
-                  }
-                });
-              },
-            ),
+              IconButton(
+                icon: const Icon(Icons.delivery_dining, color: Colors.greenAccent),
+                tooltip: 'Gerar Romaneio',
+                onPressed: _selecionadosIds.isEmpty ? null : _gerarRomaneio,
+              ),
+              IconButton(
+                icon: const Icon(Icons.close),
+                onPressed: () {
+                  setState(() {
+                    _modoSelecao = false;
+                    _selecionadosIds.clear();
+                  });
+                },
+              ),
+            ] else ...[
+              IconButton(
+                icon: const Icon(Icons.assignment_outlined),
+                tooltip: 'Ver Romaneios',
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const RomaneiosPage()),
+                ),
+              ),
+              const SyncStatusWidget(),
+              // Botão de busca
+              IconButton(
+                icon: Icon(
+                  _mostrarBusca ? Icons.search_off : Icons.search,
+                  color: _mostrarBusca
+                      ? Colors.greenAccent
+                      : Theme.of(context).colorScheme.onPrimary,
+                ),
+                tooltip: _mostrarBusca ? 'Fechar busca' : 'Buscar pedidos',
+                onPressed: () {
+                  setState(() {
+                    _mostrarBusca = !_mostrarBusca;
+                    if (!_mostrarBusca) {
+                      _termoBusca = '';
+                      _buscaController.clear();
+                    }
+                  });
+                },
+              ),
+            ],
             // Filtro por status
             PopupMenuButton<String>(
               icon: Stack(
@@ -259,7 +302,7 @@ class _PedidosPageState extends State<PedidosPage> {
               }
             }
             
-            // Incluir pedidos que começam com PED- ou não são vendas do PDV
+            // Incluir apenas pedidos tradicionais (PED-), não vendas do PDV (VND-)
             final isPedidoValido = p.numero.startsWith('PED-') ||
                 (!p.numero.startsWith('VND-') && !p.numero.startsWith('VND'));
             
@@ -268,8 +311,8 @@ class _PedidosPageState extends State<PedidosPage> {
                 (p.linkVendedorId != null && p.linkVendedorId!.isNotEmpty) ||
                 (p.linkVendedorCodigo != null && p.linkVendedorCodigo!.isNotEmpty);
             
-            // Se for pedido válido E (não tiver serviços OU for do e-commerce)
-            return isPedidoValido && (p.servicos.isEmpty || isPedidoEcommerce);
+            // Se for pedido válido
+            return isPedidoValido;
           },
         )
         .toList();
@@ -310,6 +353,11 @@ class _PedidosPageState extends State<PedidosPage> {
         ).add(const Duration(days: 1));
         return !dataPedido.isAfter(dataFim);
       }).toList();
+    }
+
+    // Ordenar por data (mais recentes primeiro) por padrão quando não estiver buscando
+    if (_termoBusca.isEmpty) {
+      resultado.sort((a, b) => b.dataPedido.compareTo(a.dataPedido));
     }
 
     // Busca inteligente e precisa
@@ -487,7 +535,15 @@ class _PedidosPageState extends State<PedidosPage> {
   ) {
     if (pedido.status == novoStatus) return;
 
-    final pedidoAtualizado = pedido.copyWith(status: novoStatus);
+    Pedido pedidoAtualizado = pedido.copyWith(status: novoStatus);
+    
+    // Se for um delivery e o status for "Entregue", atualizar também o status do delivery
+    if (novoStatus.toLowerCase() == 'entregue' && pedido.deliveryInfo != null) {
+      pedidoAtualizado = pedidoAtualizado.copyWith(
+        deliveryInfo: pedido.deliveryInfo!.copyWith(status: 'entregue'),
+      );
+    }
+    
     dataService.updatePedido(pedidoAtualizado);
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -890,6 +946,42 @@ class _PedidosPageState extends State<PedidosPage> {
     );
   }
 
+  void _alternarSelecao(String id) {
+    setState(() {
+      if (_selecionadosIds.contains(id)) {
+        _selecionadosIds.remove(id);
+        if (_selecionadosIds.isEmpty) {
+          _modoSelecao = false;
+        }
+      } else {
+        _selecionadosIds.add(id);
+        _modoSelecao = true;
+      }
+    });
+  }
+
+  void _gerarRomaneio() async {
+    // Pegar pedidos selecionados
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final selecionados = dataService.pedidos.where((p) => _selecionadosIds.contains(p.id)).toList();
+    
+    if (selecionados.isEmpty) return;
+
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => CriarRomaneioPage(pedidosSelecionados: selecionados),
+      ),
+    );
+
+    if (result == true) {
+      setState(() {
+        _modoSelecao = false;
+        _selecionadosIds.clear();
+      });
+    }
+  }
+
   Widget _buildCardPedido(
     BuildContext context,
     Pedido pedido,
@@ -899,6 +991,8 @@ class _PedidosPageState extends State<PedidosPage> {
     // Pedidos cancelados não são considerados como pagos, mesmo que tenham recebido
     final isPago = !isCancelado && pedido.totalmenteRecebido;
     final isParcialmentePago = !isCancelado && pedido.totalRecebido > 0 && !isPago;
+    final isSelecionado = _selecionadosIds.contains(pedido.id);
+    
     final cliente = pedido.clienteId != null
         ? dataService.clientes
               .where((c) => c.id == pedido.clienteId)
@@ -916,8 +1010,13 @@ class _PedidosPageState extends State<PedidosPage> {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: isCancelado
+          gradient: LinearGradient(
+            colors: isSelecionado
+                ? [
+                    Colors.blue.shade700.withOpacity(0.4),
+                    Colors.blue.shade900.withOpacity(0.3),
+                  ]
+                : isCancelado
               ? [
                   Colors.red.shade900,
                   Colors.red.shade800,
@@ -932,7 +1031,9 @@ class _PedidosPageState extends State<PedidosPage> {
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(12),
-        border: isCancelado
+        border: isSelecionado
+            ? Border.all(color: Colors.blueAccent, width: 3)
+            : isCancelado
             ? Border.all(color: Colors.redAccent, width: 2) // Borda vermelha para cancelado
             : isPago
             ? Border.all(color: Colors.greenAccent, width: 2)
@@ -941,7 +1042,14 @@ class _PedidosPageState extends State<PedidosPage> {
             : null,
       ),
       child: InkWell(
-        onTap: isCancelado
+        onLongPress: () {
+          if (!_modoSelecao) {
+            _alternarSelecao(pedido.id);
+          }
+        },
+        onTap: _modoSelecao 
+            ? () => _alternarSelecao(pedido.id)
+            : isCancelado
             ? null // Pedidos cancelados não são clicáveis
             : isPago
             ? () => _mostrarDetalhesPedidoPago(context, pedido, dataService)
@@ -955,6 +1063,15 @@ class _PedidosPageState extends State<PedidosPage> {
               // Linha 1: Número, Status e Valor
               Row(
                 children: [
+                  if (_modoSelecao) ...[
+                    Checkbox(
+                      value: isSelecionado,
+                      onChanged: (_) => _alternarSelecao(pedido.id),
+                      activeColor: Colors.blueAccent,
+                      side: BorderSide(color: Colors.white.withOpacity(0.4)),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
                   // Número do pedido
                   Text(
                     pedido.numero.isNotEmpty
@@ -999,37 +1116,52 @@ class _PedidosPageState extends State<PedidosPage> {
                       ),
                     ),
                   if (isPedidoEcommerce) const SizedBox(width: 8),
-                  // Badge PAGO
-                  if (isPago)
+
+                  
+                  // Badge Delivery vs Venda Direta
+                  if (pedido.deliveryInfo != null) ...[
                     Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 2,
-                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                       decoration: BoxDecoration(
-                        color: Colors.greenAccent,
+                        color: Colors.orange.withOpacity(0.8),
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: const Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(
-                            Icons.check_circle,
-                            color: Color(0xFF1B5E20),
-                            size: 12,
-                          ),
+                          Icon(Icons.local_shipping, color: Colors.white, size: 12),
                           SizedBox(width: 4),
                           Text(
-                            'PAGO',
-                            style: TextStyle(
-                              color: Color(0xFF1B5E20),
-                              fontWeight: FontWeight.bold,
-                              fontSize: 10,
-                            ),
+                            'DELIVERY',
+                            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 10),
                           ),
                         ],
                       ),
                     ),
+                    const SizedBox(width: 8),
+                  ] else if (!isPedidoEcommerce) ...[
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.blue.withOpacity(0.8),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.assignment, color: Colors.white, size: 12),
+                          SizedBox(width: 4),
+                          Text(
+                            'LANÇAMENTO',
+                            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 10),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+
+                  // Badge PAGO
                   // Badge EM ABERTO (Parcialmente Pago)
                   if (isParcialmentePago)
                     Container(
@@ -1074,6 +1206,17 @@ class _PedidosPageState extends State<PedidosPage> {
                           fontSize: 18,
                         ),
                       ),
+                      if (isParcialmentePago) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          'Falta: R\$ ${pedido.valorPendente.toStringAsFixed(2)}',
+                          style: const TextStyle(
+                            color: Colors.orangeAccent,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
                       if (taxaEntrega != null && taxaEntrega > 0) ...[
                         const SizedBox(height: 2),
                         Row(
@@ -1100,6 +1243,32 @@ class _PedidosPageState extends State<PedidosPage> {
                   ),
                 ],
               ),
+              if (isParcialmentePago) ...[
+                const SizedBox(height: 8),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: LinearProgressIndicator(
+                    value: (pedido.totalRecebido / pedido.totalGeral).clamp(0.0, 1.0),
+                    backgroundColor: Colors.white10,
+                    valueColor: const AlwaysStoppedAnimation<Color>(Colors.orangeAccent),
+                    minHeight: 4,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Recebido: R\$ ${pedido.totalRecebido.toStringAsFixed(2)}',
+                      style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 10),
+                    ),
+                    Text(
+                      '${((pedido.totalRecebido / pedido.totalGeral) * 100).toStringAsFixed(0)}%',
+                      style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 10),
+                    ),
+                  ],
+                ),
+              ],
               const SizedBox(height: 8),
               // Linha 2: Cliente e Telefone
               Row(
@@ -1138,6 +1307,31 @@ class _PedidosPageState extends State<PedidosPage> {
                   ],
                 ],
               ),
+              if (pedido.clienteEndereco != null && pedido.clienteEndereco!.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      Icons.location_on,
+                      color: Colors.orangeAccent.withOpacity(0.8),
+                      size: 14,
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        pedido.clienteEndereco!,
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.7),
+                          fontSize: 12,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
               // Linha 3: Vendedor E-commerce (se existir)
               if (isPedidoEcommerce && pedido.vendedorNome != null && pedido.vendedorNome!.isNotEmpty) ...[
                 const SizedBox(height: 4),
@@ -1208,13 +1402,33 @@ class _PedidosPageState extends State<PedidosPage> {
               // Linha 4: Data, Itens, Status e Ações de edição
               Row(
                 children: [
-                  // Data
-                  Text(
-                    _formatarDataCurta(pedido.dataPedido),
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.5),
-                      fontSize: 11,
-                    ),
+                   // Data
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _formatarDataCurta(pedido.dataPedido),
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.5),
+                          fontSize: 11,
+                        ),
+                      ),
+                      if (pedido.deliveryInfo?.dataEntrega != null)
+                        Row(
+                          children: [
+                            const Icon(Icons.delivery_dining, size: 10, color: Colors.blueAccent),
+                            const SizedBox(width: 4),
+                            Text(
+                              _formatarDataHora(pedido.deliveryInfo!.dataEntrega!),
+                              style: const TextStyle(
+                                color: Colors.blueAccent,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                    ],
                   ),
                   const SizedBox(width: 12),
                   // Itens
@@ -1247,6 +1461,7 @@ class _PedidosPageState extends State<PedidosPage> {
                                 'Pendente',
                                 'Parcialmente Pago',
                                 'Em Andamento',
+                                'Entregue',
                                 'Pago',
                                 'Cancelado',
                               ]
@@ -1310,12 +1525,49 @@ class _PedidosPageState extends State<PedidosPage> {
                       ),
                       tooltip: 'Receber Pagamento',
                     ),
+                  if (!isPago && pedido.status.toLowerCase() != 'cancelado' && (pedido.numero.startsWith('VND-') || pedido.numero.startsWith('VND')))
+                    IconButton(
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => VendaDiretaPage(pedidoParaEditar: pedido),
+                          ),
+                        );
+                      },
+                      icon: const Icon(
+                        Icons.shopping_cart_checkout,
+                        size: 18,
+                        color: Colors.blueAccent,
+                      ),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(
+                        minWidth: 32,
+                        minHeight: 32,
+                      ),
+                      tooltip: 'Continuar Venda no PDV',
+                    ),
                   if (!isPago && pedido.status.toLowerCase() != 'cancelado') const SizedBox(width: 2),
                   // Botão editar
                   IconButton(
                     onPressed: (isPago || pedido.status.toLowerCase() == 'cancelado')
                         ? null
-                        : () => _abrirLancamentoPedido(context, pedido: pedido),
+                        : () {
+                            final authService = Provider.of<AuthService>(context, listen: false);
+                            final empresa = authService.empresaAtual;
+                            final exigirSenha = empresa?.configuracoes?['exigir_senha_alterar_pedido'] ?? false;
+
+                            if (exigirSenha) {
+                              _solicitarSenhaAdmin(
+                                context: context,
+                                titulo: 'Autorização do Administrador',
+                                mensagem: 'Digite a senha master para alterar o pedido ${pedido.numero}:',
+                                onConfirmar: () => _abrirLancamentoPedido(context, pedido: pedido),
+                              );
+                            } else {
+                              _abrirLancamentoPedido(context, pedido: pedido);
+                            }
+                          },
                     icon: Icon(
                       Icons.edit,
                       size: 18,
@@ -1339,8 +1591,22 @@ class _PedidosPageState extends State<PedidosPage> {
                   IconButton(
                     onPressed: (isPago || pedido.status.toLowerCase() == 'cancelado')
                         ? null
-                        : () =>
-                              _confirmarCancelamento(context, pedido, dataService),
+                        : () {
+                            final authService = Provider.of<AuthService>(context, listen: false);
+                            final empresa = authService.empresaAtual;
+                            final exigirSenha = empresa?.configuracoes?['exigir_senha_cancelar_pedido'] ?? false;
+
+                            if (exigirSenha) {
+                              _solicitarSenhaAdmin(
+                                context: context,
+                                titulo: 'Autorização do Administrador',
+                                mensagem: 'Digite a senha master para cancelar o pedido ${pedido.numero}:',
+                                onConfirmar: () => _confirmarCancelamento(context, pedido, dataService),
+                              );
+                            } else {
+                              _confirmarCancelamento(context, pedido, dataService);
+                            }
+                          },
                     icon: Icon(
                       Icons.cancel_outlined,
                       size: 18,
@@ -1374,6 +1640,22 @@ class _PedidosPageState extends State<PedidosPage> {
                       minHeight: 32,
                     ),
                     tooltip: 'Imprimir Pedido',
+                  ),
+                  const SizedBox(width: 2),
+                  // Botão reimprimir produção - imprime os tickets nas impressoras dos setores
+                  IconButton(
+                    onPressed: () => _reimprimirProducao(context, pedido),
+                    icon: const Icon(
+                      Icons.restaurant,
+                      size: 18,
+                      color: Colors.deepOrangeAccent,
+                    ),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                      minWidth: 32,
+                      minHeight: 32,
+                    ),
+                    tooltip: 'Reimprimir Produção (setores)',
                   ),
                 ],
               ),
@@ -1660,6 +1942,39 @@ class _PedidosPageState extends State<PedidosPage> {
           TextButton.icon(
             onPressed: () {
               Navigator.pop(context);
+              final authService = Provider.of<AuthService>(context, listen: false);
+              final empresa = authService.empresaAtual;
+              final senhaDefinida = empresa?.configuracoes?['senha_admin']?.toString() ?? '';
+
+              if (senhaDefinida.trim().isEmpty) {
+                // Se não houver senha master configurada na empresa
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Configure uma Senha Master Admin no cadastro da empresa para liberar alterações de pedidos pagos.'),
+                    backgroundColor: Colors.orange,
+                  ),
+                );
+                return;
+              }
+
+              _solicitarSenhaAdmin(
+                context: context,
+                titulo: 'Liberar Alteração de Pedido Pago',
+                mensagem: 'Insira a Senha Master para permitir a alteração deste pedido pago:',
+                onConfirmar: () {
+                  _abrirLancamentoPedido(context, pedido: pedido);
+                },
+              );
+            },
+            icon: const Icon(Icons.lock_open, size: 18),
+            label: const Text('Liberar Alteração'),
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.redAccent,
+            ),
+          ),
+          TextButton.icon(
+            onPressed: () {
+              Navigator.pop(context);
               _mostrarDialogoTipoImpressaoPedido(context, pedido);
             },
             icon: const Icon(Icons.receipt, size: 18),
@@ -1701,6 +2016,17 @@ class _PedidosPageState extends State<PedidosPage> {
             ),
             const Divider(),
             ListTile(
+              leading: const Icon(Icons.receipt_long, color: Colors.purple, size: 32),
+              title: const Text('Romaneio / Separação (80mm)'),
+              subtitle: const Text('Apenas itens, sem valores financeiros'),
+              contentPadding: const EdgeInsets.symmetric(vertical: 8),
+              onTap: () {
+                Navigator.pop(context);
+                _imprimirRomaneioPedido(context, pedido);
+              },
+            ),
+            const Divider(),
+            ListTile(
               leading: const Icon(Icons.picture_as_pdf, color: Colors.blue, size: 32),
               title: const Text('PDF Normal (A4)'),
               subtitle: const Text('Pedido em formato PDF'),
@@ -1708,6 +2034,28 @@ class _PedidosPageState extends State<PedidosPage> {
               onTap: () {
                 Navigator.pop(context);
                 _imprimirPDFPedido(context, pedido, termico: false);
+              },
+            ),
+            const Divider(),
+            ListTile(
+              leading: const Icon(Icons.visibility, color: Colors.teal, size: 32),
+              title: const Text('Pré-visualizar PDF'),
+              subtitle: const Text('Ver o pedido em PDF (A4) antes de imprimir'),
+              contentPadding: const EdgeInsets.symmetric(vertical: 8),
+              onTap: () {
+                Navigator.pop(context);
+                _imprimirPDFPedido(context, pedido, termico: false, forcarPreview: true);
+              },
+            ),
+            const Divider(),
+            ListTile(
+              leading: const Icon(Icons.visibility, color: Colors.deepOrange, size: 32),
+              title: const Text('Pré-visualizar Térmico (80mm)'),
+              subtitle: const Text('Ver a via térmica antes de imprimir'),
+              contentPadding: const EdgeInsets.symmetric(vertical: 8),
+              onTap: () {
+                Navigator.pop(context);
+                _imprimirPDFPedido(context, pedido, termico: true, forcarPreview: true);
               },
             ),
           ],
@@ -1727,6 +2075,7 @@ class _PedidosPageState extends State<PedidosPage> {
     BuildContext context,
     Pedido pedido, {
     required bool termico,
+    bool forcarPreview = false,
   }) async {
     // Obter empresa atual
     final authService = Provider.of<AuthService>(context, listen: false);
@@ -1768,38 +2117,202 @@ class _PedidosPageState extends State<PedidosPage> {
     );
 
     try {
-      // Gerar PDF primeiro (isso é o que demora)
-      Uint8List pdfBytes;
-      if (termico) {
-        pdfBytes = await PedidoPDFService.gerarPDFTermico(
-          pedido: pedido,
-          empresa: empresa,
-        );
-      } else {
-        pdfBytes = await PedidoPDFService.gerarPDF(
-          pedido: pedido,
-          empresa: empresa,
-        );
-      }
-
-      // Fechar diálogo de loading assim que o PDF for gerado
+      // Fechar diálogo de loading antes de abrir a pré-visualização
       if (context.mounted) {
         Navigator.of(context, rootNavigator: true).pop();
       }
 
-      // Agora abrir a tela de impressão (sem diálogo de loading)
+      if (termico) {
+        await PedidoPDFService.imprimirPDFTermico(
+          pedido: pedido,
+          empresa: empresa,
+          context: context,
+          forcarPreview: forcarPreview,
+        );
+      } else {
+        await PedidoPDFService.imprimirPDF(
+          pedido: pedido,
+          empresa: empresa,
+          context: context,
+          forcarPreview: forcarPreview,
+        );
+      }
+    } catch (e) {
+      // Fechar diálogo de loading em caso de erro
+      if (context.mounted) {
+        try {
+          Navigator.of(context, rootNavigator: true).pop();
+        } catch (_) {
+          // Ignorar se o diálogo já foi fechado
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erro ao gerar PDF: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  /// Reimprime os tickets de produção do pedido nas impressoras dos setores
+  /// (Cozinha, Bar, etc. — conforme configurado em cada produto/departamento).
+  Future<void> _reimprimirProducao(BuildContext context, Pedido pedido) async {
+    try {
+      final dataService = Provider.of<DataService>(context, listen: false);
+      final authService = Provider.of<AuthService>(context, listen: false);
+      final empresa = authService.empresaAtual;
+      if (empresa == null) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Nenhuma empresa selecionada para imprimir a produção'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      final inputs = pedido.produtos
+          .map((it) => ItemProducaoInput(
+                id: it.id,
+                nome: it.nome,
+                quantidade: it.quantidade,
+                observacao: it.observacao,
+                adicionais: it.adicionais.map((a) => a.nome).toList(),
+              ))
+          .toList();
+
+      if (inputs.isEmpty) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Nenhum item para reimprimir neste pedido'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+        return;
+      }
+
+      final qtd = await ProducaoPdfService.imprimirTicketsProducao(
+        itens: inputs,
+        dataService: dataService,
+        empresa: empresa,
+        numeroDocumento: pedido.numero,
+        clienteNome: pedido.clienteNome,
+        isDelivery: pedido.deliveryInfo != null,
+        detalhes: DetalhesTicketProducao(
+          mesaComanda: pedido.origem,
+          clienteTelefone: pedido.clienteTelefone,
+          enderecoEntrega: pedido.clienteEndereco,
+          motorista: pedido.deliveryInfo?.motoristaNome,
+          previsaoEntrega: pedido.deliveryInfo?.previsaoEntrega,
+          formasPagamento: pedido.pagamentos
+              .where((p) => p.valor > 0)
+              .map((p) => p.tipo.nome)
+              .toList(),
+          pagamentoConcluido: pedido.totalmenteRecebido,
+          observacoesGerais: pedido.observacoes,
+          // Hora do pedido + operador (para a cozinha)
+          dataPedido: pedido.dataPedido,
+          usuarioCriou: pedido.operador,
+        ),
+      );
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(qtd > 0
+                ? '✓ $qtd ticket(s) de produção reimpresso(s) em suas impressoras'
+                : 'Nenhum item com impressora de produção configurada'),
+            backgroundColor: qtd > 0 ? Colors.green : Colors.orange,
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erro ao reimprimir produção: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  /// Imprime o Romaneio do pedido
+  Future<void> _imprimirRomaneioPedido(
+    BuildContext context,
+    Pedido pedido,
+  ) async {
+    // Obter empresa atual
+    final authService = Provider.of<AuthService>(context, listen: false);
+    Empresa? empresa = authService.empresaAtual;
+    
+    if (empresa == null) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Nenhuma empresa selecionada'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+
+    // Mostrar diálogo de processamento
+    if (!context.mounted) return;
+    
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => Center(
+        child: Card(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const CircularProgressIndicator(),
+                const SizedBox(height: 16),
+                const Text('Gerando Romaneio Térmico...'),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    try {
+      // Gerar PDF do romaneio
+      Uint8List pdfBytes = await PedidoPDFService.gerarRomaneioPDFTermico(
+        pedido: pedido,
+        empresa: empresa,
+      );
+
+      // Fechar diálogo de loading
+      if (context.mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+
+      // Agora abrir a tela de impressão
       if (context.mounted) {
         await Printing.layoutPdf(
           onLayout: (PdfPageFormat format) async => pdfBytes,
+          name: 'Romaneio_${pedido.numero}',
         );
         
-        // Mostrar mensagem de sucesso após a impressão
+        // Mostrar mensagem de sucesso
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(termico ? 'Impressão térmica concluída' : 'PDF gerado com sucesso'),
+            const SnackBar(
+              content: Text('Romaneio térmico gerado com sucesso'),
               backgroundColor: Colors.green,
-              duration: const Duration(seconds: 2),
+              duration: Duration(seconds: 2),
             ),
           );
         }
@@ -1814,7 +2327,7 @@ class _PedidosPageState extends State<PedidosPage> {
         }
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Erro ao gerar PDF: $e'),
+            content: Text('Erro ao gerar Romaneio: $e'),
             backgroundColor: Colors.red,
           ),
         );
@@ -1925,8 +2438,14 @@ class _PedidosPageState extends State<PedidosPage> {
     switch (status) {
       case StatusEntrega.aguardando:
         return Colors.orange;
+      case StatusEntrega.romaneioCriado:
+        return Colors.blue;
+      case StatusEntrega.emEntrega:
+        return Colors.deepPurple;
       case StatusEntrega.entregue:
         return Colors.green;
+      case StatusEntrega.cancelado:
+        return Colors.red;
     }
   }
 
@@ -2188,6 +2707,11 @@ class _PedidosPageState extends State<PedidosPage> {
     );
   }
 
+  String _formatarDataHora(DateTime data) {
+    final DateFormat formatter = DateFormat('dd/MM HH:mm');
+    return formatter.format(data);
+  }
+
   String _formatarData(DateTime data) {
     return '${data.day.toString().padLeft(2, '0')}/${data.month.toString().padLeft(2, '0')}/${data.year} às ${data.hour.toString().padLeft(2, '0')}:${data.minute.toString().padLeft(2, '0')}';
   }
@@ -2200,6 +2724,8 @@ class _PedidosPageState extends State<PedidosPage> {
         return Colors.amber;
       case 'Em Andamento':
         return Colors.blue;
+      case 'Entregue':
+        return Colors.teal;
       case 'Pago':
         return Colors.green;
       case 'Cancelado':
@@ -2207,5 +2733,84 @@ class _PedidosPageState extends State<PedidosPage> {
       default:
         return Colors.grey;
     }
+  }
+
+  /// Solicita a senha do administrador antes de executar uma ação crítica
+  void _solicitarSenhaAdmin({
+    required BuildContext context,
+    required VoidCallback onConfirmar,
+    required String titulo,
+    String? mensagem,
+  }) {
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final empresa = authService.empresaAtual;
+    final senhaDefinida = empresa?.configuracoes?['senha_admin']?.toString() ?? '';
+
+    // Se não tiver senha definida nas configurações da empresa, permite direto
+    if (senhaDefinida.trim().isEmpty) {
+      onConfirmar();
+      return;
+    }
+
+    final senhaController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            const Icon(Icons.security, color: Colors.redAccent),
+            const SizedBox(width: 8),
+            Text(titulo, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (mensagem != null) ...[
+              Text(mensagem, style: const TextStyle(color: Colors.white70, fontSize: 13)),
+              const SizedBox(height: 16),
+            ],
+            TextField(
+              controller: senhaController,
+              obscureText: true,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                labelText: 'Senha do Administrador',
+                labelStyle: TextStyle(color: Colors.white70),
+                enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white30)),
+                focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.redAccent)),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancelar', style: TextStyle(color: Colors.white70)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent, foregroundColor: Colors.white),
+            onPressed: () {
+              if (senhaController.text == senhaDefinida) {
+                Navigator.pop(ctx);
+                onConfirmar();
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Senha incorreta! Permissão negada.'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
+            },
+            child: const Text('Confirmar'),
+          ),
+        ],
+      ),
+    );
   }
 }

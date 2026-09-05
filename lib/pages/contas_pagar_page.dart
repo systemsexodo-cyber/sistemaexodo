@@ -6,6 +6,7 @@ import '../models/conta_pagar.dart';
 import '../models/forma_pagamento.dart';
 import '../theme.dart';
 import 'conta_pagar_form_page.dart';
+import '../widgets/sync_status_widget.dart';
 
 class ContasPagarPage extends StatefulWidget {
   const ContasPagarPage({super.key});
@@ -47,7 +48,7 @@ class _ContasPagarPageState extends State<ContasPagarPage> {
   }
 
   List<ContaPagar> _filtrarContas(List<ContaPagar> contas) {
-    var resultado = contas.where((c) => c.ativo).toList();
+    var resultado = contas.where((c) => c.ativo && c.categoria != 'Recebível').toList();
 
     // Filtro por status
     if (_filtroStatus != 'Todos') {
@@ -180,6 +181,7 @@ class _ContasPagarPageState extends State<ContasPagarPage> {
                 )
               : null,
           actions: [
+            const SyncStatusWidget(),
             IconButton(
               icon: Icon(
                 _mostrarBusca ? Icons.search_off : Icons.search,

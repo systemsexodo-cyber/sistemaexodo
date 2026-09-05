@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'dart:convert';
 import 'package:path_provider/path_provider.dart';
+import 'process_utils.dart';
 
 /// Serviço para acessar certificados do Windows Certificate Store
 class WindowsCertificateService {
@@ -52,59 +53,25 @@ foreach (\$cert in \$certificados) {
       await scriptFile.writeAsString(script);
       debugPrint('>>> [WindowsCert] Script salvo em: ${scriptFile.path}');
       
-      // Tentar executar usando Process.start (mais compatível)
+      // Executar PowerShell sem mostrar janela CMD
       ProcessResult result;
       try {
-        // Método 1: Tentar Process.run primeiro
-        result = await Process.run(
+        result = await runProcessHidden(
           'powershell',
           [
             '-NoProfile',
             '-ExecutionPolicy', 'Bypass',
             '-File', scriptFile.path,
           ],
-          runInShell: true,
         );
       } catch (e) {
-        debugPrint('>>> [WindowsCert] Process.run falhou: $e');
-        // Método 2: Tentar Process.start
-        try {
-          debugPrint('>>> [WindowsCert] Tentando Process.start...');
-          final process = await Process.start(
-            'powershell',
-            [
-              '-NoProfile',
-              '-ExecutionPolicy', 'Bypass',
-              '-File', scriptFile.path,
-            ],
-            mode: ProcessStartMode.normal,
-            runInShell: true,
-          );
-          
-          final stdout = await process.stdout.transform(utf8.decoder).join();
-          final stderr = await process.stderr.transform(utf8.decoder).join();
-          final exitCode = await process.exitCode;
-          
-          result = ProcessResult(
-            process.pid,
-            exitCode,
-            stdout,
-            stderr,
-          );
-        } catch (e2) {
-          // Limpar arquivo temporário
-          try {
-            await scriptFile.delete();
-          } catch (_) {}
-          
-          debugPrint('>>> [WindowsCert] Process.start também falhou: $e2');
-          throw Exception('Não foi possível executar PowerShell.\n\n'
-              'Erro: $e2\n\n'
-              'SOLUÇÃO ALTERNATIVA:\n'
-              '1. Execute manualmente o script: testar_certificados_windows.ps1\n'
+        debugPrint('>>> [WindowsCert] runProcessHidden falhou: $e');
+        throw Exception('Não foi possível executar PowerShell.\n\n'
+            'Erro: $e\n\n'
+            'SOLUÇÃO ALTERNATIVA:\n'
+            '1. Execute manualmente o script: testar_certificados_windows.ps1\n'
               '2. Copie o JSON retornado\n'
               '3. Use a opção "Selecionar Arquivo" para importar o certificado');
-        }
       }
       
       // Limpar arquivo temporário
@@ -238,51 +205,23 @@ if (\$openssl) {
       await scriptFile.writeAsString(script);
       debugPrint('>>> [WindowsCert] Script de exportação salvo em: ${scriptFile.path}');
       
-      // Executar usando método alternativo
+      // Executar PowerShell sem mostrar janela CMD
       ProcessResult result;
       try {
-        result = await Process.run(
+        result = await runProcessHidden(
           'powershell',
           [
             '-NoProfile',
             '-ExecutionPolicy', 'Bypass',
             '-File', scriptFile.path,
           ],
-          runInShell: true,
         );
       } catch (e) {
-        debugPrint('>>> [WindowsCert] Process.run falhou: $e');
-        // Tentar Process.start
         try {
-          debugPrint('>>> [WindowsCert] Tentando Process.start para exportar...');
-          final process = await Process.start(
-            'powershell',
-            [
-              '-NoProfile',
-              '-ExecutionPolicy', 'Bypass',
-              '-File', scriptFile.path,
-            ],
-            mode: ProcessStartMode.normal,
-            runInShell: true,
-          );
-          
-          final stdout = await process.stdout.transform(utf8.decoder).join();
-          final stderr = await process.stderr.transform(utf8.decoder).join();
-          final exitCode = await process.exitCode;
-          
-          result = ProcessResult(
-            process.pid,
-            exitCode,
-            stdout,
-            stderr,
-          );
-        } catch (e2) {
-          try {
-            await scriptFile.delete();
-          } catch (_) {}
-          debugPrint('>>> [WindowsCert] Process.start também falhou: $e2');
-          throw Exception('Erro ao exportar certificado: $e2');
-        }
+          await scriptFile.delete();
+        } catch (_) {}
+        debugPrint('>>> [WindowsCert] runProcessHidden falhou: $e');
+        throw Exception('Erro ao exportar certificado: $e');
       }
       
       // Limpar arquivo temporário

@@ -1,6 +1,8 @@
 library mesa_comanda;
 
-import 'conta_pagar.dart';
+import 'package:sistema_exodo_novo/models/conta_pagar.dart';
+import 'package:sistema_exodo_novo/models/adicional_produto.dart';
+import 'package:sistema_exodo_novo/utils/date_parser.dart';
 
 /// Status de um item em uma mesa/comanda
 enum StatusItem {
@@ -22,7 +24,7 @@ class ItemMesaComanda {
   final String id;
   final String itemId; // ID do produto ou serviço
   final String nome;
-  final int quantidade;
+  final double quantidade;
   final double preco;
   final bool isServico;
   final bool? paraCozinha; // Mantido para compatibilidade
@@ -32,11 +34,13 @@ class ItemMesaComanda {
   final DateTime dataHora;
   final DateTime? dataHoraPronto;
   final String? observacao;
+  final List<AdicionalProduto> adicionais; // Adicionais selecionados para este item
   // Campos de auditoria/rastreamento
   final String? usuarioCriou; // Nome do usuário que criou o item
   final String? usuarioModificou; // Nome do usuário que modificou o item pela última vez
   final DateTime? dataModificacao; // Data da última modificação
   final String? acaoRealizada; // Ação realizada (ex: "Criado", "Cancelado", "Status alterado")
+  final bool cobrarGarcom; // Se true, cobra os 10% de garçom no PDV/Comandas
 
   ItemMesaComanda({
     required this.id,
@@ -56,13 +60,16 @@ class ItemMesaComanda {
     this.usuarioModificou,
     this.dataModificacao,
     this.acaoRealizada,
-  }) : dataHora = dataHora ?? DateTime.now();
+    this.cobrarGarcom = true,
+    List<AdicionalProduto>? adicionais,
+  }) : dataHora = dataHora ?? DateTime.now(),
+       adicionais = adicionais ?? [];
 
   ItemMesaComanda copyWith({
     String? id,
     String? itemId,
     String? nome,
-    int? quantidade,
+    double? quantidade,
     double? preco,
     bool? isServico,
     bool? paraCozinha,
@@ -76,6 +83,7 @@ class ItemMesaComanda {
     String? usuarioModificou,
     DateTime? dataModificacao,
     String? acaoRealizada,
+    bool? cobrarGarcom,
   }) {
     return ItemMesaComanda(
       id: id ?? this.id,
@@ -95,59 +103,83 @@ class ItemMesaComanda {
       usuarioModificou: usuarioModificou ?? this.usuarioModificou,
       dataModificacao: dataModificacao ?? this.dataModificacao,
       acaoRealizada: acaoRealizada ?? this.acaoRealizada,
+      cobrarGarcom: cobrarGarcom ?? this.cobrarGarcom,
+      adicionais: adicionais ?? this.adicionais,
     );
   }
 
   Map<String, dynamic> toMap() {
     return {
       'id': id,
-      'itemId': itemId,
+      'item_id': itemId,
       'nome': nome,
       'quantidade': quantidade,
       'preco': preco,
-      'isServico': isServico,
-      'paraCozinha': paraCozinha,
-      'paraBar': paraBar,
+      'is_servico': isServico,
+      'para_cozinha': paraCozinha,
+      'para_bar': paraBar,
       'local': local,
       'status': status.toString().split('.').last,
-      'dataHora': dataHora.toIso8601String(),
-      'dataHoraPronto': dataHoraPronto?.toIso8601String(),
+      'data_hora': dataHora.toIso8601String(),
+      'data_hora_pronto': dataHoraPronto?.toIso8601String(),
       'observacao': observacao,
-      'usuarioCriou': usuarioCriou,
-      'usuarioModificou': usuarioModificou,
-      'dataModificacao': dataModificacao?.toIso8601String(),
-      'acaoRealizada': acaoRealizada,
+      'usuario_criou': usuarioCriou,
+      'usuario_modificou': usuarioModificou,
+      'data_modificacao': dataModificacao?.toIso8601String(),
+      'acao_realizada': acaoRealizada,
+      'cobrar_garcom': cobrarGarcom,
+      'adicionais': adicionais.map((a) => a.toMap()).toList(),
     };
   }
 
   factory ItemMesaComanda.fromMap(Map<String, dynamic> map) {
+    double? parseDouble(dynamic value) {
+      if (value == null) return null;
+      if (value is num) return value.toDouble();
+      if (value is String) return double.tryParse(value);
+      return null;
+    }
+
     return ItemMesaComanda(
-      id: map['id'] as String,
-      itemId: map['itemId'] as String,
+      id: map['id']?.toString() ?? '',
+      itemId: (map['item_id'] ?? map['itemId']) as String,
       nome: map['nome'] as String,
-      quantidade: map['quantidade'] as int,
-      preco: (map['preco'] as num).toDouble(),
-      isServico: map['isServico'] as bool? ?? false,
-      paraCozinha: map['paraCozinha'] as bool?,
-      paraBar: map['paraBar'] as bool?,
+      quantidade: parseDouble(map['quantidade']) ?? 0.0,
+      preco: parseDouble(map['preco']) ?? 0.0,
+      isServico: (map['is_servico'] ?? map['isServico']) as bool? ?? false,
+      paraCozinha: (map['para_cozinha'] ?? map['paraCozinha']) as bool?,
+      paraBar: (map['para_bar'] ?? map['paraBar']) as bool?,
       local: map['local'] as String?,
       status: StatusItem.values.firstWhere(
         (e) => e.toString().split('.').last == map['status'],
         orElse: () => StatusItem.pendente,
       ),
-      dataHora: DateTime.parse(map['dataHora'] as String),
-      dataHoraPronto: map['dataHoraPronto'] != null
-          ? DateTime.parse(map['dataHoraPronto'] as String)
+      dataHora: DateParser.parse(map['data_hora'] ?? map['dataHora']),
+      dataHoraPronto: (map['data_hora_pronto'] ?? map['dataHoraPronto']) != null
+          ? DateParser.parse(map['data_hora_pronto'] ?? map['dataHoraPronto'])
           : null,
       observacao: map['observacao'] as String?,
-      usuarioCriou: map['usuarioCriou'] as String?,
-      usuarioModificou: map['usuarioModificou'] as String?,
-      dataModificacao: map['dataModificacao'] != null
-          ? DateTime.parse(map['dataModificacao'] as String)
+      usuarioCriou: (map['usuario_criou'] ?? map['usuarioCriou']) as String?,
+      usuarioModificou: (map['usuario_modificou'] ?? map['usuarioModificou']) as String?,
+      dataModificacao: (map['data_modificacao'] ?? map['dataModificacao']) != null
+          ? DateParser.parse(map['data_modificacao'] ?? map['dataModificacao'])
           : null,
-      acaoRealizada: map['acaoRealizada'] as String?,
+      acaoRealizada: (map['acao_realizada'] ?? map['acaoRealizada']) as String?,
+      cobrarGarcom: (map['cobrar_garcom'] ?? map['cobrarGarcom']) as bool? ?? true,
+      adicionais: (map['adicionais'] as List<dynamic>?)
+          ?.map((a) => AdicionalProduto.fromMap(a as Map<String, dynamic>))
+          .toList() ?? [],
     );
   }
+
+  /// Calcula o preço unitário total (base + adicionais)
+  double get precoUnitarioComAdicionais {
+    final totalAdicionais = adicionais.fold(0.0, (sum, a) => sum + a.preco);
+    return preco + totalAdicionais;
+  }
+
+  /// Calcula o subtotal (preço unitário total * quantidade)
+  double get subtotal => precoUnitarioComAdicionais * quantidade;
 }
 
 /// Modelo para Mesa ou Comanda
@@ -176,6 +208,7 @@ class MesaComanda {
   final double? valorCouvert; // Valor do couvert artístico (calculado: quantidadePessoasCouvert * valorCouvertPorPessoa)
   final int? quantidadePessoasCouvert; // Número de pessoas para o couvert
   final double? valorCouvertPorPessoa; // Valor do couvert por pessoa
+  final String? nomeQuemPagouCouvert; // Nome de quem pagou o couvert
   final double? valorGarcom; // Valor do garçom (10% do total)
   final bool garcomRetirado; // Se o garçom já foi retirado
 
@@ -202,6 +235,7 @@ class MesaComanda {
     this.valorCouvert,
     this.quantidadePessoasCouvert,
     this.valorCouvertPorPessoa,
+    this.nomeQuemPagouCouvert,
     this.valorGarcom,
     bool? garcomRetirado,
   }) : itens = itens ?? [],
@@ -225,27 +259,50 @@ class MesaComanda {
 
   // Calcula o total dos itens (excluindo itens cancelados)
   double get totalCalculado {
-    final totalItens = itens
+    final totalItensFiltered = itens
         .where((item) => item.status != StatusItem.cancelado)
-        .fold(0.0, (sum, item) => sum + (item.preco * item.quantidade));
+        .fold(0.0, (sum, item) => sum + item.subtotal);
     
-    // Adicionar couvert se houver
-    final totalComCouvert = totalItens + valorCouvertCalculado;
+    // Adicionar couvert se houver (considerar se tem pessoas)
+    final temConsumoCouvert = (quantidadePessoasCouvert ?? 0) > 0 && (valorCouvertPorPessoa ?? 0) > 0;
+    final totalComCouvert = totalItensFiltered + (temConsumoCouvert ? valorCouvertCalculado : 0.0);
+    
+    // Se não há itens nem couvert, o total deve ser 0 (ignorar taxas residuais)
+    if (totalItensFiltered <= 0.01 && !temConsumoCouvert) {
+      return 0.0;
+    }
     
     // Adicionar garçom se não foi retirado (10% apenas dos itens, sem couvert)
-    if (!garcomRetirado && valorGarcom != null) {
-      return totalComCouvert + valorGarcom!;
+    if (!garcomRetirado) {
+      final vGarcom = valorGarcom ?? valorGarcomCalculado;
+      if (vGarcom > 0.01) {
+        return totalComCouvert + vGarcom;
+      }
     }
     
     return totalComCouvert;
   }
   
-  // Calcula o valor do garçom (10% apenas dos itens, SEM couvert)
+  // Calcula o valor do garçom (10% apenas dos itens, SEM couvert e considerando produtos com garçom habilitado)
   double get valorGarcomCalculado {
     final totalItens = itens
-        .where((item) => item.status != StatusItem.cancelado)
-        .fold(0.0, (sum, item) => sum + (item.preco * item.quantidade));
+        .where((item) => item.status != StatusItem.cancelado && item.cobrarGarcom != false)
+        .fold(0.0, (sum, item) => sum + item.subtotal);
     return totalItens * 0.10; // 10% apenas dos itens (sem couvert)
+  }
+
+  // Alias para valor do garçom (taxa de serviço) para uso em relatórios e histórico
+  double get valorTaxaServicoCalculado {
+    if (garcomRetirado) return 0.0;
+    
+    // Se não há itens, a taxa de serviço deve ser 0
+    final totalItensFiltered = itens
+        .where((item) => item.status != StatusItem.cancelado)
+        .fold(0.0, (sum, item) => sum + item.subtotal);
+    
+    if (totalItensFiltered <= 0.01) return 0.0;
+    
+    return valorGarcom ?? valorGarcomCalculado;
   }
 
   // Itens pendentes
@@ -310,10 +367,13 @@ class MesaComanda {
   // IMPORTANTE: Não permitir saldo negativo quando não há itens
   double get totalPendente {
     final pendente = totalCalculado - totalPago;
-    // Se não há itens e não há couvert, o pendente deve ser 0 (não negativo)
-    if (itens.isEmpty && valorCouvertCalculado <= 0) {
+    
+    // Se não há itens e nem couvert (considerando se tem pessoas), o pendente deve ser 0 (não negativo)
+    final temConsumoCouvert = (quantidadePessoasCouvert ?? 0) > 0 && (valorCouvertPorPessoa ?? 0) > 0;
+    if (itens.isEmpty && !temConsumoCouvert) {
       return 0.0;
     }
+    
     return pendente < 0 ? 0.0 : pendente;
   }
 
@@ -334,18 +394,20 @@ class MesaComanda {
     return itens.where((item) => itensPagos.contains(item.id)).toList();
   }
 
+  static const Object _sentinel = Object();
+
   MesaComanda copyWith({
     String? id,
     TipoControle? tipo,
     String? numero,
-    String? clienteId,
-    String? clienteNome,
-    String? mesaId,
+    Object? clienteId = _sentinel,
+    Object? clienteNome = _sentinel,
+    Object? mesaId = _sentinel,
     List<ItemMesaComanda>? itens,
     DateTime? dataAbertura,
-    DateTime? dataFechamento,
+    Object? dataFechamento = _sentinel,
     String? status,
-    String? observacao,
+    Object? observacao = _sentinel,
     double? total,
     List<RegistroPagamento>? historicoPagamentos,
     List<String>? itensPagos,
@@ -354,24 +416,25 @@ class MesaComanda {
     DateTime? updatedAt,
     String? usuarioCriou,
     String? usuarioModificou,
-    double? valorCouvert,
-    int? quantidadePessoasCouvert,
-    double? valorCouvertPorPessoa,
-    double? valorGarcom,
+    Object? valorCouvert = _sentinel,
+    Object? quantidadePessoasCouvert = _sentinel,
+    Object? valorCouvertPorPessoa = _sentinel,
+    Object? nomeQuemPagouCouvert = _sentinel,
+    Object? valorGarcom = _sentinel,
     bool? garcomRetirado,
   }) {
     return MesaComanda(
       id: id ?? this.id,
       tipo: tipo ?? this.tipo,
       numero: numero ?? this.numero,
-      clienteId: clienteId ?? this.clienteId,
-      clienteNome: clienteNome ?? this.clienteNome,
-      mesaId: mesaId ?? this.mesaId,
+      clienteId: (clienteId == _sentinel) ? this.clienteId : (clienteId as String?),
+      clienteNome: (clienteNome == _sentinel) ? this.clienteNome : (clienteNome as String?),
+      mesaId: (mesaId == _sentinel) ? this.mesaId : (mesaId as String?),
       itens: itens ?? this.itens,
       dataAbertura: dataAbertura ?? this.dataAbertura,
-      dataFechamento: dataFechamento ?? this.dataFechamento,
+      dataFechamento: (dataFechamento == _sentinel) ? this.dataFechamento : (dataFechamento as DateTime?),
       status: status ?? this.status,
-      observacao: observacao ?? this.observacao,
+      observacao: (observacao == _sentinel) ? this.observacao : (observacao as String?),
       total: total ?? this.total,
       historicoPagamentos: historicoPagamentos ?? this.historicoPagamentos,
       itensPagos: itensPagos ?? this.itensPagos,
@@ -380,10 +443,11 @@ class MesaComanda {
       updatedAt: updatedAt ?? DateTime.now(),
       usuarioCriou: usuarioCriou ?? this.usuarioCriou,
       usuarioModificou: usuarioModificou ?? this.usuarioModificou,
-      valorCouvert: valorCouvert ?? this.valorCouvert,
-      quantidadePessoasCouvert: quantidadePessoasCouvert ?? this.quantidadePessoasCouvert,
-      valorCouvertPorPessoa: valorCouvertPorPessoa ?? this.valorCouvertPorPessoa,
-      valorGarcom: valorGarcom ?? this.valorGarcom,
+      valorCouvert: (valorCouvert == _sentinel) ? this.valorCouvert : (valorCouvert as double?),
+      quantidadePessoasCouvert: (quantidadePessoasCouvert == _sentinel) ? this.quantidadePessoasCouvert : (quantidadePessoasCouvert as int?),
+      valorCouvertPorPessoa: (valorCouvertPorPessoa == _sentinel) ? this.valorCouvertPorPessoa : (valorCouvertPorPessoa as double?),
+      nomeQuemPagouCouvert: (nomeQuemPagouCouvert == _sentinel) ? this.nomeQuemPagouCouvert : (nomeQuemPagouCouvert as String?),
+      valorGarcom: (valorGarcom == _sentinel) ? this.valorGarcom : (valorGarcom as double?),
       garcomRetirado: garcomRetirado ?? this.garcomRetirado,
     );
   }
@@ -393,72 +457,83 @@ class MesaComanda {
       'id': id,
       'tipo': tipo.toString().split('.').last,
       'numero': numero,
-      'clienteId': clienteId,
-      'clienteNome': clienteNome,
-      'mesaId': mesaId,
+      'cliente_id': clienteId,
+      'cliente_nome': clienteNome,
+      'mesa_id': mesaId,
       'itens': itens.map((i) => i.toMap()).toList(),
-      'dataAbertura': dataAbertura.toIso8601String(),
-      'dataFechamento': dataFechamento?.toIso8601String(),
+      'data_abertura': dataAbertura.toIso8601String(),
+      'data_fechamento': dataFechamento?.toIso8601String(),
       'status': status,
       'observacao': observacao,
       'total': total,
-      'historicoPagamentos': historicoPagamentos.map((p) => p.toMap()).toList(),
-      'itensPagos': itensPagos,
-      'couvertPago': couvertPago,
-      'createdAt': createdAt.toIso8601String(),
-      'updatedAt': updatedAt.toIso8601String(),
-      'usuarioCriou': usuarioCriou,
-      'usuarioModificou': usuarioModificou,
-      'valorCouvert': valorCouvert,
-      'quantidadePessoasCouvert': quantidadePessoasCouvert,
-      'valorCouvertPorPessoa': valorCouvertPorPessoa,
-      'valorGarcom': valorGarcom,
-      'garcomRetirado': garcomRetirado,
+      'historico_pagamentos': historicoPagamentos.map((p) => p.toMap()).toList(),
+      'itens_pagos': itensPagos,
+      'couvert_pago': couvertPago,
+      'created_at': createdAt.toIso8601String(),
+      'updated_at': updatedAt.toIso8601String(),
+      'usuario_criou': usuarioCriou,
+      'usuario_modificou': usuarioModificou,
+      'valor_couvert': valorCouvert,
+      'quantidade_pessoas_couvert': quantidadePessoasCouvert,
+      'valor_couvert_por_pessoa': valorCouvertPorPessoa,
+      'nome_quem_pagou_couvert': nomeQuemPagouCouvert,
+      'valor_garcom': valorGarcom,
+      'garcom_retirado': garcomRetirado,
     };
   }
 
   factory MesaComanda.fromMap(Map<String, dynamic> map) {
+    double? parseDouble(dynamic value) {
+      if (value == null) return null;
+      if (value is num) return value.toDouble();
+      if (value is String) return double.tryParse(value);
+      return null;
+    }
+
     return MesaComanda(
-      id: map['id'] as String,
+      id: map['id']?.toString() ?? '',
       tipo: TipoControle.values.firstWhere(
         (e) => e.toString().split('.').last == map['tipo'],
         orElse: () => TipoControle.mesa,
       ),
       numero: map['numero'] as String,
-      clienteId: map['clienteId'] as String?,
-      clienteNome: map['clienteNome'] as String?,
-      mesaId: map['mesaId'] as String?,
+      clienteId: (map['cliente_id'] ?? map['clienteId']) as String?,
+      clienteNome: (map['cliente_nome'] ?? map['clienteNome']) as String?,
+      mesaId: (map['mesa_id'] ?? map['mesaId']) as String?,
       itens: (map['itens'] as List<dynamic>?)
               ?.map((i) => ItemMesaComanda.fromMap(i as Map<String, dynamic>))
               .toList() ??
           [],
-      dataAbertura: DateTime.parse(map['dataAbertura'] as String),
-      dataFechamento: map['dataFechamento'] != null
-          ? DateTime.parse(map['dataFechamento'] as String)
+      dataAbertura: DateParser.parse(map['data_abertura'] ?? map['dataAbertura']),
+      dataFechamento: (map['data_fechamento'] ?? map['dataFechamento']) != null
+          ? DateParser.parse(map['data_fechamento'] ?? map['dataFechamento'])
           : null,
       status: map['status'] as String? ?? 'Aberta',
       observacao: map['observacao'] as String?,
-      total: (map['total'] as num?)?.toDouble() ?? 0.0,
-      historicoPagamentos: (map['historicoPagamentos'] as List<dynamic>?)
-              ?.map((p) => RegistroPagamento.fromMap(p as Map<String, dynamic>))
-              .toList() ??
-          [],
-      itensPagos: (map['itensPagos'] as List<dynamic>?)
-              ?.map((i) => i as String)
-              .toList() ??
-          [],
-      couvertPago: (map['couvertPago'] as num?)?.toDouble() ?? 0.0,
-      createdAt: DateTime.parse(map['createdAt'] as String),
-      updatedAt: DateTime.parse(map['updatedAt'] as String),
-      usuarioCriou: map['usuarioCriou'] as String?,
-      usuarioModificou: map['usuarioModificou'] as String?,
-      valorCouvert: (map['valorCouvert'] as num?)?.toDouble(),
-      quantidadePessoasCouvert: map['quantidadePessoasCouvert'] != null 
-          ? (map['quantidadePessoasCouvert'] as num).toInt()
+      total: parseDouble(map['total']) ?? 0.0,
+      historicoPagamentos: ((map['historico_pagamentos'] ?? map['historicoPagamentos']) != null && (map['historico_pagamentos'] ?? map['historicoPagamentos']) is List)
+              ? ((map['historico_pagamentos'] ?? map['historicoPagamentos']) as List<dynamic>)
+                  .map((p) => RegistroPagamento.fromMap(p as Map<String, dynamic>))
+                  .toList()
+              : [],
+      itensPagos: ((map['itens_pagos'] ?? map['itensPagos']) != null && (map['itens_pagos'] ?? map['itensPagos']) is List)
+              ? ((map['itens_pagos'] ?? map['itensPagos']) as List<dynamic>)
+                  .map((i) => i as String)
+                  .toList()
+              : [],
+      couvertPago: parseDouble(map['couvert_pago'] ?? map['couvertPago']) ?? 0.0,
+      createdAt: DateParser.parse(map['created_at'] ?? map['createdAt']),
+      updatedAt: DateParser.parse(map['updated_at'] ?? map['updatedAt']),
+      usuarioCriou: (map['usuario_criou'] ?? map['usuarioCriou']) as String?,
+      usuarioModificou: (map['usuario_modificou'] ?? map['usuarioModificou']) as String?,
+      valorCouvert: parseDouble(map['valor_couvert'] ?? map['valorCouvert']),
+      quantidadePessoasCouvert: (map['quantidade_pessoas_couvert'] ?? map['quantidadePessoasCouvert']) != null 
+          ? ((map['quantidade_pessoas_couvert'] ?? map['quantidadePessoasCouvert']) as num).toInt()
           : null,
-      valorCouvertPorPessoa: (map['valorCouvertPorPessoa'] as num?)?.toDouble(),
-      valorGarcom: (map['valorGarcom'] as num?)?.toDouble(),
-      garcomRetirado: map['garcomRetirado'] as bool? ?? false,
+      valorCouvertPorPessoa: parseDouble(map['valor_couvert_por_pessoa'] ?? map['valorCouvertPorPessoa']),
+      nomeQuemPagouCouvert: (map['nome_quem_pagou_couvert'] ?? map['nomeQuemPagouCouvert']) as String?,
+      valorGarcom: parseDouble(map['valor_garcom'] ?? map['valorGarcom']),
+      garcomRetirado: (map['garcom_retirado'] ?? map['garcomRetirado']) as bool? ?? false,
     );
   }
 }

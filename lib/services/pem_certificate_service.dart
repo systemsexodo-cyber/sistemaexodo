@@ -48,7 +48,7 @@ class PEMCertificateService {
       debugPrint('>>> [PEM] Extraindo chave privada...');
       RSAPrivateKey privateKey;
       try {
-        final key = _extrairChavePrivada(pemContent);
+        final key = extrairChavePrivada(pemContent);
         if (key == null) {
           throw Exception('Não foi possível extrair a chave privada do arquivo PEM.');
         }
@@ -88,7 +88,7 @@ class PEMCertificateService {
   }
   
   /// Extrai chave privada RSA do conteúdo PEM
-  static RSAPrivateKey? _extrairChavePrivada(String pemContent) {
+  static RSAPrivateKey? extrairChavePrivada(String pemContent) {
     try {
       debugPrint('>>> [PEM] Extraindo chave privada...');
       

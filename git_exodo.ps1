@@ -22,7 +22,7 @@ function Get-CommitMessage {
     Write-Host "1. Feat | 2. Fix | 3. Docs | 4. Style | 5. Refactor | 6. Perf | 7. Chore"
     $typeChoice = Read-Host "Escolha o numero (Padrao: 7)"
     
-    $prefix = switch($typeChoice) {
+    $prefix = switch ($typeChoice) {
         "1" { "feat: " }
         "2" { "fix: " }
         "3" { "docs: " }
@@ -48,10 +48,14 @@ function Invoke-GitAutoPush {
     }
 
     Write-Host ">>> Rodando Flutter Analyze..." -ForegroundColor Yellow
-    flutter analyze
+    flutter analyze --no-fatal-infos
     if ($LASTEXITCODE -ne 0) {
-        $confirm = Read-Host "Foram encontrados avisos. Continuar mesmo assim? (s/N)"
-        if ($confirm -ne 's') { return }
+        Write-Host "!!! Foram encontrados problemas no codigo (Erros ou Advertencias)." -ForegroundColor Red
+        $confirm = Read-Host "Deseja continuar com o envio mesmo assim? (s/N)"
+        if ($confirm -ne 's') { 
+            Write-Host "Envio cancelado. Corrija os erros e tente novamente." -ForegroundColor Yellow
+            return 
+        }
     }
 
     git add .
@@ -60,7 +64,7 @@ function Invoke-GitAutoPush {
     
     $branch = git branch --show-current
     Write-Host ">>> Enviando para origin/$branch..." -ForegroundColor Cyan
-    git push origin $branch
+    git push -u origin $branch
     if ($LASTEXITCODE -eq 0) { Write-Host "v SUCESSO!" -ForegroundColor Green }
 }
 
@@ -86,11 +90,31 @@ while (-not $exit) {
         }
         "6" {
             $current = git branch --show-current
+            if ($current -eq "main") {
+                Write-Host "Voce ja esta na branch main!" -ForegroundColor Yellow
+                return
+            }
+            
+            Write-Host ">>> Verificando alteracoes pendentes..." -ForegroundColor Yellow
+            $status = git status --porcelain
+            if ($status) {
+                Write-Host "!!! Voce tem alteracoes nao salvas. Salve-as (Opcao 1) antes de fazer o deploy." -ForegroundColor Red
+                return
+            }
+
+            Write-Host ">>> Iniciando Deploy (Merge para main)..." -ForegroundColor Magenta
             git checkout main
-            git merge $current
-            git push origin main
+            git pull origin main
+            git merge $current --no-edit
+            if ($LASTEXITCODE -eq 0) {
+                git push origin main
+                Write-Host "v SUCESSO! Código enviado para branch main. O deploy automático começará agora no GitHub." -ForegroundColor Green
+            }
+            else {
+                Write-Host "!!! Houve um CONFLITO no merge. Resolva manualmente ou peça ajuda." -ForegroundColor Red
+                git merge --abort
+            }
             git checkout $current
-            Write-Host "v Deploy pronto!" -ForegroundColor Green
         }
         "q" { $exit = $true }
         "Q" { $exit = $true }

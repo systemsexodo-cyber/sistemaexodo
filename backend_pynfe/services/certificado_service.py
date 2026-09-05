@@ -8,6 +8,7 @@ import os
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.backends import default_backend
+from datetime import datetime
 
 
 class CertificadoService:
@@ -184,7 +185,6 @@ class CertificadoService:
         try:
             certificado_info = self.carregar_certificado(certificado_base64, senha)
             
-            from datetime import datetime
             agora = datetime.now()
             validade = datetime.fromisoformat(certificado_info['validade'])
             

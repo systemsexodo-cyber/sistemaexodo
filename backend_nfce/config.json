@@ -1,0 +1,20 @@
+{
+    "certificado": "certificado_28e6a294.pfx",
+    "senha": "SUA_SENHA_AQUI",
+    "ambiente": 2,
+    "uf": "PR",
+    "serie": 1,
+    "emitente": {
+        "cnpj": "12345678000199",
+        "razao_social": "Sua Empresa LTDA",
+        "nome_fantasia": "Nome da Loja",
+        "inscricao_estadual": "123456789",
+        "codigo_municipio": "4106902",
+        "municipio": "Curitiba",
+        "uf": "PR",
+        "logradouro": "Rua Exemplo",
+        "numero": "100",
+        "bairro": "Centro",
+        "cep": "80000000"
+    }
+}

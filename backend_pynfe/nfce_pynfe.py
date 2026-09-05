@@ -98,36 +98,26 @@ class NFCePyNFe:
             endereco_telefone=empresa_data.get('telefone', '').replace('(', '').replace(')', '').replace('-', '').replace(' ', ''),
         )
     
-    def _criar_cliente(self, consumidor: Optional[Dict]) -> Cliente:
+    def _criar_cliente(self, consumidor: Optional[Dict]) -> Optional[Cliente]:
         """Cria objeto Cliente do PyNFe"""
         if consumidor and consumidor.get('cpf'):
-            return Cliente(
-                razao_social=consumidor.get('nome', 'CONSUMIDOR FINAL'),
-                tipo_documento='CPF',
-                numero_documento=consumidor.get('cpf', '').replace('.', '').replace('-', ''),
-                indicador_ie=9,  # 9=Não contribuinte
-                endereco_logradouro='',
-                endereco_numero='0',
-                endereco_bairro='',
-                endereco_municipio='',
-                endereco_uf='',
-                endereco_cep='',
-                endereco_pais=CODIGO_BRASIL,
-            )
-        else:
-            return Cliente(
-                razao_social='CONSUMIDOR FINAL',
-                tipo_documento='CPF',
-                numero_documento='00000000000',
-                indicador_ie=9,
-                endereco_logradouro='',
-                endereco_numero='0',
-                endereco_bairro='',
-                endereco_municipio='',
-                endereco_uf='',
-                endereco_cep='',
-                endereco_pais=CODIGO_BRASIL,
-            )
+            cpf = consumidor.get('cpf', '').replace('.', '').replace('-', '')
+            if len(cpf) == 11 and cpf != '00000000000':
+                return Cliente(
+                    razao_social=consumidor.get('nome', 'CONSUMIDOR FINAL'),
+                    tipo_documento='CPF',
+                    numero_documento=cpf,
+                    indicador_ie=9,  # 9=Não contribuinte
+                    endereco_logradouro='RUA CENTRAL',
+                    endereco_numero='1',
+                    endereco_bairro='CENTRO',
+                    endereco_municipio='Sao Paulo',
+                    endereco_uf='SP',
+                    endereco_cep='01001000',
+                    endereco_pais=CODIGO_BRASIL,
+                )
+        # Se não tiver CPF válido, não criar cliente para NFC-e (anônimo)
+        return None
     
     def _criar_notafiscal(
         self,
@@ -322,6 +312,26 @@ class NFCePyNFe:
                 xml_assinado_nfe = xml_assinado[0]
             else:
                 xml_assinado_nfe = xml_assinado
+
+            # 6.5 Adicionar QR Code
+            print("\n[6.5/7] Gerando QR Code...")
+            try:
+                from pynfe.processamento.serializacao import SerializacaoQrcode
+                token = empresa_data.get('idToken', '000001')
+                csc = empresa_data.get('csc', '0123456789')
+                if 'idToken' not in empresa_data:
+                    print(f"⚠️  Aviso: idToken não fornecido. Usando default {token}")
+                if 'csc' not in empresa_data:
+                    print(f"⚠️  Aviso: CSC não fornecido. Usando default {csc}")
+                
+                # O método gerar_qrcode vai modificar xml_assinado_nfe in-place
+                xml_assinado_nfe, qrcode_url = SerializacaoQrcode().gerar_qrcode(
+                    token=token, csc=csc, xml=xml_assinado_nfe, return_qr=True, online=True
+                )
+                print("✅ QR Code gerado e anexado ao XML")
+            except Exception as e:
+                print(f"⚠️  Erro ao gerar QR Code: {e}")
+            
             
             # 7. Enviar para SEFAZ
             print("\n[7/7] Enviando para SEFAZ...")

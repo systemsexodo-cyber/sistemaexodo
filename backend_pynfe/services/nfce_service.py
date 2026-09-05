@@ -20,8 +20,9 @@ try:
     from nfelib.nfe.bindings.v4_0 import nfe_v4_00 as nfe
     import requests
     from signxml import XMLSigner
-    from cryptography.hazmat.primitives.serialization import pkcs12
+    from cryptography.hazmat.primitives.serialization import pkcs12, Encoding, PrivateFormat, NoEncryption
     from cryptography.hazmat.backends import default_backend
+    import tempfile
     NFELIB_DISPONIVEL = True
     print("[OK] nfelib e dependencias importadas com sucesso!")
 except ImportError as e:
@@ -4546,6 +4547,171 @@ class NFCeService:
                 'error': str(e)
             }
     
+    def cancelar_nfce(self, data):
+        """
+        Cancela uma NFC-e autorizada
+        
+        Args:
+            data: Dicionário com chave de acesso, protocolo, justificativa e dados da empresa
+            
+        Returns:
+            Dicionário com resultado do cancelamento
+        """
+        try:
+            chave_acesso = data.get('chave_acesso')
+            protocolo = data.get('protocolo')
+            justificativa = data.get('justificativa', 'Cancelamento por erro de emissao ou devolucao de mercadoria')
+            empresa_data = data.get('empresa', {})
+            
+            print(f'>>> [PyNFe] Iniciando cancelamento da NFC-e: {chave_acesso}')
+            
+            # 1. Carregar certificado
+            certificado = self.certificado_service.carregar_certificado(
+                empresa_data['certificado_base64'],
+                empresa_data['senha_certificado']
+            )
+            
+            # 2. Criar comunicação com SEFAZ
+            from pynfe.processamento.comunicacao import ComunicacaoSefaz
+            comunicacao = ComunicacaoSefaz(
+                uf=empresa_data.get('uf', 'SP'),
+                certificado=certificado['arquivo'],
+                certificado_senha=empresa_data['senha_certificado'],
+                homologacao=empresa_data.get('ambiente_homologacao', True)
+            )
+            
+            # 3. Obter protocolo se não fornecido (via consulta)
+            if not protocolo:
+                print(f'>>> [PyNFe] Protocolo não fornecido, consultando nota...')
+                # Tenta consultar status para pegar protocolo
+                # nota: a consulta da SEFAZ retorna o protocolo de autorização
+                resposta_consulta = comunicacao.consulta_nota(modelo="nfce", chave=chave_acesso)
+                if resposta_consulta.status_code == 200:
+                    dados_consulta = self._processar_resposta_consulta_detalhada(resposta_consulta.text)
+                    protocolo = dados_consulta.get('protocolo')
+                    print(f'>>> [PyNFe] Protocolo obtido via consulta: {protocolo}')
+
+            if not protocolo:
+                return {
+                    'success': False,
+                    'error': 'Protocolo de autorização não encontrado. A nota pode não estar autorizada.'
+                }
+
+            # 4. Criar entidade de cancelamento
+            from pynfe.entidades.evento import EventoCancelarNota
+            from datetime import datetime
+            
+            print(f'>>> [PyNFe] Criando evento de cancelamento...')
+            evento = EventoCancelarNota()
+            evento.chave = chave_acesso
+            evento.protocolo = protocolo
+            evento.justificativa = justificativa
+            evento.data_emissao = datetime.now()
+            evento.uf = empresa_data.get('uf', 'SP')
+            evento.cnpj = str(empresa_data.get('cnpj', '')).replace('.', '').replace('/', '').replace('-', '').replace(' ', '')
+            
+            # 5. Serializar evento (sem assinatura ainda)
+            from pynfe.processamento.serializacao import SerializacaoXML
+            serializador = SerializacaoXML(None, homologacao=empresa_data.get('ambiente_homologacao', True))
+            xml_evento = serializador.serializar_evento(evento)
+            
+            # 6. Assinar o evento
+            from pynfe.processamento.assinatura import AssinaturaA1
+            assinador = AssinaturaA1(certificado['arquivo'], empresa_data['senha_certificado'])
+            xml_assinado = assinador.assinar(xml_evento)
+            
+            # 7. Enviar evento para SEFAZ
+            modelo = "nfce"
+            print(f'>>> [PyNFe] Enviando evento para SEFAZ (modelo {modelo})...')
+            resposta = comunicacao.evento(modelo=modelo, evento=xml_assinado)
+            
+            if resposta.status_code == 200:
+                print(f'>>> [PyNFe] Resposta SEFAZ recebida: {resposta.status_code}')
+                resultado = self._processar_resposta_evento(resposta.text)
+                
+                # 135 = Evento registrado e vinculado a NF-e
+                return {
+                    'success': resultado.get('cStat') == '135',
+                    'data': resultado,
+                    'error': resultado.get('xMotivo') if resultado.get('cStat') != '135' else None
+                }
+            else:
+                print(f'>>> [PyNFe] ❌ Erro na comunicação com SEFAZ: {resposta.status_code}')
+                return {
+                    'success': False,
+                    'error': f'Erro na comunicação com SEFAZ: {resposta.status_code}',
+                    'details': resposta.text
+                }
+                
+        except Exception as e:
+            print(f'>>> [PyNFe] ❌ Erro ao cancelar NFC-e: {e}')
+            import traceback
+            traceback.print_exc()
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    def _processar_resposta_evento(self, xml_text):
+        """Processa o XML de retorno do evento (retEnvEvento)"""
+        try:
+            from lxml import etree
+            # Limpar declaração XML bugada do requests se houver
+            if xml_text.startswith('<?xml'):
+                xml_text = xml_text[xml_text.find('?>')+2:].strip()
+                
+            root = etree.fromstring(xml_text.encode('utf-8'))
+            ns = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
+            
+            # Extrair infEvento
+            inf_evento = root.xpath('//ns:infEvento', namespaces=ns)
+            if inf_evento:
+                inf = inf_evento[0]
+                return {
+                    'cStat': inf.xpath('ns:cStat', namespaces=ns)[0].text if inf.xpath('ns:cStat', namespaces=ns) else '',
+                    'xMotivo': inf.xpath('ns:xMotivo', namespaces=ns)[0].text if inf.xpath('ns:xMotivo', namespaces=ns) else '',
+                    'chNFe': inf.xpath('ns:chNFe', namespaces=ns)[0].text if inf.xpath('ns:chNFe', namespaces=ns) else '',
+                    'nProt': inf.xpath('ns:nProt', namespaces=ns)[0].text if inf.xpath('ns:nProt', namespaces=ns) else '',
+                    'dhRegEvento': inf.xpath('ns:dhRegEvento', namespaces=ns)[0].text if inf.xpath('ns:dhRegEvento', namespaces=ns) else '',
+                    'tpEvento': inf.xpath('ns:tpEvento', namespaces=ns)[0].text if inf.xpath('ns:tpEvento', namespaces=ns) else ''
+                }
+            
+            # Se não encontrar infEvento, tentar cStat do lote
+            c_stat = root.xpath('//ns:cStat', namespaces=ns)
+            x_motivo = root.xpath('//ns:xMotivo', namespaces=ns)
+            
+            return {
+                'cStat': c_stat[0].text if c_stat else '',
+                'xMotivo': x_motivo[0].text if x_motivo else 'Erro desconhecido ao processar resposta do evento lot.'
+            }
+        except Exception as e:
+            print(f'>>> [PyNFe] ❌ Erro ao processar XML de resposta do evento: {e}')
+            return {
+                'success': False,
+                'error': f'Erro ao processar resposta: {str(e)}'
+            }
+
+    def _processar_resposta_consulta_detalhada(self, xml_text):
+        """Processa o XML de retorno da consulta (retConsSitNFe) para extrair o protocolo"""
+        try:
+            from lxml import etree
+            root = etree.fromstring(xml_text.encode('utf-8'))
+            ns = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
+            
+            inf_prot = root.xpath('//ns:infProt', namespaces=ns)
+            if inf_prot:
+                inf = inf_prot[0]
+                return {
+                    'cStat': inf.xpath('ns:cStat', namespaces=ns)[0].text if inf.xpath('ns:cStat', namespaces=ns) else '',
+                    'xMotivo': inf.xpath('ns:xMotivo', namespaces=ns)[0].text if inf.xpath('ns:xMotivo', namespaces=ns) else '',
+                    'protocolo': inf.xpath('ns:nProt', namespaces=ns)[0].text if inf.xpath('ns:nProt', namespaces=ns) else '',
+                    'chave': inf.xpath('ns:chNFe', namespaces=ns)[0].text if inf.xpath('ns:chNFe', namespaces=ns) else ''
+                }
+            return {}
+        except Exception as e:
+            print(f'>>> [PyNFe] ❌ Erro ao processar XML de resposta da consulta: {e}')
+            return {}
+
     def _criar_emitente(self, empresa_data):
         """Cria objeto Emitente"""
         from pynfe.utils import obter_codigo_por_municipio
@@ -5957,9 +6123,6 @@ class NFCeService:
                 if os.path.exists(cert_path):
                     try:
                         # Carregar certificado PKCS12
-                        from cryptography.hazmat.primitives.serialization import pkcs12
-                        from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption
-                        import tempfile
                         
                         with open(cert_path, 'rb') as f:
                             pfx_data = f.read()
