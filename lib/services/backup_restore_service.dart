@@ -567,12 +567,13 @@ class BackupRestoreService {
 
       debugPrint('>>> [BackupRestore] 📤 Enviando dump para nuvem: $fileName (${(fileSize / 1024 / 1024).toStringAsFixed(1)} MB)');
 
-      // Usar bucket 'dumps' separado de 'backups'
-      const bucketName = 'dumps';
+      // Usar bucket 'backups' existente com subpasta 'dumps'
+      const bucketName = 'backups';
       final now = DateTime.now();
       final dataStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
       final horaStr = '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}';
-      final storagePath = '$empresaId/${fileName.replaceAll('.dump', '')}_$dataStr$horaStr.dump';
+      final cleanName = fileName.replaceAll(RegExp(r'[^\w.\-]'), '_');
+      final storagePath = 'dumps/$empresaId/${cleanName.replaceAll('.dump', '')}_$dataStr$horaStr.dump';
 
       try {
         await SupabaseService.instance.client.storage
@@ -580,20 +581,7 @@ class BackupRestoreService {
             .uploadBinary(storagePath, fileBytes,
                 fileOptions: const FileOptions(upsert: true));
       } catch (e) {
-        // Bucket não existe, tentar criar
-        debugPrint('>>> [BackupRestore] ⚠️ Tentando criar bucket "$bucketName"...');
-        try {
-          await SupabaseService.instance.client.storage.createBucket(
-            bucketName,
-            const BucketOptions(public: false),
-          );
-          await SupabaseService.instance.client.storage
-              .from(bucketName)
-              .uploadBinary(storagePath, fileBytes,
-                  fileOptions: const FileOptions(upsert: true));
-        } catch (e2) {
-          return (false, 'Erro ao criar bucket ou fazer upload: $e2');
-        }
+        return (false, 'Erro ao enviar dump: $e');
       }
 
       debugPrint('>>> [BackupRestore] ✅ Dump enviado para nuvem: $storagePath');
@@ -610,8 +598,8 @@ class BackupRestoreService {
       final empresaId = _dataService.currentEmpresaId;
       if (empresaId == null || !SupabaseService.isAvailable) return [];
 
-      const bucketName = 'dumps';
-      final prefix = '$empresaId/';
+      const bucketName = 'backups';
+      final prefix = 'dumps/$empresaId/';
 
       final files = await SupabaseService.instance.client.storage
           .from(bucketName)
@@ -630,7 +618,6 @@ class BackupRestoreService {
   }
 
   /// Faz download de um dump da nuvem e salva localmente
-  /// Retorna (sucesso, mensagem, caminho_local)
   Future<(bool, String, String?)> downloadDumpDaNuvem(String storagePath) async {
     try {
       if (!SupabaseService.isAvailable) return (false, 'Supabase não disponível', null);
@@ -638,7 +625,7 @@ class BackupRestoreService {
       debugPrint('>>> [BackupRestore] 📥 Baixando dump da nuvem: $storagePath');
 
       final bytes = await SupabaseService.instance.client.storage
-          .from('dumps')
+          .from('backups')
           .download(storagePath);
 
       // Salvar em C:\ExodoBackups\{empresaId}\
@@ -662,7 +649,7 @@ class BackupRestoreService {
     try {
       if (!SupabaseService.isAvailable) return false;
       await SupabaseService.instance.client.storage
-          .from('dumps')
+          .from('backups')
           .remove([storagePath]);
       debugPrint('>>> [BackupRestore] 🗑️ Dump removido da nuvem: $storagePath');
       return true;
