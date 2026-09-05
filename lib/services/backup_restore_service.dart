@@ -567,8 +567,8 @@ class BackupRestoreService {
 
       debugPrint('>>> [BackupRestore] 📤 Enviando dump para nuvem: $fileName (${(fileSize / 1024 / 1024).toStringAsFixed(1)} MB)');
 
-      // Usar bucket 'backups' existente com subpasta 'dumps'
-      const bucketName = 'backups';
+      // Usar bucket 'imagens' que já existe no Supabase
+      const bucketName = 'imagens';
       final now = DateTime.now();
       final dataStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
       final horaStr = '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}';
@@ -598,7 +598,7 @@ class BackupRestoreService {
       final empresaId = _dataService.currentEmpresaId;
       if (empresaId == null || !SupabaseService.isAvailable) return [];
 
-      const bucketName = 'backups';
+      const bucketName = 'imagens';
       final prefix = 'dumps/$empresaId/';
 
       final files = await SupabaseService.instance.client.storage
@@ -625,7 +625,7 @@ class BackupRestoreService {
       debugPrint('>>> [BackupRestore] 📥 Baixando dump da nuvem: $storagePath');
 
       final bytes = await SupabaseService.instance.client.storage
-          .from('backups')
+          .from('imagens')
           .download(storagePath);
 
       // Salvar em C:\ExodoBackups\{empresaId}\
@@ -649,7 +649,7 @@ class BackupRestoreService {
     try {
       if (!SupabaseService.isAvailable) return false;
       await SupabaseService.instance.client.storage
-          .from('backups')
+          .from('imagens')
           .remove([storagePath]);
       debugPrint('>>> [BackupRestore] 🗑️ Dump removido da nuvem: $storagePath');
       return true;
