@@ -1,2 +1,4 @@
 hmrzbdKJB6Bc4Vcr
 senha supabase
+
+senha do postgres local ex@#$

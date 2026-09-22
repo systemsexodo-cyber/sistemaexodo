@@ -141,6 +141,11 @@ CHAVE_CACHE_EMPRESA_ATIVA = 'exodo_empresa_ativa'
 CHAVE_CTRL_ULTIMA_EMPRESA = 'ultima_empresa_ativa'
 CHAVE_CTRL_LIMPAR_OUTRAS  = 'limpar_outras_empresas_local'
 
+# Tabelas que NÃO pertencem a uma empresa só (cadastro/autenticação). Nunca
+# podem ser filtradas/limpas por `empresa_id`: a lista de empresas e de
+# usuários é global para o app inteiro.
+TABELAS_GLOBAIS = {'empresas', 'usuarios'}
+
 _EPOCH = "1970-01-01T00:00:00+00:00"
 
 
@@ -1052,6 +1057,15 @@ def remover_dados_de_outras_empresas(conn, empresa_ativa, tabelas):
     tem_log = _tem_tabela_log(conn)
     total_geral = 0
     for tabela in tabelas:
+        # ⛔ TABELAS GLOBAIS: `empresas` e `usuarios` NÃO pertencem a uma empresa
+        # só. Como `empresas` tem a coluna `empresa_id`, elas caíam aqui e o
+        # DELETE `empresa_id IS DISTINCT FROM <ativa>` levava embora da base
+        # local as empresas que não apontam para a empresa aberta — inclusive
+        # as que têm `empresa_id` NULL. Era isso que fazia a lista de empresas
+        # do app voltar com 2 linhas enquanto a nuvem tem 4, a cada ciclo.
+        # (A nuvem nunca foi tocada: esses DELETEs não entram no log.)
+        if tabela in TABELAS_GLOBAIS:
+            continue
         colunas = _colunas_e_tipos_cache.get(tabela) or {}
         if 'empresa_id' not in colunas:
             continue

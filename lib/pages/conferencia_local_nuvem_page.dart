@@ -15,6 +15,8 @@ class ConferenciaLocalNuvemPage extends StatefulWidget {
     this.carregar,
     this.empresaAberta,
     this.empresaAbertaId,
+    this.planejarEmpresas,
+    this.restaurarEmpresas,
   });
 
   /// Injeção usada pelos testes. Em produção fica nulo e a tela chama
@@ -27,6 +29,11 @@ class ConferenciaLocalNuvemPage extends StatefulWidget {
   /// Id da empresa aberta: só as divergências DELA são corrigidas no botão
   /// sincronizar (a base local guarda somente a empresa aberta).
   final String? empresaAbertaId;
+
+  /// Injeções do botão "restaurar as empresas que faltam no local" (testes).
+  final Future<ResumoEmpresasFaltantes> Function()? planejarEmpresas;
+  final Future<(bool, String, int)> Function({bool simular})?
+      restaurarEmpresas;
 
   @override
   State<ConferenciaLocalNuvemPage> createState() =>
@@ -143,6 +150,162 @@ class _ConferenciaLocalNuvemPageState extends State<ConferenciaLocalNuvemPage> {
         });
       }
     }
+  }
+
+  /// Restaura no banco LOCAL as empresas que existem na nuvem e não existem
+  /// aqui — depois de mostrar um RESUMO e só com a confirmação do usuário.
+  ///
+  /// O botão de sincronizar NÃO faz isso sozinho: `empresas` não tem
+  /// `empresa_id` confiável nos dois bancos, então nenhuma cópia automática
+  /// pode decidir o que é "da empresa aberta". Aqui a decisão é explícita e
+  /// reversível na leitura: só ENTRA o que falta (nada é apagado) e a nuvem
+  /// não é tocada.
+  Future<void> _restaurarEmpresas({bool simular = false}) async {
+    setState(() {
+      _sincronizando = true;
+      _mensagemProgresso = 'Lendo as empresas do banco local e da nuvem...';
+    });
+
+    ResumoEmpresasFaltantes resumo;
+    try {
+      final planejar = widget.planejarEmpresas ??
+          ConferenciaNuvemService.instance.planejarEmpresasFaltantesNoLocal;
+      resumo = await planejar();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _sincronizando = false;
+        _mensagemProgresso = '';
+      });
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: _card,
+          title: const Text('Não foi possível ler as empresas',
+              style: TextStyle(color: Colors.white)),
+          content: Text('$e',
+              style: const TextStyle(color: Colors.white70)),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child:
+                  const Text('Fechar', style: TextStyle(color: Colors.white70)),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _sincronizando = false;
+      _mensagemProgresso = '';
+    });
+
+    // O resumo JÁ é a simulação: é o mesmo texto que a tela mostra antes de
+    // aplicar (aqui nada foi gravado, só lido).
+    if (!resumo.temOQueRestaurar) {
+      await _mostrarResumoEmpresas(
+        titulo: 'Nada a restaurar',
+        texto: resumo.texto,
+        icone: Icons.verified,
+        cor: Colors.greenAccent,
+        botao: null,
+      );
+      return;
+    }
+
+    final confirmar = await _mostrarResumoEmpresas(
+      titulo: '⬇️  Restaurar ${resumo.quantasEntram} empresa(s) no banco local?',
+      texto: resumo.texto,
+      icone: resumo.podeRestaurar
+          ? Icons.download_for_offline_outlined
+          : Icons.block,
+      cor: resumo.podeRestaurar ? Colors.lightBlueAccent : Colors.redAccent,
+      botao: resumo.podeRestaurar
+          ? 'Restaurar ${resumo.quantasEntram}'
+          : null,
+    );
+    if (confirmar != true) return;
+
+    setState(() {
+      _sincronizando = true;
+      _mensagemProgresso = simular
+          ? 'Simulando a restauração das empresas...'
+          : 'Restaurando as empresas no banco local...';
+    });
+    try {
+      final restaurar = widget.restaurarEmpresas ??
+          ConferenciaNuvemService.instance.restaurarEmpresasFaltantesNoLocal;
+      final (ok, msg, _) = await restaurar(simular: simular);
+      if (!mounted) return;
+      await _mostrarResultado(ok, msg);
+      if (!mounted) return;
+      await _conferir();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('❌ Erro: $e'), backgroundColor: Colors.red),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _sincronizando = false;
+          _mensagemProgresso = '';
+        });
+      }
+    }
+  }
+
+  /// Diálogo do resumo (é o que o usuário vê ANTES de aplicar). [botao] nulo =
+  /// só informa (nada a fazer ou restauração bloqueada pela estrutura).
+  Future<bool?> _mostrarResumoEmpresas({
+    required String titulo,
+    required String texto,
+    required IconData icone,
+    required Color cor,
+    required String? botao,
+  }) {
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _card,
+        title: Row(
+          children: [
+            Icon(icone, color: cor),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(titulo,
+                  style: const TextStyle(color: Colors.white, fontSize: 16)),
+            ),
+          ],
+        ),
+        content: SizedBox(
+          width: 640,
+          child: SingleChildScrollView(
+            child: SelectableText(
+              texto,
+              style: const TextStyle(color: Colors.white70, height: 1.4),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar',
+                style: TextStyle(color: Colors.white54)),
+          ),
+          if (botao != null)
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.lightBlueAccent),
+              child: Text(botao, style: const TextStyle(color: Colors.black)),
+            ),
+        ],
+      ),
+    );
   }
 
   /// Confirmação antes de gravar (a simulação não passa por aqui).
@@ -581,6 +744,62 @@ class _ConferenciaLocalNuvemPageState extends State<ConferenciaLocalNuvemPage> {
                 'geralmente falta), então a contagem por empresa não se aplica — mas a '
                 'diferença de TOTAL continua sendo comparada.',
                 style: TextStyle(color: Colors.white38, fontSize: 11),
+              ),
+            ],
+            if (r.comparadasPorTotal.contains('empresas')) ...[
+              const SizedBox(height: 12),
+              const Divider(color: Colors.white12, height: 1),
+              const SizedBox(height: 10),
+              const Text(
+                '🏢  Empresas cadastradas',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                ),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Quando a nuvem tem uma empresa que o banco local não tem, dá '
+                'para trazer só ela para cá. O resumo aparece antes de aplicar, '
+                'nada é apagado ou alterado (só entra o que falta) e a nuvem não '
+                'é tocada.',
+                style: TextStyle(color: Colors.white54, fontSize: 12),
+              ),
+              if (widget.empresaAberta != null) ...[
+                const SizedBox(height: 4),
+                Text(
+                  'Vale para TODAS as empresas, não só a aberta '
+                  '(${widget.empresaAberta}) — a lista de empresas é global no app.',
+                  style: const TextStyle(color: Colors.white38, fontSize: 11),
+                ),
+              ],
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                children: [
+                  ElevatedButton.icon(
+                    onPressed: (_carregando || _sincronizando)
+                        ? null
+                        : () => _restaurarEmpresas(),
+                    icon: const Icon(Icons.download_for_offline_outlined,
+                        size: 18),
+                    style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.lightBlueAccent),
+                    label: const Text('Restaurar empresas que faltam no local',
+                        style: TextStyle(color: Colors.black)),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: (_carregando || _sincronizando)
+                        ? null
+                        : () => _restaurarEmpresas(simular: true),
+                    icon: const Icon(Icons.science_outlined,
+                        color: Colors.purpleAccent, size: 18),
+                    label: const Text('Simular antes',
+                        style: TextStyle(color: Colors.purpleAccent)),
+                  ),
+                ],
               ),
             ],
             if (r.somenteNoLocal.isNotEmpty) ...[

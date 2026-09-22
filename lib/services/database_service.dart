@@ -2131,6 +2131,21 @@ END;
           return 0;
         }
 
+        // ⛔ TABELAS GLOBAIS (`empresas`, `usuarios`) nunca são limpas por
+        // empresa: elas não pertencem a uma empresa só. Como `empresas` tem a
+        // coluna `empresa_id`, um "Limpar Local" aqui executava
+        // `DELETE FROM empresas WHERE empresa_id = <empresa aberta>` e levava
+        // embora as empresas cadastradas — a lista voltava com menos linhas do
+        // que a nuvem tem. É a mesma trava usada em [_upsertRows].
+        if (tabelasGlobaisSemFiltroDeEmpresa.contains(tabela)) {
+          debugPrint(
+            '>>> [PostgreSQL] ⛔ limparTabela($tabela) ignorado: tabela GLOBAL '
+            '(não pertence a uma empresa só — limpar por empresa apagaria o '
+            'cadastro das outras).',
+          );
+          return 0;
+        }
+
         final columns = _tableColumnTypes[tabela];
         if (columns == null || !columns.containsKey('empresa_id')) {
           debugPrint(

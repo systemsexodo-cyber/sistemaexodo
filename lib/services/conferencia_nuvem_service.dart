@@ -118,6 +118,114 @@ class _Contagens {
   const _Contagens(this.porTabela, this.tabelas);
 }
 
+/// Uma empresa que existe na NUVEM e ainda não existe no banco local.
+class EmpresaFaltanteNoLocal {
+  final String id;
+
+  /// Nome legível (razão social, nome fantasia... o primeiro que existir).
+  final String nome;
+  final String? cnpj;
+
+  /// Valor da coluna `empresa_id` da linha, quando existir (na nuvem o dado é
+  /// sujo: a linha `id=1` aponta para outra empresa — por isso nada é
+  /// sobrescrito, só a linha que falta é inserida como está).
+  final String? empresaId;
+
+  const EmpresaFaltanteNoLocal({
+    required this.id,
+    required this.nome,
+    this.cnpj,
+    this.empresaId,
+  });
+
+  String get rotulo => cnpj == null || cnpj!.isEmpty ? nome : '$nome  ·  $cnpj';
+}
+
+/// O que seria restaurado em `empresas` no banco local — montado por
+/// [ConferenciaNuvemService.planejarEmpresasFaltantesNoLocal], que só LÊ.
+class ResumoEmpresasFaltantes {
+  /// As que entram (existem na nuvem e não aqui), em ordem alfabética.
+  final List<EmpresaFaltanteNoLocal> faltantes;
+
+  /// Ids das empresas que JÁ estão aqui e não serão tocadas.
+  final List<String> idsJaExistentes;
+
+  /// Ids que existem SÓ no banco local: continuam aqui (nada é apagado).
+  final List<String> idsSoNoLocal;
+
+  /// Colunas que existem na nuvem e não existem no banco local: ficam de fora
+  /// do INSERT (o valor se perde, e isso aparece no resumo antes de aplicar).
+  final List<String> colunasIgnoradas;
+
+  /// Coluna obrigatória (NOT NULL sem valor padrão) que só existe na nuvem:
+  /// sem ela o INSERT nem seria aceito — por isso a restauração é bloqueada.
+  final List<String> colunasObrigatoriasFaltando;
+
+  final int totalLocal;
+  final int totalNuvem;
+
+  const ResumoEmpresasFaltantes({
+    required this.faltantes,
+    required this.idsJaExistentes,
+    required this.idsSoNoLocal,
+    required this.colunasIgnoradas,
+    required this.colunasObrigatoriasFaltando,
+    required this.totalLocal,
+    required this.totalNuvem,
+  });
+
+  bool get temOQueRestaurar => faltantes.isNotEmpty;
+
+  bool get podeRestaurar => faltantes.isNotEmpty && colunasObrigatoriasFaltando.isEmpty;
+
+  int get quantasEntram => faltantes.length;
+
+  /// Quantas linhas NOVAS o banco local vai ficar depois da restauração.
+  int get totalLocalDepois => totalLocal + faltantes.length;
+
+  /// Resumo em texto (é o que a tela mostra antes de aplicar).
+  String get texto {
+    final b = StringBuffer()
+      ..writeln('Banco local agora: $totalLocal empresa(s)  ·  '
+          'nuvem: $totalNuvem empresa(s)')
+      ..writeln('');
+    if (faltantes.isEmpty) {
+      b.writeln('✅ Nada a restaurar: o banco local já tem todas as empresas '
+          'que existem na nuvem.');
+    } else {
+      b.writeln('⬇️  ENTRAM no banco local (${faltantes.length}):');
+      for (final e in faltantes) {
+        b.writeln('   • ${e.rotulo}');
+        b.writeln('     id: ${e.id}');
+      }
+      b.writeln('');
+      b.writeln('Resultado: o local passa de $totalLocal para '
+          '$totalLocalDepois empresa(s).');
+    }
+    b.writeln('');
+    b.writeln('🔒 NÃO é apagado nem alterado: as ${idsJaExistentes.length} '
+        'empresa(s) que já estão aqui ficam exatamente como estão '
+        '(a cópia só entra com o que falta — INSERT ... ON CONFLICT DO NOTHING).');
+    if (idsSoNoLocal.isNotEmpty) {
+      b.writeln('🏠 Continuam existindo SÓ no local (${idsSoNoLocal.length}): '
+          '${idsSoNoLocal.join(', ')}');
+    }
+    if (colunasIgnoradas.isNotEmpty) {
+      b.writeln('📋 Colunas que existem só na nuvem ficam de fora '
+          '(${colunasIgnoradas.length}): ${colunasIgnoradas.join(', ')}');
+    }
+    if (colunasObrigatoriasFaltando.isNotEmpty) {
+      b.writeln('⛔ BLOQUEADO: o banco local não tem '
+          '${colunasObrigatoriasFaltando.join(', ')} e a nuvem exige essa(s) '
+          'coluna(s) sem valor padrão. Ajuste a estrutura antes de restaurar.');
+    }
+    b.write('☁️ A NUVEM não é tocada: nada é gravado lá (a cópia é '
+        'nuvem → local, e o gatilho de sincronização fica desligado nesta '
+        'gravação).');
+    return b.toString();
+  }
+}
+
 /// O que um banco tem: todas as tabelas base, quais delas têm `empresa_id` e
 /// quais são privadas do app (existem só no computador, de propósito).
 class _TabelasDoBanco {
@@ -676,6 +784,207 @@ class ConferenciaNuvemService {
     return msg.replaceFirst('Message:', '').trim();
   }
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // Empresas que faltam no banco local
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /// Lê os DOIS bancos (somente leitura) e monta o que seria restaurado em
+  /// `empresas`: quais empresas existem na nuvem e ainda não existem aqui.
+  ///
+  /// Nada é gravado. É o resumo que a tela mostra ANTES de aplicar — e é a
+  /// mesma leitura que o botão de aplicar faz por baixo, para o resumo e a
+  /// gravação nunca discordarem.
+  ///
+  /// A comparação é pelo `id` da empresa: a nuvem é a referência do que deve
+  /// existir, mas o local nunca perde o que já tem (empresa que existe só aqui
+  /// aparece no resumo como preservada).
+  Future<ResumoEmpresasFaltantes> planejarEmpresasFaltantesNoLocal() async {
+    final connLocal = await _abrir(nuvem: false);
+    final connNuvem = await _abrir(nuvem: true);
+    try {
+      final local = await _lerEmpresas(connLocal);
+      final nuvem = await _lerEmpresas(connNuvem);
+
+      final faltantes = nuvem.entries
+          .where((e) => !local.containsKey(e.key))
+          .map((e) => e.value)
+          .toList()
+        ..sort((a, b) =>
+            a.nome.toLowerCase().compareTo(b.nome.toLowerCase()));
+      final soNoLocal = local.keys
+          .where((k) => !nuvem.containsKey(k))
+          .toList()
+        ..sort();
+
+      final estruturaLocal = await _lerEstrutura(connLocal, 'empresas');
+      final estruturaNuvem = await _lerEstrutura(connNuvem, 'empresas');
+      final aqui = estruturaLocal.nomes;
+      final colunasIgnoradas = estruturaNuvem.colunas
+          .where((c) => !aqui.contains(c.nome))
+          .map((c) => c.nome)
+          .toList()
+        ..sort();
+      final obrigatoriasFaltando = estruturaNuvem.colunas
+          .where((c) => c.obrigatoria && !aqui.contains(c.nome))
+          .map((c) => c.nome)
+          .toList()
+        ..sort();
+
+      return ResumoEmpresasFaltantes(
+        faltantes: faltantes,
+        idsJaExistentes: local.keys.toList()..sort(),
+        idsSoNoLocal: soNoLocal,
+        colunasIgnoradas: colunasIgnoradas,
+        colunasObrigatoriasFaltando: obrigatoriasFaltando,
+        totalLocal: local.length,
+        totalNuvem: nuvem.length,
+      );
+    } finally {
+      await _fechar(connLocal);
+      await _fechar(connNuvem);
+    }
+  }
+
+  /// Restaura no banco LOCAL as empresas que existem na nuvem e ainda não
+  /// existem aqui.
+  ///
+  /// Travas (são as mesmas que valem para o resto da sincronização):
+  ///  • só ENTRA o que falta — `ON CONFLICT DO NOTHING`: as empresas que já
+  ///    estão no banco local não são alteradas e NÃO são apagadas;
+  ///  • empresa que existe SÓ no local continua exatamente onde está;
+  ///  • a NUVEM nunca é escrita (a cópia é nuvem → local);
+  ///  • a gravação roda com `exodo.sync_mode = 'on'`, então o gatilho
+  ///    `log_sync_event` fica mudo e o sincronizador de bandeja não propaga a
+  ///    cópia para o Supabase;
+  ///  • se a nuvem tiver uma coluna obrigatória que o local não tem, a
+  ///    restauração é recusada antes de tentar gravar.
+  ///
+  /// Com [simular] apenas conta: nenhum INSERT sai daqui.
+  /// Retorna (sucesso, mensagem, quantas linhas foram inseridas).
+  Future<(bool, String, int)> restaurarEmpresasFaltantesNoLocal({
+    bool simular = false,
+  }) async {
+    Connection? connLocal;
+    Connection? connNuvem;
+    try {
+      connLocal = await _abrir(nuvem: false);
+      connNuvem = await _abrir(nuvem: true);
+      final encLocal = await _encodingDe(connLocal);
+
+      // A estrutura é conferida ANTES de qualquer INSERT: coluna obrigatória
+      // que só existe na nuvem faria o INSERT estourar no meio do lote.
+      final estNuvem = await _lerEstrutura(connNuvem, 'empresas');
+      final aqui = (await _lerEstrutura(connLocal, 'empresas')).nomes;
+      final obrigatorias = estNuvem.colunas
+          .where((c) => c.obrigatoria && !aqui.contains(c.nome))
+          .map((c) => c.nome)
+          .toList();
+      if (obrigatorias.isNotEmpty) {
+        return (
+          false,
+          'Recusado sem tocar no banco: a nuvem exige '
+              '${obrigatorias.join(', ')} e o banco local não tem essa(s) '
+              'coluna(s). Ajuste a estrutura (Backup e Restauração → '
+              'Saúde dos Bancos) e tente de novo.',
+          0,
+        );
+      }
+
+      var copia = const _Copia(0, <String>[], 0);
+      await connLocal.runTx((session) async {
+        // O gatilho de sincronização fica mudo: esta cópia é LOCAL. Sem isso o
+        // sincronizador de bandeja veria as linhas novas e as mandaria para a
+        // nuvem (mesma trava usada em DatabaseService.limparTabela).
+        await session.execute("SET LOCAL exodo.sync_mode = 'on';");
+        copia = await _copiarFaltantes(
+          origem: connNuvem!,
+          destino: session,
+          tabela: 'empresas',
+          empresaId: null,
+          baixando: true,
+          simular: simular,
+          sanitizarParaWin1252: encLocal != 'UTF8',
+          semFiltroEmpresa: true,
+        );
+      });
+
+      final partes = <String>[
+        simular
+            ? '${copia.linhas} empresa(s) SERIAM restauradas no banco local '
+                '(nada foi gravado ainda).'
+            : '${copia.linhas} empresa(s) restaurada(s) no banco local.',
+        'Empresa que já estava aqui não foi alterada nem apagada.',
+        if (copia.colunasIgnoradas.isNotEmpty)
+          'Colunas que existem só na nuvem ficaram de fora '
+              '(${copia.colunasIgnoradas.length}): '
+              '${copia.colunasIgnoradas.take(8).join(', ')}'
+              '${copia.colunasIgnoradas.length > 8 ? '…' : ''}.',
+        if (copia.ajustados > 0)
+          '${copia.ajustados} valor(es) foram ajustados para o banco local '
+              'WIN1252 (símbolos que ele não guarda viram ASCII). A nuvem '
+              'mantém o valor original.',
+        'A NUVEM não foi tocada.',
+      ];
+
+      if (copia.linhas == 0 && copia.colunasIgnoradas.isEmpty) {
+        return (
+          true,
+          'Nada a restaurar: o banco local já tem todas as empresas da nuvem.',
+          0,
+        );
+      }
+      return (true, partes.join('\n'), copia.linhas);
+    } catch (e) {
+      debugPrint('>>> [Conferencia] ❌ Restauração de empresas: $e');
+      return (
+        false,
+        'Falha ao restaurar as empresas no banco local: ${_mensagemCurta(e)}',
+        0,
+      );
+    } finally {
+      if (connLocal != null) await _fechar(connLocal);
+      if (connNuvem != null) await _fechar(connNuvem);
+    }
+  }
+
+  /// `id -> empresa` da tabela `empresas` de um lado.
+  Future<Map<String, EmpresaFaltanteNoLocal>> _lerEmpresas(Session conn) async {
+    final res = await conn.execute('SELECT * FROM empresas ORDER BY id');
+    final mapa = <String, EmpresaFaltanteNoLocal>{};
+    for (final row in res) {
+      final m = row.toColumnMap();
+      final id = m['id']?.toString() ?? '';
+      if (id.isEmpty) continue;
+      mapa[id] = EmpresaFaltanteNoLocal(
+        id: id,
+        nome: _nomeDaEmpresa(m),
+        cnpj: _textoOuNulo(m['cnpj']),
+        empresaId: _textoOuNulo(m['empresa_id']),
+      );
+    }
+    return mapa;
+  }
+
+  /// Primeiro nome não vazio da linha (a nuvem não usa sempre a mesma coluna).
+  static String _nomeDaEmpresa(Map<String, dynamic> m) {
+    for (final chave in const [
+      'razao_social',
+      'nome_fantasia',
+      'nome_exibicao',
+      'nome',
+      'descricao',
+    ]) {
+      final valor = _textoOuNulo(m[chave]);
+      if (valor != null) return valor;
+    }
+    return '(sem nome)';
+  }
+
+  static String? _textoOuNulo(Object? v) {
+    final texto = v?.toString().trim();
+    return (texto == null || texto.isEmpty) ? null : texto;
+  }
+
   // ───────────────────────────────────────────────────────────────────────────
   // Cópia das linhas que faltam
   // ───────────────────────────────────────────────────────────────────────────
@@ -689,15 +998,26 @@ class ConferenciaNuvemService {
   /// antigo que o da nuvem: há nomes de um lado que não existem no outro), e
   /// cada valor é convertido para o tipo da coluna de destino antes de ir.
   Future<_Copia> _copiarFaltantes({
-    required Connection origem,
-    required Connection destino,
+    required Session origem,
+    required Session destino,
     required String tabela,
-    required String empresaId,
+    required String? empresaId,
     required bool baixando,
     bool simular = false,
     bool sanitizarParaWin1252 = false,
+    bool semFiltroEmpresa = false,
   }) async {
     final nomeSql = _aspas(tabela);
+    // Tabela GLOBAL (`empresas`): as linhas não pertencem a uma empresa, então
+    // não existe `empresa_id` para filtrar — entra tudo o que estiver faltando.
+    // Sem isso a cópia nunca alcançava `empresas`, que era justamente a tabela
+    // que ficava 2 × 4 entre o banco local e a nuvem.
+    final filtro =
+        semFiltroEmpresa ? '' : " WHERE COALESCE(empresa_id, '') = @emp";
+    final parametrosFiltro = semFiltroEmpresa
+        ? const <String, Object?>{}
+        : <String, Object?>{'emp': empresaId};
+    final ondeNoLog = semFiltroEmpresa ? '$tabela (todas as empresas)' : '$tabela/$empresaId';
     final est = await _lerEstrutura(destino, tabela);
 
     // Chave primária real da tabela de destino (cai para "id" se ela não tiver
@@ -711,8 +1031,8 @@ class ConferenciaNuvemService {
     }
 
     final linhas = await origem.execute(
-      Sql.named("SELECT * FROM $nomeSql WHERE COALESCE(empresa_id, '') = @emp"),
-      parameters: {'emp': empresaId},
+      Sql.named('SELECT * FROM $nomeSql$filtro'),
+      parameters: parametrosFiltro,
     );
     if (linhas.isEmpty) return const _Copia(0, [], 0);
 
@@ -746,10 +1066,8 @@ class ConferenciaNuvemService {
     // O que já existe no destino não será tocado: comparamos pelas chaves.
     final chaveSql = chave.map(_aspas).join(', ');
     final existentes = await destino.execute(
-      Sql.named(
-        "SELECT $chaveSql FROM $nomeSql WHERE COALESCE(empresa_id, '') = @emp",
-      ),
-      parameters: {'emp': empresaId},
+      Sql.named('SELECT $chaveSql FROM $nomeSql$filtro'),
+      parameters: parametrosFiltro,
     );
     final jaTem = <String>{};
     for (final r in existentes) {
@@ -815,7 +1133,7 @@ class ConferenciaNuvemService {
 
     debugPrint('>>> [Conferencia] ${simular ? '🧪 simulação' : '✅'}, '
         '${baixando ? '⬇️ nuvem → local' : '⬆️ local → nuvem'} '
-        '$tabela/$empresaId: $inseridas linha(s)'
+        '$ondeNoLog: $inseridas linha(s)'
         '${ajustados > 0 ? ' — $ajustados valor(es) ajustado(s) para WIN1252' : ''}');
     return _Copia(inseridas, ignoradas, ajustados);
   }
@@ -827,7 +1145,7 @@ class ConferenciaNuvemService {
       chave.map((k) => mapa[k]?.toString() ?? '').join('\u0001');
 
   /// Colunas e chave primária de uma tabela do banco de DESTINO.
-  Future<_EstruturaTabela> _lerEstrutura(Connection conn, String tabela) async {
+  Future<_EstruturaTabela> _lerEstrutura(Session conn, String tabela) async {
     final res = await conn.execute(
       Sql.named(
         'SELECT column_name, data_type, udt_name, is_nullable, '
