@@ -93,6 +93,65 @@ def get_pystray():
 IS_CLOUD = os.environ.get("CLOUD_RUN", "false").lower() == "true"
 IS_WINDOWS = platform.system() == "Windows"
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Execução de comandos SEM abrir janela de CMD
+# ═══════════════════════════════════════════════════════════════════════════════
+# O Bridge é compilado com console=False (PyInstaller --noconsole): ele NÃO tem
+# console. Quando um processo sem console executa um aplicativo de console
+# (cmd.exe via os.system, .bat com shell=True, taskkill, w32tm, net...), o
+# Windows aloca uma nova janela de CMD — que aparece na tela do usuário. A flag
+# CREATE_NO_WINDOW (0x08000000) evita isso.
+CREATE_NO_WINDOW = 0x08000000
+DETACHED_PROCESS = 0x00000008
+
+
+def _startupinfo_oculto():
+    """STARTUPINFO com SW_HIDE — reforço para o caso de o filho ser um app de
+    interface (wscript, notepad): nesses o CREATE_NO_WINDOW não vale e a janela
+    aparece mesmo assim."""
+    if not IS_WINDOWS:
+        return None
+    try:
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = subprocess.SW_HIDE
+        return si
+    except Exception:
+        return None
+
+
+def run_silent(cmd, timeout=30):
+    """Executa um comando escondido (sem janela de CMD)."""
+    try:
+        return subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            creationflags=CREATE_NO_WINDOW if IS_WINDOWS else 0,
+            startupinfo=_startupinfo_oculto(),
+        )
+    except Exception as e:
+        log_message(f"[SILENT] Falha ao executar {cmd}: {e}", "WARN")
+        return None
+
+
+def popen_silent(cmd, detached=False):
+    """Inicia um processo escondido (sem janela de CMD)."""
+    flags = CREATE_NO_WINDOW if IS_WINDOWS else 0
+    if detached and IS_WINDOWS:
+        flags |= DETACHED_PROCESS
+    try:
+        return subprocess.Popen(
+            cmd,
+            creationflags=flags,
+            startupinfo=_startupinfo_oculto(),
+            close_fds=True,
+        )
+    except Exception as e:
+        log_message(f"[SILENT] Falha ao iniciar {cmd}: {e}", "WARN")
+        return None
+
 # Correção de caminhos para pynfe quando compilado com PyInstaller
 if getattr(sys, 'frozen', False):
     import os
@@ -287,7 +346,7 @@ def load_identity():
     except: pass
 
 # --- GLOBAIS ---
-BRIDGE_VERSION = "3.5.4"
+BRIDGE_VERSION = "3.5.6"
 
 # Custom encoder for Firestore objects
 def json_serial(obj):
@@ -528,13 +587,26 @@ def processar_comando_remoto(db, doc_id, data):
                             for chunk in r.iter_content(chunk_size=8192): 
                                 f.write(chunk)
                                 
-                        bat_path = os.path.join(os.path.dirname(target_exe), "update_bridge.bat")
-                        with open(bat_path, "w") as f:
-                            # Adicionamos taskkill para o watchdog também para evitar conflitos de arquivo durante o 'move'
-                            f.write(f'@echo off\ntimeout /t 3\ntaskkill /F /IM ExodoNfceBridgeWatchdog.exe\ntaskkill /F /PID {os.getpid()}\ntimeout /t 1\nmove /Y "{new_exe}" "{target_exe}"\nstart "" "{target_exe}"\ndel "%~f0"')
+                        # Usar VBScript em vez de .bat para NÃO abrir janela CMD visível.
+                        # O .bat com 'start ""' cria uma janela preta no cliente.
+                        vbs_path = os.path.join(os.path.dirname(target_exe), "update_bridge.vbs")
+                        with open(vbs_path, "w") as f:
+                            f.write(
+                                'Set sh = CreateObject("WScript.Shell")\r\n'
+                                'WScript.Sleep 3000\r\n'
+                                'sh.Run "cmd /c taskkill /F /IM ExodoNfceBridgeWatchdog.exe", 0, False\r\n'
+                                f'sh.Run "cmd /c taskkill /F /PID {os.getpid()}", 0, False\r\n'
+                                'WScript.Sleep 1500\r\n'
+                                f'sh.Run "cmd /c move /Y \"{new_exe}\" \"{target_exe}\"", 0, True\r\n'
+                                f'sh.Run "\"{target_exe}\" --silent", 0, False\r\n'
+                                'WScript.Sleep 500\r\n'
+                                'Set fso = CreateObject("Scripting.FileSystemObject")\r\n'
+                                f'fso.DeleteFile WScript.ScriptFullName\r\n'
+                            )
                         
                         doc_ref.update({'status': 'concluido', 'resultado': f'Baixado v{nova_versao} com sucesso. Reiniciando para aplicar.', 'sucesso': True})
-                        subprocess.Popen([bat_path], shell=True)
+                        # VBScript roda tudo escondido (WScript.Shell.Run com 2º arg = 0)
+                        popen_silent(['wscript.exe', vbs_path])
                         return
                     else:
                         raise Exception(f"Erro HTTP ao baixar: {r.status_code}")
@@ -765,11 +837,27 @@ def _iniciar_listeners(db):
     if not IS_WINDOWS: return
     try:
         log_message("Limpando Watchdog (passivo)...")
-        os.system('taskkill /F /IM ExodoNfceBridgeWatchdog* /T >nul 2>&1')
+        run_silent(['taskkill', '/F', '/IM', 'ExodoNfceBridgeWatchdog.exe', '/T'])
     except: pass
 
 # --- UTILITÁRIOS ---
 LAST_HEARTBEAT_TS = time.time()
+
+# Evita ficar rodando w32tm/net start a cada heartbeat quando o relógio está
+# errado de verdade (no máximo uma tentativa a cada 30 min).
+ULTIMA_SINCRONIA_RELOGIO = 0.0
+JANELA_SINCRONIA_RELOGIO = 30 * 60
+
+
+def _pode_sincronizar_relogio():
+    """True se já passou tempo suficiente desde a última sincronia de hora."""
+    global ULTIMA_SINCRONIA_RELOGIO
+    agora = time.time()
+    if (agora - ULTIMA_SINCRONIA_RELOGIO) < JANELA_SINCRONIA_RELOGIO:
+        return False
+    ULTIMA_SINCRONIA_RELOGIO = agora
+    return True
+
 
 def _registrar_heartbeat(db):
     """Registra/atualiza o heartbeat do Bridge no Firestore."""
@@ -800,15 +888,21 @@ def _registrar_heartbeat(db):
     except Exception as e:
         err_msg = str(e)
         log_message(f"Falha ao enviar sinal de vida ao servidor: {err_msg}", "WARN")
-        if "iat" in err_msg or "Invalid JWT Signature" in err_msg or "expired" in err_msg.lower():
+        if "Invalid JWT Signature" in err_msg or "invalid_grant" in err_msg:
+            # Chave de serviço inválida NÃO é problema de relógio: antes daqui
+            # saía um w32tm/net start a cada heartbeat (cmd.exe piscando na tela
+            # do cliente) sem resolver nada. Aqui só avisa.
+            FIREBASE_STATUS_MSG = "🔴 Erro de Credencial (JWT inválida)"
+        elif ("iat" in err_msg or "clock" in err_msg.lower() or "expired" in err_msg.lower()) \
+                and _pode_sincronizar_relogio():
             FIREBASE_STATUS_MSG = "🔴 Erro de Relógio (Hora do Windows Errada)"
-            # Tentar sincronizar a hora automaticamente se for admin
+            # Sincroniza a hora automaticamente. run_silent = sem janela de CMD.
             try:
                 log_message("Detectado erro de relógio. Tentando sincronizar com servidor NTP...", "WARN")
-                os.system('w32tm /resync /force >nul 2>&1')
+                run_silent(['w32tm', '/resync', '/force'], timeout=20)
                 # Se falhar, tentar ligar o serviço de hora
-                os.system('net start w32time >nul 2>&1')
-                os.system('w32tm /resync /force >nul 2>&1')
+                run_silent(['net', 'start', 'w32time'], timeout=20)
+                run_silent(['w32tm', '/resync', '/force'], timeout=20)
             except: pass
         elif "403" in err_msg or "Permission" in err_msg:
             FIREBASE_STATUS_MSG = "🔴 Erro de Permissão / Chave Off"
@@ -953,23 +1047,34 @@ def self_install():
         log_message(f"Erro ao configurar inicialização básica: {e}", "ERROR")
 
     # 3. TRIPLE FALLBACK: PASTA INICIALIZAR (STARTUP FOLDER)
+    # Usar VBScript em vez de .bat para NÃO abrir janela CMD visível.
+    # O .bat com 'start ""' cria uma janela preta toda vez que o Windows inicia.
     try:
         startup_path = os.path.join(os.environ['APPDATA'], r"Microsoft\Windows\Start Menu\Programs\Startup")
-        shortcut_path = os.path.join(startup_path, "ExodoNfceBridge.bat")
-        # Cria um arquivo .bat simples que aponta para o exe
-        with open(shortcut_path, "w") as f:
-            f.write(f'@echo off\nstart "" "{exe_path}" --silent')
-        log_message(f"Atalho de inicialização criado na pasta Startup.")
+        vbs_path = os.path.join(startup_path, "ExodoNfceBridge.vbs")
+        with open(vbs_path, "w") as f:
+            f.write(
+                'Set sh = CreateObject("WScript.Shell")\r\n'
+                f'sh.Run "\"{exe_path}\" --silent", 0, False\r\n'
+            )
+        # Remover .bat antigo se existir
+        old_bat = os.path.join(startup_path, "ExodoNfceBridge.bat")
+        if os.path.exists(old_bat):
+            try: os.remove(old_bat)
+            except: pass
+        log_message(f"Atalho de inicialização (VBScript) criado na pasta Startup.")
     except Exception as e:
         log_message(f"Erro ao criar atalho na pasta Startup: {e}", "WARN")
 
 # --- TRAY ICON ---
 def restart_action_silent():
+    # DETACHED para o novo processo sobreviver ao fechamento do atual,
+    # e CREATE_NO_WINDOW para não abrir janela de console.
     if getattr(sys, 'frozen', False):
-        subprocess.Popen([sys.executable, "--silent"])
+        popen_silent([sys.executable, "--silent"], detached=True)
     else:
-        subprocess.Popen([sys.executable] + sys.argv + ["--silent"])
-    subprocess.run(["taskkill", "/F", "/PID", str(os.getpid())], creationflags=0x08000000)
+        popen_silent([sys.executable] + sys.argv + ["--silent"], detached=True)
+    subprocess.run(["taskkill", "/F", "/PID", str(os.getpid())], creationflags=CREATE_NO_WINDOW)
 
 def setup_tray():
     import pystray

@@ -586,9 +586,9 @@ CREATE TABLE IF NOT EXISTS public.mesas_comandas (
     couvert_pago numeric,
     usuario_criou text,
     usuario_modificou text,
-    valor_couvert text,
-    quantidade_pessoas_couvert text,
-    valor_couvert_por_pessoa text,
+    valor_couvert numeric,
+    quantidade_pessoas_couvert integer,
+    valor_couvert_por_pessoa numeric,
     nome_quem_pagou_couvert text,
     valor_garcom numeric,
     garcom_retirado boolean,
@@ -786,7 +786,7 @@ CREATE TABLE IF NOT EXISTS public.produtos (
     subgrupo text,
     preco numeric,
     preco_custo numeric,
-    preco_promocional text,
+    preco_promocional numeric,
     tem_promocao boolean,
     estoque numeric,
     estoque_minimo numeric,
@@ -801,7 +801,7 @@ CREATE TABLE IF NOT EXISTS public.produtos (
     csosn text,
     origem text,
     icms_cst text,
-    icms_aliquota text,
+    icms_aliquota numeric,
     pis_cst text,
     cofins_cst text,
     ativo boolean,
@@ -904,6 +904,81 @@ CREATE TABLE IF NOT EXISTS public.servicos (
     updated_at text,
     sync boolean DEFAULT false
 );
+
+--
+-- Name: orcamentos; Type: TABLE; Schema: public; Owner: -
+--
+-- Orçamento de pedido (série ORC-), feito na tela de Pedidos central. Não é um
+-- pedido: fora do PDV, dos recebíveis e dos relatórios de venda. Aprovado, gera
+-- um pedido (PED-) e guarda o vínculo em pedido_gerado_id/pedido_gerado_numero.
+--
+
+CREATE TABLE IF NOT EXISTS public.orcamentos (
+    id text NOT NULL,
+    numero text DEFAULT '',
+    cliente_id text DEFAULT '',
+    cliente_nome text DEFAULT '',
+    cliente_telefone text DEFAULT '',
+    cliente_endereco text DEFAULT '',
+    cliente_cpf_cnpj text DEFAULT '',
+    operador text DEFAULT '',
+    data_orcamento timestamptz DEFAULT now(),
+    validade_orcamento timestamptz,
+    status text DEFAULT 'Orçamento',
+    total numeric DEFAULT 0,
+    desconto_total numeric DEFAULT 0,
+    acrescimo_total numeric DEFAULT 0,
+    observacoes text DEFAULT '',
+    itens jsonb DEFAULT '[]'::jsonb,
+    servicos jsonb DEFAULT '[]'::jsonb,
+    delivery_info jsonb,
+    pedido_gerado_id text DEFAULT '',
+    pedido_gerado_numero text DEFAULT '',
+    data_aprovacao timestamptz,
+    empresa_id text NOT NULL DEFAULT '',
+    created_at timestamptz DEFAULT now(),
+    updated_at timestamptz DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_orcamentos_empresa_id ON public.orcamentos(empresa_id);
+CREATE INDEX IF NOT EXISTS idx_orcamentos_status ON public.orcamentos(status);
+
+--
+-- Name: servicos_realizados; Type: TABLE; Schema: public; Owner: -
+--
+-- Serviço REALIZADO: entidade própria, separada de `pedidos`. Numeração
+-- SRV-0001 própria e status 'Orçamento' / 'Em Aberto' / 'Recebido' / 'Cancelado'.
+--
+
+CREATE TABLE IF NOT EXISTS public.servicos_realizados (
+    id text NOT NULL,
+    numero text DEFAULT '',
+    cliente_id text DEFAULT '',
+    cliente_nome text DEFAULT '',
+    cliente_telefone text DEFAULT '',
+    cliente_endereco text DEFAULT '',
+    pet_id text DEFAULT '',
+    pet_nome text DEFAULT '',
+    operador text DEFAULT '',
+    data_servico timestamptz DEFAULT now(),
+    data_conclusao timestamptz,
+    data_orcamento timestamptz,
+    validade_orcamento timestamptz,
+    status text DEFAULT 'Em Aberto',
+    total numeric DEFAULT 0,
+    desconto_total numeric DEFAULT 0,
+    acrescimo_total numeric DEFAULT 0,
+    observacoes text DEFAULT '',
+    servicos jsonb DEFAULT '[]'::jsonb,
+    pagamentos jsonb DEFAULT '[]'::jsonb,
+    materiais_consumidos jsonb DEFAULT '[]'::jsonb,
+    empresa_id text NOT NULL DEFAULT '',
+    created_at timestamptz DEFAULT now(),
+    updated_at timestamptz DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_servicos_realizados_empresa_id ON public.servicos_realizados(empresa_id);
+CREATE INDEX IF NOT EXISTS idx_servicos_realizados_status ON public.servicos_realizados(status);
 
 --
 -- Name: suprimentos_caixa; Type: TABLE; Schema: public; Owner: -
@@ -1049,27 +1124,34 @@ CREATE TABLE IF NOT EXISTS public.vendas_balcao (
 );
 
 --
--- Name: vw_historico_recente; Type: TABLE; Schema: public; Owner: -
+-- Name: vw_historico_recente; Type: VIEW; Schema: public; Owner: -
 --
+-- ATENÇÃO: este objeto é uma VIEW, não uma tabela. Nas instalações antigas ele
+-- ficou como TABELA vazia (era um dump com o nome trocado) e isso fazia o banco
+-- local aparecer com 1 tabela a mais que a nuvem. O Supabase cria exatamente
+-- esta view em supabase/migrations/004_produto_historico.sql.
+--
+-- Numa instalação antiga, a tabela vazia é trocada pela view no app
+-- (Backup e Restauração → "🧩 Igualar TABELA × VIEW"); o bloco abaixo faz o
+-- mesmo aqui, mas só quando a tabela está VAZIA (com dado dentro, nada é
+-- apagado — aí o usuário decide).
+--
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+               WHERE n.nspname = 'public' AND c.relname = 'vw_historico_recente'
+                 AND c.relkind = 'r') THEN
+        IF (SELECT count(*) FROM public.vw_historico_recente) = 0 THEN
+            DROP TABLE public.vw_historico_recente;
+        END IF;
+    END IF;
+END $$;
 
-CREATE TABLE IF NOT EXISTS public.vw_historico_recente (
-    id text NOT NULL,
-    empresa_id text,
-    produto_id jsonb,
-    produto_nome text,
-    produto_codigo text,
-    usuario_id text,
-    usuario_nome text,
-    usuario_email text,
-    tipo_operacao text,
-    campos_alterados text,
-    valores_anteriores jsonb,
-    valores_novos jsonb,
-    resumo_mudancas text,
-    data_alteracao timestamp with time zone,
-    created_at timestamp with time zone,
-    updated_at timestamp with time zone
-);
+CREATE OR REPLACE VIEW public.vw_historico_recente AS
+SELECT *
+FROM produto_historico
+WHERE data_alteracao >= (now() - interval '30 days')
+ORDER BY data_alteracao DESC;
 
 --
 -- Name: vw_vendas_detalhado; Type: VIEW; Schema: public; Owner: -
@@ -1490,12 +1572,15 @@ END $$;
 --
 -- Name: vw_historico_recente vw_historico_recente_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
-
-DO $$ BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'vw_historico_recente_pkey' AND connamespace = 'public'::regnamespace) THEN
-        ALTER TABLE ONLY public.vw_historico_recente ADD CONSTRAINT vw_historico_recente_pkey PRIMARY KEY (id);
-    END IF;
-END $$;
+-- Removido de propósito: `vw_historico_recente` é uma VIEW (não tem chave
+-- primária). O ALTER TABLE abaixo só valeria para a tabela legada e falharia
+-- agora que o objeto é view.
+--
+-- DO $$ BEGIN
+--     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'vw_historico_recente_pkey' AND connamespace = 'public'::regnamespace) THEN
+--         ALTER TABLE ONLY public.vw_historico_recente ADD CONSTRAINT vw_historico_recente_pkey PRIMARY KEY (id);
+--     END IF;
+-- END $$;
 
 --
 -- Name: idx_clientes_empresa_id; Type: INDEX; Schema: public; Owner: -
@@ -1737,6 +1822,20 @@ DROP TRIGGER IF EXISTS trg_exodo_sync_log_servicos ON public.servicos;
 CREATE TRIGGER trg_exodo_sync_log_servicos AFTER INSERT OR DELETE OR UPDATE ON public.servicos FOR EACH ROW EXECUTE FUNCTION public.log_sync_event();
 
 --
+-- Name: servicos_realizados; Type: TRIGGER; Schema: public; Owner: -
+--
+
+--
+-- Name: orcamentos; Type: TRIGGER; Schema: public; Owner: -
+--
+
+DROP TRIGGER IF EXISTS trg_exodo_sync_log_orcamentos ON public.orcamentos;
+CREATE TRIGGER trg_exodo_sync_log_orcamentos AFTER INSERT OR DELETE OR UPDATE ON public.orcamentos FOR EACH ROW EXECUTE FUNCTION public.log_sync_event();
+
+DROP TRIGGER IF EXISTS trg_exodo_sync_log_servicos_realizados ON public.servicos_realizados;
+CREATE TRIGGER trg_exodo_sync_log_servicos_realizados AFTER INSERT OR DELETE OR UPDATE ON public.servicos_realizados FOR EACH ROW EXECUTE FUNCTION public.log_sync_event();
+
+--
 -- Name: suprimentos_caixa trg_exodo_sync_log_suprimentos_caixa; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -1777,13 +1876,215 @@ CREATE TRIGGER trg_exodo_sync_log_usuarios AFTER INSERT OR DELETE OR UPDATE ON p
 --
 
 DROP TRIGGER IF EXISTS trg_exodo_sync_log_vendas_balcao ON public.vendas_balcao;
-CREATE TRIGGER trg_exodo_sync_log_vendas_balcao AFTER INSERT OR DELETE OR UPDATE ON public.vendas_balcao FOR EACH ROW EXECUTE FUNCTION public.log_sync_event();
-
---
+CREATE TRIGGER trg_exodo_sync_log_vendas_balcao AFTER INSERT OR DELETE OR UPDATE ON public.vendas_balcao FOR EACH ROW EXECUTE FUNCTION public.log_sync_event();--
 -- Migração: subgrupo do produto (grupo -> subgrupo)
 --
+
 ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS subgrupo text;
 ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS departamentos_adicionais jsonb;
+
+--
+-- Migração: colunas de valor que ficaram como text viram numeric/integer
+-- ----------------------------------------------------------------------------
+-- No Supabase estas colunas SEMPRE foram numéricas; só no banco local elas
+-- tinham sido criadas como text, o que deixava os dois bancos divergentes e
+-- impedia contas no próprio banco. Nada é apagado: o texto vira número.
+--
+-- Roda uma única vez por banco (depois que a coluna vira numeric/integer, o
+-- IF EXISTS lá embaixo não encontra mais data_type = 'text' e não faz nada).
+--
+
+-- Converte texto em número aceitando "10.50", "10,50", "1.234,56", "R$ 10,50".
+-- Devolve NULL quando não há número nenhum no texto (vazio, "-", "abc"),
+-- para um registro estranho nunca derrubar a migração inteira.
+CREATE OR REPLACE FUNCTION public.exodo_texto_para_numeric(valor text)
+RETURNS numeric
+LANGUAGE plpgsql
+IMMUTABLE
+AS $$
+DECLARE
+    limpo text;
+BEGIN
+    IF valor IS NULL THEN
+        RETURN NULL;
+    END IF;
+
+    -- Tira espaços, "R$", letras e qualquer outro símbolo.
+    limpo := regexp_replace(valor, '[^0-9,.-]', '', 'g');
+
+    IF limpo = '' OR limpo = '-' OR limpo = '.' OR limpo = ',' THEN
+        RETURN NULL;
+    END IF;
+
+    -- Com vírgula e ponto juntos, o último é o separador decimal
+    -- ("1.234,56" = pt-BR, "1,234.56" = en-US).
+    IF position(',' IN limpo) > 0 AND position('.' IN limpo) > 0 THEN
+        IF position(',' IN limpo) > position('.' IN limpo) THEN
+            limpo := replace(replace(limpo, '.', ''), ',', '.');
+        ELSE
+            limpo := replace(limpo, ',', '');
+        END IF;
+    ELSIF position(',' IN limpo) > 0 THEN
+        limpo := replace(limpo, ',', '.');
+    END IF;
+
+    RETURN limpo::numeric;
+EXCEPTION
+    WHEN others THEN
+        RETURN NULL;
+END;
+$$;
+
+DO $$
+DECLARE
+    alvo record;
+BEGIN
+    FOR alvo IN
+        SELECT * FROM (VALUES
+            ('mesas_comandas', 'valor_couvert', 'numeric'),
+            ('mesas_comandas', 'quantidade_pessoas_couvert', 'integer'),
+            ('mesas_comandas', 'valor_couvert_por_pessoa', 'numeric'),
+            ('produtos', 'preco_promocional', 'numeric'),
+            ('produtos', 'icms_aliquota', 'numeric')
+        ) AS t(tabela, coluna, tipo)
+    LOOP
+        IF EXISTS (
+            SELECT 1
+            FROM information_schema.columns c
+            WHERE c.table_schema = 'public'
+              AND c.table_name = alvo.tabela
+              AND c.column_name = alvo.coluna
+              AND c.data_type = 'text'
+        ) THEN
+            EXECUTE format(
+                'ALTER TABLE public.%I ALTER COLUMN %I TYPE %s USING public.exodo_texto_para_numeric(%I)::%s',
+                alvo.tabela, alvo.coluna, alvo.tipo, alvo.coluna, alvo.tipo
+            );
+            RAISE NOTICE 'Exodo: %.% convertida de text para %',
+                alvo.tabela, alvo.coluna, alvo.tipo;
+        END IF;
+    END LOOP;
+END $$;
+
+--
+-- Name: lotes_produto; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE IF NOT EXISTS public.lotes_produto (
+    id text NOT NULL,
+    empresa_id text DEFAULT '',
+    produto_id text DEFAULT '',
+    produto_nome text DEFAULT '',
+    numero_lote text DEFAULT '',
+    quantidade numeric DEFAULT 0,
+    data_fabricacao timestamp with time zone,
+    data_validade timestamp with time zone,
+    fornecedor_id text DEFAULT '',
+    fornecedor_nome text DEFAULT '',
+    custo_unitario numeric DEFAULT 0,
+    status text DEFAULT 'ativo',
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now()
+);
+
+--
+-- Name: lotes_produto lotes_produto_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'lotes_produto_pkey' AND connamespace = 'public'::regnamespace) THEN
+        ALTER TABLE ONLY public.lotes_produto ADD CONSTRAINT lotes_produto_pkey PRIMARY KEY (id);
+    END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_lotes_produto_empresa ON public.lotes_produto(empresa_id);
+CREATE INDEX IF NOT EXISTS idx_lotes_produto_produto ON public.lotes_produto(produto_id);
+
+DROP TRIGGER IF EXISTS trg_exodo_sync_log_lotes_produto ON public.lotes_produto;
+CREATE TRIGGER trg_exodo_sync_log_lotes_produto AFTER INSERT OR DELETE OR UPDATE ON public.lotes_produto FOR EACH ROW EXECUTE FUNCTION public.log_sync_event();
+
+--
+-- Name: perfis_tributarios; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE IF NOT EXISTS public.perfis_tributarios (
+    id text NOT NULL,
+    empresa_id text DEFAULT '',
+    nome text DEFAULT '',
+    descricao text DEFAULT '',
+    cfop text DEFAULT '',
+    icms_cst text DEFAULT '',
+    csosn text DEFAULT '',
+    aliquota_icms numeric DEFAULT 0,
+    pis_cst text DEFAULT '',
+    aliquota_pis numeric DEFAULT 0,
+    cofins_cst text DEFAULT '',
+    aliquota_cofins numeric DEFAULT 0,
+    cst_ibs text DEFAULT '',
+    aliquota_ibs numeric DEFAULT 0,
+    cst_cbs text DEFAULT '',
+    aliquota_cbs numeric DEFAULT 0,
+    ipi_cst text DEFAULT '',
+    aliquota_ipi numeric DEFAULT 0,
+    mva numeric DEFAULT 0,
+    reducao_base_icms numeric DEFAULT 0,
+    aliquota_fcp numeric DEFAULT 0,
+    aliquota_icms_interestadual numeric DEFAULT 0,
+    ncm text DEFAULT '',
+    is_default boolean DEFAULT false,
+    ativo boolean DEFAULT true,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now()
+);
+
+--
+-- Name: perfis_tributarios perfis_tributarios_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'perfis_tributarios_pkey' AND connamespace = 'public'::regnamespace) THEN
+        ALTER TABLE ONLY public.perfis_tributarios ADD CONSTRAINT perfis_tributarios_pkey PRIMARY KEY (id);
+    END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_perfis_tributarios_empresa ON public.perfis_tributarios(empresa_id);
+
+DROP TRIGGER IF EXISTS trg_exodo_sync_log_perfis_tributarios ON public.perfis_tributarios;
+CREATE TRIGGER trg_exodo_sync_log_perfis_tributarios AFTER INSERT OR DELETE OR UPDATE ON public.perfis_tributarios FOR EACH ROW EXECUTE FUNCTION public.log_sync_event();
+
+--
+-- Name: departamentos; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE IF NOT EXISTS public.departamentos (
+    id text NOT NULL,
+    empresa_id text DEFAULT '',
+    nome text DEFAULT '',
+    descricao text DEFAULT '',
+    cor text DEFAULT '',
+    icone text DEFAULT '',
+    impressora_producao text DEFAULT '',
+    impressora_producao_extra jsonb DEFAULT '[]'::jsonb,
+    ordem integer DEFAULT 0,
+    ativo boolean DEFAULT true,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now()
+);
+
+--
+-- Name: departamentos departamentos_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'departamentos_pkey' AND connamespace = 'public'::regnamespace) THEN
+        ALTER TABLE ONLY public.departamentos ADD CONSTRAINT departamentos_pkey PRIMARY KEY (id);
+    END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_departamentos_empresa ON public.departamentos(empresa_id);
+
+DROP TRIGGER IF EXISTS trg_exodo_sync_log_departamentos ON public.departamentos;
+CREATE TRIGGER trg_exodo_sync_log_departamentos AFTER INSERT OR DELETE OR UPDATE ON public.departamentos FOR EACH ROW EXECUTE FUNCTION public.log_sync_event();
 
 --
 -- PostgreSQL database dump complete

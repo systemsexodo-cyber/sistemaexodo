@@ -30,7 +30,9 @@ import 'package:collection/collection.dart';
 
 import '../services/auth_service.dart';
 import '../models/empresa.dart';
+import '../models/nfce.dart';
 import '../widgets/sync_status_widget.dart';
+import '../widgets/historico_nfce_pdv_dialog.dart';
 
 /// Página do PDV - Ponto de Venda com abas
 /// Receber Pedidos, Venda Direta e Consulta Cliente
@@ -820,11 +822,61 @@ class _PdvPageState extends State<PdvPage> {
     final dataService = Provider.of<DataService>(context);
     final pedidosEncontrados = _buscarPedidos(dataService.pedidos, dataService);
 
+    // Pedido aberto no detalhe (na versão mais recente, para o título da AppBar)
+    final pedidoAberto = _pedidoSelecionado == null
+        ? null
+        : dataService.pedidos.firstWhere(
+            (p) => p.id == _pedidoSelecionado!.id,
+            orElse: () => _pedidoSelecionado!,
+          );
+
+    // Calcular resumo NFC-e
+    final now = DateTime.now();
+    final nfcesPendentes = dataService.nfces.where((n) => n.status == 'contingencia' || n.status == 'pendente').toList();
+    final nfcesAutorizadasHoje = dataService.nfces.where((n) => 
+      (n.status == 'autorizada' || n.status == 'sucesso') &&
+      n.createdAt.year == now.year && n.createdAt.month == now.month && n.createdAt.day == now.day
+    ).toList();
+    final totalFiscalHoje = nfcesAutorizadasHoje.fold(0.0, (sum, n) => sum + n.valorTotal);
+    // Total do mês
+    final nfcesAutorizadasMes = dataService.nfces.where((n) => 
+      (n.status == 'autorizada' || n.status == 'sucesso') &&
+      n.createdAt.year == now.year && n.createdAt.month == now.month
+    ).toList();
+    final totalFiscalMes = nfcesAutorizadasMes.fold(0.0, (sum, n) => sum + n.valorTotal);
+    
     return AppTheme.appBackground(
       child: Scaffold(
         backgroundColor: Colors.transparent,
         appBar: AppBar(
-          title: const Text('Pedidos'),
+          // Com um pedido aberto, o título passa a mostrar número e cliente:
+          // a identificação do pedido fica sempre visível mesmo rolando a lista.
+          title: pedidoAberto == null
+              ? const Text('Pedidos')
+              : Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      pedidoAberto.numero,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                        color: Colors.white,
+                        letterSpacing: 0.8,
+                      ),
+                    ),
+                    if ((pedidoAberto.clienteNome ?? '').isNotEmpty)
+                      Text(
+                        pedidoAberto.clienteNome!,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.white.withOpacity(0.8),
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                  ],
+                ),
           centerTitle: true,
           backgroundColor: Colors.transparent,
           elevation: 0,
@@ -864,7 +916,134 @@ class _PdvPageState extends State<PdvPage> {
             const SyncStatusWidget(),
           ],
         ),
-        body: _buildAbaReceberPedidos(dataService, pedidosEncontrados),
+        body: Column(
+          children: [
+            // Barra de resumo NFC-e (SEMPRE visível)
+            Container(
+              margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: nfcesPendentes.isNotEmpty 
+                    ? [Colors.orange.shade900.withOpacity(0.6), Colors.deepOrange.shade900.withOpacity(0.4)]
+                    : [Colors.green.shade900.withOpacity(0.4), Colors.teal.shade900.withOpacity(0.3)],
+                  begin: Alignment.centerLeft,
+                  end: Alignment.centerRight,
+                ),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: nfcesPendentes.isNotEmpty 
+                    ? Colors.orange.withOpacity(0.4)
+                    : Colors.green.withOpacity(0.3),
+                ),
+              ),
+                child: GestureDetector(
+                  onTap: () {
+                    final empresa = dataService.empresaAtual;
+                    if (empresa != null) {
+                      showDialog(
+                        context: context,
+                        builder: (_) => HistoricoNFCePDVDialog(empresa: empresa),
+                      );
+                    }
+                  },
+                  child: Row(
+                    children: [
+                      // Ícone fiscal
+                      Icon(
+                        nfcesPendentes.isNotEmpty 
+                          ? Icons.warning_amber_rounded 
+                          : Icons.receipt_long,
+                        color: nfcesPendentes.isNotEmpty 
+                          ? Colors.orangeAccent 
+                          : Colors.greenAccent,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 10),
+                      
+                      // Total fiscal Hoje
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: Colors.green.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          'Hoje: ${nfcesAutorizadasHoje.length} notas | R\$ ${totalFiscalHoje.toStringAsFixed(2)}',
+                          style: const TextStyle(
+                            color: Colors.greenAccent,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      
+                      const SizedBox(width: 8),
+                      
+                      // Total fiscal Mês
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: Colors.blue.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          'Mês: ${nfcesAutorizadasMes.length} notas | R\$ ${totalFiscalMes.toStringAsFixed(2)}',
+                          style: const TextStyle(
+                            color: Colors.lightBlueAccent,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      
+                      // Pendentes
+                      if (nfcesPendentes.isNotEmpty) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: Colors.orange.withOpacity(0.3),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.sync_problem, color: Colors.orangeAccent, size: 14),
+                              const SizedBox(width: 4),
+                              Text(
+                                '${nfcesPendentes.length} pendente${nfcesPendentes.length != 1 ? 's' : ''}',
+                                style: const TextStyle(
+                                  color: Colors.orangeAccent,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                      
+                      const Spacer(),
+                      
+                      Text(
+                        'Ver Fiscal  ›',
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.5),
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            
+            // Lista de pedidos
+            Expanded(
+              child: _buildAbaReceberPedidos(dataService, pedidosEncontrados),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -8159,14 +8338,48 @@ class _PdvPageState extends State<PdvPage> {
     );
   }
 
+  /// Selo de destaque usado no cabeçalho do pedido (DELIVERY, status, etc).
+  Widget _buildSeloPedido(String texto, IconData icone, Color cor) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: cor.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: cor.withOpacity(0.45)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icone, size: 13, color: cor),
+          const SizedBox(width: 5),
+          Text(
+            texto,
+            style: TextStyle(
+              color: cor,
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 0.6,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildPedidoDetalhes(Pedido pedido, DataService dataService) {
     final isRecebido = pedido.totalmenteRecebido;
+    final isDeliveryPedido = pedido.deliveryInfo != null;
+    final corDestaque = isRecebido
+        ? Colors.greenAccent
+        : isDeliveryPedido
+            ? Colors.cyanAccent
+            : Colors.orangeAccent;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: Column(
         children: [
-          // Cabeçalho
+          // Cabeçalho em destaque: identificação do pedido em primeiro plano
           Container(
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
@@ -8176,46 +8389,87 @@ class _PdvPageState extends State<PdvPage> {
                         Colors.green.shade900.withOpacity(0.5),
                         Colors.green.shade800.withOpacity(0.4),
                       ]
-                    : [const Color(0xFF1E1E2E), const Color(0xFF2D2D44)],
+                    : isDeliveryPedido
+                        ? [const Color(0xFF10303C), const Color(0xFF2D2D44)]
+                        : [const Color(0xFF1E1E2E), const Color(0xFF2D2D44)],
               ),
               borderRadius: BorderRadius.circular(20),
               border: Border.all(
                 color: isRecebido
-                    ? Colors.green.withOpacity(0.5)
-                    : Colors.white.withOpacity(0.1),
+                    ? Colors.green.withOpacity(0.6)
+                    : corDestaque.withOpacity(0.45),
+                width: 1.5,
               ),
             ),
             child: Column(
               children: [
                 Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Container(
-                      padding: const EdgeInsets.all(14),
+                      padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        color: isRecebido
-                            ? Colors.green.withOpacity(0.3)
-                            : Colors.blue.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(14),
+                        color: corDestaque.withOpacity(0.18),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: corDestaque.withOpacity(0.35)),
                       ),
                       child: Icon(
-                        isRecebido ? Icons.check_circle : Icons.receipt_long,
-                        color: isRecebido ? Colors.greenAccent : Colors.blue,
-                        size: 32,
+                        isRecebido
+                            ? Icons.check_circle
+                            : isDeliveryPedido
+                                ? Icons.delivery_dining
+                                : Icons.receipt_long,
+                        color: corDestaque,
+                        size: 38,
                       ),
                     ),
-                    const SizedBox(width: 16),
+                    const SizedBox(width: 18),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          // Selos: tipo do pedido e status atual
+                          Row(
+                            children: [
+                              if (isDeliveryPedido) ...[
+                                _buildSeloPedido(
+                                  'DELIVERY',
+                                  Icons.delivery_dining,
+                                  Colors.cyanAccent,
+                                ),
+                                const SizedBox(width: 6),
+                              ],
+                              _buildSeloPedido(
+                                pedido.status.toUpperCase(),
+                                isRecebido ? Icons.check_circle : Icons.schedule,
+                                isRecebido
+                                    ? Colors.greenAccent
+                                    : pedido.status.toLowerCase() == 'cancelado'
+                                        ? Colors.redAccent
+                                        : Colors.orangeAccent,
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          // Número do pedido em destaque
                           Text(
                             pedido.numero,
                             style: const TextStyle(
                               color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 24,
+                              fontWeight: FontWeight.w900,
+                              fontSize: 32,
+                              letterSpacing: 1.0,
+                              height: 1.1,
+                              shadows: [
+                                Shadow(
+                                  color: Colors.black54,
+                                  blurRadius: 6,
+                                  offset: Offset(0, 2),
+                                ),
+                              ],
                             ),
                           ),
+                          const SizedBox(height: 8),
                           GestureDetector(
                             onTap: () {
                               if (pedido.clienteId != null) {
@@ -8234,38 +8488,70 @@ class _PdvPageState extends State<PdvPage> {
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
+                                const Icon(
+                                  Icons.person,
+                                  size: 19,
+                                  color: Colors.orangeAccent,
+                                ),
+                                const SizedBox(width: 7),
                                 Flexible(
                                   child: Text(
                                     pedido.clienteNome ?? 'Sem cliente',
                                     style: TextStyle(
-                                      color: Colors.white.withOpacity(0.7),
-                                      fontSize: 16,
+                                      color: Colors.white.withOpacity(0.95),
+                                      fontSize: 19,
+                                      fontWeight: FontWeight.w600,
                                     ),
                                     overflow: TextOverflow.ellipsis,
                                   ),
                                 ),
                                 if (pedido.clienteNome != null) ...[
-                                  const SizedBox(width: 6),
+                                  const SizedBox(width: 8),
                                   Icon(
                                     Icons.edit,
-                                    size: 15,
-                                    color: Colors.orangeAccent.withOpacity(0.7),
+                                    size: 16,
+                                    color: Colors.orangeAccent.withOpacity(0.85),
                                   ),
-                                ],                                ],
+                                ],
+                              ],
                             ),
                           ),
-                          // Data e hora do pedido
+                          const SizedBox(height: 8),
+                          // Data/hora e telefone do pedido
                           Row(
                             children: [
-                              const Icon(Icons.access_time, size: 12, color: Colors.white38),
-                              const SizedBox(width: 4),
+                              const Icon(
+                                Icons.access_time,
+                                size: 14,
+                                color: Colors.white60,
+                              ),
+                              const SizedBox(width: 5),
                               Text(
                                 DateFormat('dd/MM/yyyy HH:mm').format(pedido.dataPedido),
                                 style: TextStyle(
-                                  color: Colors.white.withOpacity(0.5),
+                                  color: Colors.white.withOpacity(0.75),
                                   fontSize: 13,
+                                  fontWeight: FontWeight.w500,
                                 ),
                               ),
+                              if (pedido.clienteTelefone != null &&
+                                  pedido.clienteTelefone!.isNotEmpty) ...[
+                                const SizedBox(width: 14),
+                                const Icon(
+                                  Icons.phone,
+                                  size: 14,
+                                  color: Colors.white60,
+                                ),
+                                const SizedBox(width: 5),
+                                Text(
+                                  pedido.clienteTelefone!,
+                                  style: TextStyle(
+                                    color: Colors.white.withOpacity(0.75),
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
                             ],
                           ),
                         ],
@@ -8300,6 +8586,8 @@ class _PdvPageState extends State<PdvPage> {
                           ],
                         ),
                       ),
+                    // Os itens são alterados direto aqui no detalhe (ver _buildSecaoItens),
+                    // por isso não há mais atalho de edição abrindo o PDV no topo.
                   ],
                 ),
                 const SizedBox(height: 20),
@@ -8338,7 +8626,7 @@ class _PdvPageState extends State<PdvPage> {
           const SizedBox(height: 20),
 
           // Itens
-          _buildSecaoItens(pedido),
+          _buildSecaoItens(pedido, dataService),
           const SizedBox(height: 20),
 
           // Pagamentos
@@ -8411,7 +8699,7 @@ class _PdvPageState extends State<PdvPage> {
                 ),
               ),
           ],
-            // Botão Continuar Venda no PDV
+            // Botão de edição do pedido no PDV
             if (!pedido.totalmenteRecebido && pedido.status.toLowerCase() != 'cancelado')
               SizedBox(
                 width: double.infinity,
@@ -8424,9 +8712,9 @@ class _PdvPageState extends State<PdvPage> {
                       ),
                     );
                   },
-                  icon: const Icon(Icons.shopping_cart_checkout, size: 18),
+                  icon: const Icon(Icons.edit, size: 18),
                   label: const Text(
-                    'CONTINUAR NO PDV',
+                    'EDITAR ITENS (PDV)',
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.bold,
@@ -8945,7 +9233,344 @@ class _PdvPageState extends State<PdvPage> {
     );
   }
 
-  Widget _buildSecaoItens(Pedido pedido) {
+  /// O pedido pode ser editado direto no detalhe? (não pago e não cancelado)
+  bool _podeEditarPedido(Pedido pedido) {
+    return !pedido.totalmenteRecebido &&
+        pedido.status.toLowerCase() != 'cancelado';
+  }
+
+  /// Botão compacto usado nos controles de edição dos itens.
+  Widget _buildBotaoEdicaoItem(
+    IconData icone,
+    Color cor,
+    VoidCallback? onPressed,
+    String tooltip,
+  ) {
+    return IconButton(
+      onPressed: onPressed,
+      icon: Icon(icone, size: 18),
+      color: cor,
+      disabledColor: Colors.white24,
+      tooltip: tooltip,
+      visualDensity: VisualDensity.compact,
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+    );
+  }
+
+  /// Mostra a quantidade do item no mesmo estilo de antes (usado como botão
+  /// quando o pedido está em edição).
+  Widget _buildChipQuantidadeItem(String texto) {
+    return Container(
+      width: 34,
+      height: 28,
+      decoration: BoxDecoration(
+        color: Colors.blue.withOpacity(0.2),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Center(
+        child: Text(
+          texto,
+          style: const TextStyle(
+            color: Colors.lightBlueAccent,
+            fontSize: 11,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Altera a quantidade de um item do pedido direto no detalhe.
+  Future<void> _alterarQuantidadeItemPedido(
+    Pedido pedido,
+    int index,
+    double novaQuantidade,
+    DataService dataService,
+  ) async {
+    if (index < 0 || index >= pedido.produtos.length) return;
+    if (novaQuantidade <= 0) return;
+
+    final produtos = List<ItemPedido>.from(pedido.produtos);
+    produtos[index] = produtos[index].copyWith(quantidade: novaQuantidade);
+    await _persistirEdicaoItens(pedido, produtos, dataService);
+  }
+
+  /// Remove um item do pedido direto no detalhe.
+  Future<void> _removerItemPedido(
+    Pedido pedido,
+    int index,
+    DataService dataService,
+  ) async {
+    if (index < 0 || index >= pedido.produtos.length) return;
+
+    if (pedido.produtos.length + pedido.servicos.length <= 1) {
+      _avisarEdicaoPedido(
+        'O pedido precisa continuar com pelo menos um item. Para zerar, use o cancelamento.',
+      );
+      return;
+    }
+
+    final produtos = List<ItemPedido>.from(pedido.produtos)..removeAt(index);
+    await _persistirEdicaoItens(pedido, produtos, dataService);
+  }
+
+  /// Persiste a alteração dos itens recalculando o total.
+  ///
+  /// Usa addOrUpdatePedido: atualiza o MESMO pedido (mesmo id e mesmo número).
+  /// O estoque não é mexido aqui — a baixa acontece quando o pedido é recebido
+  /// (ver _processarRecebimentoTodos), então editar um pedido em aberto não
+  /// interfere no estoque.
+  Future<void> _persistirEdicaoItens(
+    Pedido pedido,
+    List<ItemPedido> produtos,
+    DataService dataService,
+  ) async {
+    final base = pedido.copyWith(produtos: produtos, updatedAt: DateTime.now());
+    final atualizado = base.copyWith(total: base.totalGeral);
+
+    await dataService.addOrUpdatePedido(atualizado);
+
+    if (!mounted) return;
+    setState(() => _pedidoSelecionado = atualizado);
+    _avisarEdicaoPedido(
+      'Pedido ${atualizado.numero} atualizado. Total: R\$ ${atualizado.totalGeral.toStringAsFixed(2)}',
+    );
+  }
+
+  void _avisarEdicaoPedido(String mensagem, {bool erro = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(mensagem),
+        backgroundColor: erro ? Colors.red.shade700 : Colors.orange.shade800,
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.only(top: 50, left: 20, right: 20, bottom: 20),
+      ),
+    );
+  }
+
+  /// Diálogo para digitar a quantidade exata do item (aceita frações, ex: 0,5).
+  Future<void> _abrirDialogQuantidadeItem(
+    Pedido pedido,
+    int index,
+    DataService dataService,
+  ) async {
+    if (index < 0 || index >= pedido.produtos.length) return;
+
+    final item = pedido.produtos[index];
+    final controller = TextEditingController(text: '${item.quantidade}');
+
+    final novaQuantidade = await showDialog<double>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          'Alterar Quantidade',
+          style: TextStyle(color: Colors.white, fontSize: 18),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              item.nome,
+              style: const TextStyle(color: Colors.white70, fontSize: 14),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: controller,
+              autofocus: true,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              style: const TextStyle(color: Colors.white),
+              decoration: InputDecoration(
+                labelText: 'Quantidade',
+                labelStyle: const TextStyle(color: Colors.white70),
+                filled: true,
+                fillColor: Colors.black26,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              onSubmitted: (valor) => Navigator.pop(
+                dialogContext,
+                double.tryParse(valor.replaceAll(',', '.').trim()),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(
+              dialogContext,
+              double.tryParse(controller.text.replaceAll(',', '.').trim()),
+            ),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+            child: const Text('Salvar'),
+          ),
+        ],
+      ),
+    );
+
+    if (novaQuantidade == null || novaQuantidade <= 0) return;
+    await _alterarQuantidadeItemPedido(
+      pedido,
+      index,
+      novaQuantidade,
+      dataService,
+    );
+  }
+
+  /// Busca no catálogo e adiciona um produto ao pedido aberto.
+  Future<void> _abrirDialogAdicionarItemPedido(
+    Pedido pedido,
+    DataService dataService,
+  ) async {
+    final catalogo = dataService.produtos.where((p) => p.ativo).toList()
+      ..sort((a, b) => a.nome.toLowerCase().compareTo(b.nome.toLowerCase()));
+
+    if (catalogo.isEmpty) {
+      _avisarEdicaoPedido('Nenhum produto ativo cadastrado para adicionar.', erro: true);
+      return;
+    }
+
+    final buscaController = TextEditingController();
+    Produto? selecionado;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) {
+          final termo = buscaController.text.trim().toLowerCase();
+          final filtrados = (termo.isEmpty
+                  ? catalogo
+                  : catalogo.where((p) =>
+                      p.nome.toLowerCase().contains(termo) ||
+                      (p.codigo ?? '').toLowerCase().contains(termo)))
+              .take(100)
+              .toList();
+
+          return AlertDialog(
+            backgroundColor: const Color(0xFF1E1E2E),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: const Text(
+              'Adicionar Item ao Pedido',
+              style: TextStyle(color: Colors.white, fontSize: 18),
+            ),
+            content: SizedBox(
+              width: 420,
+              height: 420,
+              child: Column(
+                children: [
+                  TextField(
+                    controller: buscaController,
+                    autofocus: true,
+                    style: const TextStyle(color: Colors.white),
+                    onChanged: (_) => setDialogState(() {}),
+                    decoration: InputDecoration(
+                      hintText: 'Buscar produto por nome ou código...',
+                      hintStyle: const TextStyle(color: Colors.white38),
+                      prefixIcon: const Icon(Icons.search, color: Colors.white38),
+                      filled: true,
+                      fillColor: Colors.black26,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Expanded(
+                    child: filtrados.isEmpty
+                        ? const Center(
+                            child: Text(
+                              'Nenhum produto encontrado',
+                              style: TextStyle(color: Colors.white54),
+                            ),
+                          )
+                        : ListView.builder(
+                            itemCount: filtrados.length,
+                            itemBuilder: (_, i) {
+                              final produto = filtrados[i];
+                              return ListTile(
+                                dense: true,
+                                leading: const Icon(
+                                  Icons.inventory_2_rounded,
+                                  color: Colors.lightBlueAccent,
+                                  size: 20,
+                                ),
+                                title: Text(
+                                  produto.nome,
+                                  style: const TextStyle(color: Colors.white, fontSize: 14),
+                                ),
+                                subtitle: Text(
+                                  'R\$ ${produto.preco.toStringAsFixed(2)} • Estoque: ${produto.estoque.toStringAsFixed(2)}',
+                                  style: const TextStyle(color: Colors.white54, fontSize: 11),
+                                ),
+                                onTap: () {
+                                  selecionado = produto;
+                                  Navigator.pop(dialogContext);
+                                },
+                              );
+                            },
+                          ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    if (selecionado == null) return;
+    await _adicionarItemAoPedido(pedido, selecionado!, dataService);
+  }
+
+  /// Adiciona um produto do catálogo ao pedido (soma 1 se o item já existir).
+  Future<void> _adicionarItemAoPedido(
+    Pedido pedido,
+    Produto produto,
+    DataService dataService,
+  ) async {
+    final produtos = List<ItemPedido>.from(pedido.produtos);
+    final indexExistente = produtos.indexWhere(
+      (i) => i.id == produto.id && i.adicionais.isEmpty,
+    );
+
+    if (indexExistente != -1) {
+      produtos[indexExistente] = produtos[indexExistente].copyWith(
+        quantidade: produtos[indexExistente].quantidade + 1,
+      );
+    } else {
+      produtos.add(
+        ItemPedido(
+          id: produto.id,
+          nome: produto.nome,
+          quantidade: 1,
+          preco: produto.preco,
+          fornecedorNome: produto.fornecedorNome,
+          unidadeVenda: produto.unidadeVenda,
+          quantidadeBaixa: produto.fatorBaixaEstoque,
+        ),
+      );
+    }
+
+    await _persistirEdicaoItens(pedido, produtos, dataService);
+  }
+
+  Widget _buildSecaoItens(Pedido pedido, DataService dataService) {
+    final podeEditar = _podeEditarPedido(pedido);
     final totalItens = pedido.produtos.length + pedido.servicos.length;
     // Calcular total de taxas taxi dog dos serviços
     double totalTaxaTaxiDog = 0.0;
@@ -8977,35 +9602,74 @@ class _PdvPageState extends State<PdvPage> {
                   fontSize: 14,
                 ),
               ),
+              const Spacer(),
+              if (podeEditar)
+                TextButton.icon(
+                  onPressed: () =>
+                      _abrirDialogAdicionarItemPedido(pedido, dataService),
+                  icon: const Icon(Icons.add, size: 16),
+                  label: const Text(
+                    'ADICIONAR ITEM',
+                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                  ),
+                  style: TextButton.styleFrom(
+                    foregroundColor: Colors.lightBlueAccent,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                ),
             ],
           ),
           const Divider(color: Colors.white12, height: 24),
           
           // Produtos
           if (pedido.produtos.isNotEmpty) ...[
-            ...pedido.produtos.map(
-              (item) => Padding(
+            ...List.generate(pedido.produtos.length, (index) {
+              final item = pedido.produtos[index];
+              return Padding(
                 padding: const EdgeInsets.only(bottom: 8),
                 child: Row(
                   children: [
-                    Container(
-                      width: 28,
-                      height: 28,
-                      decoration: BoxDecoration(
-                        color: Colors.blue.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(8),
+                    if (podeEditar) ...[
+                      _buildBotaoEdicaoItem(
+                        Icons.remove,
+                        Colors.redAccent,
+                        item.quantidade > 1
+                            ? () => _alterarQuantidadeItemPedido(
+                                  pedido,
+                                  index,
+                                  item.quantidade - 1,
+                                  dataService,
+                                )
+                            : null,
+                        'Diminuir 1',
                       ),
-                      child: Center(
-                        child: Text(
-                          '${item.quantidade}x',
-                          style: const TextStyle(
-                            color: Colors.lightBlueAccent,
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
-                          ),
+                      const SizedBox(width: 2),
+                      InkWell(
+                        onTap: () => _abrirDialogQuantidadeItem(
+                          pedido,
+                          index,
+                          dataService,
+                        ),
+                        borderRadius: BorderRadius.circular(8),
+                        child: Tooltip(
+                          message: 'Clique para digitar a quantidade',
+                          child: _buildChipQuantidadeItem('${item.quantidade}x'),
                         ),
                       ),
-                    ),
+                      const SizedBox(width: 2),
+                      _buildBotaoEdicaoItem(
+                        Icons.add,
+                        Colors.lightBlueAccent,
+                        () => _alterarQuantidadeItemPedido(
+                          pedido,
+                          index,
+                          item.quantidade + 1,
+                          dataService,
+                        ),
+                        'Aumentar 1',
+                      ),
+                    ] else
+                      _buildChipQuantidadeItem('${item.quantidade}x'),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Text(
@@ -9020,10 +9684,17 @@ class _PdvPageState extends State<PdvPage> {
                         fontWeight: FontWeight.w500,
                       ),
                     ),
+                    if (podeEditar)
+                      _buildBotaoEdicaoItem(
+                        Icons.delete_outline,
+                        Colors.redAccent,
+                        () => _removerItemPedido(pedido, index, dataService),
+                        'Remover item',
+                      ),
                   ],
                 ),
-              ),
-            ),
+              );
+            }),
             if (pedido.servicos.isNotEmpty || temTaxaTaxiDog) const SizedBox(height: 12),
           ],
           

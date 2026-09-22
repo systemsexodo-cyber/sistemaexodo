@@ -2,6 +2,8 @@ import 'package:sistema_exodo_novo/models/cliente.dart';
 import 'package:sistema_exodo_novo/models/usuario.dart';
 
 import 'package:sistema_exodo_novo/models/pedido.dart';
+import 'package:sistema_exodo_novo/models/servico_realizado.dart';
+import 'package:sistema_exodo_novo/models/orcamento.dart';
 import 'package:sistema_exodo_novo/models/ordem_servico.dart';
 import 'package:sistema_exodo_novo/models/produto.dart';
 import 'package:sistema_exodo_novo/models/servico.dart';
@@ -9,6 +11,7 @@ import 'package:sistema_exodo_novo/models/entrega.dart';
 import 'package:sistema_exodo_novo/models/venda_balcao.dart';
 import 'package:sistema_exodo_novo/models/troca_devolucao.dart';
 import 'package:sistema_exodo_novo/models/estoque_historico.dart';
+import 'package:sistema_exodo_novo/services/env_config.dart';
 import 'package:sistema_exodo_novo/models/lote_produto.dart';
 import 'package:sistema_exodo_novo/models/produto_historico.dart';
 import 'package:sistema_exodo_novo/models/nota_entrada.dart';
@@ -46,6 +49,7 @@ import 'package:uuid/uuid.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:convert';
+import 'package:path/path.dart' as p;
 import 'dart:math';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
@@ -59,6 +63,30 @@ export 'package:sistema_exodo_novo/models/cliente.dart' show TipoPessoa;
 
 const uuid = Uuid();
 
+/// Resultado do botão **"Limpar Local"**: o que foi apagado DESTA empresa e a
+/// prova de que as outras empresas continuaram intactas.
+class ResultadoLimpezaLocal {
+  final String empresaId;
+  final String empresaNome;
+
+  /// `tabela -> linhas apagadas` (tabelas que já estavam vazias não aparecem).
+  final Map<String, int> porTabela;
+
+  /// Linhas das OUTRAS empresas que continuaram nas mesmas tabelas depois da
+  /// limpeza. É a evidência de que só a empresa alvo foi tocada.
+  final int linhasDeOutrasEmpresas;
+
+  const ResultadoLimpezaLocal({
+    required this.empresaId,
+    required this.empresaNome,
+    required this.porTabela,
+    required this.linhasDeOutrasEmpresas,
+  });
+
+  int get total => porTabela.values.fold<int>(0, (soma, qtd) => soma + qtd);
+  int get tabelas => porTabela.length;
+}
+
 class DataService extends ChangeNotifier {
   List<EstoqueHistorico> get estoqueHistorico => _estoqueHistorico;
   List<LoteProduto> get lotesProdutos => _lotesProdutos;
@@ -67,6 +95,13 @@ class DataService extends ChangeNotifier {
   final List<Produto> _produtos = [];
   final List<Servico> _tiposServico = [];
   final List<Pedido> _pedidos = [];
+  // Serviços realizados: entidade própria (tabela `servicos_realizados`),
+  // separada de `pedidos` — numeração SRV, orçamento, em aberto e recebido.
+  final List<ServicoRealizado> _servicosRealizados = [];
+  // Orçamentos de pedido (tela de Pedidos central): entidade própria, série
+  // ORC-. Fora do PDV, dos recebíveis e dos relatórios de venda até ser
+  // aprovado — a aprovação gera um Pedido (PED-).
+  final List<Orcamento> _orcamentos = [];
   final List<OrdemServico> _ordensServico = [];
   final List<Entrega> _entregas = [];
   final List<Motorista> _motoristas = [];
@@ -153,6 +188,8 @@ class DataService extends ChangeNotifier {
         'produtos': _produtos.map((e) => e.toMap()).toList(),
         'servicos': _tiposServico.map((e) => e.toMap()).toList(),
         'pedidos': _pedidos.map((e) => e.toMap()).toList(),
+        'servicos_realizados': _servicosRealizados.map((e) => e.toMap()).toList(),
+        'orcamentos': _orcamentos.map((e) => e.toMap()).toList(),
         'vendas_balcao': _vendasBalcao.map((e) => e.toMap()).toList(),
         'agendamentos': _agendamentosServico.map((e) => e.toMap()).toList(),
         'contas_pagar': _contasPagar.map((e) => e.toMap()).toList(),
@@ -181,6 +218,8 @@ class DataService extends ChangeNotifier {
       _produtos.clear();
       _tiposServico.clear();
       _pedidos.clear();
+      _servicosRealizados.clear();
+      _orcamentos.clear();
       _ordensServico.clear();
       _vendasBalcao.clear();
       _trocasDevolucoes.clear();
@@ -212,6 +251,17 @@ class DataService extends ChangeNotifier {
       if (colecoes['pedidos'] is List) {
         for (final item in colecoes['pedidos'] as List) {
           _pedidos.add(Pedido.fromMap(item as Map<String, dynamic>));
+        }
+      }
+      if (colecoes['servicos_realizados'] is List) {
+        for (final item in colecoes['servicos_realizados'] as List) {
+          _servicosRealizados
+              .add(ServicoRealizado.fromMap(item as Map<String, dynamic>));
+        }
+      }
+      if (colecoes['orcamentos'] is List) {
+        for (final item in colecoes['orcamentos'] as List) {
+          _orcamentos.add(Orcamento.fromMap(item as Map<String, dynamic>));
         }
       }
       if (colecoes['vendas_balcao'] is List) {
@@ -406,6 +456,8 @@ class DataService extends ChangeNotifier {
   List<NFCe> get nfes => _nfes;
   List<VendaBalcao> get vendasBalcao => _vendasBalcao;
   List<Pedido> get pedidos => _pedidos;
+  List<ServicoRealizado> get servicosRealizados => _servicosRealizados;
+  List<Orcamento> get orcamentos => _orcamentos;
   List<TrocaDevolucao> get trocasDevolucoes => _trocasDevolucoes;
 
   /// Devolucoes corrompidas por sincronizacao (stubs sem venda vinculada,
@@ -496,21 +548,44 @@ class DataService extends ChangeNotifier {
 
   bool _syncEmAndamento = false;
 
+  /// --------------------------------------------------------------------
+  /// Trace flags: marca, em memória apenas, que um pedido/venda já foi
+  /// enviado com sucesso para a nuvem NESTA sessão. Usado pelo
+  /// _notificarEnvioPedidosEVendas() para evitar duplo-envio na mesma
+  /// transação e para rastreamento de diagnóstico.
+  /// --------------------------------------------------------------------
+  final Set<String> _pedidosEnviadosEstaSessao = {};
+  final Set<String> _vendasBalcaoEnviadasEstaSessao = {};
+
   /// Helper para realizar upsert no Supabase com empresa_id automático
-  Future<void> _upsertNoSupabase(String table, Map<String, dynamic> data) async {
+  /// [empresaId] permite gravar em nome da empresa da OPERAÇÃO, e não da empresa
+  /// aberta agora. Isso é essencial na fila de sincronização (persistida entre
+  /// sessões): sem ele, um item pendente da Empresa A podia ser drenado depois de
+  /// você trocar para a Empresa B e ia para a nuvem como sendo de B.
+  Future<void> _upsertNoSupabase(String table, Map<String, dynamic> data, {String? empresaId}) async {
     if (!SupabaseService.isAvailable) {
       debugPrint('>>> [Supabase] ⏭️ Pulando upsert em $table: Supabase não disponível');
       return;
     }
-    if (_currentEmpresaId == null) {
+
+    // Ordem de prioridade: (1) a empresa da operação; (2) a que já vem no
+    // registro; (3) a empresa aberta agora.
+    final empresaDoRegistro = data['empresa_id']?.toString();
+    final empresaEfetiva = (empresaId != null && empresaId.isNotEmpty)
+        ? empresaId
+        : ((empresaDoRegistro != null && empresaDoRegistro.isNotEmpty)
+            ? empresaDoRegistro
+            : _currentEmpresaId);
+
+    if (empresaEfetiva == null || empresaEfetiva.isEmpty) {
       debugPrint('>>> [Supabase] ⏭️ Pulando upsert em $table: Empresa não definida');
       return;
     }
 
     try {
       final map = Map<String, dynamic>.from(data);
-      // SEMPRE definir empresa_id para garantir RLS funcione corretamente
-      map['empresa_id'] = _currentEmpresaId;
+      // empresa_id definido (e nunca sobrescrito pela empresa errada)
+      map['empresa_id'] = empresaEfetiva;
       
       // SANITIZAÇÃO E RLS:
       // 1. Remover colunas que causam erro PGRST204 especificamente em cada tabela
@@ -528,6 +603,12 @@ class DataService extends ChangeNotifier {
         // fazia o sync de entregas ser descartado por completo. REMOVER após rodar
         // o SUPABASE_FIX_ALL.sql (que adiciona a coluna).
         map.remove('enderecoEntrega');
+      } else if (table == SupabaseService.tableProdutos) {
+        // Colunas que existem no banco local mas NÃO existem no Supabase
+        map.remove('baixar_estoque_proprio');
+        map.remove('eh_composto');
+        map.remove('composicao');
+        map.remove('cobrar_garcom');
       }
       
       // 2. Injetar o ID real do usuário do Supabase apenas em tabelas que possuem a coluna usuario_id
@@ -673,6 +754,58 @@ class DataService extends ChangeNotifier {
     } catch (e) {
       debugPrint('>>> [Sync] ❌ Erro ao enviar mudança para Supabase em background: $e');
       _adicionarSincronizacaoPendente(table: tabela, data: dados, type: evento);
+    }
+  }
+
+  /// ======================================================
+  /// GARANTIA DE ENVIO + CONFIRMAÇÃO (pedido / venda balcão)
+  /// ======================================================
+  /// Após criar/atualizar um pedido ou venda de balcão, garante que o registro
+  /// chegou à nuvem (Supabase) e que o Realtime já transmitiu a mudança para
+  /// os outros PCs. Reduz a janela em que uma venda feita no PC-A ainda não
+  /// aparece no PC-B.
+  ///
+  /// Fluxo:
+  ///   1. Upsert AGUARDADO no Supabase (o enviarMudancaParaSupabase roda em
+  ///      background; aqui garantimos uma tentativa real e síncrona);
+  ///   2. Marca o id como enviado nesta sessão (diagnóstico);
+  ///   3. Espera a confirmação Realtime (o próprio broadcast volta para esta
+  ///      máquina, confirmando que a escrita foi persistida e divulgada).
+  Future<void> garantirEnvioEConfirmacao({
+    required String tabela,
+    required Map<String, dynamic> dados,
+  }) async {
+    final id = dados['id'] as String?;
+
+    // 1) Upsert aguardado (idempotente — o background continua como fallback)
+    try {
+      await _upsertNoSupabase(tabela, dados);
+    } catch (e) {
+      debugPrint('>>> [Sync] ⚠️ garantirEnvioEConfirmacao: falha no upsert $tabela/$id: $e');
+      return;
+    }
+
+    // 2) Marca como enviado nesta sessão
+    if (id != null) {
+      if (tabela == SupabaseService.tablePedidos) {
+        _pedidosEnviadosEstaSessao.add(id);
+      } else if (tabela == SupabaseService.tableVendasBalcao) {
+        _vendasBalcaoEnviadasEstaSessao.add(id);
+      }
+    }
+
+    // 3) Confirmação Realtime (apenas se o canal estiver ativo)
+    if (id != null && SupabaseService.isAvailable && _realtimeSync.ativo) {
+      final confirmou = await _realtimeSync.aguardarConfirmacao(
+        tabela,
+        id,
+        timeout: const Duration(seconds: 2),
+      );
+      debugPrint(confirmou
+          ? '>>> [Sync] ✅ Realtime confirmou $tabela/$id (na nuvem e divulgado aos PCs)'
+          : '>>> [Sync] ⏳ Realtime sem confirmação para $tabela/$id (segue no sync normal)');
+    } else {
+      debugPrint('>>> [Sync] ⏭️ Confirmação Realtime pulada para $tabela/$id (offline ou canal inativo)');
     }
   }
 
@@ -950,26 +1083,51 @@ class DataService extends ChangeNotifier {
     _currentSyncInterval = 10;
     _lastSyncActivityTime = DateTime.now();
     debugPrint('>>> [Sync] ⏱️ Timer de Auto-Sync Adaptativo iniciado (10 seg inicial)');
-    _programarProximoSync();
-    
-    // Iniciar backup diário automático
+    _programarProximoSync();    // Iniciar backup diário automático
     _iniciarBackupDiario();
   }
   
   Timer? _backupDiarioTimer;
   DateTime? _ultimoBackupDiario;
+  bool _emProcessoBackupDiario = false;
+  static const int _maxDumpsLocais = 3; // manter no máximo 3 backups do dump
   
-  /// Inicia o timer de backup diário automático para a nuvem.
-  /// Verifica a cada 30 minutos se já passou de 24 horas desde o último backup.
+  /// Inicia o timer de backup diário automático.
+  /// Roda na abertura do app e depois verifica a cada 30 min se 24h passaram.
+  /// Gera um dump PostgreSQL (.dump) e envia para o Supabase Storage.
   void _iniciarBackupDiario() {
     _backupDiarioTimer?.cancel();
     
-    // Carregar timestamp do último backup
-    _carregarUltimoBackupDiario().then((_) {
-      _backupDiarioTimer = Timer.periodic(const Duration(minutes: 30), (_) {
-        _verificarBackupDiario();
+    _carregarUltimoBackupDiario().then((_) async {
+      await _carregarUltimoBackupNuvem();
+      await _carregarUltimoBackupCompleto();
+      // 1. Rodar backup logo na abertura do app (com pequeno delay para não travar o boot)
+      Timer(const Duration(seconds: 20), () {
+        _verificarBackupDiario(forcar: true);
       });
-      debugPrint('>>> [Backup] ⏱️ Timer de backup diário iniciado');
+      // 1b. Backup na nuvem um pouco depois, para não competir com o dump local
+      // (o backup .sql roda ~30 consultas no psql)
+      Timer(const Duration(seconds: 90), () {
+        _verificarBackupNuvemDiario();
+        // Se algum dump de um boot anterior ficou devendo envio, tenta agora.
+        reenviarDumpPendente();
+      });
+      // 1c. Backup COMPLETO do banco da nuvem por último: ele lê TODAS as tabelas
+      // de TODAS as empresas e envia vários MB — melhor não competir com os
+      // outros dois nem atrasar a abertura.
+      Timer(const Duration(seconds: 150), () {
+        verificarBackupCompletoNuvem(forcar: true);
+      });
+      // 2. Depois verificar a cada 30 min (respeitando o intervalo, 24h)
+      _backupDiarioTimer = Timer.periodic(const Duration(minutes: 30), (_) {
+        reenviarDumpPendente();
+        _verificarBackupDiario();
+        _verificarBackupNuvemDiario();
+        verificarBackupCompletoNuvem();
+      });
+      debugPrint('>>> [Backup] ⏱️ Timers de backup iniciados — dump LOCAL (20s) + '
+          '.sql da EMPRESA na nuvem (90s) + banco COMPLETO da nuvem (150s); '
+          'depois a cada 30 min, respeitando 24h.');
     });
   }
   
@@ -986,46 +1144,381 @@ class DataService extends ChangeNotifier {
     }
   }
   
-  Future<void> _verificarBackupDiario() async {
-    if (_currentEmpresaId == null) return;
-    
-    final agora = DateTime.now();
-    final ultimoBackup = _ultimoBackupDiario;
-    
-    // Se nunca fez backup ou se passou mais de 24 horas
-    if (ultimoBackup == null || agora.difference(ultimoBackup).inHours >= 24) {
-      debugPrint('>>> [Backup] 🕐 Hora do backup diário automático...');
-      final backupService = BackupRestoreService(this);
-      
-      // 1. Backup local (C:\ExodoBackups) — sempre, mesmo offline
-      try {
-        final localPath = await backupService.salvarBackupLocalAutomatico();
-        if (localPath != null) {
-          debugPrint('>>> [Backup] 💾 Backup local salvo: $localPath');
-          addSyncLog('💾 Backup local automático salvo.');
-        }
-      } catch (e) {
-        debugPrint('>>> [Backup] ⚠️ Erro no backup local: $e');
+  /// Envia o dump diário para a nuvem. Devolve `true` quando o arquivo ficou na
+  /// nuvem. Só falha "de verdade" (retorna false) quando não dá para tentar ou
+  /// quando o envio deu erro — nos dois casos o chamador marca o arquivo como
+  /// pendente para tentar de novo.
+  Future<bool> _enviarDumpDiarioParaNuvem(
+      BackupRestoreService backupService, String dumpPath) async {
+    if (!SupabaseService.isAvailable || _isOffline) {
+      debugPrint('>>> [Backup] ⏭️ Dump diário: upload pulado (offline/indisponível).');
+      return false;
+    }
+    try {
+      final arquivo = File(dumpPath);
+      if (!await arquivo.exists()) {
+        debugPrint('>>> [Backup] ⏭️ Dump diário: arquivo não está mais no disco.');
+        return true; // nada a enviar
       }
-      
-      // 2. Backup nuvem (Supabase Storage) — só se online
-      if (SupabaseService.isAvailable && !_isOffline) {
+      final (ok, msg) = await backupService.uploadDumpNaNuvem(arquivo);
+      if (ok) {
+        debugPrint('>>> [Backup] ☁️ Dump diário enviado para nuvem: $msg');
+        addSyncLog('☁️ Backup diário do banco PostgreSQL enviado para a nuvem.');
+        return true;
+      }
+      debugPrint('>>> [Backup] ⚠️ Falha no upload do dump diário: $msg');
+      addSyncLog('⚠️ Dump diário não subiu para a nuvem: $msg');
+      return false;
+    } catch (e) {
+      debugPrint('>>> [Backup] ❌ Erro ao enviar dump diário para nuvem: $e');
+      addSyncLog('⚠️ Erro ao enviar o dump diário para a nuvem: $e');
+      return false;
+    }
+  }
+
+  /// Guarda (ou limpa, com [caminho] nulo) o dump que ficou devendo envio.
+  Future<void> _marcarDumpPendente(String? caminho) async {
+    try {
+      await _storage.salvar(
+        _getEmpresaKey('exodo_dump_pendente_envio'),
+        caminho ?? '',
+      );
+    } catch (e) {
+      debugPrint('>>> [Backup] ⚠️ Erro ao marcar dump pendente: $e');
+    }
+  }
+
+  /// Reenvia o dump que ficou devendo envio (chamado nas verificações de 30 min
+  /// e logo após a abertura). Não gera um dump novo — só tenta subir o arquivo
+  /// que já existe.
+  Future<void> reenviarDumpPendente() async {
+    if (_currentEmpresaId == null) return;
+    if (!SupabaseService.isAvailable || _isOffline) return;
+
+    try {
+      final pendente = await _storage.carregar(_getEmpresaKey('exodo_dump_pendente_envio'));
+      final caminho = (pendente ?? '').toString();
+      if (caminho.isEmpty) return;
+
+      debugPrint('>>> [Backup] 🔁 Tentando reenviar o dump pendente: $caminho');
+      final enviou =
+          await _enviarDumpDiarioParaNuvem(BackupRestoreService(this), caminho);
+      if (enviou) {
+        await _marcarDumpPendente(null);
+        debugPrint('>>> [Backup] ✅ Dump pendente enviado — nada mais devendo.');
+      }
+    } catch (e) {
+      debugPrint('>>> [Backup] ⚠️ Erro ao reenviar dump pendente: $e');
+    }
+  }
+
+  /// Verifica se é hora de gerar o backup diário para TODAS as empresas.
+  /// Roda a cada 30 minutos; para cada empresa, verifica se 24h passaram
+  /// desde o último backup. O dump pg_dump é gerado UMA VEZ (banco inteiro)
+  /// e copiado para a pasta de cada empresa. O backup .sql é gerado
+  /// separadamente para cada empresa (cada um filtra por empresa_id).
+  Future<void> _verificarBackupDiario({bool forcar = false}) async {
+    if (_currentEmpresaId == null) return;
+    if (_emProcessoBackupDiario) {
+      debugPrint('>>> [Backup] ⏳ Backup diário já em processamento, pulando...');
+      return;
+    }
+
+    // Listar todas as empresas do banco local
+    final db = DatabaseService();
+    final todasEmpresas = await db.carregarListaCompleta('empresas');
+    if (todasEmpresas.isEmpty) {
+      debugPrint('>>> [Backup] ⚠️ Nenhuma empresa encontrada no banco local.');
+      return;
+    }
+
+    // Para cada empresa, verificar se precisa de backup
+    final agora = DateTime.now();
+    final empresasQuePrecisamBackup = <Map<String, dynamic>>[];
+    for (final emp in todasEmpresas) {
+      final empId = emp['id']?.toString();
+      if (empId == null || empId.isEmpty) continue;
+      final chave = 'appcfg_empresa_${empId}_exodo_ultimo_backup_diario';
+      final valor = await _storage.carregar(chave);
+      final ultimo = valor != null ? DateTime.tryParse(valor.toString()) : null;
+      final horas = ultimo != null ? agora.difference(ultimo).inHours : 999;
+      if (forcar || horas >= 24) {
+        empresasQuePrecisamBackup.add(emp);
+      }
+    }
+
+    if (empresasQuePrecisamBackup.isEmpty) {
+      debugPrint('>>> [Backup] ⏭️ Backup diário: todas as empresas foram backed up nas últimas 24h.');
+      return;
+    }
+
+    debugPrint('>>> [Backup] 🕐 Backup diário: ${empresasQuePrecisamBackup.length} empresa(s) precisam de backup.');
+    _emProcessoBackupDiario = true;
+
+    addSyncLog('🗄️ Backup diário: ${empresasQuePrecisamBackup.length} empresa(s) precisam de backup...');
+
+    try {
+      final backupService = BackupRestoreService(this);
+      File? dumpGerado; // pg_dump UMA VEZ, copiado para cada empresa
+
+      for (final emp in empresasQuePrecisamBackup) {
+        final empId = emp['id']?.toString();
+        if (empId == null || empId.isEmpty) continue;
+        final nomeEmp = (emp['nome_fantasia'] ?? emp['razao_social'] ?? empId)
+            .toString().replaceAll(RegExp(r'[^a-zA-Z0-9À-ú]'), '_');
+
+        debugPrint('>>> [Backup] 📦 Processando empresa $nomeEmp ($empId)...');
+
+        // Pasta para dumps desta empresa
+        final dumpsDir = Directory('C:\\ExodoBackups\\$empId\\dumps');
+        if (!await dumpsDir.exists()) await dumpsDir.create(recursive: true);
+
+        final dataStr = '${agora.year}-${agora.month.toString().padLeft(2, '0')}-${agora.day.toString().padLeft(2, '0')}';
+        final horaStr = '${agora.hour.toString().padLeft(2, '0')}${agora.minute.toString().padLeft(2, '0')}';
+
+        // 1. Gerar dump local (pg_dump -Fc) — UMA VEZ para todas as empresas
+        if (dumpGerado == null) {
+          final dumpPath = p.join(dumpsDir.path, '${nomeEmp}_dump_diario_${dataStr}_${horaStr}.dump');
+          final (sucesso, mensagem, caminho) = await backupService.criarBackupDumpLocal(destinoArquivo: dumpPath);
+          if (!sucesso || caminho == null) {
+            debugPrint('>>> [Backup] ⚠️ Falha ao gerar dump: $mensagem');
+            addSyncLog('⚠️ Dump diário falhou: $mensagem');
+            continue;
+          }
+          dumpGerado = File(caminho);
+          debugPrint('>>> [Backup] 💾 Dump gerado: $caminho');
+        } else {
+          // Copiar dump existente para esta empresa
+          final dumpPath = p.join(dumpsDir.path, '${nomeEmp}_dump_diario_${dataStr}_${horaStr}.dump');
+          await dumpGerado.copy(dumpPath);
+          debugPrint('>>> [Backup] 📋 Dump copiado para $nomeEmp: $dumpPath');
+        }
+
+        // 2. Upload do dump para a nuvem
+        final dumpPath = p.join(dumpsDir.path, '${nomeEmp}_dump_diario_${dataStr}_${horaStr}.dump');
+        final enviou = await _enviarDumpDiarioParaNuvem(backupService, dumpPath);
+        await _marcarDumpPendente(enviou ? null : dumpPath);
+
+        // 3. Backup .sql da empresa para a nuvem (cada empresa tem seu propre sql)
         try {
-          final (sucesso, mensagem, _) = await backupService.uploadBackupNaNuvem();
-          if (sucesso) {
-            debugPrint('>>> [Backup] ☁️ Backup nuvem concluído: $mensagem');
-            addSyncLog('☁️ Backup diário automático para nuvem realizado.');
-          } else {
-            debugPrint('>>> [Backup] ⚠️ Backup nuvem falhou: $mensagem');
+          if (SupabaseService.isAvailable && !_isOffline) {
+            final (okSql, msgSql, caminhoSql) = await backupService.criarBackupSqlDaEmpresa(
+              empresaId: empId,
+            );
+            if (okSql && caminhoSql != null) {
+              await backupService.uploadDumpNaNuvem(File(caminhoSql));
+              debugPrint('>>> [Backup] ☁️ Backup .sql de $nomeEmp enviado para nuvem.');
+            } else {
+              debugPrint('>>> [Backup] ⚠️ Backup .sql de $nomeEmp falhou: $msgSql');
+            }
           }
         } catch (e) {
-          debugPrint('>>> [Backup] ❌ Erro no backup nuvem: $e');
+          debugPrint('>>> [Backup] ⚠️ Erro no backup .sql de $nomeEmp: $e');
         }
+
+        // 4. Limpar dumps locais antigos desta empresa
+        try {
+          final dumpsLocais = dumpsDir.listSync()
+              .whereType<File>()
+              .where((f) => f.path.endsWith('.dump'))
+              .toList()
+            ..sort((a, b) => a.lastModifiedSync().compareTo(b.lastModifiedSync()));
+          if (dumpsLocais.length > _maxDumpsLocais) {
+            final antigos = dumpsLocais.sublist(0, dumpsLocais.length - _maxDumpsLocais);
+            for (final antigo in antigos) {
+              await antigo.delete();
+            }
+          }
+        } catch (e) {
+          debugPrint('>>> [Backup] ⚠️ Erro ao limpar dumps antigos de $nomeEmp: $e');
+        }
+
+        // 5. Atualizar timestamp desta empresa
+        await _storage.salvar(
+          'appcfg_empresa_${empId}_exodo_ultimo_backup_diario',
+          agora.toIso8601String(),
+        );
+        debugPrint('>>> [Backup] ✅ Backup diário de $nomeEmp concluído.');
       }
-      
-      // Atualizar timestamp
+
+      // Atualizar timestamp da empresa atual (compatibilidade)
       _ultimoBackupDiario = agora;
-      await _storage.salvar(_getEmpresaKey('exodo_ultimo_backup_diario'), agora.toIso8601String());
+      debugPrint('>>> [Backup] ✅ Backup diário de todas as empresas concluído.');
+    } catch (e) {
+      debugPrint('>>> [Backup] ❌ Erro inesperado no backup diário: $e');
+      addSyncLog('❌ Erro inesperado no backup diário: $e');
+    } finally {
+      _emProcessoBackupDiario = false;
+    }
+  }
+
+  // ==========================================================================
+  // BACKUP AUTOMÁTICO NA NUVEM (PostgreSQL .sql — SOMENTE a empresa atual)
+  // ==========================================================================
+
+  DateTime? _ultimoBackupNuvem;
+  bool _emProcessoBackupNuvem = false;
+
+  /// Data/hora do último backup enviado para a nuvem (empresa atual).
+  DateTime? get ultimoBackupNuvem => _ultimoBackupNuvem;
+
+  /// Carrega do armazenamento local o horário do último backup na nuvem
+  /// (chave por empresa, então cada empresa tem o seu próprio controle).
+  Future<void> _carregarUltimoBackupNuvem() async {
+    if (_currentEmpresaId == null) return;
+    try {
+      final valor = await _storage.carregar(_getEmpresaKey('exodo_ultimo_backup_nuvem'));
+      if (valor != null) {
+        _ultimoBackupNuvem = DateTime.tryParse(valor.toString());
+      }
+    } catch (e) {
+      debugPrint('>>> [BackupNuvem] ⚠️ Erro ao carregar último backup da nuvem: $e');
+    }
+  }
+
+  /// Gera e envia AGORA para a nuvem um backup PostgreSQL (.sql) com APENAS os
+  /// dados da empresa atual (Supabase Storage, pasta `dumps/{empresaId}/`).
+  /// Não depende do pg_dump: usa psql com `COPY ... WHERE empresa_id = '<id>'`.
+  /// Retorna (sucesso, mensagem).
+  Future<(bool, String)> fazerBackupNuvemAgora() async {
+    if (_currentEmpresaId == null || _currentEmpresaId!.isEmpty) {
+      return (false, 'Empresa não selecionada');
+    }
+    if (!SupabaseService.isAvailable) {
+      return (false, 'Supabase indisponível — backup na nuvem não enviado');
+    }
+
+    try {
+      final backupService = BackupRestoreService(this);
+
+      // 1. Gera o backup PostgreSQL (.sql) SOMENTE desta empresa
+      final (okGerou, msgGerou, caminho) = await backupService.criarBackupSqlDaEmpresa();
+      if (!okGerou || caminho == null) {
+        debugPrint('>>> [BackupNuvem] ⚠️ $msgGerou');
+        addSyncLog('⚠️ Backup da empresa na nuvem NÃO foi gerado: $msgGerou');
+        return (false, msgGerou);
+      }
+
+      // 2. Envia para a nuvem, na pasta da própria empresa
+      final (ok, msg) = await backupService.uploadDumpNaNuvem(File(caminho));
+      if (ok) {
+        _ultimoBackupNuvem = DateTime.now();
+        await _storage.salvar(
+          _getEmpresaKey('exodo_ultimo_backup_nuvem'),
+          _ultimoBackupNuvem!.toIso8601String(),
+        );
+        addSyncLog('☁️ Backup PostgreSQL da empresa enviado para a nuvem.');
+        return (true, 'Backup da empresa enviado para a nuvem! $msgGerou');
+      }
+      addSyncLog('⚠️ Backup da empresa NÃO subiu para a nuvem: $msg');
+      return (false, msg);
+    } catch (e) {
+      debugPrint('>>> [BackupNuvem] ❌ Erro ao enviar backup para a nuvem: $e');
+      return (false, 'Erro ao enviar backup para a nuvem: $e');
+    }
+  }
+
+  /// Timer diário do backup PostgreSQL na nuvem.
+  /// NOTA: desde a refatoração, o backup .sql por empresa é feito dentro de
+  /// [_verificarBackupDiario], que itera TODAS as empresas. Este método
+  /// agora só serve como fallback para o caso de o dump local ter falhado
+  /// mas a empresa estar online.
+  Future<void> _verificarBackupNuvemDiario() async {
+    // O backup .sql por empresa já é feito em _verificarBackupDiario para
+    // todas as empresas. Este método fica como compatibilidade.
+    debugPrint('>>> [BackupNuvem] ℹ️ Backup .sql por empresa já integrado no backup diário.');
+  }
+
+  // ==========================================================================
+  // BACKUP COMPLETO DO BANCO DA NUVEM (TODAS as empresas) — automático
+  // ==========================================================================
+  //
+  // Diferente dos dois acima (que são por empresa), este é a cópia COMPLETA do
+  // banco do Supabase — o arquivo de recuperação de desastre —, arquivado na
+  // própria nuvem em `dumps/_banco_completo/`. Como ele não pertence a nenhuma
+  // empresa, o controle do último envio é uma chave GLOBAL, sem prefixo de
+  // empresa (senão cada empresa teria o seu relógio e o backup sairia várias
+  // vezes por dia).
+
+  static const String _keyUltimoBackupCompleto = 'exodo_ultimo_backup_completo_nuvem';
+
+  DateTime? _ultimoBackupCompletoNuvem;
+  bool _emProcessoBackupCompleto = false;
+
+  /// Data/hora do último backup COMPLETO do banco da nuvem enviado.
+  DateTime? get ultimoBackupCompletoNuvem => _ultimoBackupCompletoNuvem;
+
+  Future<void> _carregarUltimoBackupCompleto() async {
+    try {
+      final valor = await _storage.carregar(_keyUltimoBackupCompleto);
+      if (valor != null) {
+        _ultimoBackupCompletoNuvem = DateTime.tryParse(valor.toString());
+      }
+    } catch (e) {
+      debugPrint('>>> [BackupCompleto] ⚠️ Erro ao carregar o último envio: $e');
+    }
+  }
+
+  /// Verifica se é hora do backup COMPLETO do banco da nuvem e, quando for,
+  /// gera o arquivo (todas as tabelas, todas as empresas) e o arquiva na
+  /// própria nuvem.
+  ///
+  /// O intervalo vem do .env (`BACKUP_COMPLETO_NUVEM_HORAS`, 24h por padrão;
+  /// 0 desliga). Devolve uma linha dizendo o que aconteceu — é o mesmo texto
+  /// do log, e serve para conferir o comportamento sem precisar do app aberto.
+  ///
+  /// [forcar] antecipa a VERIFICAÇÃO na abertura do app (em vez de esperar o
+  /// timer de 30 min); a regra do intervalo continua valendo, então reabrir o
+  /// app logo depois de um backup não gera um segundo arquivo.
+  Future<String> verificarBackupCompletoNuvem({bool forcar = false}) async {
+    if (!EnvConfig.backupCompletoNuvemAtivo) {
+      return 'backup completo automático DESLIGADO (BACKUP_COMPLETO_NUVEM_HORAS=0)';
+    }
+    if (_emProcessoBackupCompleto) {
+      return 'backup completo já em andamento — ignorado';
+    }
+    if (!SupabaseService.isAvailable || _isOffline) {
+      return 'backup completo: sem Supabase/offline — pulado';
+    }
+    if (!EnvConfig.backupBancoNuvemConfigurado) {
+      return 'backup completo: conexão do banco da nuvem não configurada no .env';
+    }
+
+    final intervalo = EnvConfig.backupCompletoNuvemHoras;
+    final agora = DateTime.now();
+    final horasDesdeUltimo = _ultimoBackupCompletoNuvem != null
+        ? agora.difference(_ultimoBackupCompletoNuvem!).inHours
+        : 9999;
+    if (horasDesdeUltimo < intervalo) {
+      final faltam = intervalo - horasDesdeUltimo;
+      debugPrint('>>> [BackupCompleto] ⏭️ Ainda não é hora: faltam ${faltam}h '
+          '(intervalo ${intervalo}h).');
+      return 'backup completo: faltam ${faltam}h (intervalo de ${intervalo}h)';
+    }
+
+    _emProcessoBackupCompleto = true;
+    debugPrint('>>> [BackupCompleto] 🕐 Hora do backup COMPLETO do banco da nuvem...');
+    addSyncLog('🗄️ Backup COMPLETO do banco da nuvem iniciado (todas as empresas)...');
+    try {
+      final (ok, msg, _) =
+          await BackupRestoreService(this).enviarBackupCompletoParaNuvem();
+      if (!ok) {
+        debugPrint('>>> [BackupCompleto] ⚠️ $msg');
+        addSyncLog('⚠️ Backup COMPLETO da nuvem falhou: $msg');
+        return 'backup completo FALHOU: $msg';
+      }
+
+      _ultimoBackupCompletoNuvem = agora;
+      await _storage.salvar(_keyUltimoBackupCompleto, agora.toIso8601String());
+      debugPrint('>>> [BackupCompleto] ✅ $msg');
+      addSyncLog('☁️ Backup COMPLETO do banco da nuvem salvo na nuvem.');
+      return 'backup completo ENVIADO: $msg';
+    } catch (e) {
+      debugPrint('>>> [BackupCompleto] ❌ Erro no backup completo: $e');
+      addSyncLog('❌ Erro no backup COMPLETO da nuvem: $e');
+      return 'backup completo ERRO: $e';
+    } finally {
+      _emProcessoBackupCompleto = false;
     }
   }
 
@@ -1135,6 +1628,13 @@ class DataService extends ChangeNotifier {
   bool _isLoading = false;
   String _mensagemLoading = 'Carregando...';
 
+  // Carga INICIAL da nuvem (abertura do sistema): enquanto true, o app mantém
+  // a tela de "carregando" em vez de abrir as telas com os dados ainda
+  // incompletos. Liberada quando a carga termina, no limite de segurança
+  // (ver _limiteEsperaNuvemInicial) ou quando o usuário escolhe não esperar.
+  bool _sincronizandoInicial = false;
+  static const Duration _limiteEsperaNuvemInicial = Duration(seconds: 60);
+
   // Controle de Paginação (Infinite Scroll)
   int _paginaAtualClientes = 0;
   bool _temMaisClientes = true;
@@ -1144,6 +1644,8 @@ class DataService extends ChangeNotifier {
   bool _temMaisVendas = true;
   bool _carregandoMaisVendas = false;
   bool get isLoading => _isLoading;
+  /// True enquanto os dados iniciais da nuvem estão sendo baixados na abertura.
+  bool get sincronizandoInicial => _sincronizandoInicial;
   bool get syncEmAndamento => _syncEmAndamento;
   DateTime? get ultimaSincronizacaoSucesso => _ultimaSincronizacaoSucesso;
   String? get ultimoErroSync => _ultimoErroSync;
@@ -1174,6 +1676,15 @@ class DataService extends ChangeNotifier {
     }
   }
   
+  /// Libera a tela de carregamento inicial sem esperar a nuvem terminar
+  /// (a sincronização continua rodando em segundo plano).
+  void pularEsperaSincronizacaoInicial() {
+    if (!_sincronizandoInicial) return;
+    _sincronizandoInicial = false;
+    addSyncLog('⚠️ Carregamento inicial liberado pelo usuário (sem esperar a nuvem)');
+    notifyListeners();
+  }
+
   /// Força uma sincronização
   Future<void> forceSync() async {
     _ultimoErroSync = null;
@@ -1243,7 +1754,7 @@ class DataService extends ChangeNotifier {
       if (_isModoLeve && !modoLeve) {
         debugPrint('>>> [DataService] ⚡ Upgrade: modoLeve -> Full sync (empresa: $empresaId)');
         _isModoLeve = false;
-        await iniciarSincronizacao(modoLeve: false);
+        await iniciarSincronizacao(modoLeve: false, cargaInicial: true);
         return;
       }
       debugPrint('>>> [DataService] ℹ️ Empresa já definida: $empresaId (Leve: $_isModoLeve)');
@@ -1319,6 +1830,19 @@ class DataService extends ChangeNotifier {
     _currentEmpresaId = empresaId;
     _ultimaSincronizacao = null; // Resetar para que a nova empresa tenha sua própria sincronização
     _ultimaSincronizacaoSucesso = null;
+
+    // Controles de backup são POR EMPRESA: zerar e recarregar para a nova empresa,
+    // senão ela herdaria o horário do último backup da empresa anterior e ficaria
+    // até 24h sem backup automático (local e nuvem).
+    _ultimoBackupDiario = null;
+    _ultimoBackupNuvem = null;
+    await _carregarUltimoBackupDiario();
+    await _carregarUltimoBackupNuvem();
+
+    // Os mínimos de numeração (VND/PED) também são POR EMPRESA: sem recarregar,
+    // a empresa nova herdava o mínimo da anterior e a venda saía com o número da
+    // outra empresa (ex.: a Exodo Systems lançou 408 porque o mínimo estava em 407).
+    await carregarMinimosNumeracao();
     
     // Carregar logs específicos da nova empresa do PostgreSQL
     if (empresaId != null) {
@@ -1348,8 +1872,11 @@ class DataService extends ChangeNotifier {
       }
       
       // Recarregar dados APENAS da nova empresa (isoladamente)
+      // cargaInicial: true -> enquanto os dados não chegam, o app mantém a tela
+      // de carregando (não abre as telas com o sistema vazio).
       try {
-        await iniciarSincronizacao(modoLeve: modoLeve).timeout(const Duration(minutes: 2));
+        await iniciarSincronizacao(modoLeve: modoLeve, cargaInicial: true)
+            .timeout(const Duration(minutes: 2));
       } catch (e) {
         print('>>> DataService: ⚠️ Erro durante iniciarSincronizacao: $e');
         // Continuamos para garantir que _isLoading = false seja chamado
@@ -1363,19 +1890,23 @@ class DataService extends ChangeNotifier {
       }
 
       // ✅ SYNC MONITOR: Inicializar monitoramento de sincronizacao
-      if (!_syncMonitorInitialized && !kIsWeb) {
-        _syncMonitorInitialized = true;
+      // Chamado a cada troca de empresa para o heartbeat apontar sempre para a
+      // empresa aberta no momento (o timer em si é criado uma única vez).
+      if (!kIsWeb) {
         try {
           final pcName = Platform.localHostname;
           SyncMonitorService.instance.initialize(
             empresaId: empresaId,
             pcName: pcName,
           );
-          SyncMonitorService.instance.registrarEvento(
-            empresaId: empresaId,
-            evento: 'inicio_sync',
-            detalhes: 'Sessao iniciada no PC: $pcName',
-          );
+          if (!_syncMonitorInitialized) {
+            _syncMonitorInitialized = true;
+            SyncMonitorService.instance.registrarEvento(
+              empresaId: empresaId,
+              evento: 'inicio_sync',
+              detalhes: 'Sessao iniciada no PC: $pcName',
+            );
+          }
           debugPrint('>>> [SyncMonitor] ✅ Monitoramento de sync iniciado para empresa $empresaId');
         } catch (e) {
           debugPrint('>>> [SyncMonitor] ⚠️ Erro ao iniciar monitor: $e');
@@ -1387,6 +1918,11 @@ class DataService extends ChangeNotifier {
     
     // Finalizar loading
     _isLoading = false;
+    // Sem empresa definida (logout/saída da empresa) não há carga de nuvem
+    // pendente que justifique segurar o usuário na tela de carregando.
+    if (empresaId == null) {
+      _sincronizandoInicial = false;
+    }
     notifyListeners();
     print('>>> DataService: ✓ Troca de empresa concluída - dados isolados');
 
@@ -1680,11 +2216,37 @@ class DataService extends ChangeNotifier {
     }
   }
 
-  Future<void> iniciarSincronizacao({bool modoLeve = false}) async {
+  /// [cargaInicial] deve ser true apenas na ABERTURA do sistema (troca/seleção
+  /// de empresa). Nesse caso o app segura o usuário na tela de carregando até
+  /// os dados da nuvem chegarem, para não abrir as telas vazias — a liberação
+  /// acontece quando a carga termina, no limite de segurança
+  /// (_limiteEsperaNuvemInicial) ou pelo botão "Continuar sem esperar".
+  Future<void> iniciarSincronizacao({
+    bool modoLeve = false,
+    bool cargaInicial = false,
+  }) async {
     // Atualizar mensagem de loading
     if (_isLoading) {
-      _mensagemLoading = 'Sincronizando dados...';
+      _mensagemLoading = cargaInicial
+          ? 'Sincronizando dados da nuvem...'
+          : 'Sincronizando dados...';
       notifyListeners();
+    }
+
+    if (cargaInicial) {
+      _sincronizandoInicial = true;
+      _mensagemLoading = 'Sincronizando dados da nuvem...';
+      notifyListeners();
+
+      // Rede de segurança: nunca deixa o sistema preso na tela de carregando.
+      Future.delayed(_limiteEsperaNuvemInicial).then((_) {
+        if (_sincronizandoInicial) {
+          _sincronizandoInicial = false;
+          addSyncLog('⚠️ Limite de espera da carga inicial atingido: '
+              'abrindo o sistema com os dados locais (a nuvem continua em segundo plano)');
+          notifyListeners();
+        }
+      });
     }
     
     print('╔════════════════════════════════════════════════╗');
@@ -1757,6 +2319,13 @@ class DataService extends ChangeNotifier {
         notifyListeners();
       }).catchError((e) {
         print('>>> ⚠ Erro ao carregar do Supabase em background: $e');
+      }).whenComplete(() {
+        // Fim da carga de dados da abertura: agora a tela de carregando pode
+        // sair (as telas seguintes já encontram os dados da nuvem carregados).
+        if (_sincronizandoInicial) {
+          _sincronizandoInicial = false;
+          notifyListeners();
+        }
       });
     } else {
       // Supabase DESABILITADO ou OFFLINE - carregar apenas do localStorage
@@ -1771,6 +2340,12 @@ class DataService extends ChangeNotifier {
       } catch (e) {
         print('>>> ⚠ Erro ao carregar do localStorage: $e');
       }
+
+      // Sem nuvem nesta abertura: libera a tela de carregando imediatamente
+      if (_sincronizandoInicial) {
+        _sincronizandoInicial = false;
+        notifyListeners();
+      }
     }
 
     // Iniciar o timer de pulso para manter máquinas sincronizadas (essencial para PDV multi-terminal)
@@ -1778,7 +2353,23 @@ class DataService extends ChangeNotifier {
     
     // Se não houver dados salvos (nem Supabase nem local), carregar dados fictícios
     // APENAS para a empresa padrão (ID "1"). Empresas novas começam vazias.
-    final isEmpresaPadrao = _currentEmpresaId == '1' || _currentEmpresaId == null;
+    //
+    // DADOS FICTÍCIOS (demonstração): só entram se a build for feita com
+    // `--dart-define=EXODO_DEMO=true`. Em build normal `isEmpresaPadrao` é
+    // sempre false e nada é semeado.
+    //
+    // ⚠️ POR QUE ISTO FICOU BLOQUEADO: quando o app iniciava sem empresa
+    // selecionada, este trecho inseria 15 produtos de demonstração de FERRAGEM
+    // (ids '1'..'15', códigos COD-1..COD-15, "Parafuso Phillips 4x40mm",
+    // "Martelo Unha 27mm"...) e 8 clientes fictícios em memória e chamava
+    // _salvarTodosDados() — que gravava no PostgreSQL local usando o empresa_id
+    // que ainda estava carregado da empresa anterior e subia para a NUVEM.
+    // Foi assim que produtos de demonstração apareceram dentro da empresa BMJ,
+    // colidindo com os códigos COD-1..COD-15 que o catálogo real já usava.
+    // Nunca liberar isto em produção.
+    const bool semearDadosDemo = bool.fromEnvironment('EXODO_DEMO');
+    final isEmpresaPadrao = semearDadosDemo &&
+        (_currentEmpresaId == '1' || _currentEmpresaId == null);
     
     if (isEmpresaPadrao) {
       // Apenas a empresa padrão carrega dados fictícios
@@ -5140,16 +5731,358 @@ class DataService extends ChangeNotifier {
     }
   }
 
+  // ============ CRUD Serviço Realizado ============
+  //
+  // Entidade PRÓPRIA (tabela `servicos_realizados`), separada de `pedidos`:
+  // numeração SRV própria, nasce como Orçamento e não entra no PDV nem nos
+  // recebíveis de pedido.
+
+  Future<void> addServicoRealizado(ServicoRealizado servico) async {
+    _servicosRealizados.add(servico);
+    notifyListeners();
+    _marcarSujo(LocalStorageService.keyServicosRealizados);
+    await _enviarServicoRealizadoParaSupabase(servico);
+    debugPrint('>>> Serviço realizado salvo: ${servico.numero} (${servico.status})');
+  }
+
+  Future<void> updateServicoRealizado(ServicoRealizado servico) async {
+    final index = _servicosRealizados.indexWhere((s) => s.id == servico.id);
+    if (index == -1) {
+      await addServicoRealizado(servico);
+      return;
+    }
+    _servicosRealizados[index] = servico;
+    notifyListeners();
+    _marcarSujo(LocalStorageService.keyServicosRealizados);
+    await _enviarServicoRealizadoParaSupabase(servico);
+    debugPrint('>>> Serviço realizado atualizado: ${servico.numero} (${servico.status})');
+  }
+
+  Future<void> removerServicoRealizado(String id) async {
+    _servicosRealizados.removeWhere((s) => s.id == id);
+    notifyListeners();
+    _marcarSujo(LocalStorageService.keyServicosRealizados);
+    try {
+      if (SupabaseService.isAvailable && _currentEmpresaId != null) {
+        await enviarMudancaParaSupabase(
+          SupabaseService.tableServicosRealizados,
+          {'id': id},
+          evento: 'DELETE',
+        );
+      }
+    } catch (e) {
+      debugPrint('>>> ⚠️ Não foi possível excluir o serviço realizado na nuvem: $e');
+    }
+  }
+
+  /// Recebe uma parcela do serviço. Quando zera o pendente, o serviço passa
+  /// para 'Recebido'.
+  Future<ServicoRealizado?> receberPagamentoServico(
+    String servicoId,
+    String pagamentoId, {
+    DateTime? dataRecebimento,
+  }) async {
+    final index = _servicosRealizados.indexWhere((s) => s.id == servicoId);
+    if (index == -1) return null;
+
+    final atual = _servicosRealizados[index];
+    final recebidoEm = dataRecebimento ?? DateTime.now();
+    final pagamentos = atual.pagamentos
+        .map((p) => p.id == pagamentoId
+            ? p.copyWith(recebido: true, dataRecebimento: recebidoEm)
+            : p)
+        .toList();
+
+    var atualizado = atual.copyWith(
+      pagamentos: pagamentos,
+      updatedAt: DateTime.now(),
+    );
+
+    if (atualizado.valorPendente <= 0.009 && !atualizado.cancelado) {
+      atualizado = atualizado.copyWith(
+        status: ServicoRealizado.statusRecebido,
+        dataConclusao: atualizado.dataConclusao ?? recebidoEm,
+      );
+    }
+
+    await updateServicoRealizado(atualizado);
+    return atualizado;
+  }
+
+  /// Recebe TODO o valor pendente de uma vez (quitando o serviço).
+  ///
+  /// Serviço lançado sem forma de pagamento recebe aqui o pagamento que faltava
+  /// — senão não haveria como marcar o valor como recebido.
+  Future<ServicoRealizado?> receberServicoTotal(
+    String servicoId, {
+    TipoPagamento? tipo,
+  }) async {
+    final index = _servicosRealizados.indexWhere((s) => s.id == servicoId);
+    if (index == -1) return null;
+
+    final atual = _servicosRealizados[index];
+    final recebidoEm = DateTime.now();
+
+    final List<PagamentoPedido> pagamentos;
+    if (atual.pagamentos.isEmpty) {
+      pagamentos = [
+        PagamentoPedido(
+          id: '${recebidoEm.millisecondsSinceEpoch}_pg',
+          tipo: tipo ?? TipoPagamento.dinheiro,
+          valor: atual.totalGeral > 0 ? atual.totalGeral : atual.totalServicos,
+          recebido: true,
+          dataRecebimento: recebidoEm,
+        ),
+      ];
+    } else {
+      pagamentos = atual.pagamentos
+          .map((p) => p.recebido
+              ? p
+              : p.copyWith(recebido: true, dataRecebimento: recebidoEm))
+          .toList();
+    }
+
+    await updateServicoRealizado(atual.copyWith(
+      pagamentos: pagamentos,
+      descontoTotal: 0,
+      status: ServicoRealizado.statusRecebido,
+      dataConclusao: atual.dataConclusao ?? recebidoEm,
+      updatedAt: recebidoEm,
+    ));
+    return _servicosRealizados[index];
+  }
+
+  /// Aprova um orçamento: deixa de ser proposta e passa a 'Em Aberto'
+  /// (a partir daqui o valor entra como serviço a receber).
+  Future<ServicoRealizado?> aprovarOrcamentoServico(String servicoId) async {
+    final index = _servicosRealizados.indexWhere((s) => s.id == servicoId);
+    if (index == -1) return null;
+
+    final atual = _servicosRealizados[index];
+    final atualizado = atual.copyWith(
+      status: ServicoRealizado.statusEmAberto,
+      dataOrcamento: atual.dataOrcamento ?? DateTime.now(),
+      updatedAt: DateTime.now(),
+    );
+    await updateServicoRealizado(atualizado);
+    return atualizado;
+  }
+
+  /// Cancela o serviço (não gera recebível nem orçamento válido).
+  Future<ServicoRealizado?> cancelarServicoRealizado(String servicoId) async {
+    final index = _servicosRealizados.indexWhere((s) => s.id == servicoId);
+    if (index == -1) return null;
+
+    final atualizado = _servicosRealizados[index].copyWith(
+      status: ServicoRealizado.statusCancelado,
+      updatedAt: DateTime.now(),
+    );
+    await updateServicoRealizado(atualizado);
+    return atualizado;
+  }
+
+  // ============ CRUD Orçamento (pedidos do central) ============
+  //
+  // Entidade PRÓPRIA (tabela `orcamentos`, série ORC-). Não é pedido: fica fora
+  // do PDV, dos recebíveis e dos relatórios de venda. Só viram pedido quando o
+  // cliente aprova — e aí a série passa a ser PED-.
+
+  Future<void> addOrcamento(Orcamento orcamento) async {
+    _orcamentos.add(orcamento);
+    notifyListeners();
+    _marcarSujo(LocalStorageService.keyOrcamentos);
+    await _enviarOrcamentoParaSupabase(orcamento);
+    debugPrint('>>> Orçamento salvo: ${orcamento.numero} (${orcamento.status})');
+  }
+
+  Future<void> updateOrcamento(Orcamento orcamento) async {
+    final index = _orcamentos.indexWhere((o) => o.id == orcamento.id);
+    if (index == -1) {
+      await addOrcamento(orcamento);
+      return;
+    }
+    _orcamentos[index] = orcamento;
+    notifyListeners();
+    _marcarSujo(LocalStorageService.keyOrcamentos);
+    await _enviarOrcamentoParaSupabase(orcamento);
+    debugPrint('>>> Orçamento atualizado: ${orcamento.numero} (${orcamento.status})');
+  }
+
+  Future<void> removerOrcamento(String id) async {
+    _orcamentos.removeWhere((o) => o.id == id);
+    notifyListeners();
+    _marcarSujo(LocalStorageService.keyOrcamentos);
+    try {
+      if (SupabaseService.isAvailable && _currentEmpresaId != null) {
+        await enviarMudancaParaSupabase(
+          SupabaseService.tableOrcamentos,
+          {'id': id},
+          evento: 'DELETE',
+        );
+      }
+    } catch (e) {
+      debugPrint('>>> ⚠️ Não foi possível excluir o orçamento na nuvem: $e');
+    }
+  }
+
+  /// **Aprovar** = o cliente aceitou a proposta. Só isso: o orçamento passa a
+  /// 'Aprovado' e CONTINUA sendo orçamento, com o número ORC- dele.
+  ///
+  /// O pedido (série PED-) só nasce no [gerarPedidoDoOrcamento], depois da
+  /// aprovação — as duas coisas são separadas de propósito.
+  Future<Orcamento?> aprovarOrcamento(String orcamentoId) async {
+    final index = _orcamentos.indexWhere((o) => o.id == orcamentoId);
+    if (index == -1) return null;
+
+    final atual = _orcamentos[index];
+    if (atual.cancelado) return null;
+
+    final aprovado = atual.copyWith(
+      status: Orcamento.statusAprovado,
+      dataAprovacao: DateTime.now(),
+      updatedAt: DateTime.now(),
+    );
+    await updateOrcamento(aprovado);
+    debugPrint('>>> Orçamento ${aprovado.numero} aprovado (ainda sem pedido)');
+    return aprovado;
+  }
+
+  /// **Gerar pedido**: transforma um orçamento JÁ APROVADO em Pedido, com
+  /// número próprio da série PED- e o número do orçamento de origem guardado
+  /// nas observações do pedido.
+  Future<Pedido?> gerarPedidoDoOrcamento(String orcamentoId) async {
+    final index = _orcamentos.indexWhere((o) => o.id == orcamentoId);
+    if (index == -1) return null;
+
+    final orcamento = _orcamentos[index];
+    // Só vira pedido depois de aprovado, e nunca duas vezes.
+    if (orcamento.cancelado || !orcamento.aprovado) return null;
+    if (orcamento.temPedidoGerado) return null;
+
+    final agora = DateTime.now();
+    final observacoesPedido = [
+      'Orçamento ${orcamento.numero}',
+      if ((orcamento.observacoes ?? '').trim().isNotEmpty)
+        orcamento.observacoes!.trim(),
+    ].join('\n');
+
+    final pedido = Pedido(
+      id: uuid.v4(),
+      numero: getProximoNumeroPedido(),
+      clienteId: orcamento.clienteId,
+      clienteNome: orcamento.clienteNome,
+      clienteTelefone: orcamento.clienteTelefone,
+      clienteEndereco: orcamento.clienteEndereco,
+      clienteCpfCnpj: orcamento.clienteCpfCnpj,
+      operador: orcamento.operador,
+      dataPedido: agora,
+      status: 'Pendente',
+      total: orcamento.totalGeral,
+      descontoTotal: orcamento.descontoTotal,
+      acrescimoTotal: orcamento.acrescimoTotal,
+      observacoes: observacoesPedido,
+      produtos: orcamento.itens,
+      servicos: orcamento.servicos,
+      pagamentos: const [],
+      deliveryInfo: orcamento.deliveryInfo,
+      createdAt: agora,
+      updatedAt: agora,
+    );
+
+    await addPedido(pedido);
+
+    await updateOrcamento(orcamento.copyWith(
+      pedidoGeradoId: pedido.id,
+      pedidoGeradoNumero: pedido.numero,
+      updatedAt: agora,
+    ));
+
+    debugPrint('>>> Orçamento ${orcamento.numero} virou pedido ${pedido.numero}');
+    return pedido;
+  }
+
+  /// Reabre um orçamento recusado/cancelado (volta a ser proposta em aberto).
+  Future<void> reabrirOrcamento(String orcamentoId) async {
+    final index = _orcamentos.indexWhere((o) => o.id == orcamentoId);
+    if (index == -1) return;
+    final atual = _orcamentos[index];
+    if (atual.temPedidoGerado) return; // já virou pedido: não dá para voltar
+    await updateOrcamento(atual.copyWith(
+      status: Orcamento.statusOrcamento,
+      limparAprovacao: true,
+      updatedAt: DateTime.now(),
+    ));
+  }
+
+  /// Marca o orçamento como recusado pelo cliente.
+  Future<void> recusarOrcamento(String orcamentoId) async {
+    final index = _orcamentos.indexWhere((o) => o.id == orcamentoId);
+    if (index == -1) return;
+    await updateOrcamento(_orcamentos[index].copyWith(
+      status: Orcamento.statusRecusado,
+      updatedAt: DateTime.now(),
+    ));
+  }
+
+  /// Cancela o orçamento (nem proposta válida, nem pedido).
+  Future<void> cancelarOrcamento(String orcamentoId) async {
+    final index = _orcamentos.indexWhere((o) => o.id == orcamentoId);
+    if (index == -1) return;
+    await updateOrcamento(_orcamentos[index].copyWith(
+      status: Orcamento.statusCancelado,
+      updatedAt: DateTime.now(),
+    ));
+  }
+
+  Future<void> _enviarOrcamentoParaSupabase(Orcamento orcamento) async {
+    try {
+      if (!SupabaseService.isAvailable || _currentEmpresaId == null) return;
+      final dados = orcamento.toMap();
+      dados['empresa_id'] = _currentEmpresaId;
+      await enviarMudancaParaSupabase(
+        SupabaseService.tableOrcamentos,
+        dados,
+      );
+    } catch (e) {
+      // Tabela ausente na nuvem não pode impedir o salvamento local.
+      debugPrint('>>> ⚠️ Orçamento ${orcamento.numero} não subiu para a nuvem: $e');
+    }
+  }
+
+  Future<void> _enviarServicoRealizadoParaSupabase(
+      ServicoRealizado servico) async {
+    try {
+      if (!SupabaseService.isAvailable || _currentEmpresaId == null) return;
+      final dados = servico.toMap();
+      dados['empresa_id'] = _currentEmpresaId;
+      await enviarMudancaParaSupabase(
+        SupabaseService.tableServicosRealizados,
+        dados,
+      );
+    } catch (e) {
+      // Tabela ausente na nuvem não pode impedir o salvamento local.
+      debugPrint('>>> ⚠️ Serviço realizado ${servico.numero} não subiu para a nuvem: $e');
+    }
+  }
+
   // ============ CRUD Pedido ============
 
   Future<void> addPedido(Pedido pedido) async {
     
     _pedidos.add(pedido);
+    // Trava o contador da empresa no número já emitido (ver o método).
+    await _elevarMinimoNumeracaoPeloNumero(pedido.numero);
     notifyListeners();
     _marcarSujo(LocalStorageService.keyPedidos);
     
     // Enviar mudança para Supabase automaticamente (sincronização bidirecional)
     await enviarMudancaParaSupabase(SupabaseService.tablePedidos, pedido.toMap());
+    
+    // GARANTIA MULTI-PC: upsert aguardado + confirmação Realtime
+    await garantirEnvioEConfirmacao(
+      tabela: SupabaseService.tablePedidos,
+      dados: pedido.toMap(),
+    );
     
     debugPrint('>>> Pedido salvo com sucesso: ${pedido.numero}');
   }
@@ -5168,6 +6101,12 @@ class DataService extends ChangeNotifier {
       // Enviar mudança para Supabase automaticamente (sincronização bidirecional)
       await enviarMudancaParaSupabase(SupabaseService.tablePedidos, pedido.toMap());
 
+      // GARANTIA MULTI-PC: upsert aguardado + confirmação Realtime
+      await garantirEnvioEConfirmacao(
+        tabela: SupabaseService.tablePedidos,
+        dados: pedido.toMap(),
+      );
+
       // SINCRONIZAÇÃO BIDIRECIONAL: Pedido -> Entrega
       if (pedido.deliveryInfo != null && pedido.deliveryInfo!.status.toLowerCase() == 'entregue') {
         final entregaIndex = _entregas.indexWhere((e) => e.pedidoId == pedido.id || e.pedidoNumero == pedido.numero);
@@ -5183,6 +6122,37 @@ class DataService extends ChangeNotifier {
     } else {
       debugPrint('>>> ERRO: Pedido não encontrado para atualizar!');
     }
+  }
+
+  /// Salva um pedido de forma idempotente: se já existir um pedido com o mesmo
+  /// id, ATUALIZA o registro existente (mantendo o MESMO número) em vez de
+  /// inserir outro registro.
+  ///
+  /// Isso é usado ao EDITAR um pedido salvo: antes era chamado addPedido(),
+  /// que só fazia _pedidos.add(), criando dois registros com o mesmo número —
+  /// e o detalhe do PDV (que busca o pedido por id) continuava exibindo o
+  /// registro antigo, como se a edição não tivesse sido salva.
+  Future<void> addOrUpdatePedido(Pedido pedido) async {
+    final index = _pedidos.indexWhere((p) => p.id == pedido.id);
+    if (index == -1) {
+      await addPedido(pedido);
+      return;
+    }
+
+    // Edição NUNCA renumera o pedido e também não reescreve a data de criação:
+    // o número e o createdAt originais são preservados.
+    final existente = _pedidos[index];
+    final pedidoFinal = pedido.copyWith(
+      numero: existente.numero,
+      createdAt: existente.createdAt,
+    );
+
+    if (pedido.numero != existente.numero) {
+      debugPrint('>>> [Pedido] Numeração preservada na edição: mantido '
+          '${existente.numero} (seria ${pedido.numero})');
+    }
+
+    await updatePedido(pedidoFinal);
   }
 
   void deletePedido(String id) {
@@ -5326,6 +6296,37 @@ class DataService extends ChangeNotifier {
       
       await _upsertNoSupabase(SupabaseService.tableEntregas, entrega.toMap());
     }
+  }
+
+  /// Salva a entrega vinculada a um pedido sem duplicar: se o pedido já tiver
+  /// uma entrega, ATUALIZA os dados dela preservando status, histórico e
+  /// rastreio. Usado ao editar pedidos de delivery (antes cada salvamento
+  /// criava um registro de entrega novo, duplicando a entrega no controle).
+  Future<void> addOrUpdateEntregaDoPedido(Entrega entrega) async {
+    final index = _entregas.indexWhere(
+      (e) =>
+          e.id == entrega.id ||
+          (entrega.pedidoId.isNotEmpty && e.pedidoId == entrega.pedidoId),
+    );
+    if (index == -1) {
+      await addEntrega(entrega);
+      return;
+    }
+
+    final existente = _entregas[index];
+    await updateEntrega(existente.copyWith(
+      pedidoNumero: entrega.pedidoNumero,
+      clienteNome: entrega.clienteNome,
+      clienteTelefone: entrega.clienteTelefone,
+      enderecoEntrega: entrega.enderecoEntrega,
+      bairro: entrega.bairro,
+      cidade: entrega.cidade,
+      cep: entrega.cep,
+      motoristaId: entrega.motoristaId,
+      motoristaNome: entrega.motoristaNome,
+      taxaEntrega: entrega.taxaEntrega,
+      observacoes: entrega.observacoes,
+    ));
   }
 
   void deleteEntrega(String id) {
@@ -5529,6 +6530,8 @@ class DataService extends ChangeNotifier {
       }
     }
     _vendasBalcao.add(venda);
+    // Trava o contador da empresa no número já emitido (ver o método).
+    await _elevarMinimoNumeracaoPeloNumero(venda.numero);
     print('✓ Venda ${venda.numero} (ID: ${venda.id}) salva em memória @ ${DateTime.now()}');
     
     // SALVAR IMEDIATAMENTE no PostgreSQL (apenas este item, sem reescrever toda a tabela)
@@ -5590,6 +6593,12 @@ class DataService extends ChangeNotifier {
     
     // Enviar mudança para Supabase automaticamente (sincronização bidirecional)
     await enviarMudancaParaSupabase(SupabaseService.tableVendasBalcao, venda.toMap());
+    
+    // GARANTIA MULTI-PC: upsert aguardado + confirmação Realtime
+    await garantirEnvioEConfirmacao(
+      tabela: SupabaseService.tableVendasBalcao,
+      dados: venda.toMap(),
+    );
   }
 
   Future<void> updateVendaBalcao(VendaBalcao venda) async {
@@ -5639,6 +6648,12 @@ class DataService extends ChangeNotifier {
       
       // Enviar mudança para Supabase automaticamente (sincronização bidirecional)
       await enviarMudancaParaSupabase(SupabaseService.tableVendasBalcao, venda.toMap());
+      
+      // GARANTIA MULTI-PC: upsert aguardado + confirmação Realtime
+      await garantirEnvioEConfirmacao(
+        tabela: SupabaseService.tableVendasBalcao,
+        dados: venda.toMap(),
+      );
     } else {
       print('!!! ERRO: Venda não encontrada para atualizar !!!');
       // Listar todas as vendas para debug
@@ -5861,6 +6876,7 @@ class DataService extends ChangeNotifier {
   }
 
   // Próximo número de venda (considera vendas balcão E pedidos para evitar duplicados)
+  // Respeita o mínimo salvo via sincronizarNumeracaoComSupabase()
   String getProximoNumeroVenda() {
     // Coletar todos os números existentes
     final Set<int> numerosExistentes = {};
@@ -5890,6 +6906,13 @@ class DataService extends ChangeNotifier {
       proximoNumero = numerosExistentes.reduce((a, b) => a > b ? a : b) + 1;
     }
 
+    // Respeitar mínimo sincronizado com Supabase (evita numerar abaixo do que já existe na nuvem)
+    final minStr = _minNumeroVenda;
+    if (minStr != null) {
+      final minVal = int.tryParse(minStr) ?? 0;
+      if (proximoNumero <= minVal) proximoNumero = minVal + 1;
+    }
+
     // Garantir que o número não existe (proteção extra)
     while (numerosExistentes.contains(proximoNumero)) {
       proximoNumero++;
@@ -5899,6 +6922,7 @@ class DataService extends ChangeNotifier {
   }
 
   // Próximo número de pedido (PED-0001, PED-0002, etc)
+  // Respeita o mínimo salvo via sincronizarNumeracaoComSupabase()
   String getProximoNumeroPedido() {
     // Coletar todos os números existentes que começam com PED-
     final Set<int> numerosExistentes = {};
@@ -5920,12 +6944,329 @@ class DataService extends ChangeNotifier {
       proximoNumero = numerosExistentes.reduce((a, b) => a > b ? a : b) + 1;
     }
 
+    // Respeitar mínimo sincronizado com Supabase
+    final minStr = _minNumeroPedido;
+    if (minStr != null) {
+      final minVal = int.tryParse(minStr) ?? 0;
+      if (proximoNumero <= minVal) proximoNumero = minVal + 1;
+    }
+
     // Garantir que o número não existe (proteção extra)
     while (numerosExistentes.contains(proximoNumero)) {
       proximoNumero++;
     }
 
     return 'PED-${proximoNumero.toString().padLeft(4, '0')}';
+  }
+
+  // ─── Numeração SEGURA (multi-PC): consulta a nuvem antes de gerar ────────
+  // Cache curto: evita consultar o Supabase a cada venda consecutiva, mas
+  // mantém os mínimos frescos o suficiente para não colidir entre máquinas.
+  DateTime? _ultimaConsultaNumeracaoNuvem;
+  static const Duration _cacheNumeracaoNuvem = Duration(seconds: 8);
+
+  /// Consulta o maior número VND/PED já existente na NUVEM para a empresa atual.
+  /// Retorna {vnd, ped} ou null em caso de offline/erro/timeout.
+  Future<Map<String, int>?> _consultarMaiorNumeroNaNuvem() async {
+    if (!SupabaseService.isAvailable || _currentEmpresaId == null) return null;
+    // Cache curto
+    final agora = DateTime.now();
+    if (_ultimaConsultaNumeracaoNuvem != null &&
+        agora.difference(_ultimaConsultaNumeracaoNuvem!) < _cacheNumeracaoNuvem) {
+      return {'vnd': int.tryParse(_minNumeroVenda ?? '0') ?? 0, 'ped': int.tryParse(_minNumeroPedido ?? '0') ?? 0};
+    }
+    try {
+      final client = SupabaseService.instance.client;
+      final empresaId = _currentEmpresaId!;
+      int vnd = 0, ped = 0;
+
+      // Últimos 300 por ordem descendente de numero (pega o maior)
+      final resVnd = await client
+          .from(SupabaseService.tableVendasBalcao)
+          .select('numero')
+          .eq('empresa_id', empresaId)
+          .order('numero', ascending: false)
+          .limit(300)
+          .timeout(const Duration(seconds: 4));
+      for (final row in resVnd) {
+        final numero = row['numero']?.toString() ?? '';
+        final m = RegExp(r'VND-(\d+)').firstMatch(numero);
+        if (m != null) {
+          final n = int.tryParse(m.group(1)!) ?? 0;
+          if (n > vnd) vnd = n;
+        }
+      }
+
+      final resPed = await client
+          .from(SupabaseService.tablePedidos)
+          .select('numero')
+          .eq('empresa_id', empresaId)
+          .order('numero', ascending: false)
+          .limit(300)
+          .timeout(const Duration(seconds: 4));
+      for (final row in resPed) {
+        final numero = row['numero']?.toString() ?? '';
+        final mV = RegExp(r'VND-(\d+)').firstMatch(numero);
+        if (mV != null) {
+          final n = int.tryParse(mV.group(1)!) ?? 0;
+          if (n > vnd) vnd = n;
+        }
+        if (numero.startsWith('PED-')) {
+          final n = int.tryParse(numero.substring(4)) ?? 0;
+          if (n > ped) ped = n;
+        }
+      }
+
+      _ultimaConsultaNumeracaoNuvem = agora;
+      return {'vnd': vnd, 'ped': ped};
+    } catch (e) {
+      debugPrint('>>> [DataService] ⚠️ Falha ao consultar maior número na nuvem: $e');
+      return null;
+    }
+  }
+
+  /// Próximo número de venda SEGURO: consulta o maior VND na nuvem e atualiza
+  /// o mínimo local antes de gerar, evitando duplicar número entre máquinas.
+  /// Offline: cai no comportamento local (getProximoNumeroVenda).
+  Future<String> getProximoNumeroVendaSeguro() async {
+    final nuvem = await _consultarMaiorNumeroNaNuvem();
+    if (nuvem != null && nuvem['vnd']! > 0) {
+      final novoMin = nuvem['vnd']!;
+      final minAtual = int.tryParse(_minNumeroVenda ?? '0') ?? 0;
+      if (novoMin > minAtual) {
+        _minNumeroVenda = novoMin.toString();
+        await _salvarMinNumeracao('venda', novoMin);
+        debugPrint('>>> [DataService] ✅ Mínimo VND atualizado pela nuvem (empresa $_currentEmpresaId): $novoMin');
+      }
+    }
+    return getProximoNumeroVenda();
+  }
+
+  /// Próximo número de pedido SEGURO: consulta o maior PED na nuvem e atualiza
+  /// o mínimo local antes de gerar, evitando duplicar número entre máquinas.
+  /// Offline: cai no comportamento local (getProximoNumeroPedido).
+  Future<String> getProximoNumeroPedidoSeguro() async {
+    final nuvem = await _consultarMaiorNumeroNaNuvem();
+    if (nuvem != null && nuvem['ped']! > 0) {
+      final novoMin = nuvem['ped']!;
+      final minAtual = int.tryParse(_minNumeroPedido ?? '0') ?? 0;
+      if (novoMin > minAtual) {
+        _minNumeroPedido = novoMin.toString();
+        await _salvarMinNumeracao('pedido', novoMin);
+        debugPrint('>>> [DataService] ✅ Mínimo PED atualizado pela nuvem (empresa $_currentEmpresaId): $novoMin');
+      }
+    }
+    return getProximoNumeroPedido();
+  }
+
+  // ─── Mínimos de numeração (carregados do exodo_config) ───────────────────
+  String? _minNumeroVenda;
+  String? _minNumeroPedido;
+
+  /// Chave de configuração dos mínimos de numeração, SEMPRE com o id da empresa.
+  ///
+  /// A tabela `exodo_config` é única no banco local (não tem `empresa_id`): usar a
+  /// chave sem o id fazia a numeração vazar de uma empresa para a outra — a empresa
+  /// nova herdava o mínimo da anterior e a venda saía com o número da outra empresa.
+  String? _chaveMinNumeracao(String tipo, [String? empresaId]) {
+    final id = ((empresaId ?? _currentEmpresaId) ?? '').trim();
+    if (id.isEmpty) return null;
+    return 'exodo_min_numero_${tipo}_$id';
+  }
+
+  /// Carrega os mínimos de numeração da EMPRESA ATUAL do banco local.
+  /// Também zera o cache da consulta à nuvem, que também é por empresa.
+  Future<void> carregarMinimosNumeracao() async {
+    _ultimaConsultaNumeracaoNuvem = null;
+
+    final chaveVnd = _chaveMinNumeracao('venda');
+    final chavePed = _chaveMinNumeracao('pedido');
+    if (chaveVnd == null || chavePed == null) {
+      _minNumeroVenda = null;
+      _minNumeroPedido = null;
+      return;
+    }
+
+    try {
+      final db = DatabaseService();
+      final vnd = await db.carregarConfig(chaveVnd);
+      final ped = await db.carregarConfig(chavePed);
+      _minNumeroVenda  = vnd?.toString();
+      _minNumeroPedido = ped?.toString();
+      debugPrint('>>> [DataService] Mínimos carregados (empresa $_currentEmpresaId): VND=$_minNumeroVenda PED=$_minNumeroPedido');
+    } catch (e) {
+      debugPrint('>>> [DataService] Aviso ao carregar mínimos de numeração: $e');
+    }
+  }
+
+  /// Grava o mínimo de numeração da empresa informada (ou da atual).
+  Future<void> _salvarMinNumeracao(String tipo, int valor, [String? empresaId]) async {
+    final chave = _chaveMinNumeracao(tipo, empresaId);
+    if (chave == null) return;
+    try {
+      await DatabaseService().salvarConfig(chave, valor.toString());
+    } catch (e) {
+      debugPrint('>>> [DataService] ⚠️ Erro ao salvar $chave: $e');
+    }
+  }
+
+  /// Eleva o mínimo de numeração da empresa a partir de um número JÁ EMITIDO
+  /// (ex.: 'VND-0408' → 408).
+  ///
+  /// Isso trava o contador: se em algum momento a lista em memória ainda não
+  /// estiver carregada (app abrindo, troca de empresa, consulta à nuvem falhando),
+  /// sem esta trava o próximo número poderia voltar para VND-0001 e duplicar
+  /// uma venda que já existe.
+  Future<void> _elevarMinimoNumeracaoPeloNumero(String? numero) async {
+    final texto = (numero ?? '').trim().toUpperCase();
+    if (texto.isEmpty) return;
+
+    final venda = RegExp(r'^VND-(\d+)$').firstMatch(texto);
+    if (venda != null) {
+      final n = int.tryParse(venda.group(1)!) ?? 0;
+      if (n > (int.tryParse(_minNumeroVenda ?? '0') ?? 0)) {
+        _minNumeroVenda = n.toString();
+        await _salvarMinNumeracao('venda', n);
+      }
+      return;
+    }
+
+    final pedido = RegExp(r'^PED-(\d+)$').firstMatch(texto);
+    if (pedido != null) {
+      final n = int.tryParse(pedido.group(1)!) ?? 0;
+      if (n > (int.tryParse(_minNumeroPedido ?? '0') ?? 0)) {
+        _minNumeroPedido = n.toString();
+        await _salvarMinNumeracao('pedido', n);
+      }
+    }
+  }
+
+  /// Diagnóstico: retorna o maior número VND e PED do Supabase e do banco local
+  Future<Map<String, int>> diagnosticarNumeracao(String empresaId) async {
+    int localVnd = 0, localPed = 0, supabaseVnd = 0, supabasePed = 0;
+
+    // Local
+    for (final v in _vendasBalcao) {
+      final m = RegExp(r'VND-(\d+)').firstMatch(v.numero);
+      if (m != null) {
+        final n = int.tryParse(m.group(1)!) ?? 0;
+        if (n > localVnd) localVnd = n;
+      }
+    }
+    for (final p in _pedidos) {
+      final mV = RegExp(r'VND-(\d+)').firstMatch(p.numero);
+      if (mV != null) {
+        final n = int.tryParse(mV.group(1)!) ?? 0;
+        if (n > localVnd) localVnd = n;
+      }
+      if (p.numero.startsWith('PED-')) {
+        final n = int.tryParse(p.numero.substring(4)) ?? 0;
+        if (n > localPed) localPed = n;
+      }
+    }
+
+    // Supabase
+    try {
+      if (SupabaseService.isAvailable && empresaId.isNotEmpty) {
+        final client = SupabaseService.instance.client;
+
+        // VND nas vendas_balcao
+        final resVnd = await client
+            .from('vendas_balcao')
+            .select('numero')
+            .eq('empresa_id', empresaId)
+            .order('numero', ascending: false)
+            .limit(500)
+            .timeout(const Duration(seconds: 10));
+        for (final row in resVnd) {
+          final numero = row['numero']?.toString() ?? '';
+          final m = RegExp(r'VND-(\d+)').firstMatch(numero);
+          if (m != null) {
+            final n = int.tryParse(m.group(1)!) ?? 0;
+            if (n > supabaseVnd) supabaseVnd = n;
+          }
+        }
+
+        // VND/PED nos pedidos
+        final resPed = await client
+            .from('pedidos')
+            .select('numero')
+            .eq('empresa_id', empresaId)
+            .order('numero', ascending: false)
+            .limit(500)
+            .timeout(const Duration(seconds: 10));
+        for (final row in resPed) {
+          final numero = row['numero']?.toString() ?? '';
+          final mV = RegExp(r'VND-(\d+)').firstMatch(numero);
+          if (mV != null) {
+            final n = int.tryParse(mV.group(1)!) ?? 0;
+            if (n > supabaseVnd) supabaseVnd = n;
+          }
+          if (numero.startsWith('PED-')) {
+            final n = int.tryParse(numero.substring(4)) ?? 0;
+            if (n > supabasePed) supabasePed = n;
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('>>> [DataService] Erro ao consultar Supabase para diagnóstico: $e');
+    }
+
+    return {
+      'localVnd': localVnd,
+      'localPed': localPed,
+      'supabaseVnd': supabaseVnd,
+      'supabasePed': supabasePed,
+    };
+  }
+
+  /// Sincroniza a numeração local com o Supabase:
+  /// Salva em exodo_config os maiores números encontrados na nuvem,
+  /// garantindo que as próximas vendas/pedidos não duplicam números já existentes.
+  Future<Map<String, dynamic>> sincronizarNumeracaoComSupabase(String empresaId) async {
+    try {
+      final diag = await diagnosticarNumeracao(empresaId);
+      final supabaseVnd = diag['supabaseVnd']!;
+      final supabasePed = diag['supabasePed']!;
+      final localVnd    = diag['localVnd']!;
+      final localPed    = diag['localPed']!;
+
+      final db = DatabaseService();
+
+      // Salva o máximo entre local e Supabase como mínimo garantido
+      final novoMinVnd = supabaseVnd > localVnd ? supabaseVnd : localVnd;
+      final novoMinPed = supabasePed > localPed ? supabasePed : localPed;
+
+      // Grava SEMPRE por empresa: `exodo_config` é uma tabela única do banco
+      // local (não tem empresa_id), então a chave precisa carregar o id.
+      final chaveVnd = _chaveMinNumeracao('venda', empresaId);
+      final chavePed = _chaveMinNumeracao('pedido', empresaId);
+      if (chaveVnd != null && chavePed != null) {
+        await db.salvarConfig(chaveVnd, novoMinVnd.toString());
+        await db.salvarConfig(chavePed, novoMinPed.toString());
+      }
+
+      // Atualiza em memória APENAS se ainda for a empresa atual
+      if (empresaId == _currentEmpresaId) {
+        _minNumeroVenda  = novoMinVnd.toString();
+        _minNumeroPedido = novoMinPed.toString();
+      }
+
+      debugPrint('>>> [DataService] ✅ Numeração sincronizada: VND=$novoMinVnd PED=$novoMinPed');
+
+      return {
+        'sucesso': true,
+        'localVnd': localVnd,
+        'localPed': localPed,
+        'supabaseVnd': supabaseVnd,
+        'supabasePed': supabasePed,
+        'novoMinVnd': novoMinVnd,
+        'novoMinPed': novoMinPed,
+      };
+    } catch (e) {
+      debugPrint('>>> [DataService] ❌ Erro ao sincronizar numeração: $e');
+      return {'sucesso': false, 'erro': e.toString()};
+    }
   }
 
   // Próximo número de serviço (SRV-0001, SRV-0002, etc)
@@ -5936,6 +7277,15 @@ class DataService extends ChangeNotifier {
     // Buscar números nos pedidos que começam com SRV-
     for (final pedido in _pedidos) {
       final match = RegExp(r'SRV-(\d+)').firstMatch(pedido.numero);
+      if (match != null) {
+        final numero = int.tryParse(match.group(1)!) ?? 0;
+        numerosExistentes.add(numero);
+      }
+    }
+
+    // E na série própria de serviços realizados (SRV-0001, SRV-0002, ...)
+    for (final servico in _servicosRealizados) {
+      final match = RegExp(r'SRV-(\d+)').firstMatch(servico.numero);
       if (match != null) {
         final numero = int.tryParse(match.group(1)!) ?? 0;
         numerosExistentes.add(numero);
@@ -5955,6 +7305,28 @@ class DataService extends ChangeNotifier {
     }
 
     return 'SRV-${proximoNumero.toString().padLeft(4, '0')}';
+  }
+
+  /// Próximo número da série de ORÇAMENTOS (ORC-0001, ORC-0002, ...).
+  String getProximoNumeroOrcamento() {
+    final Set<int> numerosExistentes = {};
+
+    for (final orcamento in _orcamentos) {
+      final match = RegExp(r'ORC-(\d+)').firstMatch(orcamento.numero);
+      if (match != null) {
+        numerosExistentes.add(int.tryParse(match.group(1)!) ?? 0);
+      }
+    }
+
+    int proximoNumero = 1;
+    if (numerosExistentes.isNotEmpty) {
+      proximoNumero = numerosExistentes.reduce((a, b) => a > b ? a : b) + 1;
+    }
+    while (numerosExistentes.contains(proximoNumero)) {
+      proximoNumero++;
+    }
+
+    return 'ORC-${proximoNumero.toString().padLeft(4, '0')}';
   }
 
   String getProximoNumeroAgendamento() {
@@ -6166,13 +7538,26 @@ class DataService extends ChangeNotifier {
   // ============ Métodos de Persistência ============
 
   /// [modoLeve]: Se true, carrega apenas o essencial (Produtos, Servicos, Agendamentos)
-  Future<void> _carregarDadosDoSupabase({bool modoLeve = false}) async {
+  Future<void> _carregarDadosDoSupabase({bool modoLeve = false, bool forcarRecarga = false}) async {
     if (_currentEmpresaId == null) {
       print('>>> ⚠ _carregarDadosDoSupabase: Empresa não definida - não é possível carregar dados do Supabase');
       return;
     }
 
-    if (_syncEmAndamento) {
+    // Base local limpa de propósito ("Limpar Local"): enquanto o usuário não
+    // mandar "Puxar Nuvem", nenhuma recarga automática (startup, auto-sync,
+    // verificação de versão) pode trazer os dados de volta — senão a limpeza
+    // fica invisível, como se não tivesse funcionado.
+    if (_baseLocalLimpa && !forcarRecarga) {
+      debugPrint('>>> [DataService] ⏸️ Recarga automática bloqueada: base local limpa, '
+          'aguardando "Puxar Nuvem".');
+      return;
+    }
+
+    // Na recarga forçada (botão "Puxar da Nuvem") o lock já está segurando
+    // `_syncEmAndamento = true` para o auto-sync periódico não entrar no meio;
+    // neste caso NÃO podemos abortar aqui.
+    if (_syncEmAndamento && !forcarRecarga) {
       debugPrint('>>> [Sync] ⏳ Sincronização já em andamento, aguardando...');
       return;
     }
@@ -6180,7 +7565,10 @@ class DataService extends ChangeNotifier {
     // Otimização: Só usar modo leve/silencioso se já fez a carga inicial completa pelo menos 1 vez
     final finalModoLeve = modoLeve || _isModoLeve;
     // isSilentSync: só é verdadeiro se o timer periódico está ativo E já foi feita a primeira carga completa
-    final isSilentSync = _primeiraCargaAgendamentosRealizada &&
+    // Na recarga forçada (botão "Puxar da Nuvem") nunca usamos modo silencioso:
+    // queremos baixar TODAS as tabelas sem pular nada.
+    final isSilentSync = !forcarRecarga &&
+        _primeiraCargaAgendamentosRealizada &&
         _syncTimer != null &&
         _syncTimer!.isActive;
 
@@ -6219,9 +7607,13 @@ class DataService extends ChangeNotifier {
       final Map<String, dynamic> dados = result['data'] as Map<String, dynamic>;
       
       // Verificar se há dados no Supabase - usando um critério amplo
+      // (Inclui TODAS as tabelas baixadas para que a recarga forçada do botão
+      // "Puxar da Nuvem" nunca retorne cedo com a base local vazia.)
       final temDados = dados['clientes']?.isNotEmpty == true ||
           dados['produtos']?.isNotEmpty == true ||
           dados['pedidos']?.isNotEmpty == true ||
+          dados['servicos_realizados']?.isNotEmpty == true ||
+          dados['orcamentos']?.isNotEmpty == true ||
           dados['agendamentos_servico']?.isNotEmpty == true ||
           dados['servicos']?.isNotEmpty == true ||
           dados['ordens_servico']?.isNotEmpty == true ||
@@ -6230,7 +7622,20 @@ class DataService extends ChangeNotifier {
           dados['contas_pagar']?.isNotEmpty == true ||
           dados['comissoes_vendedores']?.isNotEmpty == true ||
           dados['mesas_comandas']?.isNotEmpty == true ||
-          dados['romaneios']?.isNotEmpty == true;
+          dados['romaneios']?.isNotEmpty == true ||
+          dados['vendas_balcao']?.isNotEmpty == true ||
+          dados['aberturas_caixa']?.isNotEmpty == true ||
+          dados['fechamentos_caixa']?.isNotEmpty == true ||
+          dados['nfces']?.isNotEmpty == true ||
+          dados['nfes']?.isNotEmpty == true ||
+          dados['sangrias']?.isNotEmpty == true ||
+          dados['suprimentos']?.isNotEmpty == true ||
+          dados['entregas']?.isNotEmpty == true ||
+          dados['notas_entrada']?.isNotEmpty == true ||
+          dados['estoque_historico']?.isNotEmpty == true ||
+          dados['lotes_produto']?.isNotEmpty == true ||
+          dados['links_vendedores']?.isNotEmpty == true ||
+          dados['motoristas']?.isNotEmpty == true;
       
       if (!temDados) {
         debugPrint('>>> [Supabase] Nenhum dado novo/atualizado encontrado. Sincronização delta concluída.');
@@ -6328,6 +7733,66 @@ class DataService extends ChangeNotifier {
           _marcarSujo(LocalStorageService.keyPedidos);
         }
         print('>>> ✓ ${novosPedidos.length} pedidos carregados do Supabase');
+      }
+
+      // 4.1 Serviços realizados (entidade própria, série SRV)
+      if (dados['servicos_realizados'] != null &&
+          (dados['servicos_realizados'] as List).isNotEmpty) {
+        final novosServicos = _parseListaSegura(
+          dados['servicos_realizados'] as List,
+          ServicoRealizado.fromMap,
+          nomeColecao: 'Serviços Realizados',
+        );
+        bool dirty = false;
+        for (final servico in novosServicos) {
+          final indexLocal =
+              _servicosRealizados.indexWhere((s) => s.id == servico.id);
+          if (indexLocal != -1) {
+            final local = _servicosRealizados[indexLocal];
+            // Preserva a versão local quando ela é mais recente (ex.: recebimento
+            // feito aqui e ainda não enviado).
+            if (local.updatedAt.isAfter(servico.updatedAt)) {
+              continue;
+            }
+            _servicosRealizados[indexLocal] = servico;
+            dirty = true;
+          } else {
+            _servicosRealizados.add(servico);
+            dirty = true;
+          }
+        }
+        if (dirty) {
+          _marcarSujo(LocalStorageService.keyServicosRealizados);
+        }
+        print('>>> ✓ ${novosServicos.length} serviços realizados carregados do Supabase');
+      }
+
+      // 4.2 Orçamentos de pedido (entidade própria, série ORC)
+      if (dados['orcamentos'] != null &&
+          (dados['orcamentos'] as List).isNotEmpty) {
+        final novosOrcamentos = _parseListaSegura(
+          dados['orcamentos'] as List,
+          Orcamento.fromMap,
+          nomeColecao: 'Orçamentos',
+        );
+        bool dirty = false;
+        for (final orcamento in novosOrcamentos) {
+          final indexLocal =
+              _orcamentos.indexWhere((o) => o.id == orcamento.id);
+          if (indexLocal != -1) {
+            final local = _orcamentos[indexLocal];
+            if (local.updatedAt.isAfter(orcamento.updatedAt)) continue;
+            _orcamentos[indexLocal] = orcamento;
+            dirty = true;
+          } else {
+            _orcamentos.add(orcamento);
+            dirty = true;
+          }
+        }
+        if (dirty) {
+          _marcarSujo(LocalStorageService.keyOrcamentos);
+        }
+        print('>>> ✓ ${novosOrcamentos.length} orçamentos carregados do Supabase');
       }
 
       // 5. Ordens de Serviço
@@ -6608,6 +8073,8 @@ class DataService extends ChangeNotifier {
       if (dados['clientes'] != null && (dados['clientes'] as List).isNotEmpty) summary.add('${(dados['clientes'] as List).length} clientes');
       if (dados['produtos'] != null && (dados['produtos'] as List).isNotEmpty) summary.add('${(dados['produtos'] as List).length} produtos');
       if (dados['servicos'] != null && (dados['servicos'] as List).isNotEmpty) summary.add('${(dados['servicos'] as List).length} serviços');
+      if (dados['servicos_realizados'] != null && (dados['servicos_realizados'] as List).isNotEmpty) summary.add('${(dados['servicos_realizados'] as List).length} serviços realizados');
+      if (dados['orcamentos'] != null && (dados['orcamentos'] as List).isNotEmpty) summary.add('${(dados['orcamentos'] as List).length} orçamentos');
       if (dados['pedidos'] != null && (dados['pedidos'] as List).isNotEmpty) summary.add('${(dados['pedidos'] as List).length} pedidos');
       if (dados['ordens_servico'] != null && (dados['ordens_servico'] as List).isNotEmpty) summary.add('${(dados['ordens_servico'] as List).length} ordens serv.');
       if (dados['entregas'] != null && (dados['entregas'] as List).isNotEmpty) summary.add('${(dados['entregas'] as List).length} entregas');
@@ -6636,7 +8103,16 @@ class DataService extends ChangeNotifier {
       }
       
       _sincronizarNotasComDrive();
-      
+
+      // A nuvem pode trazer de volta rascunhos `pend-` antigos (criados antes do
+      // DELETE local existir). Sem isso, a nota autorizada volta a aparecer como
+      // "Pendente" depois de cada sincronização.
+      await _limparRascunhosPendentesOrfaos();
+
+      // Serviços antigos (lançados como pedido) trazidos da nuvem também
+      // viram Serviço Realizado.
+      await _migrarServicosRealizadosDePedidos();
+
     } catch (e, stackTrace) {
       _ultimoErroSync = e.toString();
       if (_currentEmpresaId != null) {
@@ -6667,6 +8143,10 @@ class DataService extends ChangeNotifier {
       final produtosMap = await _storage.carregarLista(_getEmpresaKey(LocalStorageService.keyProdutos));
       final servicosMap = await _storage.carregarLista(_getEmpresaKey(LocalStorageService.keyServicos));
       final pedidosMap = await _storage.carregarLista(_getEmpresaKey(LocalStorageService.keyPedidos));
+      final servicosRealizadosMap = await _storage
+          .carregarLista(_getEmpresaKey(LocalStorageService.keyServicosRealizados));
+      final orcamentosMap =
+          await _storage.carregarLista(_getEmpresaKey(LocalStorageService.keyOrcamentos));
       final vendasMap = await _storage.carregarLista(_getEmpresaKey(LocalStorageService.keyVendasBalcao));
       final agendamentosMap = await _storage.carregarLista(_getEmpresaKey(LocalStorageService.keyAgendamentosServico));
       final notasMap = await _storage.carregarLista(_getEmpresaKey(LocalStorageService.keyNotasEntrada));
@@ -6708,6 +8188,20 @@ class DataService extends ChangeNotifier {
         _pedidos.clear();
         _pedidos.addAll(pedidosMap.map((map) => Pedido.fromMap(map)));
         print('>>> ✓ ${_pedidos.length} pedidos carregados em ${stopwatch.elapsedMilliseconds}ms');
+      }
+
+      if (servicosRealizadosMap.isNotEmpty) {
+        _servicosRealizados.clear();
+        _servicosRealizados.addAll(
+            servicosRealizadosMap.map((map) => ServicoRealizado.fromMap(map)));
+        print('>>> ✓ ${_servicosRealizados.length} serviços realizados carregados em ${stopwatch.elapsedMilliseconds}ms');
+      }
+
+      if (orcamentosMap.isNotEmpty) {
+        _orcamentos.clear();
+        _orcamentos
+            .addAll(orcamentosMap.map((map) => Orcamento.fromMap(map)));
+        print('>>> ✓ ${_orcamentos.length} orçamentos carregados em ${stopwatch.elapsedMilliseconds}ms');
       }
 
       if (vendasMap.isNotEmpty) {
@@ -6843,6 +8337,7 @@ class DataService extends ChangeNotifier {
         _nfes.clear();
         _nfes.addAll(nfesMap.map((map) => NFCe.fromMap(map)));
       }
+      await _limparRascunhosPendentesOrfaos();
 
       print('>>> [Carregamento] 🔗 Otimizando vínculos...');
       _reVincularTodosAgendamentos(); 
@@ -6858,6 +8353,13 @@ class DataService extends ChangeNotifier {
       // Migração: vendas legadas sem operador somem dos caixas nominados.
       // Atribui o operador pelo caixa da época (idempotente).
       _atribuirOperadorVendasSemDono();
+
+      // Migração: serviços lançados como pedido (série SRV-) passam a existir
+      // na entidade própria de serviço realizado (idempotente).
+      await _migrarServicosRealizadosDePedidos();
+
+      // Carregar mínimos de numeração (VND e PED) persistidos
+      await carregarMinimosNumeracao();
       
       stopwatch.stop();
       print('>>> ✓ CARREGAMENTO LOCAL COMPLETO: ${stopwatch.elapsedMilliseconds}ms');
@@ -6865,6 +8367,67 @@ class DataService extends ChangeNotifier {
       print('>>> ✗ Erro ao carregar dados locais: $e');
       debugPrint(stackTrace.toString());
     }
+  }
+
+  /// Migração (idempotente): serviços que foram lançados como Pedido — série
+  /// SRV- ou pedidos que só têm serviços — passam a existir também na entidade
+  /// própria `servicos_realizados`.
+  ///
+  /// O pedido original NÃO é apagado (histórico e relatórios continuam
+  /// válidos); a cópia existe para a tela de Serviços não começar vazia na
+  /// separação das entidades. O vínculo pelo `id` evita migrar duas vezes.
+  Future<int> _migrarServicosRealizadosDePedidos() async {
+    if (_pedidos.isEmpty) return 0;
+
+    final idsExistentes = _servicosRealizados.map((s) => s.id).toSet();
+    final novos = <ServicoRealizado>[];
+
+    for (final pedido in _pedidos) {
+      if (pedido.servicos.isEmpty) continue;
+      final ehSerieServico = RegExp(r'SRV-\d+').hasMatch(pedido.numero);
+      final soTemServico = pedido.produtos.isEmpty;
+      if (!ehSerieServico && !soTemServico) continue;
+      if (idsExistentes.contains(pedido.id)) continue;
+
+      final recebido = pedido.pagamentos.isNotEmpty && pedido.totalmenteRecebido;
+      final cancelado = pedido.status.toLowerCase() == 'cancelado';
+
+      novos.add(ServicoRealizado(
+        id: pedido.id,
+        numero: pedido.numero,
+        clienteId: pedido.clienteId,
+        clienteNome: pedido.clienteNome,
+        clienteTelefone: pedido.clienteTelefone,
+        clienteEndereco: pedido.clienteEndereco,
+        operador: pedido.operador,
+        dataServico: pedido.dataPedido,
+        dataConclusao: recebido ? pedido.updatedAt : null,
+        status: cancelado
+            ? ServicoRealizado.statusCancelado
+            : recebido
+                ? ServicoRealizado.statusRecebido
+                : ServicoRealizado.statusEmAberto,
+        total: pedido.total,
+        descontoTotal: pedido.descontoTotal,
+        acrescimoTotal: pedido.acrescimoTotal,
+        observacoes: pedido.observacoes,
+        servicos: List.from(pedido.servicos),
+        pagamentos: List.from(pedido.pagamentos),
+        materiaisConsumidos: pedido.materiaisConsumidos,
+        createdAt: pedido.createdAt,
+        updatedAt: pedido.updatedAt,
+      ));
+      idsExistentes.add(pedido.id);
+    }
+
+    if (novos.isEmpty) return 0;
+
+    _servicosRealizados.addAll(novos);
+    _marcarSujo(LocalStorageService.keyServicosRealizados);
+    notifyListeners();
+    debugPrint('>>> [Migração] ${novos.length} serviço(s) lançado(s) como pedido '
+        'migrado(s) para servicos_realizados');
+    return novos.length;
   }
 
   /// Migração de dados: vendas antigas sem `operador` (criadas antes do caixa
@@ -7201,6 +8764,8 @@ class DataService extends ChangeNotifier {
       _manterApenasRecentes(_vendasBalcao, 10000, 'Vendas');
       _manterApenasRecentes(_ordensServico, 10000, 'Ordens de Serviço');
       _manterApenasRecentes(_pedidos, 10000, 'Pedidos');
+      _manterApenasRecentes(_servicosRealizados, 10000, 'Serviços Realizados');
+      _manterApenasRecentes(_orcamentos, 10000, 'Orçamentos');
       _manterApenasRecentes(_notasEntrada, 100, 'Notas de Entrada');
       _manterApenasRecentes(_trocasDevolucoes, 200, 'Trocas');
       _manterApenasRecentes(_agendamentosServico, 800, 'Agendamentos');
@@ -7221,6 +8786,8 @@ class DataService extends ChangeNotifier {
           LocalStorageService.keyProdutos: _produtos,
           LocalStorageService.keyServicos: _tiposServico,
           LocalStorageService.keyPedidos: _pedidos,
+          LocalStorageService.keyServicosRealizados: _servicosRealizados,
+          LocalStorageService.keyOrcamentos: _orcamentos,
           LocalStorageService.keyVendasBalcao: _vendasBalcao,
           LocalStorageService.keyAgendamentosServico: _agendamentosServico,
           LocalStorageService.keyNotasEntrada: _notasEntrada,
@@ -7323,6 +8890,21 @@ class DataService extends ChangeNotifier {
     
     if (!SupabaseService.isAvailable) {
       debugPrint('>>> [Sync] ⚠️ Supabase não disponível, pulando...');
+      return;
+    }
+
+    // PROTEÇÃO: Se TODAS as listas estiverem vazias, NÃO enviar nada para a
+    // nuvem. Isso evita que uma limpeza acidental do cache local (ex.: botão
+    // "Puxar Nuvem") apague todos os dados da nuvem via upsert com listas vazias.
+    final todosVazios = _clientes.isEmpty &&
+        _produtos.isEmpty &&
+        _pedidos.isEmpty &&
+        _vendasBalcao.isEmpty &&
+        _funcionarios.isEmpty &&
+        _agendamentosServico.isEmpty;
+    if (todosVazios) {
+      debugPrint('>>> [Sync] 🛑 ABORTADO: todas as listas locais estão vazias. Enviaria dados vazios para a nuvem — isso apagaria tudo! Pulando sincronização.');
+      addSyncLog('🛑 Sincronização abortada: dados locais vazios (proteção contra apagamento da nuvem).');
       return;
     }
     
@@ -7468,7 +9050,8 @@ class DataService extends ChangeNotifier {
         await _incrementarSyncVersion();
         // Salvar versão local para não detectar nosso próprio push
         final config = Map<String, dynamic>.from(_empresaAtual?.configuracoes ?? {});
-        final newVersion = (config['sync_version'] as int?) ?? 1;
+        final rawV = config['sync_version'];
+        final newVersion = rawV is int ? rawV : int.tryParse(rawV?.toString() ?? '') ?? 1;
         await _storage.salvar(_getEmpresaKey('exodo_sync_version'), newVersion);
       } catch (e) {
         debugPrint('>>> [Sync] ⚠️ Erro ao incrementar sync_version: $e (não bloqueante)');
@@ -7551,7 +9134,8 @@ class DataService extends ChangeNotifier {
     if (_currentEmpresaId == null || _empresaAtual == null) return;
     try {
       final config = Map<String, dynamic>.from(_empresaAtual!.configuracoes ?? {});
-      final currentVersion = (config['sync_version'] as int?) ?? 0;
+      final rawCV = config['sync_version'];
+      final currentVersion = rawCV is int ? rawCV : int.tryParse(rawCV?.toString() ?? '') ?? 0;
       config['sync_version'] = currentVersion + 1;
       config['last_cloud_push'] = DateTime.now().toUtc().toIso8601String();
       await _supabaseService.upsert(
@@ -7588,8 +9172,11 @@ class DataService extends ChangeNotifier {
       final config = result['configuracoes'] as Map<String, dynamic>?;
       if (config == null) return;
       
-      final remoteVersion = (config['sync_version'] as int?) ?? 0;
-      final localVersion = (await _storage.carregar(_getEmpresaKey('exodo_sync_version'))) ?? 0;
+      // sync_version pode vir como int OU String do Supabase
+      final rawRemote = config['sync_version'];
+      final remoteVersion = rawRemote is int ? rawRemote : int.tryParse(rawRemote?.toString() ?? '') ?? 0;
+      final rawLocal = await _storage.carregar(_getEmpresaKey('exodo_sync_version'));
+      final localVersion = rawLocal is int ? rawLocal : int.tryParse(rawLocal?.toString() ?? '') ?? 0;
       
       if (remoteVersion > localVersion) {
         debugPrint('>>> [Sync] 🔄 Nova versão detectada! Remoto: $remoteVersion, Local: $localVersion. Forçando FULL SYNC...');
@@ -7619,11 +9206,82 @@ class DataService extends ChangeNotifier {
     }
   }
 
+  /// Tabelas LOCAIS (PostgreSQL) que guardam dados POR EMPRESA.
+  ///
+  /// Usadas para limpar a base local de uma empresa sem tocar nas outras e sem
+  /// tocar na nuvem ("Limpar Local" e "Puxar Nuvem"). Aceita tanto as chaves do
+  /// [LocalStorageService] quanto o nome real da tabela — `DatabaseService`
+  /// resolve as duas formas.
+  ///
+  /// Ficam DE FORA de propósito:
+  ///  - `sync_logs`, `sync_status`, `exodo_sync_conflitos`: telemetria de
+  ///    sincronização, não dados da empresa;
+  ///  - `empresas` e `usuarios`: cadastro/autenticação — apagar derrubaria o app.
+  /// (usamos `final` e não `const` porque as chaves do [LocalStorageService]
+  /// são getters, não constantes de compilação)
+  static final List<String> tabelasLocaisDaEmpresa = [
+    LocalStorageService.keyProdutos,
+    LocalStorageService.keyClientes,
+    LocalStorageService.keyServicos,
+    LocalStorageService.keyPedidos,
+    LocalStorageService.keyServicosRealizados,
+    LocalStorageService.keyOrcamentos,
+    LocalStorageService.keyVendasBalcao,
+    LocalStorageService.keyAgendamentosServico,
+    LocalStorageService.keyNotasEntrada,
+    LocalStorageService.keyFuncionarios,
+    LocalStorageService.keyTaxasEntrega,
+    LocalStorageService.keyContasPagar,
+    LocalStorageService.keyNFCes,
+    LocalStorageService.keyNFEs,
+    LocalStorageService.keyMesasComandas,
+    LocalStorageService.keySangriasField,
+    LocalStorageService.keySuprimentosField,
+    LocalStorageService.keyOrdensServico,
+    LocalStorageService.keyEntregas,
+    LocalStorageService.keyTrocasDevolucoes,
+    LocalStorageService.keyEstoqueHistorico,
+    LocalStorageService.keyLotesProdutos,
+    LocalStorageService.keyLinksVendedores,
+    LocalStorageService.keyComissoesVendedores,
+    LocalStorageService.keyRomaneios,
+    LocalStorageService.keyMotoristas,
+    LocalStorageService.keyAberturasCaixa,
+    LocalStorageService.keyFechamentosCaixa,
+    'produto_historico', // histórico de alterações do produto (sem chave de storage)
+    'imagens', // imagens/fotos dos produtos
+  ];
+
+  /// Verifica se um mapa de dados contém alguma lista não vazia — ou seja,
+  /// há pelo menos uma tabela com registros para sincronizar.
+  ///
+  /// É usado pelo teste de regressão e pode ser útil em qualquer ponto que
+  /// precise saber, de forma genérica, se um dicionário de coleções tem
+  /// conteúdo.
+  static bool possuiDadosParaSincronizacao(Map<String, dynamic> dados) {
+    for (final valor in dados.values) {
+      if (valor is List && valor.isNotEmpty) return true;
+    }
+    return false;
+  }
+
+  /// `true` depois do botão **"Limpar Local"**: a base local está vazia DE
+  /// PROPÓSITO e nenhuma recarga automática pode repovoá-la — só o botão
+  /// "Puxar Nuvem" (que chama `_carregarDadosDoSupabase` com
+  /// `forcarRecarga: true`). Sem esta trava, o auto-sync baixava tudo de novo
+  /// poucos segundos depois da limpeza e o botão parecia não ter feito nada.
+  bool _baseLocalLimpa = false;
+
+  /// A base local foi limpa e está aguardando "Puxar Nuvem"?
+  bool get baseLocalLimpa => _baseLocalLimpa;
+
   void _limparCacheLocalCompleto() {
     _clientes.clear();
     _produtos.clear();
     _tiposServico.clear();
     _pedidos.clear();
+    _servicosRealizados.clear();
+    _orcamentos.clear();
     _ordensServico.clear();
     _entregas.clear();
     _motoristas.clear();
@@ -7657,51 +9315,197 @@ class DataService extends ChangeNotifier {
     debugPrint('>>> [DataService] 🧹 Cache local completo limpo para forçar recarga da nuvem.');
   }
 
-  /// Força a limpeza do cache local e recarregamento total do Supabase
+  /// Força a limpeza completa da base local e recarregamento total do Supabase.
+  /// Ao final, a base local fica IDÊNTICA à nuvem: tudo que existia só localmente
+  /// (clientes, vendas, pedidos, etc.) é apagado e substituído pelos dados do Supabase.
   Future<void> recarregarTudoDoSupabase() async {
     _isLoading = true;
-    _mensagemLoading = 'Baixando dados da nuvem...';
+    _mensagemLoading = 'Limpando base local e baixando dados da nuvem...';
     notifyListeners();
-    
+
+    // Sem empresa selecionada não há como puxar (evita limpar chaves compartilhadas)
+    if (_currentEmpresaId == null || _currentEmpresaId!.isEmpty) {
+      _isLoading = false;
+      notifyListeners();
+      throw Exception('Nenhuma empresa selecionada. Selecione uma empresa primeiro.');
+    }
+
+    // Se já estiver offline, nem começar: evita limpar o local e ficar sem dados
+    if (_isOffline || !SupabaseService.isAvailable) {
+      _isLoading = false;
+      notifyListeners();
+      throw Exception('Sem conexão com a nuvem (Supabase offline). Nada foi alterado.');
+    }
+
+    // Evita conflito com o auto-sync periódico que possa estar rodando agora
+    final prazo = DateTime.now().add(const Duration(seconds: 15));
+    while (_syncEmAndamento && DateTime.now().isBefore(prazo)) {
+      await Future.delayed(const Duration(milliseconds: 200));
+    }
+    if (_syncEmAndamento) {
+      _isLoading = false;
+      notifyListeners();
+      throw Exception('Sincronização já em andamento. Tente novamente em instantes.');
+    }
+
+    // "Puxar Nuvem" é o ÚNICO caminho que pode repovoar uma base limpa.
+    _baseLocalLimpa = false;
+
+    // Segura o lock de sincronização durante TODA a operação para o auto-sync
+    // periódico não interromper no meio (senão ele sobrescreveria o estado vazio
+    // ou se misturaria com a recarga). _carregarDadosDoSupabase(forcarRecarga)
+    // não aborta por causa dele e o próprio finally dele libera o lock.
+    _syncEmAndamento = true;
+
     try {
-      await _carregarDadosDoSupabase(modoLeve: false);
+      // 1. Apagar TODOS os dados locais: memória + PostgreSQL/web storage
+      //    Resetar o timestamp de última sincronização força FULL SYNC (sem delta)
+      _limparCacheLocalCompleto();
+
+      // Mantém _ultimaSincronizacao preenchido para que _salvarTodosDados NÃO
+      // interprete como "primeira sincronização" e tente enviar o estado vazio
+      // para a nuvem (isso apagaria a nuvem!). O upload só acontece quando o
+      // _ultimaSincronizacao está nulo.
+      _ultimaSincronizacao = DateTime.now();
+
+      // No Desktop, esvaziar o PostgreSQL de verdade: _upsertRows só insere/
+      // atualiza (nunca remove), então salvar listas vazias NÃO apaga as tabelas.
+      if (!kIsWeb) {
+        final db = DatabaseService();
+        if (_currentEmpresaId != null) {
+          db.setEmpresaId(_currentEmpresaId!); // Garante isolamento por empresa
+        }
+        final removidas = await db.limparTabelasDaEmpresa(tabelasLocaisDaEmpresa);
+        final totalRemovidas = removidas.values.fold<int>(0, (soma, qtd) => soma + qtd);
+        debugPrint('>>> [DataService] 🗑️ Base local (PostgreSQL) limpa: $totalRemovidas linha(s) '
+            'em ${removidas.length} tabela(s) da empresa $_currentEmpresaId.');
+      }
+
+      // Persistir o estado vazio localmente (web storage / sobrescreve cache).
+      // aguardarSupabase: false garante que NÃO DELETA nada na nuvem.
+      await _salvarTodosDados(aguardarSupabase: false, forcarTodos: true, isSync: true);
+
+      // 2. Baixar TUDO do Supabase (full sync, pois _ultimaSincronizacaoSucesso == null)
+      await _carregarDadosDoSupabase(modoLeve: false, forcarRecarga: true);
+
+      // 3. Persistir localmente exatamente o que veio da nuvem (sobrescreve tudo)
+      await _salvarTodosDados(aguardarSupabase: false, forcarTodos: true, isSync: true);
+
+      // Aberturas/fechamentos de caixa são persistidos fora do mapa de _salvarTodosDados;
+      // gravar explicitamente para a base local refletir exatamente a nuvem.
+      if (_currentEmpresaId != null) {
+        await _storage.salvarLista(
+          _getChaveComEmpresa(LocalStorageService.keyAberturasCaixa),
+          _aberturasCaixa,
+        );
+        await _storage.salvarLista(
+          _getChaveComEmpresa(LocalStorageService.keyFechamentosCaixa),
+          _fechamentosCaixa,
+        );
+      }
+
       _ultimaSincronizacao = DateTime.now();
       _ultimaSincronizacaoSucesso = _ultimaSincronizacao;
       _ultimoErroSync = null;
+
+      debugPrint('>>> [DataService] ✅ Base local recarregada da nuvem (local == nuvem).');
     } catch (e) {
       debugPrint('>>> [DataService] ❌ Erro no recarregamento total: $e');
       _ultimoErroSync = e.toString();
+      rethrow;
     } finally {
+      // Libera o lock de sincronização mesmo em caso de erro (o finally interno
+      // de _carregarDadosDoSupabase já libera, mas garantimos por segurança)
+      _syncEmAndamento = false;
       _isLoading = false;
       notifyListeners();
     }
   }
 
-  /// TESTE: Limpa apenas os dados locais (memória e PostgreSQL) sem deletar na nuvem
-  Future<void> resetLocalCacheOnly() async {
+  /// **LIMPAR LOCAL**: apaga os dados DESTA empresa no computador — memória,
+  /// PostgreSQL local e cache — deixando a NUVEM intacta.
+  ///
+  /// É o passo que faltava no fluxo "Limpar Local → Puxar Nuvem". A versão
+  /// anterior só esvaziava as listas em memória e chamava `_salvarTodosDados`,
+  /// que faz UPSERT (nunca DELETE): as tabelas do PostgreSQL continuavam cheias,
+  /// então a recarga trazia de volta exatamente o que já estava local — e o que
+  /// não existisse na nuvem nunca desaparecia.
+  ///
+  /// Segurança da nuvem: `DatabaseService.limparTabela` roda com
+  /// `exodo.sync_mode = 'on'`, então o trigger `log_sync_event` não registra os
+  /// DELETEs e o sincronizador de bandeja não os propaga para o Supabase.
+  ///
+  /// Retorna `tabela -> linhas apagadas` (tabelas vazias não aparecem).
+  Future<ResultadoLimpezaLocal> resetLocalCacheOnly({
+    String? empresaId,
+    String? empresaNome,
+  }) async {
+    final aberta = _currentEmpresaId;
+    final alvo = (empresaId != null && empresaId.isNotEmpty) ? empresaId : aberta;
+
+    if (alvo == null || alvo.isEmpty) {
+      throw Exception('Nenhuma empresa selecionada. Selecione uma empresa primeiro.');
+    }
+
+    // A empresa ABERTA NA TELA manda: se o serviço estiver com outra empresa
+    // carregada, aborta sem apagar NADA. Sem esta conferência, o botão poderia
+    // limpar a base local de uma empresa que não é a que o usuário está vendo.
+    if (aberta != null && aberta.isNotEmpty && aberta != alvo) {
+      throw Exception('A empresa aberta na tela não é a mesma carregada no '
+          'sistema. Nada foi apagado — abra a empresa de novo e tente outra vez.');
+    }
+
+    final nome = empresaNome ?? _empresaAtual?.nomeExibicao ?? alvo;
+
     _isLoading = true;
-    _mensagemLoading = 'Limpando base local para teste...';
+    _mensagemLoading = 'Limpando a base local desta empresa...';
     notifyListeners();
 
+    // Impede o auto-sync de gravar no meio da limpeza.
+    _syncEmAndamento = true;
     try {
-      // 1. Limpar listas na memória
-      _clientes.clear();
-      _produtos.clear();
-      _pedidos.clear();
-      _vendasBalcao.clear();
-      _aberturasCaixa.clear();
-      _fechamentosCaixa.clear();
-      _entregas.clear();
-      _notasEntrada.clear();
-      _funcionarios.clear();
-      
-      // 2. Salvar estado vazio localmente (sobrescreve o PostgreSQL/Storage)
-      // aguardarSupabase: false garante que NÃO DELETA na nuvem
-      await _salvarTodosDados(aguardarSupabase: false);
-      
-      _ultimaSincronizacaoSucesso = null; // Resetar status de sync
-      debugPrint('>>> [DataService] 🧹 Cache local limpo com sucesso (Nuvem intacta)');
+      // 1. Listas em memória
+      _limparCacheLocalCompleto();
+
+      // 2. PostgreSQL local: DELETE das linhas DESTA empresa, tabela por tabela
+      final removidas = <String, int>{};
+      var linhasDeOutrasEmpresas = 0;
+      if (!kIsWeb) {
+        final db = DatabaseService();
+        db.setEmpresaId(alvo); // garante o isolamento por empresa
+        removidas.addAll(await db.limparTabelasDaEmpresa(tabelasLocaisDaEmpresa));
+        // Prova pós-limpeza: quanto sobrou das OUTRAS empresas nas mesmas tabelas.
+        linhasDeOutrasEmpresas =
+            await db.contarLinhasDeOutrasEmpresas(tabelasLocaisDaEmpresa);
+      }
+
+      // 3. _limparCacheLocalCompleto zerou _ultimaSincronizacao. Se ficasse nulo,
+      //    o próximo salvamento entenderia "primeira sincronização" e enviaria o
+      //    estado VAZIO para a nuvem (apagando-a). Marcamos como sincronizado
+      //    agora; deixar _ultimaSincronizacaoSucesso nulo força o próximo
+      //    download a ser completo, sem delta.
+      _ultimaSincronizacao = DateTime.now();
+      _ultimaSincronizacaoSucesso = null;
+      _ultimoErroSync = null;
+
+      // Trava as recargas automáticas até o usuário mandar "Puxar Nuvem":
+      // assim a tela realmente fica vazia (prova de que a limpeza ocorreu) em
+      // vez de se repovoar sozinha em segundos.
+      _baseLocalLimpa = true;
+
+      final resultado = ResultadoLimpezaLocal(
+        empresaId: alvo,
+        empresaNome: nome,
+        porTabela: removidas,
+        linhasDeOutrasEmpresas: linhasDeOutrasEmpresas,
+      );
+      debugPrint('>>> [DataService] 🧹 Base local de "$nome" ($alvo) limpa: '
+          '${resultado.total} linha(s) em ${resultado.tabelas} tabela(s). '
+          'Outras empresas intactas: $linhasDeOutrasEmpresas linha(s). '
+          'Nuvem intacta. Recargas automáticas bloqueadas até "Puxar Nuvem".');
+      return resultado;
     } finally {
+      _syncEmAndamento = false;
       _isLoading = false;
       notifyListeners();
     }
@@ -7716,17 +9520,21 @@ class DataService extends ChangeNotifier {
     
     if (table != null && data != null) {
       final operationType = type ?? 'upsert';
-      debugPrint('>>> [Sync] 📋 Item específico adicionado à fila: $table (${data['id']}) - $operationType');
+      // Captura a empresa AQUI (no enfileiramento). A fila é persistida e pode ser
+      // drenada depois de trocar de empresa; se o execute() lesse
+      // _currentEmpresaId, o item desta empresa seria gravado como sendo da outra.
+      final empresaDaOperacao = _currentEmpresaId;
+      debugPrint('>>> [Sync] 📋 Item específico adicionado à fila: $table (${data['id']}) - $operationType (empresa: $empresaDaOperacao)');
       _syncQueue.enqueue(SyncOperation(
         type: operationType,
         dataId: data['id']?.toString() ?? 'unknown',
-        empresaId: _currentEmpresaId,
+        empresaId: empresaDaOperacao,
         data: {'tabela': table, 'dados': data},
         execute: () async {
           if (operationType == 'DELETE') {
             await _deleteNoSupabase(table, data['id'] as String);
           } else {
-            await _upsertNoSupabase(table, data);
+            await _upsertNoSupabase(table, data, empresaId: empresaDaOperacao);
           }
         },
       ));
@@ -7853,7 +9661,10 @@ class DataService extends ChangeNotifier {
 
   /// Adiciona uma NFC-e ou NF-e
   Future<void> adicionarNFCe(NFCe nfce) async {
-    final isNfe = nfce.modelo == 55;
+    // `ehNFe` (e não `modelo == 55`) porque o modelo também é lido da chave de
+    // acesso: quem chama sem preencher `modelo` gravava DANFE na lista e na
+    // tabela de NFC-e, e ela aparecia no histórico de NFC-e.
+    final isNfe = nfce.ehNFe;
     if (isNfe) {
       _nfes.add(nfce);
     } else {
@@ -7901,7 +9712,7 @@ class DataService extends ChangeNotifier {
 
   /// Atualiza uma NFC-e ou NF-e existente
   Future<void> atualizarNFCe(NFCe nfce) async {
-    final isNfe = nfce.modelo == 55;
+    final isNfe = nfce.ehNFe;
     final listaTarget = isNfe ? _nfes : _nfces;
     final index = listaTarget.indexWhere((n) => n.id == nfce.id);
     
@@ -7968,6 +9779,69 @@ class DataService extends ChangeNotifier {
       }
     } catch (e) {
       debugPrint('>>> [NF] ⚠️ Falha ao remover nota do Supabase: $e');
+    }
+    // Remover também do PostgreSQL local.
+    //
+    // `_salvarTodosDados` só faz UPSERT nas tabelas locais: o registro saía da
+    // lista em memória, mas continuava na tabela. No próximo carregamento o
+    // rascunho voltava para a lista — por isso a nota emitida (autorizada)
+    // reaparecia como "Pendente" depois de um tempo.
+    if (!kIsWeb) {
+      try {
+        await DatabaseService().removerItemPostgres(
+          LocalStorageService.keyNFCes,
+          id,
+          _currentEmpresaId,
+        );
+        await DatabaseService().removerItemPostgres(
+          LocalStorageService.keyNFEs,
+          id,
+          _currentEmpresaId,
+        );
+      } catch (e) {
+        debugPrint('>>> [NF] ⚠️ Falha ao remover nota do PostgreSQL local: $e');
+      }
+    }
+  }
+
+  /// Descarta os rascunhos `pend-<millis>` que já viraram nota emitida.
+  ///
+  /// O fluxo de emissão grava um rascunho (`id` começando com `pend-`) antes de
+  /// falar com a SEFAZ e o apaga quando a nota é autorizada. Como o `DELETE`
+  /// nunca chegava ao PostgreSQL local, o rascunho voltava para a lista a cada
+  /// carregamento/sincronização: a mesma nota aparecia duas vezes, uma
+  /// autorizada e outra "Pendente".
+  ///
+  /// Só descarta o rascunho quando existe outra nota com o MESMO número e série
+  /// já autorizada/cancelada — numeração fiscal não se repete, então isso nunca
+  /// remove um rascunho legítimo (os rascunhos salvos por "Gravar Nota" não usam
+  /// o prefixo `pend-`).
+  Future<void> _limparRascunhosPendentesOrfaos() async {
+    const statusEmitidos = ['autorizada', 'sucesso', 'cancelada'];
+    final orfaos = <NFCe>[];
+
+    for (final rascunho in [..._nfces, ..._nfes]) {
+      if (!rascunho.id.startsWith('pend-')) continue;
+      final statusRascunho = rascunho.status?.toLowerCase() ?? '';
+      if (statusRascunho != 'pendente' && statusRascunho != 'rejeitada') continue;
+
+      final jaEmitida = [..._nfces, ..._nfes].any((outra) =>
+          outra.id != rascunho.id &&
+          outra.numero == rascunho.numero &&
+          (outra.serie ?? '') == (rascunho.serie ?? '') &&
+          statusEmitidos.contains(outra.status?.toLowerCase()));
+
+      if (jaEmitida) orfaos.add(rascunho);
+    }
+
+    if (orfaos.isEmpty) return;
+
+    debugPrint(
+      '>>> [NF] 🧹 Removendo ${orfaos.length} rascunho(s) pendente(s) já emitido(s): ' +
+          orfaos.map((o) => '${o.id}(Nº ${o.numero})').join(', '),
+    );
+    for (final orfao in orfaos) {
+      await removerNFCe(orfao.id);
     }
   }
 
@@ -8909,7 +10783,826 @@ class DataService extends ChangeNotifier {
     return 'empresa_${_currentEmpresaId}_$baseKey';
   }
 
-  /// 🚑 RESTAURAR: Envia os dados que estão no computador de volta para a nuvem
+  /// Helper: sanitiza dados de produto para o schema do Supabase
+  /// Remove todas as colunas que existem local mas NÃO existem na nuvem.
+  static Map<String, dynamic> _sanitizeProdutoForSupabase(Map<String, dynamic> map) {
+    // Colunas são filtradas automaticamente no upsertBatch via OpenAPI
+    // (colunas que não existem no Supabase são descartadas, e as que existem
+    // — inclusive formas_venda, promocoes, variacoes, adicionais, icms_aliquota
+    // etc. — são PRESERVADAS, ao contrário das listas hardcoded antigas que
+    // apagavam dados reais).
+    return map;
+  }
+
+  /// Helper: sanitiza dados de pedido para o schema do Supabase
+  static Map<String, dynamic> _sanitizePedidoForSupabase(Map<String, dynamic> map) {
+    // Filtragem automática via OpenAPI no upsertBatch (preserva colunas reais
+    // como numero, cliente_telefone, pagamentos, produtos, delivery_info etc.).
+    return map;
+  }
+
+  /// Helper: sanitiza dados de venda_balcao para o schema do Supabase
+  static Map<String, dynamic> _sanitizeVendaBalcaoForSupabase(Map<String, dynamic> map) {
+    // Filtragem automática via OpenAPI no upsertBatch. numero e numero_venda
+    // são preservados (a unique constraint exige numero_venda).
+    return map;
+  }
+
+  /// Helper: sanitiza dados de mesa_comanda para o schema do Supabase
+  static Map<String, dynamic> _sanitizeMesaComandaForSupabase(Map<String, dynamic> map) {
+    // Filtragem automática via OpenAPI no upsertBatch.
+    return map;
+  }
+
+  /// Helper: sanitiza dados de empresa para o schema do Supabase
+  static Map<String, dynamic> _sanitizeEmpresaForSupabase(Map<String, dynamic> map) {
+    // Filtragem automática via OpenAPI no upsertBatch.
+    return map;
+  }
+
+  /// Helper: sanitiza dados de entrega para o schema do Supabase
+  static Map<String, dynamic> _sanitizeEntregaForSupabase(Map<String, dynamic> map) {
+    // Filtragem automática via OpenAPI no upsertBatch.
+    return map;
+  }
+
+  /// Mapeia snake_case → camelCase para tabelas de caixa (compatibilidade com schema Supabase)
+  static Map<String, dynamic> _sanitizeCaixaForSupabase(String table, Map<String, dynamic> map) {
+    if (table == 'aberturas_caixa') {
+      if (map.containsKey('data_abertura')) map['dataAbertura'] = map.remove('data_abertura');
+      if (map.containsKey('valor_inicial')) map['valorInicial'] = map.remove('valor_inicial');
+      if (map.containsKey('created_at')) map['createdAt'] = map.remove('created_at');
+      if (map.containsKey('updated_at')) map['updatedAt'] = map.remove('updated_at');
+    } else if (table == 'fechamentos_caixa') {
+      if (map.containsKey('abertura_caixa_id')) map['aberturaCaixaId'] = map['abertura_caixa_id'];
+      if (map.containsKey('data_fechamento')) map['dataFechamento'] = map['data_fechamento'];
+      if (map.containsKey('valor_esperado')) map['valorEsperado'] = map.remove('valor_esperado');
+      if (map.containsKey('valor_real')) map['valorReal'] = map.remove('valor_real');
+      if (map.containsKey('created_at')) map['createdAt'] = map['created_at'];
+      if (map.containsKey('updated_at')) map['updatedAt'] = map['updated_at'];
+    }
+    return map;
+  }
+
+  /// Sanitiza um mapa de dados de acordo com a tabela de destino no Supabase.
+  /// Retorna o mapa sanitizado (mutável) — não modifica o objeto original.
+  static Map<String, dynamic> _sanitizeForSupabase(String table, Map<String, dynamic> map) {
+    final m = Map<String, dynamic>.from(map);
+    m['empresa_id'] = map['empresa_id']; // Preservar empresa_id
+    
+    // REMOÇÃO GLOBAL: colunas internas do app que NÃO existem no Supabase
+    // (adicionadas pelo sincronizador local/outbox em TODAS as tabelas)
+    m.remove('sync');
+    m.remove('sync_status');
+    m.remove('sync_data');
+    m.remove('sync_erro');
+    m.remove('sync_tentativas');
+    m.remove('exodo_sync');
+
+    // Colunas específicas que não existem no Supabase são tratadas
+    // AUTOMATICAMENTE no upsertBatch (OpenAPI): chaves ausentes são
+    // descartadas e versões camelCase/snake_case equivalentes são renomeadas
+    // preservando o dado (ex: tem_acesso -> temAcesso). As listas hardcoded
+    // antigas foram removidas porque apagavam colunas que EXISTEM no Supabase
+    // (data_emissao, vendedor_id, pagamentos, formas_venda, etc.).
+    
+    switch (table) {
+      case 'produtos':
+        return _sanitizeProdutoForSupabase(m);
+      case 'pedidos':
+        return _sanitizePedidoForSupabase(m);
+      case 'vendas_balcao':
+        return _sanitizeVendaBalcaoForSupabase(m);
+      case 'mesas_comandas':
+        return _sanitizeMesaComandaForSupabase(m);
+      case 'empresas':
+        return _sanitizeEmpresaForSupabase(m);
+      case 'entregas':
+        return _sanitizeEntregaForSupabase(m);
+      case 'aberturas_caixa':
+      case 'fechamentos_caixa':
+        return _sanitizeCaixaForSupabase(table, m);
+      default:
+        return m;
+    }
+  }
+
+  /// ================================================================
+  /// MIGRAÇÃO COMPLETA: Local → Nuvem (backup de todos os dados)
+  /// ================================================================
+  /// Envia TODAS as tabelas do banco local para o Supabase.
+  /// Use quando:
+  ///  - A nuvem foi apagada/acidentalmente limpa
+  ///  - Você quer forçar o sync completo para a nuvem
+  ///  - Troubleshooting de dados inconsistentes entre máquinas
+  ///
+  /// Retornos: (sucesso, tabelaComErro, mensagemErro)
+  Future<(bool, String?, String?)> migrarTabelasLocalParaNuvem() async {
+    if (_currentEmpresaId == null) {
+      return (false, null, 'Empresa não definida');
+    }
+
+    _isLoading = true;
+    _mensagemLoading = 'Migrando dados locais para a nuvem...';
+    notifyListeners();
+
+    final tabelaErro = ValueNotifier<String?>(null);
+    final msgErro = ValueNotifier<String?>(null);
+
+    try {
+      debugPrint('>>> [Migrate] 📤 Iniciando migração Local → Nuvem para empresa $_currentEmpresaId');
+      addSyncLog('📤 Iniciando migração completa Local → Nuvem...');
+
+      // PASSO 1: Verificar e criar tabelas ausentes no Supabase automaticamente (OPCIONAL)
+      // Se as variáveis SUPABASE_DB_HOST/SUPABASE_DB_PASSWORD não estiverem configuradas,
+      // a criação automática é pulada — a migração continua e pula tabelas que não existem.
+      debugPrint('>>> [Migrate] 🔍 Verificando tabelas no Supabase antes da migração...');
+      addSyncLog('🔍 Verificando tabelas no Supabase...');
+      try {
+        if (EnvConfig.supabaseDbAvailable) {
+          final (ok, logs) = await _supabaseService.criarTabelasNoSupabase();
+          if (ok) {
+            debugPrint('>>> [Migrate] ✅ Verificação de tabelas concluída');
+            for (final log in logs) {
+              debugPrint('>>> [Migrate]    $log');
+            }
+          } else {
+            debugPrint('>>> [Migrate] ⚠️ Não foi possível verificar tabelas automaticamente: ${logs.join(', ')}');
+          }
+        } else {
+          debugPrint('>>> [Migrate] ℹ️ Variáveis SUPABASE_DB_* não configuradas — criação automática de tabelas desabilitada');
+          addSyncLog('ℹ️ Criação automática de tabelas desabilitada (Configure SUPABASE_DB_HOST e SUPABASE_DB_PASSWORD no .env para ativar)');
+        }
+      } catch (e) {
+        debugPrint('>>> [Migrate] ⚠️ Erro ao verificar tabelas: $e (continuando migração...)');
+      }
+
+      // Função auxiliar: envia uma lista para uma tabela, sanitizada
+      Future<bool> enviarTabela(String tabela, List<Map<String, dynamic>> dados) async {
+        if (dados.isEmpty) return true;
+        debugPrint('>>> [Migrate] 📦 Enviando ${dados.length} registros para $tabela...');
+        
+        // Conjunto de colunas problemáticas para esta tabela (será populado em caso de erro)
+        final Set<String> colunasProblematicas = {};
+        
+        const batchSize = 200;
+        for (int i = 0; i < dados.length; i += batchSize) {
+          final batch = dados.sublist(i, (i + batchSize).clamp(0, dados.length));
+          
+          // Função local para sanitizar removendo colunas problemáticas conhecidas
+          Map<String, dynamic> sanitizar(Map<String, dynamic> d) {
+            d['empresa_id'] = _currentEmpresaId;
+            d['updated_at'] = DateTime.now().toUtc().toIso8601String();
+            final sanitizado = _sanitizeForSupabase(tabela, d);
+            // Remover colunas que já sabemos que causam erro
+            for (final col in colunasProblematicas) {
+              sanitizado.remove(col);
+            }
+            return sanitizado;
+          }
+          
+          final sanitizados = batch.map(sanitizar).toList();
+          try {
+            await _supabaseService.upsertBatch(tabela, sanitizados);
+            debugPrint('>>> [Migrate] ✅ $tabela: lote ${(i ~/ batchSize) + 1} OK (${batch.length} registros)');
+          } catch (e) {
+            final errStr = e.toString();
+            debugPrint('>>> [Migrate] ❌ Erro ao enviar $tabela (lote ${(i ~/ batchSize) + 1}): $e');
+            
+            // Tentar extrair nome da coluna problemática do erro
+            String? colunaProblematica;
+            final RegExp regColuna = RegExp(r"column '([^']+)' doesn't exist", caseSensitive: false);
+            final matchColuna = regColuna.firstMatch(errStr);
+            if (matchColuna != null) {
+              colunaProblematica = matchColuna.group(1);
+            } else if (errStr.contains("Could not find the column '")) {
+              // Extrair entre aspas simples após "column "
+              final idxStart = errStr.indexOf("Could not find the column '") + 26;
+              final idxEnd = errStr.indexOf("'", idxStart);
+              if (idxEnd > idxStart) {
+                colunaProblematica = errStr.substring(idxStart, idxEnd);
+              }
+            }
+            
+            // Erros recuperáveis: tabela não existe, coluna inexistente, RLS, etc.
+            bool isTabelaInexistente = errStr.contains('does not exist') ||
+                                      errStr.contains('PGRST205') ||
+                                      errStr.contains('Could not find the table') ||
+                                      (errStr.contains('relation') && errStr.contains('does not exist'));
+            bool isColunaInexistente = errStr.contains('PGRST204') ||
+                                      (errStr.contains('column') && errStr.contains('does not exist')) ||
+                                      errStr.contains('Could not find the') ||
+                                      colunaProblematica != null;
+            bool isErroRLS = errStr.contains('42501') ||
+                            errStr.contains('row-level security') ||
+                            errStr.contains('permission denied');
+            bool isErroSchema = errStr.contains('schema cache') ||
+                               errStr.contains('Bad Request');
+            
+            if (isTabelaInexistente || isErroRLS || isErroSchema) {
+              debugPrint('>>> [Migrate] ⚠️ Tabela "$tabela" não pode ser sincronizada — pulando automaticamente.');
+              debugPrint('>>> [Migrate]    Motivo: ${isTabelaInexistente ? "tabela não existe" : (isErroRLS ? "erro de permissão" : "erro de schema")}');
+              // Se a tabela não existe, pular TODOS os lotes dela
+              break;
+            }
+            
+            if (isColunaInexistente && colunaProblematica != null) {
+              // Coluna não existe: adicionar à lista de problemáticas e RETENTAR este lote
+              colunasProblematicas.add(colunaProblematica);
+              debugPrint('>>> [Migrate] 🔧 Coluna "$colunaProblematica" não existe em $tabela — removendo e retentando...');
+              // RETENTAR este mesmo lote (não incrementar i)
+              i -= batchSize;
+              continue;
+            }
+            
+            tabelaErro.value = tabela;
+            msgErro.value = errStr;
+            return false;
+          }
+          await Future.delayed(const Duration(milliseconds: 200));
+        }
+        return true;
+      }
+
+      // Enviar cada tabela na ordem de dependência
+      final tabelas = <(String, List<Map<String, dynamic>>)>[
+        ('produtos', _produtos.map((p) => p.toMap()).toList()),
+        ('clientes', _clientes.map((c) => c.toMap()).toList()),
+        ('servicos', _tiposServico.map((s) => s.toMap()).toList()),
+        ('pedidos', _pedidos.map((p) => p.toMap()).toList()),
+        ('servicos_realizados',
+            _servicosRealizados.map((s) => s.toMap()).toList()),
+        ('orcamentos', _orcamentos.map((o) => o.toMap()).toList()),
+        ('vendas_balcao', _vendasBalcao.map((v) => v.toMap()).toList()),
+        ('agendamentos_servico', _agendamentosServico.map((a) => a.toMap()).toList()),
+        ('notas_entrada', _notasEntrada.map((n) => n.toMap()).toList()),
+        ('funcionarios', _funcionarios.map((f) => f.toMap()).toList()),
+        ('ordens_servico', _ordensServico.map((o) => o.toMap()).toList()),
+        ('trocas_devolucoes', _trocasDevolucoes.map((t) => t.toMap()).toList()),
+        ('comissoes_vendedores', _comissoesVendedores.map((c) => c.toMap()).toList()),
+        ('contas_pagar', _contasPagar.map((cp) => cp.toMap()).toList()),
+        ('romaneios', _romaneios.map((r) => r.toMap()).toList()),
+        ('aberturas_caixa', _aberturasCaixa.map((a) => a.toMap()).toList()),
+        ('fechamentos_caixa', _fechamentosCaixa.map((f) => f.toMap()).toList()),
+        ('sangrias_caixa', _sangrias.map((s) => s.toMap()).toList()),
+        ('suprimentos_caixa', _suprimentos.map((s) => s.toMap()).toList()),
+        ('nfces', _nfces.map((n) => n.toMap()).toList()),
+        ('mesas_comandas', _mesasComandas.map((m) => m.toMap()).toList()),
+        ('taxas_entrega', _taxasEntrega.map((t) => t.toMap()).toList()),
+        ('links_vendedores', _linksVendedores.map((l) => l.toMap()).toList()),
+        ('perfis_tributarios', _perfisTributarios.map((p) => p.toMap()).toList()),
+        ('departamentos', _departamentos.map((d) => d.toMap()).toList()),
+      ];
+
+      int tabelasEnviadas = 0;
+      int tabelasPuladas = 0;
+      final Set<String> tabelasNaoExistemNoSupabase = {};
+      for (final (tabela, dados) in tabelas) {
+        // Pular tabelas que já sabemos que não existem no Supabase
+        if (tabelasNaoExistemNoSupabase.contains(tabela)) {
+          continue;
+        }
+        if (dados.isEmpty) {
+          debugPrint('>>> [Migrate] ⏭️ $tabela: vazia, pulando');
+          continue;
+        }
+        final ok = await enviarTabela(tabela, dados);
+        if (!ok) {
+          // Se a tabela que deu erro não existe no Supabase, marcar para não tentar de novo
+          final erroTabela = tabelaErro.value;
+          if (erroTabela != null) {
+            debugPrint('>>> [Migrate] ⚠️ Tabela "$erroTabela" será pulada nas próximas tentativas.');
+            tabelasNaoExistemNoSupabase.add(erroTabela);
+            tabelasPuladas++;
+            // Resetar erro para continuar com as próximas tabelas
+            tabelaErro.value = null;
+            msgErro.value = null;
+            continue;
+          }
+          break;
+        }
+        tabelasEnviadas++;
+      }
+
+      String msg = 'Migração Local → Nuvem concluída: $tabelasEnviadas tabelas enviadas';
+      if (tabelasPuladas > 0) {
+        msg += ', $tabelasPuladas tabela(s) pulada(s) (não existem no Supabase)';
+      }
+      debugPrint('>>> [Migrate] ✅ $msg');
+      addSyncLog('✅ $msg');
+      return (tabelaErro.value == null, tabelaErro.value, msgErro.value ?? msg);
+    } catch (e, st) {
+      debugPrint('>>> [Migrate] ❌ Erro na migração Local → Nuvem: $e\n$st');
+      addSyncLog('❌ Erro na migração Local → Nuvem: $e');
+      return (false, null, e.toString());
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// ================================================================
+  /// MIGRAÇÃO COMPLETA: Nuvem → Local (restore de todos os dados)
+  /// ================================================================
+  /// Baixa TODAS as tabelas do Supabase e popula o banco local.
+  /// Use quando:
+  ///  - Você quer igualar o banco local com a nuvem
+  ///  - Troubleshooting de dados inconsistentes entre máquinas
+  ///
+  /// ⚠️ ATENÇÃO: Isso SUBSTITUI todos os dados locais!
+  Future<(bool, String?, String?)> migrarTabelasNuvemParaLocal() async {
+    if (_currentEmpresaId == null) {
+      return (false, null, 'Empresa não definida');
+    }
+
+    _isLoading = true;
+    _mensagemLoading = 'Baixando dados da nuvem para o local...';
+    notifyListeners();
+
+    try {
+      debugPrint('>>> [Migrate] 📥 Iniciando migração Nuvem → Local para empresa $_currentEmpresaId');
+      addSyncLog('📥 Iniciando migração completa Nuvem → Local...');
+
+      // Limpar cache em memória primeiro
+      limparDadosMemoria();
+
+      // Carregar todos os dados da nuvem (mesmo método usado no sync normal)
+      await _carregarDadosDoSupabase(modoLeve: false);
+
+      // Salvar no banco local
+      await _salvarTodosDados(aguardarSupabase: false, isSync: true);
+
+      notifyListeners();
+
+      final msg = 'Migração Nuvem → Local concluída! '
+          '${_produtos.length} produtos, ${_clientes.length} clientes, '
+          '${_pedidos.length} pedidos, ${_vendasBalcao.length} vendas.';
+      debugPrint('>>> [Migrate] ✅ $msg');
+      addSyncLog('✅ $msg');
+      return (true, null, msg);
+    } catch (e, st) {
+      debugPrint('>>> [Migrate] ❌ Erro na migração Nuvem → Local: $e\n$st');
+      addSyncLog('❌ Erro na migração Nuvem → Local: $e');
+      return (false, null, e.toString());
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// ================================================================
+  /// SINCRONIZAÇÃO BIDIRECIONAL COMPLETA (merge inteligente)
+  /// ================================================================
+  /// Baixa dados da nuvem, merge com o que existe localmente,
+  /// e envia de volta. Garante que os dois bancos fiquem idênticos.
+  ///
+  /// Fluxo:
+  ///  1. Baixa dados da nuvem
+  ///  2. Merge: mantém o que é mais recente (por updated_at)
+  ///  3. Salva local
+  ///  4. Envia de volta para a nuvem
+  Future<(bool, String?)> sincronizacaoBidirecionalCompleta() async {
+    if (_currentEmpresaId == null) {
+      return (false, 'Empresa não definida');
+    }
+
+    _isLoading = true;
+    _mensagemLoading = 'Sincronizando dados entre local e nuvem...';
+    notifyListeners();
+
+    try {
+      debugPrint('>>> [Sync] 🔄 Iniciando sincronização bidirecional completa...');
+      addSyncLog('🔄 Iniciando sincronização bidirecional completa...');
+
+      // 1. Enviar os dados do PostgreSQL local para a nuvem PRIMEIRO.
+      // ⚠️ ORDEM IMPORTANTE: a nuvem pode estar quase vazia (ex: máquina nova).
+      // Se baixarmos primeiro, a memória seria sobrescrita com os dados quase
+      // vazios e o envio seguinte mandaria quase nada. Enviando primeiro, os
+      // 5600 produtos locais sobem e depois baixamos só o que falta (ex:
+      // registros criados por OUTRAS máquinas).
+      debugPrint('>>> [Sync] 📤 Passo 1/4: Enviando dados locais (PostgreSQL) para a nuvem...');
+      addSyncLog('📤 Enviando dados locais para a nuvem...');
+      final (okEnvio, msgEnvio) = await enviarDadosLocalParaNuvem();
+      if (!okEnvio) {
+        final msg = 'Sincronização parcial: problema ao enviar dados para a nuvem. $msgEnvio';
+        debugPrint('>>> [Sync] ⚠️ $msg');
+        addSyncLog('⚠️ $msg');
+        return (false, msg);
+      }
+      debugPrint('>>> [Sync] ✅ Passo 1/4 concluído: $msgEnvio');
+      addSyncLog('✅ $msgEnvio');
+
+      // 2. Baixar da nuvem o que outras máquinas criaram (merge)
+      debugPrint('>>> [Sync] 📥 Passo 2/4: Baixando dados da nuvem (de outras máquinas)...');
+      await _carregarDadosDoSupabase(modoLeve: false);
+
+      // 3. Salvar localmente (merge)
+      debugPrint('>>> [Sync] 💾 Passo 3/4: Salvando dados localmente...');
+      await _salvarTodosDados(aguardarSupabase: false, isSync: true);
+      notifyListeners();
+
+      // 4. Verificar consistência final
+      debugPrint('>>> [Sync] 🔍 Passo 4/4: Verificando consistência...');
+      debugPrint('>>> [Sync] ✅ Local: ${_produtos.length} produtos, ${_clientes.length} clientes, '
+          '${_pedidos.length} pedidos, ${_vendasBalcao.length} vendas');
+
+      final msg = 'Sincronização completa! Dados locais enviados para a nuvem e dados da nuvem baixados. Os bancos estão unificados.';
+      debugPrint('>>> [Sync] ✅ $msg');
+      addSyncLog('✅ $msg');
+      return (true, msg);
+    } catch (e, st) {
+      debugPrint('>>> [Sync] ❌ Erro na sincronização bidirecional: $e\n$st');
+      addSyncLog('❌ Erro na sincronização bidirecional: $e');
+      return (false, e.toString());
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+      /// Envia dados locais para a nuvem de forma simples e direta
+  /// Lê os dados DIRETO do PostgreSQL local (DatabaseService) — não das listas
+  /// em memória, que podem estar vazias ou vir do Supabase.
+  Future<(bool, String)> enviarDadosLocalParaNuvem() async {
+    debugPrint('>>>> [EnvirLocalNuvem] Iniciando envio local -> nuvem');
+    
+    if (_currentEmpresaId == null) {
+      debugPrint('>>>> [EnvirLocalNuvem] ERRO: Empresa nao definida');
+      return (false, 'Empresa não definida');
+    }
+    debugPrint('>>>> [EnvirLocalNuvem] Empresa: ' + _currentEmpresaId!);
+    
+    if (!SupabaseService.isAvailable) {
+      debugPrint('>>>> [EnvirLocalNuvem] ERRO: Supabase nao conectado');
+      return (false, 'Supabase não está conectado');
+    }
+    debugPrint('>>>> [EnvirLocalNuvem] Supabase conectado');
+
+    // Garantir que o DatabaseService está apontando para a empresa atual
+    DatabaseService().setEmpresaId(_currentEmpresaId!);
+
+    int tabelasEnviadas = 0;
+    int tabelasComErro = 0;
+    int totalRegistros = 0;
+    final List<String> erros = [];
+    final List<String> tabelasOk = [];
+
+    // Tabela -> chave usada pelo DatabaseService (PostgreSQL local)
+    final tabelas = <String, String>{
+      'produtos': LocalStorageService.keyProdutos,
+      'clientes': LocalStorageService.keyClientes,
+      'pedidos': LocalStorageService.keyPedidos,
+      'servicos_realizados': LocalStorageService.keyServicosRealizados,
+      'orcamentos': LocalStorageService.keyOrcamentos,
+      'vendas_balcao': LocalStorageService.keyVendasBalcao,
+      'mesas_comandas': LocalStorageService.keyMesasComandas,
+      'servicos': LocalStorageService.keyServicos,
+      'ordens_servico': LocalStorageService.keyOrdensServico,
+      'notas_entrada': LocalStorageService.keyNotasEntrada,
+      'funcionarios': LocalStorageService.keyFuncionarios,
+      'agendamentos_servico': LocalStorageService.keyAgendamentosServico,
+      'trocas_devolucoes': LocalStorageService.keyTrocasDevolucoes,
+      'comissoes_vendedores': LocalStorageService.keyComissoesVendedores,
+      'contas_pagar': LocalStorageService.keyContasPagar,
+      'romaneios': LocalStorageService.keyRomaneios,
+      'aberturas_caixa': LocalStorageService.keyAberturasCaixa,
+      'fechamentos_caixa': LocalStorageService.keyFechamentosCaixa,
+      'sangrias_caixa': LocalStorageService.keySangriasField,
+      'suprimentos_caixa': LocalStorageService.keySuprimentosField,
+      'nfces': LocalStorageService.keyNFCes,
+      'taxas_entrega': LocalStorageService.keyTaxasEntrega,
+      'links_vendedores': LocalStorageService.keyLinksVendedores,
+      'estoque_historico': LocalStorageService.keyEstoqueHistorico,
+    };
+
+    for (final entry in tabelas.entries) {
+      final tabela = entry.key;
+      final chave = entry.value;
+
+      // SEMPRE filtrar por empresa_id — NUNCA carregar tudo sem filtro,
+      // senão dados de outras empresas são misturados e enviados com a
+      // empresa_id errada. carregarLista já aplica WHERE empresa_id = X.
+      List<Map<String, dynamic>> dados = [];
+      try {
+        dados = await DatabaseService().carregarLista(chave);
+        debugPrint('>>>> [EnvirLocalNuvem] PostgreSQL (empresa ' + _currentEmpresaId! + ') - ' + tabela + ': ' + dados.length.toString() + ' registros');
+      } catch (e) {
+        debugPrint('>>>> [EnvirLocalNuvem] ⚠️ Falha ao ler ' + tabela + ': ' + e.toString());
+      }
+
+      if (dados.isEmpty) {
+        debugPrint('>>>> [EnvirLocalNuvem] SKIP ' + tabela + ': vazia');
+        continue;
+      }
+
+      // Deduplicação: vendas_balcao pode ter vendas duplicadas (duas máquinas
+      // criaram a mesma venda com ids diferentes, mesmo numero). Mantém apenas
+      // uma cópia por numero para evitar 23505 (unique constraint).
+      if (tabela == 'vendas_balcao' && dados.length > 1) {
+        final Map<String, Map<String, dynamic>> porNumero = {};
+        for (final d in dados) {
+          final numero = d['numero']?.toString() ?? '';
+          if (numero.isNotEmpty && porNumero.containsKey(numero)) continue;
+          porNumero[numero.isNotEmpty ? numero : d['id']?.toString() ?? ''] = d;
+        }
+        if (porNumero.length < dados.length) {
+          debugPrint('>>>> [EnvirLocalNuvem] Dedup vendas_balcao: ${dados.length} -> ${porNumero.length} (removidos ${dados.length - porNumero.length} duplicados)');
+          dados = porNumero.values.toList();
+        }
+      }
+
+      debugPrint('>>>> [EnvirLocalNuvem] Enviando ' + dados.length.toString() + ' para ' + tabela + '...');
+
+      // Conjunto de colunas problemáticas para esta tabela (removidas e retentadas)
+      final Set<String> colunasRemovidas = {};
+
+      Future<void> enviarLote(String tabelaAtual, List<Map<String, dynamic>> lote) async {
+        // Sanitização dos dados (datas→string; colunas são filtradas
+        // automaticamente pelo upsertBatch via OpenAPI)
+        List<Map<String, dynamic>> preparar(List<Map<String, dynamic>> origem) {
+          return origem.map((d) {
+            var copia = _converterValoresParaJson(Map<String, dynamic>.from(d));
+            copia['empresa_id'] = _currentEmpresaId;
+            copia['updated_at'] = DateTime.now().toUtc().toIso8601String();
+            // numero_venda é derivado dentro do SupabaseService._prepararVendaBalcao
+            var sanitizado = _sanitizeForSupabase(tabelaAtual, copia);
+            for (final col in colunasRemovidas) {
+              sanitizado.remove(col);
+            }
+            return sanitizado;
+          }).toList();
+        }
+
+        var dadosLote = preparar(lote);
+        const batchSize = 500;
+        for (int i = 0; i < dadosLote.length; i += batchSize) {
+          final batch = dadosLote.sublist(i, (i + batchSize).clamp(0, dadosLote.length));
+          try {
+            await _supabaseService.upsertBatch(tabelaAtual, batch);
+          } catch (e2) {
+            final err2 = e2.toString();
+            debugPrint('>>>> [EnvirLocalNuvem] ⚠️ ERRO no lote de ' + tabelaAtual + ': ' + err2);
+            // Tratar erro de constraint (23505 = duplicate key) para vendas_balcao:
+            // quando duas máquinas criaram vendas com mesmo numero, o 2º registro
+            // colide. Retry registro-a-registro e pula os que já existem.
+            if (tabelaAtual == 'vendas_balcao' &&
+                (err2.contains('23505') || err2.contains('duplicate key'))) {
+              debugPrint('>>>> [EnvirLocalNuvem] ⚠️ 23505 em vendas_balcao — retry registro-a-registro...');
+              for (final registro in batch) {
+                try {
+                  await _supabaseService.upsertBatch(tabelaAtual, [registro]);
+                } catch (eReg) {
+                  final errReg = eReg.toString();
+                  if (errReg.contains('23505') || errReg.contains('duplicate key')) {
+                    debugPrint('>>>> [EnvirLocalNuvem] ⏭️ Venda duplicada pulada: ${registro['id']} (numero: ${registro['numero']})');
+                  } else {
+                    debugPrint('>>>> [EnvirLocalNuvem] ❌ Erro na venda ${registro['id']}: $errReg');
+                  }
+                }
+              }
+              continue;
+            }
+            // Extrair coluna problemática do erro PGRST204 e REMOVER de todos os lotes
+            final coluna = _extrairColunaDoErro(err2);
+            if (coluna != null && !colunasRemovidas.contains(coluna)) {
+              colunasRemovidas.add(coluna);
+              debugPrint('>>>> [EnvirLocalNuvem] 🔧 Coluna "$coluna" não existe no Supabase — removendo de TODOS os lotes e retentando...');
+              dadosLote = preparar(lote);
+              i -= batchSize;
+              continue;
+            }
+            rethrow;
+          }
+        }
+      }
+
+      try {
+        await enviarLote(tabela, dados);
+        tabelasEnviadas++;
+        totalRegistros += dados.length;
+        tabelasOk.add(tabela + '(' + dados.length.toString() + ')' + (colunasRemovidas.isNotEmpty ? ' [sem ${colunasRemovidas.join(',')}]' : ''));
+        debugPrint('>>>> [EnvirLocalNuvem] OK ' + tabela + ': ' + dados.length.toString() + ' registros' + (colunasRemovidas.isNotEmpty ? ' (colunas removidas: ${colunasRemovidas.join(', ')})' : ''));
+      } catch (e) {
+        final errStr = e.toString();
+        debugPrint('>>>> [EnvirLocalNuvem] ERRO em ' + tabela + ': ' + errStr);
+        
+        // Tabela realmente não existe no Supabase -> pular
+        if (errStr.contains('PGRST205') || (errStr.contains('relation') && errStr.contains('does not exist'))) {
+          debugPrint('>>>> [EnvirLocalNuvem] SKIP ' + tabela + ': nao existe no Supabase');
+          continue;
+        }
+        tabelasComErro++;
+        final shortErr = errStr.length > 150 ? errStr.substring(0, 150) : errStr;
+        erros.add(tabela + ': ' + shortErr);
+      }
+    }
+
+    // Perfis tributários e departamentos existem apenas em memória
+    final extras = <String, List<Map<String, dynamic>>>{
+      'perfis_tributarios': _perfisTributarios.map((p) => p.toMap()).toList(),
+      'departamentos': _departamentos.map((d) => d.toMap()).toList(),
+    };
+    for (final entry in extras.entries) {
+      final tabela = entry.key;
+      final dados = entry.value;
+      if (dados.isEmpty) {
+        debugPrint('>>>> [EnvirLocalNuvem] SKIP ' + tabela + ': vazia');
+        continue;
+      }
+      debugPrint('>>>> [EnvirLocalNuvem] Enviando ' + dados.length.toString() + ' para ' + tabela + '...');
+      try {
+        final dadosSanitizados = dados.map((d) {
+          final copia = Map<String, dynamic>.from(d);
+          copia['empresa_id'] = _currentEmpresaId;
+          copia['updated_at'] = DateTime.now().toUtc().toIso8601String();
+          return _sanitizeForSupabase(tabela, copia);
+        }).toList();
+        const batchSize = 500;
+        for (int i = 0; i < dadosSanitizados.length; i += batchSize) {
+          final batch = dadosSanitizados.sublist(i, (i + batchSize).clamp(0, dadosSanitizados.length));
+          await _supabaseService.upsertBatch(tabela, batch);
+        }
+        tabelasEnviadas++;
+        totalRegistros += dados.length;
+        tabelasOk.add(tabela + '(' + dados.length.toString() + ')');
+        debugPrint('>>>> [EnvirLocalNuvem] OK ' + tabela + ': ' + dados.length.toString() + ' registros');
+      } catch (e) {
+        final errStr = e.toString();
+        debugPrint('>>>> [EnvirLocalNuvem] ERRO em ' + tabela + ': ' + errStr);
+        if (errStr.contains('does not exist') || errStr.contains('PGRST205') || errStr.contains('PGRST204')) {
+          debugPrint('>>>> [EnvirLocalNuvem] SKIP ' + tabela + ': nao existe no Supabase');
+          continue;
+        }
+        tabelasComErro++;
+        final shortErr = errStr.length > 100 ? errStr.substring(0, 100) : errStr;
+        erros.add(tabela + ': ' + shortErr);
+      }
+    }
+    
+    String msg = 'Enviados ' + tabelasEnviadas.toString() + ' tabelas / ' + totalRegistros.toString() + ' registros para a nuvem';
+    if (tabelasOk.isNotEmpty) {
+      msg += ': ' + tabelasOk.join(', ');
+    }
+    if (tabelasComErro > 0) {
+      msg += '\n' + tabelasComErro.toString() + ' com erro: ' + erros.join('; ');
+    }
+    debugPrint('>>>> [EnvirLocalNuvem] RESULTADO: ' + msg);
+
+    // VERIFICAÇÃO: contar no Supabase o que realmente existe agora
+    try {
+      final verificacao = <String>[];
+      for (final tabela in ['produtos', 'clientes', 'pedidos', 'vendas_balcao', 'servicos', 'mesas_comandas']) {
+        final count = await _supabaseService.contarRegistrosNaNuvem(tabela, _currentEmpresaId!);
+        debugPrint('>>>> [EnvirLocalNuvem] 📊 VERIFICAÇÃO $tabela no Supabase: $count registros');
+        if (count >= 0) verificacao.add(tabela + '=' + count.toString());
+      }
+      msg += '\n📊 No Supabase agora: ' + (verificacao.isEmpty ? 'sem dados' : verificacao.join(', '));
+    } catch (e) {
+      debugPrint('>>>> [EnvirLocalNuvem] ⚠️ Falha na verificação: $e');
+    }
+
+    return (tabelasComErro == 0, msg);
+  }
+
+  /// Retorna os dados de uma tabela a partir das listas em memória (fallback)
+  List<Map<String, dynamic>> _dadosTabelaEmMemoria(String tabela) {
+    switch (tabela) {
+      case 'produtos': return _produtos.map((p) => p.toMap()).toList();
+      case 'clientes': return _clientes.map((c) => c.toMap()).toList();
+      case 'pedidos': return _pedidos.map((p) => p.toMap()).toList();
+      case 'vendas_balcao': return _vendasBalcao.map((v) => v.toMap()).toList();
+      case 'mesas_comandas': return _mesasComandas.map((m) => m.toMap()).toList();
+      case 'servicos': return _tiposServico.map((s) => s.toMap()).toList();
+      case 'ordens_servico': return _ordensServico.map((o) => o.toMap()).toList();
+      case 'notas_entrada': return _notasEntrada.map((n) => n.toMap()).toList();
+      case 'funcionarios': return _funcionarios.map((f) => f.toMap()).toList();
+      case 'agendamentos_servico': return _agendamentosServico.map((a) => a.toMap()).toList();
+      case 'trocas_devolucoes': return _trocasDevolucoes.map((t) => t.toMap()).toList();
+      case 'comissoes_vendedores': return _comissoesVendedores.map((c) => c.toMap()).toList();
+      case 'contas_pagar': return _contasPagar.map((cp) => cp.toMap()).toList();
+      case 'romaneios': return _romaneios.map((r) => r.toMap()).toList();
+      case 'aberturas_caixa': return _aberturasCaixa.map((a) => a.toMap()).toList();
+      case 'fechamentos_caixa': return _fechamentosCaixa.map((f) => f.toMap()).toList();
+      case 'sangrias_caixa': return _sangrias.map((s) => s.toMap()).toList();
+      case 'suprimentos_caixa': return _suprimentos.map((s) => s.toMap()).toList();
+      case 'nfces': return _nfces.map((n) => n.toMap()).toList();
+      case 'taxas_entrega': return _taxasEntrega.map((t) => t.toMap()).toList();
+      case 'links_vendedores': return _linksVendedores.map((l) => l.toMap()).toList();
+      case 'estoque_historico': return _estoqueHistorico.map((e) => e.toMap()).toList();
+      default: return [];
+    }
+  }
+
+  /// 🚀 Após restaurar um dump no PostgreSQL local, recarrega TODOS os dados
+  /// do banco local para a memória do app e envia tudo para o Supabase.
+  /// Assim a nuvem fica igual ao banco local restaurado — e as outras máquinas
+  /// puxam esses dados na próxima sincronização.
+  /// Recarrega as listas em memória a partir do banco LOCAL — e **só** disso.
+  ///
+  /// É o par do "restaurar sem mexer na nuvem": a tela aplica o backup no
+  /// PostgreSQL local e usa este método para refletir o resultado na interface,
+  /// sem disparar nenhum envio para o Supabase. Enviar para a nuvem vira uma
+  /// decisão separada e explícita do usuário (
+  /// [restaurarBancoLocalESincronizarNuvem] / [enviarDadosLocalParaNuvem]).
+  Future<void> recarregarSomenteBancoLocal() async {
+    if (_currentEmpresaId == null) {
+      debugPrint('>>> [DataService] ℹ️ Recarga local ignorada: empresa não definida.');
+      return;
+    }
+    await _carregarDadosSalvos();
+    debugPrint('>>> [DataService] ✅ Memória recarregada só do banco local: '
+        '${_produtos.length} produtos, ${_clientes.length} clientes, ${_pedidos.length} pedidos');
+    notifyListeners();
+  }
+
+  Future<(bool, String)> restaurarBancoLocalESincronizarNuvem() async {
+    if (_currentEmpresaId == null) {
+      return (false, 'Empresa não definida');
+    }
+
+    try {
+      debugPrint('>>> [Restaurar] 🔄 Recarregando dados do banco local (PostgreSQL)...');
+
+      // 1. Recarregar todas as listas em memória a partir do PostgreSQL local
+      await _carregarDadosSalvos();
+      debugPrint('>>> [Restaurar] ✅ Memória recarregada: ${_produtos.length} produtos, ${_clientes.length} clientes, ${_pedidos.length} pedidos');
+
+      // 2. Enviar tudo para o Supabase
+      if (!SupabaseService.isAvailable) {
+        return (true, 'Dump restaurado e carregado localmente. Supabase indisponível — os dados serão enviados quando houver conexão.');
+      }
+
+      debugPrint('>>> [Restaurar] ☁️ Enviando dados do banco local para o Supabase...');
+      final (ok, msg) = await enviarDadosLocalParaNuvem();
+      if (ok) {
+        return (true, 'Dump restaurado e enviado para a nuvem! $msg');
+      }
+      return (true, 'Dump restaurado localmente, mas com avisos na nuvem: $msg');
+    } catch (e, st) {
+      debugPrint('>>> [Restaurar] ❌ Erro: $e\n$st');
+      return (false, 'Erro ao recarregar/enviar dados: $e');
+    }
+  }
+
+  /// Converte SOMENTE os VALORES do PostgreSQL (DateTime, etc.) em formatos
+  /// JSON serializáveis, MANTENDO as chaves exatamente como estão no banco
+  /// local. IMPORTANTE: o banco local e o Supabase usam os MESMOS nomes de
+  /// colunas (inclusive camelCase em tabelas legadas como temAcesso,
+  /// tipoComissao, linkVendedorId, entregaIds, vendaId). Converter as chaves
+  /// para snake_case criava colunas que NÃO existem no Supabase e derrubava a
+  /// tabela inteira com PGRST204.
+  static Map<String, dynamic> _converterValoresParaJson(Map<String, dynamic> map) {
+    final resultado = <String, dynamic>{};
+    map.forEach((chave, valor) {
+      resultado[chave] = _converterValorParaJson(valor);
+    });
+    return resultado;
+  }
+
+  /// Converte valores do PostgreSQL (DateTime, etc.) em formatos JSON serializáveis
+  /// (string ISO 8601 para datas) — necessário porque a API do Supabase rejeita
+  /// objetos DateTime: "Converting object to an encodable object failed".
+  /// As chaves internas de Map/JSONB são preservadas (sem conversão).
+  static dynamic _converterValorParaJson(dynamic valor) {
+    if (valor == null) return null;
+    if (valor is DateTime) {
+      return valor.toIso8601String();
+    }
+    if (valor is Map) {
+      final resultado = <String, dynamic>{};
+      valor.forEach((k, v) {
+        resultado[k.toString()] = _converterValorParaJson(v);
+      });
+      return resultado;
+    }
+    if (valor is List) {
+      return valor.map(_converterValorParaJson).toList();
+    }
+    return valor;
+  }
+
+  /// Extrai o nome da coluna problemática de uma mensagem de erro do Supabase.
+  /// Ex.: 'column "xxx" of relation "produtos" does not exist' -> 'xxx'
+  static String? _extrairColunaDoErro(String errStr) {
+    final match = RegExp(r'column "?([a-zA-Z0-9_]+)"?').firstMatch(errStr);
+    if (match != null) {
+      return match.group(1);
+    }
+    // PGRST204: 'Could not find the column "xxx"'
+    final match2 = RegExp(r'column "([a-zA-Z0-9_]+)"').firstMatch(errStr);
+    if (match2 != null) {
+      return match2.group(1);
+    }
+    // "Could not find the 'xxx' column"
+    final match3 = RegExp(r"Could not find the '([a-zA-Z0-9_]+)'").firstMatch(errStr);
+    if (match3 != null) {
+      return match3.group(1);
+    }
+    return null;
+  }
+
+
+/// 🚑 RESTAURAR: Envia os dados que estão no computador de volta para a nuvem
   /// Usar quando a nuvem foi apagada acidentalmente e o local ainda tem os dados
   Future<void> restaurarLocalParaNuvem() async {
     if (_currentEmpresaId == null) return;
@@ -8927,9 +11620,18 @@ class DataService extends ChangeNotifier {
         const batchSize = 200;
         for (int i = 0; i < _produtos.length; i += batchSize) {
           final batch = _produtos.sublist(i, (i + batchSize).clamp(0, _produtos.length));
+          // Sanitizar: remover colunas que não existem no Supabase (PGRST204)
+          final dadosSanitizados = batch.map((p) {
+            final map = p.toMap();
+            map.remove('baixar_estoque_proprio');
+            map.remove('eh_composto');
+            map.remove('composicao');
+            map.remove('cobrar_garcom');
+            return map;
+          }).toList();
           await _supabaseService.upsertBatch(
             SupabaseService.tableProdutos,
-            batch.map((p) => p.toMap()).toList(),
+            dadosSanitizados,
           );
           debugPrint('>>> [Restore] ✅ Lote ${(i ~/ batchSize) + 1}: ${batch.length} produtos enviados');
           await Future.delayed(const Duration(milliseconds: 200));
@@ -8964,38 +11666,77 @@ class DataService extends ChangeNotifier {
     }
   }
 
+  /// Tabelas operacionais incluídas no "Zerar Nuvem" (todas têm coluna empresa_id)
+  static const List<String> _tabelasParaZerarNuvem = [
+    SupabaseService.tableProdutos,
+    SupabaseService.tableClientes,
+    SupabaseService.tablePedidos,
+    SupabaseService.tableVendasBalcao,
+    SupabaseService.tableAberturasCaixa,
+    SupabaseService.tableFechamentosCaixa,
+    SupabaseService.tableEstoqueHistorico,
+  ];
+
+  /// Conta quantos registros existem na nuvem para a empresa atual (por tabela).
+  /// Usado no diálogo de confirmação do "Zerar Nuvem" para mostrar o que será apagado.
+  Future<Map<String, int>> contarDadosDaEmpresa() async {
+    final resultado = <String, int>{};
+    final empresaId = _currentEmpresaId;
+    if (empresaId == null || empresaId.isEmpty) return resultado;
+    for (final tabela in _tabelasParaZerarNuvem) {
+      try {
+        resultado[tabela] = await _supabaseService.contarRegistrosNaNuvem(tabela, empresaId);
+      } catch (e) {
+        debugPrint('>>> [Supabase] ⚠️ Erro ao contar $tabela: $e');
+      }
+    }
+    return resultado;
+  }
+
   /// Limpa TODOS os dados desta empresa no SUPABASE (Cuidado!)
-  Future<void> deletarTudoNoSupabaseDestaEmpresa() async {
-    if (_currentEmpresaId == null) return;
-    
+  ///
+  /// PROTEÇÕES:
+  ///  - Exige empresa selecionada (nunca apaga com id vazio);
+  ///  - BLOQUEIA o id '1' (empresa padrão legada que, neste banco, concentra
+  ///    os dados de TODAS as empresas — apagar por esse id apagaria tudo);
+  ///  - Conta os registros ANTES de apagar e só apaga os da empresa atual;
+  ///  - Retorna um resumo (tabela -> qtd removida) para exibição na UI.
+  Future<Map<String, int>> deletarTudoNoSupabaseDestaEmpresa() async {
+    final empresaId = _currentEmpresaId;
+    if (empresaId == null || empresaId.isEmpty) {
+      throw Exception('⚠️ Nenhuma empresa selecionada. Operação cancelada.');
+    }
+    // PROTEÇÃO CRÍTICA: o id "1" é a empresa padrão e, no banco atual, TODAS
+    // as empresas legadas estão gravadas sob esse id. Apagar por ele apagaria
+    // os dados de todas as empresas de uma vez.
+    if (empresaId == '1') {
+      throw Exception('⚠️ Segurança: a empresa padrão (ID "1") concentra dados de várias empresas no banco. '
+          'Apagar por esse ID apagaria tudo. Migre/renomeie a empresa antes de zerar.');
+    }
+
     _isLoading = true;
     _mensagemLoading = 'Limpando dados na nuvem...';
     notifyListeners();
 
     try {
-      final tabelas = [
-        SupabaseService.tableProdutos,
-        SupabaseService.tableClientes,
-        SupabaseService.tablePedidos,
-        SupabaseService.tableVendasBalcao,
-        SupabaseService.tableAberturasCaixa,
-        SupabaseService.tableFechamentosCaixa,
-        SupabaseService.tableEstoqueHistorico,
-      ];
-
-      for (var tabela in tabelas) {
+      final removidosPorTabela = <String, int>{};
+      for (var tabela in _tabelasParaZerarNuvem) {
         debugPrint('>>> [Supabase] 🗑️ Deletando $tabela...');
-        await _supabaseService.deleteByEmpresa(tabela, _currentEmpresaId!);
+        final removidos = await _supabaseService.deleteByEmpresa(tabela, empresaId);
+        if (removidos > 0) {
+          removidosPorTabela[tabela] = removidos;
+        }
       }
 
-      // Após limpar a nuvem, limpa o computador também
+      // Após limpar a nuvem, limpa o computador também (apenas listas da empresa atual)
       _clientes.clear();
       _produtos.clear();
       _pedidos.clear();
       _vendasBalcao.clear();
       await _salvarTodosDados(aguardarSupabase: false);
       
-      debugPrint('>>> [Supabase] ✅ Nuvem e Local limpos para esta empresa.');
+      debugPrint('>>> [Supabase] ✅ Nuvem e Local limpos para a empresa $empresaId: $removidosPorTabela');
+      return removidosPorTabela;
     } catch (e) {
       debugPrint('>>> [Supabase] ❌ Erro ao limpar nuvem: $e');
       rethrow;

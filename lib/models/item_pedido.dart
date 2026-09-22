@@ -29,6 +29,36 @@ class ItemPedido {
     this.precoSemPromocao,
   }) : adicionais = adicionais ?? [];
 
+  /// Cópia do item com os campos alterados — usado para editar a quantidade
+  /// de um item direto no detalhe do pedido.
+  ItemPedido copyWith({
+    String? id,
+    String? nome,
+    double? quantidade,
+    double? preco,
+    String? observacao,
+    String? idVariacao,
+    String? fornecedorNome,
+    List<AdicionalProduto>? adicionais,
+    String? unidadeVenda,
+    double? quantidadeBaixa,
+    double? precoSemPromocao,
+  }) {
+    return ItemPedido(
+      id: id ?? this.id,
+      nome: nome ?? this.nome,
+      quantidade: quantidade ?? this.quantidade,
+      preco: preco ?? this.preco,
+      observacao: observacao ?? this.observacao,
+      idVariacao: idVariacao ?? this.idVariacao,
+      fornecedorNome: fornecedorNome ?? this.fornecedorNome,
+      adicionais: adicionais ?? this.adicionais,
+      unidadeVenda: unidadeVenda ?? this.unidadeVenda,
+      quantidadeBaixa: quantidadeBaixa ?? this.quantidadeBaixa,
+      precoSemPromocao: precoSemPromocao ?? this.precoSemPromocao,
+    );
+  }
+
   factory ItemPedido.fromMap(Map<String, dynamic> map) {
     return ItemPedido(
       id: map['id']?.toString() ?? '',

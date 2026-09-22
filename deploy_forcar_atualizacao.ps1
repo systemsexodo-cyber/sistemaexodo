@@ -83,10 +83,10 @@ if ($pubGetOutput -match "Got dependencies!" -or $LASTEXITCODE -eq 0) {
 Write-Host ""
 
 Write-Host "[6/7] Construindo projeto para web (modo release)..." -ForegroundColor Yellow
-Write-Host "  Executando: flutter build web --release" -ForegroundColor Cyan
+Write-Host "  Executando: flutter build web --release --no-wasm-dry-run" -ForegroundColor Cyan
 Write-Host "  Isso pode levar alguns minutos..." -ForegroundColor Yellow
 Write-Host "  IMPORTANTE: Este build será COMPLETAMENTE NOVO!" -ForegroundColor Cyan
-$buildResult = flutter build web --release 2>&1
+$buildResult = flutter build web --release --no-wasm-dry-run 2>&1
 if ($LASTEXITCODE -eq 0) {
     Write-Host "  OK: Build concluído com sucesso!" -ForegroundColor Green
     

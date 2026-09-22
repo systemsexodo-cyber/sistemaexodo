@@ -73,8 +73,10 @@ Write-Host "`n[4/7] Limpando e construindo para Web..." -ForegroundColor Yellow
 if (Test-Path "build") { Remove-Item -Recurse -Force "build" -ErrorAction SilentlyContinue }
 flutter clean | Out-Null
 flutter pub get | Out-Null
-Write-Host "  Executando: flutter build web --release" -ForegroundColor Gray
-$buildResult = flutter build web --release 2>&1
+# O --no-wasm-dry-run evita que o build JS falhe acusando import de dar:ffi
+# (ffi/win32 sao usados apenas no app desktop, mas o dry-run do Wasm reprova).
+Write-Host "  Executando: flutter build web --release --no-wasm-dry-run" -ForegroundColor Gray
+$buildResult = flutter build web --release --no-wasm-dry-run 2>&1
 if ($LASTEXITCODE -ne 0) {
     Write-Host "  ERRO: Falha no build do Flutter!" -ForegroundColor Red
     Write-Host $buildResult -ForegroundColor Red

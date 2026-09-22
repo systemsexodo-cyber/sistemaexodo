@@ -28,6 +28,8 @@ import '../models/link_vendedor.dart';
 import '../models/comissao_vendedor.dart';
 import 'package:sistema_exodo_novo/models/romaneio.dart';
 import '../supabase_config.dart';
+import 'package:postgres/postgres.dart';
+import 'env_config.dart';
 
 /// Serviço para sincronizar todos os dados com Supabase (PostgreSQL)
 class SupabaseService {
@@ -98,6 +100,8 @@ class SupabaseService {
   static const String tableProdutos = 'produtos';
   static const String tableServicos = 'servicos';
   static const String tablePedidos = 'pedidos';
+  static const String tableServicosRealizados = 'servicos_realizados';
+  static const String tableOrcamentos = 'orcamentos';
   static const String tableOrdensServico = 'ordens_servico';
   static const String tableEntregas = 'entregas';
   static const String tableVendasBalcao = 'vendas_balcao';
@@ -153,6 +157,8 @@ class SupabaseService {
         tableProdutos: 'produtos',
         tableServicos: 'servicos',
         tablePedidos: 'pedidos',
+        tableServicosRealizados: 'servicos_realizados',
+        tableOrcamentos: 'orcamentos',
         tableOrdensServico: 'ordens_servico',
         tableEntregas: 'entregas',
         tableVendasBalcao: 'vendas_balcao',
@@ -177,6 +183,20 @@ class SupabaseService {
         tableRomaneios: 'romaneios',
       };
 
+      // Tabelas de CATÁLOGO: SEMPRE baixadas por completo (sem filtro delta).
+      // Um catálogo incompleto no cliente é pior que um sync mais pesado — evita
+      // que produtos/clientes antigos (nunca alterados) fiquem para sempre fora
+      // do cliente por causa de delta sync / relógio / lastSync desatualizado.
+      const tabelasSempreCompletas = {
+        tableProdutos,
+        tableClientes,
+        tableServicos,
+        tableFuncionarios,
+        tableMotoristas,
+        tableTaxasEntrega,
+        tableLotesProdutos,
+      };
+
       for (var tableEntry in tabelasMap.entries) {
         final tableName = tableEntry.key;
         final dataKey = tableEntry.value;
@@ -191,7 +211,7 @@ class SupabaseService {
           while (hasMore) {
             var query = _from(tableName).select().eq('empresa_id', empresaId);
             
-            if (lastSync != null) {
+            if (lastSync != null && !tabelasSempreCompletas.contains(tableName)) {
               query = query.gte('updated_at', lastSync.toUtc().toIso8601String());
             } else if (tableName == tablePedidos || tableName == tableVendasBalcao || tableName == tableMesasComandas) {
               query = query.gte('created_at', dataLimiteIso);
@@ -365,16 +385,73 @@ class SupabaseService {
     }
   }
 
-  /// Faz upsert em lote de uma lista de registros (para restauração de emergência)
-  Future<void> upsertBatch(String table, List<Map<String, dynamic>> data) async {
+  /// Prepara um mapa de vendas_balcao para o Supabase.
+  /// Deriva numero_venda do 'numero' textual ('VND-0405' -> 405); se não
+  /// houver dígitos, usa um hash estável do id.
+  static Map<String, dynamic> _prepararVendaBalcao(Map<String, dynamic> m) {
+    if (m.containsKey('numero_venda') && m['numero_venda'] != null && m['numero_venda'] != 0) return m;
+    final numero = m['numero'];
+    if (numero != null) {
+      final match = RegExp(r'(\d+)').firstMatch(numero.toString());
+      final nv = match != null ? int.tryParse(match.group(1)!) : null;
+      if (nv != null) {
+        m['numero_venda'] = nv;
+        return m;
+      }
+    }
+    final id = m['id']?.toString() ?? '';
+    m['numero_venda'] = id.hashCode & 0x7fffffff;
+    return m;
+  }
+
+  /// Faz upsert em lote de uma lista de registros.
+  /// Filtra automaticamente as colunas que não existem na tabela real do
+  /// Supabase (via OpenAPI), eliminando o erro PGRST204 de uma vez por todas.
+  /// [onConflict] permite escolher a(s) coluna(s) do conflito (ex:
+  /// 'empresa_id,numero_venda' quando a tabela tem uma unique constraint além
+  /// da PK). Para vendas_balcao o numero_venda é derivado automaticamente.
+  Future<void> upsertBatch(String table, List<Map<String, dynamic>> data,
+      {String? onConflict}) async {
     if (!isAvailable || data.isEmpty) return;
     try {
-      final typedData = data.map((m) => _toSafeMap(m)).toList();
-      await _client.from(table).upsert(typedData);
+      final colunas = await _detectarColunasTabela(table);
+      var lista = data.map((m) => _toSafeMap(m)).toList();
+      if (table == 'vendas_balcao') {
+        lista = lista.map(_prepararVendaBalcao).toList();
+      }
+      if (colunas != null && colunas.isNotEmpty) {
+        final descartadas = <String>{};
+        lista = lista
+            .map((m) => _filtrarParaColunasReais(m, colunas, colunasDescartadas: descartadas))
+            .toList();
+        if (descartadas.isNotEmpty) {
+          debugPrint('>>> [Supabase] 🔧 Colunas descartadas em $table: ${descartadas.join(', ')}');
+        }
+      }
+      final query = _client.from(table).upsert(lista, onConflict: onConflict);
+      await query.timeout(const Duration(seconds: 60));
       debugPrint('>>> [Supabase] ✅ upsertBatch: ${data.length} itens em $table');
     } catch (e) {
       debugPrint('>>> [Supabase] ❌ Erro no upsertBatch em $table: $e');
       rethrow;
+    }
+  }
+
+  /// Conta quantos registros de uma tabela existem no Supabase para a empresa.
+  /// Retorna -1 se a tabela não existe.
+  Future<int> contarRegistrosNaNuvem(String table, String empresaId) async {
+    if (!isAvailable) return -1;
+    try {
+      final countResp = await _client
+          .from(table)
+          .select('id')
+          .eq('empresa_id', empresaId)
+          .count()
+          .timeout(const Duration(seconds: 30));
+      return countResp.count;
+    } catch (e) {
+      debugPrint('>>> [Supabase] ⚠️ Não foi possível contar $table: $e');
+      return -1;
     }
   }
 
@@ -466,7 +543,10 @@ class SupabaseService {
   // ============ MÉTODOS GENÉRICOS DE CRUD ============
 
   /// Consulta registros de uma tabela com filtros opcionais
-  Future<List<Map<String, dynamic>>> select(String table, {Map<String, dynamic>? filters, String? orderBy, bool descending = true, int? limit}) async {
+  ///
+  /// `filtrosDiferentes` aplica `<>` (útil para "tudo menos vazio", como os
+  /// eventos com erro em `sync_logs`), sem precisar baixar a tabela inteira.
+  Future<List<Map<String, dynamic>>> select(String table, {Map<String, dynamic>? filters, Map<String, dynamic>? filtrosDiferentes, String? orderBy, bool descending = true, int? limit}) async {
     try {
       if (!isAvailable) return [];
       dynamic builder = _client.from(table).select();
@@ -474,6 +554,12 @@ class SupabaseService {
       if (filters != null) {
         filters.forEach((key, value) {
           builder = builder.eq(key, value);
+        });
+      }
+
+      if (filtrosDiferentes != null) {
+        filtrosDiferentes.forEach((key, value) {
+          builder = builder.neq(key, value);
         });
       }
       
@@ -511,11 +597,30 @@ class SupabaseService {
     }
   }
 
-  /// Deleta todos os registros de uma tabela para uma empresa específica
-  Future<void> deleteByEmpresa(String table, String empresaId) async {
+  /// Deleta todos os registros de uma tabela para uma empresa específica.
+  /// Retorna quantos registros foram removidos (0 se nada foi encontrado).
+  Future<int> deleteByEmpresa(String table, String empresaId) async {
     try {
-      if (!isAvailable) return;
-      await _client.from(table).delete().eq('empresa_id', empresaId).timeout(const Duration(seconds: 8));
+      if (!isAvailable) return 0;
+      if (empresaId.isEmpty) {
+        debugPrint('>>> [Supabase] ❌ ERRO: empresaId vazio, abortando delete em $table');
+        return 0;
+      }
+      // Contar ANTES de apagar: só apaga o que realmente pertence à empresa
+      final countResp = await _client
+          .from(table)
+          .select('id')
+          .eq('empresa_id', empresaId)
+          .count()
+          .timeout(const Duration(seconds: 15));
+      final count = countResp.count;
+      if (count > 0) {
+        await _client.from(table).delete().eq('empresa_id', empresaId).timeout(const Duration(seconds: 15));
+        debugPrint('>>> [Supabase] 🗑️ $table: $count registro(s) removidos da empresa $empresaId');
+      } else {
+        debugPrint('>>> [Supabase] ⏭️ $table: 0 registros da empresa, pulando...');
+      }
+      return count;
     } catch (e) {
       debugPrint('>>> [Supabase] ❌ Erro ao deletar por empresa em $table: $e');
       rethrow;
@@ -541,16 +646,14 @@ class SupabaseService {
     }
 
     if (table.contains('produtos')) {
-      m.remove('envia_balanca');
-      m.remove('enviaBalanca');
+      // Somente colunas que comprovadamente NÃO existem no schema do Supabase
+      // (verificado via OpenAPI /rest/v1/). envia_balanca, precos_por_perfil e
+      // regras_quantidade EXISTEM no Supabase e agora são preservadas — o
+      // filtro genérico (_filtrarParaColunasReais) cuida do resto.
       m.remove('cobrar_garcom');
       m.remove('cobrarGarcom');
       m.remove('perguntas_selecao');
       m.remove('perguntasSelecao');
-      m.remove('precos_por_perfil');
-      m.remove('precosPorPerfil');
-      m.remove('regras_quantidade');
-      m.remove('regrasQuantidade');
       m.remove('exibir_composicao_pdv');
       m.remove('exibirComposicaoPdv');
     }
@@ -607,25 +710,30 @@ class SupabaseService {
       
       Map<String, dynamic> dataToUpsert = _filtrarCamposLocais(table, data);
 
-      // estoque_historico: envia SOMENTE as colunas que existem na tabela real
-      // (evita PGRST204 por custo_unitario/valor_custo quando o schema ainda não
-      // foi migrado). Com o schema migrado, o custo da quebra passa a subir.
-      if (table == SupabaseService.tableEstoqueHistorico) {
-        final colunas = await _detectarColunasEstoqueHistorico();
-        dataToUpsert.removeWhere((k, _) => !colunas.contains(k));
+      // vendas_balcao: derivar numero_venda para consistência.
+      String? onConflict;
+      if (table == 'vendas_balcao') {
+        dataToUpsert = _prepararVendaBalcao(dataToUpsert);
       }
 
-      // empresas: o toMap() envia ~40 chaves (razaoSocial, whatsapp*, etc.)
-      // mas a tabela real só tem algumas. Sem filtrar, o upsert falhava com
-      // PGRST204 (engolido silenciosamente) e o configuracoes — que carrega o
-      // OK de mensalidade — nunca chegava à nuvem.
-      if (table == SupabaseService.tableEmpresas) {
-        final colunas = await _detectarColunasEmpresas();
-        dataToUpsert.removeWhere((k, _) => !colunas.contains(k));
+      // Filtro genérico: envia SOMENTE colunas que existem na tabela real
+      // (via OpenAPI, em cache). Elimina PGRST204 para qualquer tabela,
+      // inclusive as legadas com colunas camelCase (temAcesso, linkVendedorId,
+      // etc.). Se a detecção falhar, mantém o comportamento antigo.
+      final colunas = await _detectarColunasTabela(table);
+      if (colunas != null && colunas.isNotEmpty) {
+        final descartadas = <String>{};
+        dataToUpsert = _filtrarParaColunasReais(dataToUpsert, colunas, colunasDescartadas: descartadas);
+        if (descartadas.isNotEmpty) {
+          debugPrint('>>> [Supabase] 🔧 Colunas descartadas em $table: ${descartadas.join(', ')}');
+        }
       }
 
       final safeData = _toSafeMap(dataToUpsert);
-      await _client.from(table).upsert(safeData).timeout(const Duration(seconds: 8));
+      await _client
+          .from(table)
+          .upsert(safeData, onConflict: onConflict)
+          .timeout(const Duration(seconds: 8));
       debugPrint('>>> [Supabase] ✅ Upsert concluído em $table');
     } catch (e) {
       debugPrint('>>> [Supabase] ❌ Erro ao fazer upsert em $table: $e');
@@ -700,6 +808,134 @@ class SupabaseService {
       'id', 'email', 'nome', 'empresa_id', 'perfil', 'ativo',
       'created_at', 'updated_at',
     };
+  }
+
+  /// ============================================================
+  /// DETECÇÃO GENÉRICA DE COLUNAS VIA OPENAPI (/rest/v1/)
+  /// ============================================================
+  /// Busca UMA única vez as colunas reais de TODAS as tabelas do Supabase e
+  /// guarda em cache. Usada no upsert/upsertBatch para enviar SOMENTE colunas
+  /// que existem de verdade — elimina permanentemente o erro PGRST204
+  /// ("Could not find the 'xxx' column") para qualquer tabela/coluna, inclusive
+  /// as que aparecerem no futuro. Se a detecção falhar, retorna null (sem
+  /// filtro) e o fluxo continua com o comportamento antigo.
+  Map<String, Set<String>>? _colunasTodasTabelasCache;
+  Future<Map<String, Set<String>>>? _detectandoColunasTodasTabelas;
+
+  Future<Map<String, Set<String>>> _detectarColunasTodasTabelas() async {
+    final cached = _colunasTodasTabelasCache;
+    if (cached != null) return cached;
+    final emAndamento = _detectandoColunasTodasTabelas;
+    if (emAndamento != null) return emAndamento;
+
+    final futuro = _detectarColunasTodasTabelasInterno();
+    _detectandoColunasTodasTabelas = futuro;
+    try {
+      final colunas = await futuro;
+      _colunasTodasTabelasCache = colunas;
+      return colunas;
+    } finally {
+      _detectandoColunasTodasTabelas = null;
+    }
+  }
+
+  Future<Map<String, Set<String>>> _detectarColunasTodasTabelasInterno() async {
+    final resultado = <String, Set<String>>{};
+    try {
+      final resp = await http.get(
+        Uri.parse('${SupabaseConfig.url}/rest/v1/'),
+        headers: {
+          'apikey': SupabaseConfig.anonKey,
+          'Authorization': 'Bearer ${SupabaseConfig.anonKey}',
+          'Accept': 'application/json',
+        },
+      ).timeout(const Duration(seconds: 12));
+
+      if (resp.statusCode == 200) {
+        final decoded = jsonDecode(resp.body);
+        if (decoded is Map<String, dynamic>) {
+          final definitions = decoded['definitions'];
+          if (definitions is Map<String, dynamic>) {
+            definitions.forEach((nome, def) {
+              if (def is Map<String, dynamic>) {
+                final properties = def['properties'];
+                if (properties is Map<String, dynamic>) {
+                  resultado[nome] = properties.keys.toSet();
+                }
+              }
+            });
+            debugPrint('>>> [Supabase] ℹ️ Colunas reais detectadas via OpenAPI (${resultado.length} tabelas)');
+          }
+        }
+      } else {
+        debugPrint('>>> [Supabase] ⚠️ Falha ao detectar colunas via OpenAPI (HTTP ${resp.statusCode})');
+      }
+    } catch (e) {
+      debugPrint('>>> [Supabase] ⚠️ Falha ao detectar colunas via OpenAPI: $e');
+    }
+    return resultado;
+  }
+
+  /// Retorna as colunas reais de uma tabela (ou null se não foi possível
+  /// detectar — nesse caso o chamador não filtra e segue como antes).
+  Future<Set<String>?> _detectarColunasTabela(String table) async {
+    final todas = await _detectarColunasTodasTabelas();
+    if (todas.isEmpty) return null;
+    final colunas = todas[table];
+    if (colunas == null) {
+      // Tabela não existe no Supabase
+      debugPrint('>>> [Supabase] ℹ️ Tabela "$table" não encontrada no schema (OpenAPI)');
+      return const {};
+    }
+    return colunas;
+  }
+
+  /// Converte snake_case para camelCase (tem_acesso -> temAcesso).
+  static String _snakeParaCamel(String chave) {
+    final partes = chave.split('_');
+    if (partes.length <= 1) return chave;
+    return partes.first +
+        partes.skip(1).map((p) => p.isEmpty ? p : p[0].toUpperCase() + p.substring(1)).join();
+  }
+
+  /// Filtra um mapa para conter SOMENTE colunas que existem na tabela real do
+  /// Supabase. Se a chave local (ex: tem_acesso) não existir mas a versão
+  /// camelCase (temAcesso) existir, RENOMEIA preservando o dado. Se não existir
+  /// de nenhuma forma, descarta a chave (evita PGRST204).
+  ///
+  /// [colunasDescartadas] é um set acumulativo (por tabela) usado para logar
+  /// colunas descartadas apenas uma vez, evitando spam no console (5683 produtos
+  /// × 3 colunas = 17.000 linhas de log inúteis).
+  Map<String, dynamic> _filtrarParaColunasReais(
+      Map<String, dynamic> map, Set<String> colunas,
+      {Set<String>? colunasDescartadas}) {
+    final resultado = <String, dynamic>{};
+    map.forEach((chave, valor) {
+      if (colunas.contains(chave)) {
+        resultado[chave] = valor;
+        return;
+      }
+      // Tenta o twin camelCase (tabelas legadas criadas com camelCase)
+      final camel = _snakeParaCamel(chave);
+      if (camel != chave && colunas.contains(camel)) {
+        resultado[camel] = valor;
+        return;
+      }
+      // Tenta o twin snake_case (chave veio camelCase e a tabela é snake_case)
+      final snake = chave.replaceAllMapped(
+        RegExp(r'([a-z0-9])([A-Z])'),
+        (m) => '${m.group(1)}_${m.group(2)!.toLowerCase()}',
+      );
+      if (snake != chave && colunas.contains(snake)) {
+        resultado[snake] = valor;
+        return;
+      }
+      // Não existe de nenhuma forma -> descartar (log apenas na 1ª ocorrência)
+      if (colunasDescartadas != null && colunasDescartadas.add(chave)) {
+        debugPrint('>>> [Supabase] 🔧 Coluna "$chave" descartada (não existe na tabela)');
+      }
+    });
+    return resultado;
   }
 
   Set<String>? _colunasEmpresasCache;
@@ -1227,6 +1463,8 @@ class SupabaseService {
       tableOrdensServico,
       tableEntregas,
       tablePedidos,
+      tableServicosRealizados,
+      tableOrcamentos,
       tableMesasComandas,
       tableFechamentosCaixa,
       tableAberturasCaixa,
@@ -1264,6 +1502,823 @@ class SupabaseService {
     
     debugPrint('>>> [Supabase] ✅ Limpeza concluida: $totalRemovidos tabelas afetadas, $totalRegistros registros removidos da empresa $empresaId');
     return totalRegistros;
+  }
+
+  // ============================================================
+  // CRIAR TABELAS NO SUPABASE VIA CONEXÃO DIRETA AO POSTGRESQL
+  // ============================================================
+  /// Conecta diretamente ao PostgreSQL do Supabase (não ao local) e cria todas
+  /// as tabelas que o app precisa. Requer que as variáveis SUPABASE_DB_HOST e
+  /// SUPABASE_DB_PASSWORD estejam configuradas no .env.
+  ///
+  /// Retorna (sucesso, mensagens de log).
+  /// Cria tabelas no Supabase usando a Management API do Supabase
+  /// Requer um Personal Access Token (PAT) do Supabase configurado no .env
+  Future<(bool, List<String>)> criarTabelasNoSupabase() async {
+    final logs = <String>[];
+    final supabaseUrl = SupabaseConfig.url;
+    final apiKey = SupabaseConfig.anonKey;
+
+    logs.add('🔌 Verificando e criando tabelas no Supabase...');
+
+    final sqlStatements = _getSqlCriarTabelas();
+    int tabelasExistentes = 0;
+    int tabelasCriadas = 0;
+    int tabelasComErro = 0;
+    final List<String> tabelasFaltando = [];
+
+    // Primeiro: verificar quais tabelas já existem
+    for (final entry in sqlStatements.entries) {
+      final nomeTabela = entry.key;
+      try {
+        final response = await http.get(
+          Uri.parse('$supabaseUrl/rest/v1/$nomeTabela?select=id&limit=1'),
+          headers: {
+            'apikey': apiKey,
+            'Authorization': 'Bearer $apiKey',
+            'Content-Type': 'application/json',
+          },
+        ).timeout(const Duration(seconds: 5));
+
+        if (response.statusCode == 200) {
+          tabelasExistentes++;
+          logs.add('✅ $nomeTabela: já existe');
+        } else {
+          tabelasFaltando.add(nomeTabela);
+        }
+      } catch (e) {
+        tabelasFaltando.add(nomeTabela);
+      }
+      await Future.delayed(const Duration(milliseconds: 50));
+    }
+
+    logs.add('');
+    logs.add('📊 $tabelasExistentes tabelas já existem, ${tabelasFaltando.length} precisam ser criadas');
+
+    if (tabelasFaltando.isEmpty) {
+      logs.add('✅ Todas as tabelas já existem no Supabase!');
+      return (true, logs);
+    }
+
+    logs.add('');
+    logs.add('🔨 Tentando criar ${tabelasFaltando.length} tabela(s) faltante(s) via RPC...');
+
+    // Tentar criar tabelas faltantes via RPC (executar_sql)
+    // Primeiro verificar se a função RPC existe
+    bool rpcDisponivel = false;
+    try {
+      final testResponse = await http.post(
+        Uri.parse('$supabaseUrl/rest/v1/rpc/executar_sql'),
+        headers: {
+          'apikey': apiKey,
+          'Authorization': 'Bearer $apiKey',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({'sql_query': 'SELECT 1'}),
+      ).timeout(const Duration(seconds: 5));
+      rpcDisponivel = testResponse.statusCode == 200;
+    } catch (e) {
+      rpcDisponivel = false;
+    }
+
+    if (!rpcDisponivel) {
+      logs.add('⚠️ Função RPC "executar_sql" não encontrada no Supabase');
+      logs.add('');
+      logs.add('📋 Para criar tabelas automaticamente, execute UMA ÚNICA VEZ:');
+      logs.add('   1. Abra Supabase Dashboard → SQL Editor');
+      logs.add('   2. Cole o conteúdo do arquivo CRIAR_FUNCAO_EXECUTAR_SQL.sql');
+      logs.add('   3. Clique em Run');
+      logs.add('   4. Depois volte aqui e clique novamente neste botão');
+      logs.add('');
+      logs.add('💡 Enquanto isso, as tabelas faltantes podem ser criadas manualmente:');
+      logs.add('   Abra o script CRIAR_TODAS_TABELAS_SUPABASE.sql no SQL Editor');
+      return (false, logs);
+    }
+
+    logs.add('✅ Função RPC "executar_sql" encontrada! Criando tabelas...');
+
+    for (final nomeTabela in tabelasFaltando) {
+      final sql = sqlStatements[nomeTabela];
+      if (sql == null) continue;
+
+      try {
+        // Dividir SQL em comandos individuais
+        final comandos = sql.split(';').where((c) => c.trim().isNotEmpty).toList();
+        int ok = 0;
+        int erros = 0;
+
+        for (final cmd in comandos) {
+          final sqlLimpo = cmd.trim();
+          if (sqlLimpo.isEmpty) continue;
+
+          final response = await http.post(
+            Uri.parse('$supabaseUrl/rest/v1/rpc/executar_sql'),
+            headers: {
+              'apikey': apiKey,
+              'Authorization': 'Bearer $apiKey',
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode({'sql_query': sqlLimpo}),
+          ).timeout(const Duration(seconds: 15));
+
+          if (response.statusCode == 200) {
+            final body = response.body;
+            if (body.contains('ERRO')) {
+              erros++;
+            } else {
+              ok++;
+            }
+          } else {
+            erros++;
+          }
+          await Future.delayed(const Duration(milliseconds: 50));
+        }
+
+        if (ok > 0) {
+          tabelasCriadas++;
+          logs.add('✅ $nomeTabela: criada ($ok comandos OK' +
+              (erros > 0 ? ', $erros ignorados' : '') + ')');
+        } else {
+          tabelasComErro++;
+          logs.add('❌ $nomeTabela: falhou');
+        }
+      } catch (e) {
+        tabelasComErro++;
+        logs.add('❌ $nomeTabela: erro — $e');
+      }
+      await Future.delayed(const Duration(milliseconds: 100));
+    }
+
+    logs.add('');
+    logs.add('📊 Resultado: $tabelasExistentes existiam + $tabelasCriadas criadas, $tabelasComErro com erro');
+
+    if (tabelasComErro > 0) {
+      logs.add('');
+      logs.add('💡 Se alguma tabela falhou, execute o script');
+      logs.add('   CRIAR_TODAS_TABELAS_SUPABASE.sql no SQL Editor do Supabase.');
+    }
+
+    return (tabelasComErro == 0, logs);
+  }
+
+  /// Verifica quais tabelas existem no Supabase
+  Future<(bool, Set<String>, List<String>)> verificarTabelasSupabase() async {
+    final logs = <String>[];
+    final tabelasExistentes = <String>{};
+
+    if (!EnvConfig.supabaseDbAvailable) {
+      return (false, tabelasExistentes, ['❌ Variáveis SUPABASE_DB_* não configuradas no .env']);
+    }
+
+    Connection? conn;
+    try {
+      conn = await Connection.open(
+        Endpoint(
+          host: EnvConfig.supabaseDbHost,
+          port: EnvConfig.supabaseDbPort,
+          database: EnvConfig.supabaseDbName,
+          username: EnvConfig.supabaseDbUser,
+          password: EnvConfig.supabaseDbPassword,
+        ),
+        settings: const ConnectionSettings(sslMode: SslMode.require),
+      );
+
+      final result = await conn.execute(
+        "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'",
+      );
+
+      for (final row in result) {
+        tabelasExistentes.add(row[0] as String);
+      }
+
+      final tabelasNecessarias = _getSqlCriarTabelas().keys;
+      final faltando = tabelasNecessarias.where((t) => !tabelasExistentes.contains(t)).toList();
+
+      if (faltando.isEmpty) {
+        logs.add('✅ Todas as ${tabelasNecessarias.length} tabelas necessárias existem no Supabase');
+      } else {
+        logs.add('⚠️ ${faltando.length} tabela(s) faltando no Supabase: ${faltando.join(', ')}');
+      }
+
+      return (true, tabelasExistentes, logs);
+    } catch (e) {
+      return (false, tabelasExistentes, ['❌ Erro ao verificar tabelas: $e']);
+    } finally {
+      try { conn?.close(); } catch (_) {}
+    }
+  }
+
+  /// Mapa de SQL para criar todas as tabelas necessárias no Supabase
+  /// Nomes das tabelas que o app usa na nuvem (as mesmas de
+  /// [_getSqlCriarTabelas], sem o SQL). Usado pela comparação de esquema que cria
+  /// na nuvem as tabelas que só existem no banco local.
+  Set<String> get tabelasDoApp => _getSqlCriarTabelas().keys.toSet();
+
+  Map<String, String> _getSqlCriarTabelas() {
+    return {
+      'produtos': """
+        CREATE TABLE IF NOT EXISTS public.produtos (
+          id TEXT PRIMARY KEY, empresa_id TEXT NOT NULL DEFAULT '', nome TEXT DEFAULT '',
+          codigo TEXT DEFAULT '', codigo_barras TEXT DEFAULT '', descricao TEXT DEFAULT '',
+          preco NUMERIC(15,2) DEFAULT 0, preco_custo NUMERIC(15,2) DEFAULT 0, custo NUMERIC(15,2) DEFAULT 0,
+          estoque NUMERIC(15,3) DEFAULT 0, estoque_minimo NUMERIC(15,3) DEFAULT 0,
+          unidade TEXT DEFAULT 'UN', ncm TEXT DEFAULT '', cest TEXT DEFAULT '',
+          cfop TEXT DEFAULT '', csosn TEXT DEFAULT '', cst TEXT DEFAULT '', origem TEXT DEFAULT '',
+          ibpt TEXT DEFAULT '', tipo TEXT DEFAULT 'produto', ativo BOOLEAN DEFAULT true,
+          envia_balanca BOOLEAN DEFAULT false, codigo_balanca TEXT DEFAULT '',
+          perfil_tributario_id TEXT DEFAULT '',
+          precos_por_perfil JSONB DEFAULT '[]'::jsonb, regras_quantidade JSONB DEFAULT '[]'::jsonb,
+          departamentos_adicionais JSONB DEFAULT '[]'::jsonb,
+          foto_url TEXT DEFAULT '', observacao TEXT DEFAULT '',
+          created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS empresa_id TEXT NOT NULL DEFAULT '';
+        ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS nome TEXT DEFAULT '';
+        ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS codigo TEXT DEFAULT '';
+        ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS codigo_barras TEXT DEFAULT '';
+        ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS descricao TEXT DEFAULT '';
+        ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS preco NUMERIC(15,2) DEFAULT 0;
+        ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS preco_custo NUMERIC(15,2) DEFAULT 0;
+        ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS custo NUMERIC(15,2) DEFAULT 0;
+        ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS estoque NUMERIC(15,3) DEFAULT 0;
+        ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS estoque_minimo NUMERIC(15,3) DEFAULT 0;
+        ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS unidade TEXT DEFAULT 'UN';
+        ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS ncm TEXT DEFAULT '';
+        ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS cfop TEXT DEFAULT '';
+        ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS csosn TEXT DEFAULT '';
+        ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS cst TEXT DEFAULT '';
+        ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS origem TEXT DEFAULT '';
+        ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS ibpt TEXT DEFAULT '';
+        ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS tipo TEXT DEFAULT 'produto';
+        ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS ativo BOOLEAN DEFAULT true;
+        ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS envia_balanca BOOLEAN DEFAULT false;
+        ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS codigo_balanca TEXT DEFAULT '';
+        ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS perfil_tributario_id TEXT DEFAULT '';
+        ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS precos_por_perfil JSONB DEFAULT '[]'::jsonb;
+        ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS regras_quantidade JSONB DEFAULT '[]'::jsonb;
+        ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS departamentos_adicionais JSONB DEFAULT '[]'::jsonb;
+        ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS foto_url TEXT DEFAULT '';
+        ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS observacao TEXT DEFAULT '';
+        ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+        ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+        ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS cest TEXT DEFAULT '';
+        CREATE INDEX IF NOT EXISTS idx_produtos_empresa ON public.produtos(empresa_id);
+        CREATE INDEX IF NOT EXISTS idx_produtos_codigo ON public.produtos(codigo);
+        ALTER TABLE public.produtos ENABLE ROW LEVEL SECURITY;
+        DROP POLICY IF EXISTS service_role_produtos ON public.produtos;
+        CREATE POLICY service_role_produtos ON public.produtos FOR ALL USING (auth.role() = 'service_role');
+      """,
+
+      'clientes': """
+        CREATE TABLE IF NOT EXISTS public.clientes (
+          id TEXT PRIMARY KEY, empresa_id TEXT NOT NULL DEFAULT '', nome TEXT DEFAULT '',
+          cpf_cnpj TEXT DEFAULT '', tipo_pessoa TEXT DEFAULT 'F', email TEXT DEFAULT '',
+          telefone TEXT DEFAULT '', celular TEXT DEFAULT '', endereco TEXT DEFAULT '',
+          numero TEXT DEFAULT '', complemento TEXT DEFAULT '', bairro TEXT DEFAULT '',
+          cidade TEXT DEFAULT '', estado TEXT DEFAULT '', cep TEXT DEFAULT '',
+          observacao TEXT DEFAULT '', ativo BOOLEAN DEFAULT true,
+          created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_clientes_empresa ON public.clientes(empresa_id);
+        ALTER TABLE public.clientes ENABLE ROW LEVEL SECURITY;
+        DROP POLICY IF EXISTS service_role_clientes ON public.clientes;
+        CREATE POLICY service_role_clientes ON public.clientes FOR ALL USING (auth.role() = 'service_role');
+      """,
+
+      'orcamentos': """
+        CREATE TABLE IF NOT EXISTS public.orcamentos (
+          id TEXT PRIMARY KEY, empresa_id TEXT NOT NULL DEFAULT '', numero TEXT DEFAULT '',
+          cliente_id TEXT DEFAULT '', cliente_nome TEXT DEFAULT '',
+          cliente_telefone TEXT DEFAULT '', cliente_endereco TEXT DEFAULT '',
+          cliente_cpf_cnpj TEXT DEFAULT '', operador TEXT DEFAULT '',
+          data_orcamento TIMESTAMPTZ DEFAULT NOW(), validade_orcamento TIMESTAMPTZ,
+          status TEXT DEFAULT 'Orçamento', total NUMERIC(15,2) DEFAULT 0,
+          desconto_total NUMERIC(15,2) DEFAULT 0, acrescimo_total NUMERIC(15,2) DEFAULT 0,
+          observacoes TEXT DEFAULT '', itens JSONB DEFAULT '[]'::jsonb,
+          servicos JSONB DEFAULT '[]'::jsonb, delivery_info JSONB,
+          pedido_gerado_id TEXT DEFAULT '', pedido_gerado_numero TEXT DEFAULT '',
+          data_aprovacao TIMESTAMPTZ,
+          created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_orcamentos_empresa ON public.orcamentos(empresa_id);
+        CREATE INDEX IF NOT EXISTS idx_orcamentos_status ON public.orcamentos(status);
+        ALTER TABLE public.orcamentos ENABLE ROW LEVEL SECURITY;
+        DROP POLICY IF EXISTS service_role_orcamentos ON public.orcamentos;
+        CREATE POLICY service_role_orcamentos ON public.orcamentos FOR ALL USING (auth.role() = 'service_role');
+        GRANT ALL ON TABLE public.orcamentos TO anon, authenticated, service_role;
+      """,
+
+      'servicos_realizados': """
+        CREATE TABLE IF NOT EXISTS public.servicos_realizados (
+          id TEXT PRIMARY KEY, empresa_id TEXT NOT NULL DEFAULT '', numero TEXT DEFAULT '',
+          cliente_id TEXT DEFAULT '', cliente_nome TEXT DEFAULT '',
+          cliente_telefone TEXT DEFAULT '', cliente_endereco TEXT DEFAULT '',
+          pet_id TEXT DEFAULT '', pet_nome TEXT DEFAULT '', operador TEXT DEFAULT '',
+          data_servico TIMESTAMPTZ DEFAULT NOW(), data_conclusao TIMESTAMPTZ,
+          data_orcamento TIMESTAMPTZ, validade_orcamento TIMESTAMPTZ,
+          status TEXT DEFAULT 'Em Aberto', total NUMERIC(15,2) DEFAULT 0,
+          desconto_total NUMERIC(15,2) DEFAULT 0, acrescimo_total NUMERIC(15,2) DEFAULT 0,
+          observacoes TEXT DEFAULT '', servicos JSONB DEFAULT '[]'::jsonb,
+          pagamentos JSONB DEFAULT '[]'::jsonb,
+          materiais_consumidos JSONB DEFAULT '[]'::jsonb,
+          created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_servicos_realizados_empresa ON public.servicos_realizados(empresa_id);
+        CREATE INDEX IF NOT EXISTS idx_servicos_realizados_status ON public.servicos_realizados(status);
+        ALTER TABLE public.servicos_realizados ENABLE ROW LEVEL SECURITY;
+        DROP POLICY IF EXISTS service_role_servicos_realizados ON public.servicos_realizados;
+        CREATE POLICY service_role_servicos_realizados ON public.servicos_realizados FOR ALL USING (auth.role() = 'service_role');
+        GRANT ALL ON TABLE public.servicos_realizados TO anon, authenticated, service_role;
+      """,
+
+      'servicos': """
+        CREATE TABLE IF NOT EXISTS public.servicos (
+          id TEXT PRIMARY KEY, empresa_id TEXT NOT NULL DEFAULT '', nome TEXT DEFAULT '',
+          descricao TEXT DEFAULT '', preco NUMERIC(15,2) DEFAULT 0,
+          duracao_minutos INTEGER DEFAULT 30, ativo BOOLEAN DEFAULT true,
+          created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_servicos_empresa ON public.servicos(empresa_id);
+        ALTER TABLE public.servicos ENABLE ROW LEVEL SECURITY;
+        DROP POLICY IF EXISTS service_role_servicos ON public.servicos;
+        CREATE POLICY service_role_servicos ON public.servicos FOR ALL USING (auth.role() = 'service_role');
+      """,
+
+      'pedidos': """
+        CREATE TABLE IF NOT EXISTS public.pedidos (
+          id TEXT PRIMARY KEY, empresa_id TEXT NOT NULL DEFAULT '', numero_pedido INTEGER DEFAULT 0,
+          cliente_id TEXT DEFAULT '', cliente_nome TEXT DEFAULT '', mesa_comanda_id TEXT DEFAULT '',
+          itens JSONB DEFAULT '[]'::jsonb, subtotal NUMERIC(15,2) DEFAULT 0,
+          desconto NUMERIC(15,2) DEFAULT 0, acrescimo NUMERIC(15,2) DEFAULT 0,
+          total NUMERIC(15,2) DEFAULT 0, valor_recebido NUMERIC(15,2) DEFAULT 0,
+          troco NUMERIC(15,2) DEFAULT 0, forma_pagamento TEXT DEFAULT '',
+          status TEXT DEFAULT 'aberto', tipo TEXT DEFAULT 'balcao',
+          observacao TEXT DEFAULT '', vendedor TEXT DEFAULT '', operador TEXT DEFAULT '',
+          data_pedido TIMESTAMPTZ DEFAULT NOW(), data_recebimento TIMESTAMPTZ,
+          data_cancelamento TIMESTAMPTZ, motivo_cancelamento TEXT DEFAULT '',
+          created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS empresa_id TEXT NOT NULL DEFAULT '';
+        ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS numero_pedido INTEGER DEFAULT 0;
+        ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS cliente_id TEXT DEFAULT '';
+        ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS cliente_nome TEXT DEFAULT '';
+        ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS mesa_comanda_id TEXT DEFAULT '';
+        ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS itens JSONB DEFAULT '[]'::jsonb;
+        ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS subtotal NUMERIC(15,2) DEFAULT 0;
+        ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS desconto NUMERIC(15,2) DEFAULT 0;
+        ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS acrescimo NUMERIC(15,2) DEFAULT 0;
+        ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS total NUMERIC(15,2) DEFAULT 0;
+        ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS valor_recebido NUMERIC(15,2) DEFAULT 0;
+        ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS troco NUMERIC(15,2) DEFAULT 0;
+        ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS forma_pagamento TEXT DEFAULT '';
+        ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'aberto';
+        ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS tipo TEXT DEFAULT 'balcao';
+        ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS observacao TEXT DEFAULT '';
+        ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS vendedor TEXT DEFAULT '';
+        ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS operador TEXT DEFAULT '';
+        ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS data_pedido TIMESTAMPTZ DEFAULT NOW();
+        ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS data_recebimento TIMESTAMPTZ;
+        ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS data_cancelamento TIMESTAMPTZ;
+        ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS motivo_cancelamento TEXT DEFAULT '';
+        ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+        ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+        CREATE INDEX IF NOT EXISTS idx_pedidos_empresa ON public.pedidos(empresa_id);
+        CREATE INDEX IF NOT EXISTS idx_pedidos_numero ON public.pedidos(numero_pedido);
+        ALTER TABLE public.pedidos ENABLE ROW LEVEL SECURITY;
+        DROP POLICY IF EXISTS service_role_pedidos ON public.pedidos;
+        CREATE POLICY service_role_pedidos ON public.pedidos FOR ALL USING (auth.role() = 'service_role');
+      """,
+
+      'vendas_balcao': """
+        CREATE TABLE IF NOT EXISTS public.vendas_balcao (
+          id TEXT PRIMARY KEY, empresa_id TEXT NOT NULL DEFAULT '', numero_venda INTEGER DEFAULT 0,
+          cliente_id TEXT DEFAULT '', cliente_nome TEXT DEFAULT '',
+          itens JSONB DEFAULT '[]'::jsonb, subtotal NUMERIC(15,2) DEFAULT 0,
+          desconto NUMERIC(15,2) DEFAULT 0, acrescimo NUMERIC(15,2) DEFAULT 0,
+          total NUMERIC(15,2) DEFAULT 0, valor_recebido NUMERIC(15,2) DEFAULT 0,
+          troco NUMERIC(15,2) DEFAULT 0, forma_pagamento TEXT DEFAULT '',
+          status TEXT DEFAULT 'finalizada', tipo TEXT DEFAULT 'balcao',
+          observacao TEXT DEFAULT '', vendedor TEXT DEFAULT '', operador TEXT DEFAULT '',
+          data_venda TIMESTAMPTZ DEFAULT NOW(),
+          created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        ALTER TABLE public.vendas_balcao ADD COLUMN IF NOT EXISTS empresa_id TEXT NOT NULL DEFAULT '';
+        ALTER TABLE public.vendas_balcao ADD COLUMN IF NOT EXISTS numero_venda INTEGER DEFAULT 0;
+        ALTER TABLE public.vendas_balcao ADD COLUMN IF NOT EXISTS cliente_id TEXT DEFAULT '';
+        ALTER TABLE public.vendas_balcao ADD COLUMN IF NOT EXISTS cliente_nome TEXT DEFAULT '';
+        ALTER TABLE public.vendas_balcao ADD COLUMN IF NOT EXISTS itens JSONB DEFAULT '[]'::jsonb;
+        ALTER TABLE public.vendas_balcao ADD COLUMN IF NOT EXISTS subtotal NUMERIC(15,2) DEFAULT 0;
+        ALTER TABLE public.vendas_balcao ADD COLUMN IF NOT EXISTS desconto NUMERIC(15,2) DEFAULT 0;
+        ALTER TABLE public.vendas_balcao ADD COLUMN IF NOT EXISTS acrescimo NUMERIC(15,2) DEFAULT 0;
+        ALTER TABLE public.vendas_balcao ADD COLUMN IF NOT EXISTS total NUMERIC(15,2) DEFAULT 0;
+        ALTER TABLE public.vendas_balcao ADD COLUMN IF NOT EXISTS valor_recebido NUMERIC(15,2) DEFAULT 0;
+        ALTER TABLE public.vendas_balcao ADD COLUMN IF NOT EXISTS troco NUMERIC(15,2) DEFAULT 0;
+        ALTER TABLE public.vendas_balcao ADD COLUMN IF NOT EXISTS forma_pagamento TEXT DEFAULT '';
+        ALTER TABLE public.vendas_balcao ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'finalizada';
+        ALTER TABLE public.vendas_balcao ADD COLUMN IF NOT EXISTS tipo TEXT DEFAULT 'balcao';
+        ALTER TABLE public.vendas_balcao ADD COLUMN IF NOT EXISTS observacao TEXT DEFAULT '';
+        ALTER TABLE public.vendas_balcao ADD COLUMN IF NOT EXISTS vendedor TEXT DEFAULT '';
+        ALTER TABLE public.vendas_balcao ADD COLUMN IF NOT EXISTS operador TEXT DEFAULT '';
+        ALTER TABLE public.vendas_balcao ADD COLUMN IF NOT EXISTS data_venda TIMESTAMPTZ DEFAULT NOW();
+        ALTER TABLE public.vendas_balcao ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+        ALTER TABLE public.vendas_balcao ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+        CREATE INDEX IF NOT EXISTS idx_vendas_balcao_empresa ON public.vendas_balcao(empresa_id);
+        ALTER TABLE public.vendas_balcao ENABLE ROW LEVEL SECURITY;
+        DROP POLICY IF EXISTS service_role_vendas ON public.vendas_balcao;
+        CREATE POLICY service_role_vendas ON public.vendas_balcao FOR ALL USING (auth.role() = 'service_role');
+      """,
+
+      'agendamentos_servico': """
+        CREATE TABLE IF NOT EXISTS public.agendamentos_servico (
+          id TEXT PRIMARY KEY, empresa_id TEXT NOT NULL DEFAULT '',
+          cliente_id TEXT DEFAULT '', cliente_nome TEXT DEFAULT '', cliente_telefone TEXT DEFAULT '',
+          servico_id TEXT DEFAULT '', servico_nome TEXT DEFAULT '',
+          funcionario_id TEXT DEFAULT '', funcionario_nome TEXT DEFAULT '',
+          data_agendamento TIMESTAMPTZ DEFAULT NOW(), hora_inicio TEXT DEFAULT '',
+          hora_fim TEXT DEFAULT '', status TEXT DEFAULT 'agendado',
+          valor NUMERIC(15,2) DEFAULT 0, observacao TEXT DEFAULT '',
+          pet_id TEXT DEFAULT '', pet_nome TEXT DEFAULT '', notificado BOOLEAN DEFAULT false,
+          created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_agendamentos_empresa ON public.agendamentos_servico(empresa_id);
+        ALTER TABLE public.agendamentos_servico ENABLE ROW LEVEL SECURITY;
+        DROP POLICY IF EXISTS service_role_agendamentos ON public.agendamentos_servico;
+        CREATE POLICY service_role_agendamentos ON public.agendamentos_servico FOR ALL USING (auth.role() = 'service_role');
+      """,
+
+      'notas_entrada': """
+        CREATE TABLE IF NOT EXISTS public.notas_entrada (
+          id TEXT PRIMARY KEY, empresa_id TEXT NOT NULL DEFAULT '', numero_nota TEXT DEFAULT '',
+          serie TEXT DEFAULT '', fornecedor_id TEXT DEFAULT '', fornecedor_nome TEXT DEFAULT '',
+          fornecedor_cnpj TEXT DEFAULT '', data_entrada TIMESTAMPTZ DEFAULT NOW(),
+          data_emissao TIMESTAMPTZ, valor_total NUMERIC(15,2) DEFAULT 0,
+          valor_icms NUMERIC(15,2) DEFAULT 0, valor_ipi NUMERIC(15,2) DEFAULT 0,
+          valor_pis NUMERIC(15,2) DEFAULT 0, valor_cofins NUMERIC(15,2) DEFAULT 0,
+          itens JSONB DEFAULT '[]'::jsonb, status TEXT DEFAULT 'recebida',
+          observacao TEXT DEFAULT '',
+          created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_notas_entrada_empresa ON public.notas_entrada(empresa_id);
+        ALTER TABLE public.notas_entrada ENABLE ROW LEVEL SECURITY;
+        DROP POLICY IF EXISTS service_role_notas_entrada ON public.notas_entrada;
+        CREATE POLICY service_role_notas_entrada ON public.notas_entrada FOR ALL USING (auth.role() = 'service_role');
+      """,
+
+      'ordens_servico': """
+        CREATE TABLE IF NOT EXISTS public.ordens_servico (
+          id TEXT PRIMARY KEY, empresa_id TEXT NOT NULL DEFAULT '', numero_os INTEGER DEFAULT 0,
+          cliente_id TEXT DEFAULT '', cliente_nome TEXT DEFAULT '', cliente_telefone TEXT DEFAULT '',
+          equipamento TEXT DEFAULT '', defeito TEXT DEFAULT '', observacao TEXT DEFAULT '',
+          valor_total NUMERIC(15,2) DEFAULT 0, valor_pago NUMERIC(15,2) DEFAULT 0,
+          status TEXT DEFAULT 'aberta', prioridade TEXT DEFAULT 'normal',
+          responsavel TEXT DEFAULT '', data_abertura TIMESTAMPTZ DEFAULT NOW(),
+          data_previsao TIMESTAMPTZ, data_entrega TIMESTAMPTZ,
+          itens JSONB DEFAULT '[]'::jsonb,
+          created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_ordens_servico_empresa ON public.ordens_servico(empresa_id);
+        ALTER TABLE public.ordens_servico ENABLE ROW LEVEL SECURITY;
+        DROP POLICY IF EXISTS service_role_ordens ON public.ordens_servico;
+        CREATE POLICY service_role_ordens ON public.ordens_servico FOR ALL USING (auth.role() = 'service_role');
+      """,
+
+      'trocas_devolucoes': """
+        CREATE TABLE IF NOT EXISTS public.trocas_devolucoes (
+          id TEXT PRIMARY KEY, empresa_id TEXT NOT NULL DEFAULT '',
+          pedido_id TEXT DEFAULT '', venda_id TEXT DEFAULT '', numero_pedido TEXT DEFAULT '',
+          cliente_id TEXT DEFAULT '', cliente_nome TEXT DEFAULT '',
+          tipo TEXT DEFAULT 'devolucao', motivo TEXT DEFAULT '',
+          valor_total NUMERIC(15,2) DEFAULT 0, valor_devolvido NUMERIC(15,2) DEFAULT 0,
+          valor_troca NUMERIC(15,2) DEFAULT 0,
+          itens_devolvidos JSONB DEFAULT '[]'::jsonb, itens_novos JSONB DEFAULT '[]'::jsonb,
+          status TEXT DEFAULT 'finalizada', data_operacao TIMESTAMPTZ DEFAULT NOW(),
+          operador TEXT DEFAULT '', observacao TEXT DEFAULT '',
+          created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_trocas_empresa ON public.trocas_devolucoes(empresa_id);
+        ALTER TABLE public.trocas_devolucoes ENABLE ROW LEVEL SECURITY;
+        DROP POLICY IF EXISTS service_role_trocas ON public.trocas_devolucoes;
+        CREATE POLICY service_role_trocas ON public.trocas_devolucoes FOR ALL USING (auth.role() = 'service_role');
+      """,
+
+      'funcionarios': """
+        CREATE TABLE IF NOT EXISTS public.funcionarios (
+          id TEXT PRIMARY KEY, empresa_id TEXT NOT NULL DEFAULT '', nome TEXT DEFAULT '',
+          cpf TEXT DEFAULT '', cargo TEXT DEFAULT '', email TEXT DEFAULT '',
+          telefone TEXT DEFAULT '', comissao_percentual NUMERIC(5,2) DEFAULT 0,
+          salario NUMERIC(15,2) DEFAULT 0, ativo BOOLEAN DEFAULT true,
+          created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_funcionarios_empresa ON public.funcionarios(empresa_id);
+        ALTER TABLE public.funcionarios ENABLE ROW LEVEL SECURITY;
+        DROP POLICY IF EXISTS service_role_funcionarios ON public.funcionarios;
+        CREATE POLICY service_role_funcionarios ON public.funcionarios FOR ALL USING (auth.role() = 'service_role');
+      """,
+
+      'contas_pagar': """
+        CREATE TABLE IF NOT EXISTS public.contas_pagar (
+          id TEXT PRIMARY KEY, empresa_id TEXT NOT NULL DEFAULT '',
+          descricao TEXT DEFAULT '', fornecedor TEXT DEFAULT '', categoria TEXT DEFAULT '',
+          valor NUMERIC(15,2) DEFAULT 0, data_vencimento TIMESTAMPTZ DEFAULT NOW(),
+          data_pagamento TIMESTAMPTZ, status TEXT DEFAULT 'pendente',
+          forma_pagamento TEXT DEFAULT '', observacao TEXT DEFAULT '',
+          recorrente BOOLEAN DEFAULT false, periodicidade TEXT DEFAULT '',
+          created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_contas_pagar_empresa ON public.contas_pagar(empresa_id);
+        ALTER TABLE public.contas_pagar ENABLE ROW LEVEL SECURITY;
+        DROP POLICY IF EXISTS service_role_contas ON public.contas_pagar;
+        CREATE POLICY service_role_contas ON public.contas_pagar FOR ALL USING (auth.role() = 'service_role');
+      """,
+
+      'entregas': """
+        CREATE TABLE IF NOT EXISTS public.entregas (
+          id TEXT PRIMARY KEY, empresa_id TEXT NOT NULL DEFAULT '',
+          pedido_id TEXT DEFAULT '', cliente_id TEXT DEFAULT '', cliente_nome TEXT DEFAULT '',
+          endereco TEXT DEFAULT '', enderecoEntrega TEXT DEFAULT '',
+          bairro TEXT DEFAULT '', cidade TEXT DEFAULT '', complemento TEXT DEFAULT '',
+          numero TEXT DEFAULT '', referencia TEXT DEFAULT '',
+          latitude NUMERIC(10,7) DEFAULT 0, longitude NUMERIC(10,7) DEFAULT 0,
+          motorista_id TEXT DEFAULT '', motorista_nome TEXT DEFAULT '',
+          taxa_entrega NUMERIC(15,2) DEFAULT 0, status TEXT DEFAULT 'pendente',
+          data_saida TIMESTAMPTZ, data_entrega TIMESTAMPTZ, observacao TEXT DEFAULT '',
+          created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_entregas_empresa ON public.entregas(empresa_id);
+        ALTER TABLE public.entregas ENABLE ROW LEVEL SECURITY;
+        DROP POLICY IF EXISTS service_role_entregas ON public.entregas;
+        CREATE POLICY service_role_entregas ON public.entregas FOR ALL USING (auth.role() = 'service_role');
+      """,
+
+      'motoristas': """
+        CREATE TABLE IF NOT EXISTS public.motoristas (
+          id TEXT PRIMARY KEY, empresa_id TEXT NOT NULL DEFAULT '',
+          nome TEXT DEFAULT '', cpf TEXT DEFAULT '', telefone TEXT DEFAULT '',
+          veiculo TEXT DEFAULT '', placa TEXT DEFAULT '', ativo BOOLEAN DEFAULT true,
+          created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_motoristas_empresa ON public.motoristas(empresa_id);
+        ALTER TABLE public.motoristas ENABLE ROW LEVEL SECURITY;
+        DROP POLICY IF EXISTS service_role_motoristas ON public.motoristas;
+        CREATE POLICY service_role_motoristas ON public.motoristas FOR ALL USING (auth.role() = 'service_role');
+      """,
+
+      'taxas_entrega': """
+        CREATE TABLE IF NOT EXISTS public.taxas_entrega (
+          id TEXT PRIMARY KEY, empresa_id TEXT NOT NULL DEFAULT '',
+          nome TEXT DEFAULT '', bairro TEXT DEFAULT '', valor NUMERIC(15,2) DEFAULT 0,
+          tempo_estimado_minutos INTEGER DEFAULT 30, ativo BOOLEAN DEFAULT true,
+          created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_taxas_entrega_empresa ON public.taxas_entrega(empresa_id);
+        ALTER TABLE public.taxas_entrega ENABLE ROW LEVEL SECURITY;
+        DROP POLICY IF EXISTS service_role_taxas ON public.taxas_entrega;
+        CREATE POLICY service_role_taxas ON public.taxas_entrega FOR ALL USING (auth.role() = 'service_role');
+      """,
+
+      'aberturas_caixa': """
+        CREATE TABLE IF NOT EXISTS public.aberturas_caixa (
+          id TEXT PRIMARY KEY, empresa_id TEXT NOT NULL DEFAULT '',
+          responsavel TEXT DEFAULT '', "valorInicial" NUMERIC(15,2) DEFAULT 0,
+          "dataAbertura" TIMESTAMPTZ DEFAULT NOW(), observacao TEXT DEFAULT '',
+          caixa_numero INTEGER DEFAULT 1,
+          created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_aberturas_empresa ON public.aberturas_caixa(empresa_id);
+        ALTER TABLE public.aberturas_caixa ENABLE ROW LEVEL SECURITY;
+        DROP POLICY IF EXISTS service_role_aberturas ON public.aberturas_caixa;
+        CREATE POLICY service_role_aberturas ON public.aberturas_caixa FOR ALL USING (auth.role() = 'service_role');
+      """,
+
+      'fechamentos_caixa': """
+        CREATE TABLE IF NOT EXISTS public.fechamentos_caixa (
+          id TEXT PRIMARY KEY, empresa_id TEXT NOT NULL DEFAULT '',
+          "aberturaCaixaId" TEXT DEFAULT '', abertura_caixa_id TEXT DEFAULT '',
+          responsavel TEXT DEFAULT '', "valorEsperado" NUMERIC(15,2) DEFAULT 0,
+          "valorReal" NUMERIC(15,2) DEFAULT 0, diferenca NUMERIC(15,2) DEFAULT 0,
+          "dataFechamento" TIMESTAMPTZ DEFAULT NOW(), data_fechamento TIMESTAMPTZ,
+          observacao TEXT DEFAULT '',
+          created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_fechamentos_empresa ON public.fechamentos_caixa(empresa_id);
+        ALTER TABLE public.fechamentos_caixa ENABLE ROW LEVEL SECURITY;
+        DROP POLICY IF EXISTS service_role_fechamentos ON public.fechamentos_caixa;
+        CREATE POLICY service_role_fechamentos ON public.fechamentos_caixa FOR ALL USING (auth.role() = 'service_role');
+      """,
+
+      'sangrias_caixa': """
+        CREATE TABLE IF NOT EXISTS public.sangrias_caixa (
+          id TEXT PRIMARY KEY, empresa_id TEXT NOT NULL DEFAULT '',
+          abertura_caixa_id TEXT DEFAULT '', valor NUMERIC(15,2) DEFAULT 0,
+          motivo TEXT DEFAULT '', responsavel TEXT DEFAULT '',
+          data_sangria TIMESTAMPTZ DEFAULT NOW(),
+          created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_sangrias_empresa ON public.sangrias_caixa(empresa_id);
+        ALTER TABLE public.sangrias_caixa ENABLE ROW LEVEL SECURITY;
+        DROP POLICY IF EXISTS service_role_sangrias ON public.sangrias_caixa;
+        CREATE POLICY service_role_sangrias ON public.sangrias_caixa FOR ALL USING (auth.role() = 'service_role');
+      """,
+
+      'suprimentos_caixa': """
+        CREATE TABLE IF NOT EXISTS public.suprimentos_caixa (
+          id TEXT PRIMARY KEY, empresa_id TEXT NOT NULL DEFAULT '',
+          abertura_caixa_id TEXT DEFAULT '', valor NUMERIC(15,2) DEFAULT 0,
+          motivo TEXT DEFAULT '', responsavel TEXT DEFAULT '',
+          data_suprimento TIMESTAMPTZ DEFAULT NOW(),
+          created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_suprimentos_empresa ON public.suprimentos_caixa(empresa_id);
+        ALTER TABLE public.suprimentos_caixa ENABLE ROW LEVEL SECURITY;
+        DROP POLICY IF EXISTS service_role_suprimentos ON public.suprimentos_caixa;
+        CREATE POLICY service_role_suprimentos ON public.suprimentos_caixa FOR ALL USING (auth.role() = 'service_role');
+      """,
+
+      'mesas_comandas': """
+        CREATE TABLE IF NOT EXISTS public.mesas_comandas (
+          id TEXT PRIMARY KEY, empresa_id TEXT NOT NULL DEFAULT '',
+          numero TEXT DEFAULT '', nome TEXT DEFAULT '', tipo TEXT DEFAULT 'mesa',
+          status TEXT DEFAULT 'Aberta', itens JSONB DEFAULT '[]'::jsonb,
+          total NUMERIC(15,2) DEFAULT 0, pessoa_sentada INTEGER DEFAULT 0,
+          data_abertura TIMESTAMPTZ DEFAULT NOW(), data_fechamento TIMESTAMPTZ,
+          garcom TEXT DEFAULT '', observacao TEXT DEFAULT '',
+          created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_mesas_empresa ON public.mesas_comandas(empresa_id);
+        ALTER TABLE public.mesas_comandas ENABLE ROW LEVEL SECURITY;
+        DROP POLICY IF EXISTS service_role_mesas ON public.mesas_comandas;
+        CREATE POLICY service_role_mesas ON public.mesas_comandas FOR ALL USING (auth.role() = 'service_role');
+      """,
+
+      'nfces': """
+        CREATE TABLE IF NOT EXISTS public.nfces (
+          id TEXT PRIMARY KEY, empresa_id TEXT NOT NULL DEFAULT '',
+          numero INTEGER DEFAULT 0, serie INTEGER DEFAULT 1,
+          chave_acesso TEXT DEFAULT '', protocolo TEXT DEFAULT '',
+          data_emissao TIMESTAMPTZ DEFAULT NOW(), valor_total NUMERIC(15,2) DEFAULT 0,
+          status TEXT DEFAULT 'pendente', xml TEXT DEFAULT '', recibo TEXT DEFAULT '',
+          motivo TEXT DEFAULT '', tipo TEXT DEFAULT 'entrada',
+          pedido_id TEXT DEFAULT '', cliente_id TEXT DEFAULT '',
+          consumidor_nome TEXT DEFAULT '', consumidor_cpf TEXT DEFAULT '',
+          consumidor_cnpj TEXT DEFAULT '',
+          created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_nfces_empresa ON public.nfces(empresa_id);
+        ALTER TABLE public.nfces ENABLE ROW LEVEL SECURITY;
+        DROP POLICY IF EXISTS service_role_nfces ON public.nfces;
+        CREATE POLICY service_role_nfces ON public.nfces FOR ALL USING (auth.role() = 'service_role');
+      """,
+
+      'nfes': """
+        CREATE TABLE IF NOT EXISTS public.nfes (
+          id TEXT PRIMARY KEY, empresa_id TEXT NOT NULL DEFAULT '',
+          numero INTEGER DEFAULT 0, serie INTEGER DEFAULT 1,
+          chave_acesso TEXT DEFAULT '', protocolo TEXT DEFAULT '',
+          data_emissao TIMESTAMPTZ DEFAULT NOW(), valor_total NUMERIC(15,2) DEFAULT 0,
+          valor_icms NUMERIC(15,2) DEFAULT 0, valor_ipi NUMERIC(15,2) DEFAULT 0,
+          valor_pis NUMERIC(15,2) DEFAULT 0, valor_cofins NUMERIC(15,2) DEFAULT 0,
+          status TEXT DEFAULT 'pendente', xml TEXT DEFAULT '', recibo TEXT DEFAULT '',
+          motivo TEXT DEFAULT '', tipo TEXT DEFAULT 'saida',
+          pedido_id TEXT DEFAULT '', cliente_id TEXT DEFAULT '',
+          destinatario_nome TEXT DEFAULT '', destinatario_cpf_cnpj TEXT DEFAULT '',
+          created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_nfes_empresa ON public.nfes(empresa_id);
+        CREATE INDEX IF NOT EXISTS idx_nfes_chave ON public.nfes(chave_acesso);
+        ALTER TABLE public.nfes ENABLE ROW LEVEL SECURITY;
+        DROP POLICY IF EXISTS service_role_nfes ON public.nfes;
+        CREATE POLICY service_role_nfes ON public.nfes FOR ALL USING (auth.role() = 'service_role');
+      """,
+
+      'romaneios': """
+        CREATE TABLE IF NOT EXISTS public.romaneios (
+          id TEXT PRIMARY KEY, empresa_id TEXT NOT NULL DEFAULT '',
+          numero_romaneio INTEGER DEFAULT 0, motorista_id TEXT DEFAULT '',
+          motorista_nome TEXT DEFAULT '', veiculo TEXT DEFAULT '', placa TEXT DEFAULT '',
+          itens JSONB DEFAULT '[]'::jsonb, total_itens INTEGER DEFAULT 0,
+          status TEXT DEFAULT 'pendente', data_romaneio TIMESTAMPTZ DEFAULT NOW(),
+          data_entrega TIMESTAMPTZ, observacao TEXT DEFAULT '',
+          created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_romaneios_empresa ON public.romaneios(empresa_id);
+        ALTER TABLE public.romaneios ENABLE ROW LEVEL SECURITY;
+        DROP POLICY IF EXISTS service_role_romaneios ON public.romaneios;
+        CREATE POLICY service_role_romaneios ON public.romaneios FOR ALL USING (auth.role() = 'service_role');
+      """,
+
+      'comissoes_vendedores': """
+        CREATE TABLE IF NOT EXISTS public.comissoes_vendedores (
+          id TEXT PRIMARY KEY, empresa_id TEXT NOT NULL DEFAULT '',
+          vendedor_id TEXT DEFAULT '', vendedor_nome TEXT DEFAULT '',
+          venda_id TEXT DEFAULT '', pedido_id TEXT DEFAULT '',
+          valor_venda NUMERIC(15,2) DEFAULT 0, percentual_comissao NUMERIC(5,2) DEFAULT 0,
+          valor_comissao NUMERIC(15,2) DEFAULT 0, status TEXT DEFAULT 'pendente',
+          data_venda TIMESTAMPTZ DEFAULT NOW(), data_pagamento TIMESTAMPTZ,
+          observacao TEXT DEFAULT '',
+          created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_comissoes_empresa ON public.comissoes_vendedores(empresa_id);
+        ALTER TABLE public.comissoes_vendedores ENABLE ROW LEVEL SECURITY;
+        DROP POLICY IF EXISTS service_role_comissoes ON public.comissoes_vendedores;
+        CREATE POLICY service_role_comissoes ON public.comissoes_vendedores FOR ALL USING (auth.role() = 'service_role');
+      """,
+
+      'links_vendedores': """
+        CREATE TABLE IF NOT EXISTS public.links_vendedores (
+          id TEXT PRIMARY KEY, empresa_id TEXT NOT NULL DEFAULT '',
+          vendedor_id TEXT DEFAULT '', vendedor_nome TEXT DEFAULT '',
+          link TEXT DEFAULT '', codigo TEXT DEFAULT '', ativo BOOLEAN DEFAULT true,
+          cliques INTEGER DEFAULT 0, pedidos_gerados INTEGER DEFAULT 0,
+          created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_links_vendedores_empresa ON public.links_vendedores(empresa_id);
+        ALTER TABLE public.links_vendedores ENABLE ROW LEVEL SECURITY;
+        DROP POLICY IF EXISTS service_role_links ON public.links_vendedores;
+        CREATE POLICY service_role_links ON public.links_vendedores FOR ALL USING (auth.role() = 'service_role');
+      """,
+
+      'estoque_historico': """
+        CREATE TABLE IF NOT EXISTS public.estoque_historico (
+          id TEXT PRIMARY KEY, empresa_id TEXT NOT NULL DEFAULT '',
+          produto_id TEXT DEFAULT '', produto_nome TEXT DEFAULT '',
+          tipo_operacao TEXT DEFAULT '', quantidade NUMERIC(15,3) DEFAULT 0,
+          estoque_anterior NUMERIC(15,3) DEFAULT 0, estoque_atual NUMERIC(15,3) DEFAULT 0,
+          custo_unitario NUMERIC(15,2) DEFAULT 0, valor_total NUMERIC(15,2) DEFAULT 0,
+          documento TEXT DEFAULT '', observacao TEXT DEFAULT '',
+          data TIMESTAMPTZ DEFAULT NOW(),
+          created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_estoque_historico_empresa ON public.estoque_historico(empresa_id);
+        ALTER TABLE public.estoque_historico ENABLE ROW LEVEL SECURITY;
+        DROP POLICY IF EXISTS service_role_estoque ON public.estoque_historico;
+        CREATE POLICY service_role_estoque ON public.estoque_historico FOR ALL USING (auth.role() = 'service_role');
+      """,
+
+      'lotes_produto': """
+        CREATE TABLE IF NOT EXISTS public.lotes_produto (
+          id TEXT PRIMARY KEY, empresa_id TEXT NOT NULL DEFAULT '',
+          produto_id TEXT DEFAULT '', produto_nome TEXT DEFAULT '',
+          numero_lote TEXT DEFAULT '', quantidade NUMERIC(15,3) DEFAULT 0,
+          data_fabricacao TIMESTAMPTZ, data_validade TIMESTAMPTZ,
+          fornecedor_id TEXT DEFAULT '', fornecedor_nome TEXT DEFAULT '',
+          custo_unitario NUMERIC(15,2) DEFAULT 0, status TEXT DEFAULT 'ativo',
+          created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_lotes_empresa ON public.lotes_produto(empresa_id);
+        CREATE INDEX IF NOT EXISTS idx_lotes_produto ON public.lotes_produto(produto_id);
+        ALTER TABLE public.lotes_produto ENABLE ROW LEVEL SECURITY;
+        DROP POLICY IF EXISTS service_role_lotes ON public.lotes_produto;
+        CREATE POLICY service_role_lotes ON public.lotes_produto FOR ALL USING (auth.role() = 'service_role');
+      """,
+
+      'produto_historico': """
+        CREATE TABLE IF NOT EXISTS public.produto_historico (
+          id TEXT PRIMARY KEY, empresa_id TEXT NOT NULL DEFAULT '',
+          produto_id TEXT DEFAULT '', produto_nome TEXT DEFAULT '',
+          tipo_operacao TEXT DEFAULT 'UPDATE',
+          dados_anteriores JSONB DEFAULT '{}'::jsonb, dados_novos JSONB DEFAULT '{}'::jsonb,
+          usuario_id TEXT DEFAULT '', usuario_nome TEXT DEFAULT '',
+          data_alteracao TIMESTAMPTZ DEFAULT NOW(),
+          created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_produto_historico_empresa ON public.produto_historico(empresa_id);
+        ALTER TABLE public.produto_historico ENABLE ROW LEVEL SECURITY;
+        DROP POLICY IF EXISTS service_role_produto_historico ON public.produto_historico;
+        CREATE POLICY service_role_produto_historico ON public.produto_historico FOR ALL USING (auth.role() = 'service_role');
+      """,
+
+      'perfis_tributarios': """
+        CREATE TABLE IF NOT EXISTS public.perfis_tributarios (
+          id TEXT PRIMARY KEY, empresa_id TEXT NOT NULL DEFAULT '',
+          nome TEXT DEFAULT '', descricao TEXT DEFAULT '',
+          icms NUMERIC(5,2) DEFAULT 0, icms_st NUMERIC(5,2) DEFAULT 0,
+          ipi NUMERIC(5,2) DEFAULT 0, pis NUMERIC(5,2) DEFAULT 0,
+          cofins NUMERIC(5,2) DEFAULT 0, cfop TEXT DEFAULT '',
+          csosn TEXT DEFAULT '', cst TEXT DEFAULT '', origem TEXT DEFAULT '',
+          mva NUMERIC(5,2) DEFAULT 0, fcp NUMERIC(5,2) DEFAULT 0,
+          ativo BOOLEAN DEFAULT true,
+          created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_perfis_tributarios_empresa ON public.perfis_tributarios(empresa_id);
+        ALTER TABLE public.perfis_tributarios ENABLE ROW LEVEL SECURITY;
+        DROP POLICY IF EXISTS service_role_perfis ON public.perfis_tributarios;
+        CREATE POLICY service_role_perfis ON public.perfis_tributarios FOR ALL USING (auth.role() = 'service_role');
+      """,
+
+      'departamentos': """
+        CREATE TABLE IF NOT EXISTS public.departamentos (
+          id TEXT PRIMARY KEY, empresa_id TEXT NOT NULL DEFAULT '',
+          nome TEXT DEFAULT '', descricao TEXT DEFAULT '',
+          cor TEXT DEFAULT '', icone TEXT DEFAULT '', ordem INTEGER DEFAULT 0,
+          ativo BOOLEAN DEFAULT true,
+          created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_departamentos_empresa ON public.departamentos(empresa_id);
+        ALTER TABLE public.departamentos ENABLE ROW LEVEL SECURITY;
+        DROP POLICY IF EXISTS service_role_departamentos ON public.departamentos;
+        CREATE POLICY service_role_departamentos ON public.departamentos FOR ALL USING (auth.role() = 'service_role');
+      """,
+    };
   }
 }
 

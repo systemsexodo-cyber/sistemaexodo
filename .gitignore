@@ -150,3 +150,17 @@ backup_trocas_devolucoes_corrompidas_*.csv
 
 # Scripts descartáveis de desenvolvimento na raiz
 scratch_*.py
+
+# Backups comprimidos gigantes (o GitHub recusa arquivo acima de 100 MB)
+*.rar
+
+# Rascunhos de investigação (testes-sonda, arquivos de apoio)
+scratch/
+
+# Metadados do agente local
+.freebuff/
+
+# ⚠️ Cópia do .env com as SENHAS DE VERDADE (nome trocado para .py por engano).
+# Nunca versionar: contém a service_role key, a senha do banco e o token do
+# Supabase. O GitHub bloqueia o push e o segredo fica exposto no histórico.
+sincronizador_local_supabase.py

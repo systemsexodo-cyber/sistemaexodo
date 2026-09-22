@@ -114,6 +114,7 @@ class Produto {
   // Mapeamento de estoque por fornecedor (Ex: {"Ambev": 10.0, "Coca": 10.0})
   final Map<String, double> estoquePorFornecedor; 
   final bool enviaBalanca;
+  final bool ativo; // Se true, produto aparece no PDV e pode ser vendido. Se false, está desativado.
   final bool cobrarGarcom; // Se true, cobra os 10% de taxa de garçom no PDV/Comandas
   final String? perfilTributarioId; // ID do Perfil Tributário (impostos)
   final List<PerguntaSelecao> perguntasSelecao;
@@ -169,6 +170,7 @@ class Produto {
     this.exibirNaLoja = false,
     this.emDestaque = false,
     this.enviaBalanca = false,
+    this.ativo = true,
     this.cobrarGarcom = true,
     this.perfilTributarioId,
     this.perguntasSelecao = const [],
@@ -523,6 +525,7 @@ class Produto {
       'exibir_na_loja': exibirNaLoja,
       'em_destaque': emDestaque,
       'envia_balanca': enviaBalanca,
+      'ativo': ativo,
       'cobrar_garcom': cobrarGarcom,
       'perfil_tributario_id': perfilTributarioId,
       'perguntas_selecao': perguntasSelecao.map((p) => p.toMap()).toList(),
@@ -586,7 +589,13 @@ class Produto {
     }
     bool? getBool(String camel, String snake) => get<bool>(camel, snake);
     List? getList(String camel, String snake) => get<List>(camel, snake);
-    Map? getMap(String camel, String snake) => get<Map>(camel, snake);
+    // Tolerante a tipo: no Supabase precos_por_perfil/estoque_por_fornecedor
+    // podem vir como lista vazia ([] — default do schema JSONB) em produtos
+    // importados; tratar como "sem mapa" em vez de estourar o parse do produto.
+    Map? getMap(String camel, String snake) {
+      final val = map.containsKey(camel) ? map[camel] : map[snake];
+      return (val is Map) ? val : null;
+    }
 
     DateTime? getDate(String camel, String snake) {
       final val = map[camel] ?? map[snake];
@@ -648,6 +657,7 @@ class Produto {
       exibirNaLoja: getBool('exibirNaLoja', 'exibir_na_loja') ?? false,
       emDestaque: getBool('emDestaque', 'em_destaque') ?? false,
       enviaBalanca: getBool('enviaBalanca', 'envia_balanca') ?? false,
+      ativo: getBool('ativo', 'ativo') ?? true,
       cobrarGarcom: getBool('cobrarGarcom', 'cobrar_garcom') ?? true,
       perfilTributarioId: getStr('perfilTributarioId', 'perfil_tributario_id'),
       perguntasSelecao: getList('perguntasSelecao', 'perguntas_selecao')?.map((p) => PerguntaSelecao.fromMap(Map<String, dynamic>.from(p is Map ? p : {}))).toList() ?? [],
@@ -661,13 +671,22 @@ class Produto {
       larguraCm: getNum('larguraCm', 'largura_cm')?.toDouble(),
       profundidadeCm: getNum('profundidadeCm', 'profundidade_cm')?.toDouble(),
       tags: getList('tags', 'tags')?.cast<String>() ?? [],
-      variacoes: getList('variacoes', 'variacoes')?.map((v) => VariacaoProduto.fromMap(v as Map<String, dynamic>)).toList() ?? [],
+      variacoes: (getList('variacoes', 'variacoes') ?? [])
+          .whereType<Map>()
+          .map((v) => VariacaoProduto.fromMap(Map<String, dynamic>.from(v)))
+          .toList(),
       temVariacoes: getBool('temVariacoes', 'tem_variacoes') ?? false,
-      adicionais: getList('adicionais', 'adicionais')?.map((a) => AdicionalProduto.fromMap(a as Map<String, dynamic>)).toList() ?? [],
+      adicionais: (getList('adicionais', 'adicionais') ?? [])
+          .whereType<Map>()
+          .map((a) => AdicionalProduto.fromMap(Map<String, dynamic>.from(a)))
+          .toList(),
       temAdicionais: getBool('temAdicionais', 'tem_adicionais') ?? false,
       ehComposto: getBool('ehComposto', 'eh_composto') ?? false,
       baixarEstoqueProprio: getBool('baixarEstoqueProprio', 'baixar_estoque_proprio') ?? true,
-      composicao: getList('composicao', 'composicao')?.map((c) => ItemComposicao.fromMap(c as Map<String, dynamic>)).toList() ?? [],
+      composicao: (getList('composicao', 'composicao') ?? [])
+          .whereType<Map>()
+          .map((c) => ItemComposicao.fromMap(Map<String, dynamic>.from(c)))
+          .toList(),
       observacaoPadrao: getStr('observacaoPadrao', 'observacao_padrao'),
       fornecedorId: getStr('fornecedorId', 'fornecedor_id'),
       fornecedorNome: getStr('fornecedorNome', 'fornecedor_nome'),
@@ -749,6 +768,7 @@ class Produto {
     bool? pedidoCompraGerado,
     DateTime? dataUltimoPedido,
     bool? enviaBalanca,
+    bool? ativo,
     bool? cobrarGarcom,
     String? perfilTributarioId,
     List<PerguntaSelecao>? perguntasSelecao,
@@ -824,6 +844,7 @@ class Produto {
       pedidoCompraGerado: pedidoCompraGerado ?? this.pedidoCompraGerado,
       dataUltimoPedido: dataUltimoPedido ?? this.dataUltimoPedido,
       enviaBalanca: enviaBalanca ?? this.enviaBalanca,
+      ativo: ativo ?? this.ativo,
       cobrarGarcom: cobrarGarcom ?? this.cobrarGarcom,
       perfilTributarioId: perfilTributarioId ?? this.perfilTributarioId,
       perguntasSelecao: perguntasSelecao ?? this.perguntasSelecao,

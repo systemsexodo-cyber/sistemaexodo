@@ -123,6 +123,34 @@ class NFCe {
     };
   }
 
+  /// Modelo do documento lido da chave de acesso: `55` = NF-e (DANFE),
+  /// `65` = NFC-e. `null` quando não há chave (nota em contingência, ainda sem
+  /// autorização).
+  ///
+  /// A chave tem 44 dígitos: cUF(2) + AAMM(4) + CNPJ(14) + mod(2) + série(3)…
+  static String? modeloDaChave(String? chave) {
+    final limpa = (chave ?? '').replaceAll(RegExp(r'[^0-9]'), '');
+    if (limpa.length != 44) return null;
+    return limpa.substring(20, 22);
+  }
+
+  /// Modelo do documento, usando a chave como segunda opinião.
+  ///
+  /// Não existe coluna `modelo` no banco (nem no Supabase): ao recarregar as
+  /// notas, tudo o que veio do banco tem `modelo == null` — inclusive NF-e
+  /// modelo 55. Sem olhar a chave, uma DANFE era tratada como NFC-e e aparecia
+  /// no histórico de NFC-e.
+  int? get modeloEfetivo {
+    if (modelo != null) return modelo;
+    return int.tryParse(modeloDaChave(chaveAcesso) ?? '');
+  }
+
+  /// true para NF-e / DANFE (modelo 55).
+  bool get ehNFe => modeloEfetivo == 55;
+
+  /// true para NFC-e (modelo 65, ou nota em contingência ainda sem chave).
+  bool get ehNFCe => !ehNFe;
+
   NFCe copyWith({
     String? id,
     String? numero,

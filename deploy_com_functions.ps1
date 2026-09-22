@@ -13,7 +13,7 @@ Set-Location ..
 
 # 2. Build Flutter Web
 Write-Host "`n[2/3] Construindo Flutter Web..." -ForegroundColor Yellow
-flutter build web --release
+flutter build web --release --no-wasm-dry-run
 
 # 3. Deploy para Firebase
 Write-Host "`n[3/3] Fazendo deploy para Firebase..." -ForegroundColor Yellow

@@ -16,6 +16,8 @@ class LocalStorageService {
   static const String _keyProdutos = 'exodo_produtos';
   static const String _keyServicos = 'exodo_servicos';
   static const String _keyPedidos = 'exodo_pedidos';
+  static const String _keyServicosRealizados = 'exodo_servicos_realizados';
+  static const String _keyOrcamentos = 'exodo_orcamentos';
   static const String _keyOrdensServico = 'exodo_ordens_servico';
   static const String _keyEntregas = 'exodo_entregas';
   static const String _keyMotoristas = 'exodo_motoristas';
@@ -185,6 +187,8 @@ class LocalStorageService {
       _keyProdutos,
       _keyServicos,
       _keyPedidos,
+      _keyServicosRealizados,
+      _keyOrcamentos,
       _keyOrdensServico,
       _keyEntregas,
       _keyMotoristas,
@@ -324,6 +328,8 @@ class LocalStorageService {
   static String get keyProdutos => _keyProdutos;
   static String get keyServicos => _keyServicos;
   static String get keyPedidos => _keyPedidos;
+  static String get keyServicosRealizados => _keyServicosRealizados;
+  static String get keyOrcamentos => _keyOrcamentos;
   static String get keyOrdensServico => _keyOrdensServico;
   static String get keyEntregas => _keyEntregas;
   static String get keyMotoristas => _keyMotoristas;
@@ -347,6 +353,7 @@ class LocalStorageService {
     try {
       final chaves = [
         _keyClientes, _keyProdutos, _keyServicos, _keyPedidos,
+        _keyServicosRealizados, _keyOrcamentos,
         _keyOrdensServico, _keyEntregas, _keyVendasBalcao, _keyAberturasCaixa,
         _keyFechamentosCaixa, _keyNotasEntrada, _keyAgendamentosServico,
         _keyFuncionarios, _keyTaxasEntrega, _keyContasPagar, _keyNFCes,

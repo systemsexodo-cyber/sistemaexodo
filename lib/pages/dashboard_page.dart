@@ -627,9 +627,11 @@ class _DashboardPageState extends State<DashboardPage> {
     final mapNfce = <String, NFCe>{};
     final mapNfe = <String, NFCe>{};
 
-    // Coleção NFC-es do DataService
+    // Coleção NFC-es do DataService. `ehNFe` (não `modelo == 55`) porque a
+    // coluna `modelo` não existe no banco: nota carregada de lá vem com modelo
+    // nulo e uma DANFE acabava contada como NFC-e.
     for (final n in dataService.nfces) {
-      if (n.modelo == 55) {
+      if (n.ehNFe) {
         mapNfe[n.id] = n;
       } else {
         mapNfce[n.id] = n;
@@ -638,7 +640,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
     // Coleção NF-es do DataService
     for (final n in dataService.nfes) {
-      if (n.modelo == 65) {
+      if (n.ehNFCe) {
         mapNfce[n.id] = n;
       } else {
         mapNfe[n.id] = n;

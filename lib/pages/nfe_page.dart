@@ -2000,6 +2000,13 @@ class _EmissaoManualPageState extends State<_EmissaoManualPage>
   // ── Emissão ──
   bool _emitindo = false;
 
+  /// Origem dos itens quando a nota é faturada a partir de vendas/pedidos.
+  ///
+  /// Cada registro guarda o rótulo (ex.: `Venda VND-0168`) e o cliente, para a
+  /// tela mostrar DE ONDE veio o faturamento — na consolidação em lote a lista
+  /// de itens ficava sem nenhuma indicação de origem.
+  final List<Map<String, dynamic>> _origensFaturamento = [];
+
   @override
   void initState() {
     super.initState();
@@ -2057,40 +2064,59 @@ class _EmissaoManualPageState extends State<_EmissaoManualPage>
         _foneCtrl.text = _clienteSelecionado!.telefone;
       }
 
-      // Adicionar itens da venda/pedido
-      List<dynamic> itensOriginais = [];
+      // Itens da venda/pedido, cada um com a origem (de qual registro veio)
+      final itensComOrigem = <Map<String, dynamic>>[];
+
+      void registrarOrigem(String rotulo, String? cliente, List<dynamic> itens) {
+        if (itens.isEmpty) return;
+        _origensFaturamento.add({'rotulo': rotulo, 'cliente': cliente});
+        for (final item in itens) {
+          itensComOrigem.add({'item': item, 'rotulo': rotulo, 'cliente': cliente});
+        }
+      }
+
       if (widget.vendaFaturar != null) {
         final idVenda = widget.vendaFaturar!['id'];
         try {
           final v = widget.dataService.vendasBalcao.firstWhere((v) => v.id == idVenda);
-          itensOriginais = v.itens;
+          registrarOrigem(
+            'Venda ${v.numero}',
+            widget.vendaFaturar!['cliente']?.toString(),
+            v.itens,
+          );
         } catch (_) {}
       } else if (widget.pedidoFaturar != null) {
         final idPed = widget.pedidoFaturar!['id'];
         try {
           final p = widget.dataService.pedidos.firstWhere((p) => p.id == idPed);
-          itensOriginais = p.produtos;
+          registrarOrigem(
+            'Pedido ${p.numero}',
+            widget.pedidoFaturar!['cliente']?.toString(),
+            p.produtos,
+          );
         } catch (_) {}
       } else if (widget.loteFaturar != null) {
-        // Consolidação em lote
-        for (var itemLote in widget.loteFaturar!) {
+        // Consolidação em lote: mantém a origem de cada venda/pedido selecionado
+        for (final itemLote in widget.loteFaturar!) {
           final idLote = itemLote['id'];
+          final clienteLote = itemLote['cliente']?.toString();
           if (itemLote['tipo'] == 'Venda') {
             try {
               final v = widget.dataService.vendasBalcao.firstWhere((v) => v.id == idLote);
-              itensOriginais.addAll(v.itens);
+              registrarOrigem('Venda ${v.numero}', clienteLote, v.itens);
             } catch (_) {}
           } else {
             try {
               final p = widget.dataService.pedidos.firstWhere((p) => p.id == idLote);
-              itensOriginais.addAll(p.produtos);
+              registrarOrigem('Pedido ${p.numero}', clienteLote, p.produtos);
             } catch (_) {}
           }
         }
       }
 
       // Mapear itens para a listagem da UI
-      for (final item in itensOriginais) {
+      for (final registro in itensComOrigem) {
+        final item = registro['item'];
         Produto? prod;
         try {
           prod = widget.dataService.produtos.firstWhere((p) => p.id == item.id);
@@ -2119,6 +2145,8 @@ class _EmissaoManualPageState extends State<_EmissaoManualPage>
           'cfop': _cfopCtrl.text,
           'unidade': prod.unidade ?? 'UN',
           'descricao': item.nome,
+          'origem': registro['rotulo'],
+          'clienteOrigem': registro['cliente'],
         });
       }
       return;
@@ -2279,7 +2307,11 @@ class _EmissaoManualPageState extends State<_EmissaoManualPage>
         title: Text(
           widget.clonar
               ? 'Clonar Nota Nº ${widget.nfeExistente?.numero ?? ''}'
-              : (widget.nfeExistente != null ? 'Editar e Reemitir NF-e' : 'Nova NF-e Manual'),
+              : (widget.nfeExistente != null
+                  ? 'Editar e Reemitir NF-e'
+                  : (_origensFaturamento.isEmpty
+                      ? 'Nova NF-e Manual'
+                      : 'Faturar ${_origensFaturamento.length} registro(s)')),
           style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
         ),
         iconTheme: const IconThemeData(color: Colors.white),
@@ -2359,6 +2391,7 @@ class _EmissaoManualPageState extends State<_EmissaoManualPage>
               ),
             ),
           ],
+          if (_origensFaturamento.isNotEmpty) _buildBannerOrigens(),
           Expanded(
             child: TabBarView(
               controller: _tabController,
@@ -2454,6 +2487,85 @@ class _EmissaoManualPageState extends State<_EmissaoManualPage>
   }
 
   // ─── ABA 1: DESTINATÁRIO ────────────────────────────────
+  /// Banner com a origem do faturamento: de qual venda/pedido vieram os itens,
+  /// o cliente e o valor de cada um.
+  Widget _buildBannerOrigens() {
+    final moeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+    return Container(
+      width: double.infinity,
+      color: const Color(0xFF14212E),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.receipt_long, size: 18, color: Colors.lightBlueAccent),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  _origensFaturamento.length == 1
+                      ? 'Faturamento originado de 1 registro'
+                      : 'Faturamento consolidado de ${_origensFaturamento.length} registros',
+                  style: const TextStyle(
+                    color: Colors.lightBlueAccent,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: _origensFaturamento.map((origem) {
+              final rotulo = origem['rotulo'].toString();
+              final itens = _itens.where((i) => i['origem'] == rotulo).toList();
+              final valor = itens.fold<double>(
+                0.0,
+                (soma, i) => soma + ((i['preco'] as double) * (i['qtd'] as double)),
+              );
+              final cliente = (origem['cliente'] ?? '').toString();
+              final mostrarCliente =
+                  cliente.isNotEmpty && cliente.toLowerCase() != 'consumidor final';
+              return Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1E1E2E),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.lightBlueAccent.withValues(alpha: 0.3)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.shopping_bag_outlined, size: 13, color: Colors.lightBlueAccent),
+                    const SizedBox(width: 6),
+                    Text(rotulo,
+                        style: const TextStyle(
+                            color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                    if (mostrarCliente) ...[
+                      const SizedBox(width: 6),
+                      Text('· $cliente', style: const TextStyle(color: Colors.white70, fontSize: 11)),
+                    ],
+                    const SizedBox(width: 8),
+                    Text('${itens.length} item(ns)',
+                        style: const TextStyle(color: Colors.white38, fontSize: 11)),
+                    const SizedBox(width: 8),
+                    Text(moeda.format(valor),
+                        style: const TextStyle(
+                            color: Colors.greenAccent, fontSize: 12, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+              );
+            }).toList(),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildTabDestinatario() {
     final clientes = widget.dataService.clientes
       ..sort((a, b) => a.nome.compareTo(b.nome));
@@ -2854,6 +2966,12 @@ class _EmissaoManualPageState extends State<_EmissaoManualPage>
                                 style: const TextStyle(color: Colors.white70, fontSize: 12)),
                             Text('NCM: ${item['ncm']}  |  CFOP: ${item['cfop']}  |  UN: ${item['unidade']}',
                                 style: const TextStyle(color: Colors.white38, fontSize: 11)),
+                            // De qual venda/pedido este item veio (quando faturado)
+                            if ((item['origem'] ?? '').toString().isNotEmpty)
+                              Text(
+                                'Origem: ${item['origem']}${(item['clienteOrigem'] ?? '').toString().isEmpty ? '' : '  ·  ${item['clienteOrigem']}'}',
+                                style: const TextStyle(color: Colors.lightBlueAccent, fontSize: 11),
+                              ),
                           ],
                         ),
                         trailing: Row(

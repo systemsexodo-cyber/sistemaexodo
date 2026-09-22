@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:io';
@@ -18,6 +19,219 @@ import '../services/app_update_service.dart';
 import 'bloqueio_mensalidade_page.dart';
 import 'monitor_page.dart';
 import 'backup_restore_page.dart';
+// ─────────────────────────────────────────────────────────────────────────────
+// Publicação de atualização: escolha do destino
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Destino escolhido para publicar a atualização do app.
+class _DestinoAtualizacao {
+  /// `null` = todos os clientes (`app_latest`).
+  final Empresa? empresa;
+
+  const _DestinoAtualizacao.todos() : empresa = null;
+  const _DestinoAtualizacao.paraEmpresa(Empresa this.empresa);
+
+  bool get global => empresa == null;
+}
+
+/// Pergunta para quem vai a atualização: TODOS os clientes (global, `app_latest`)
+/// ou uma empresa específica (`app_update_<id>`).
+///
+/// A escolha era fixa no cartão (sempre global) e só existia escondida no menu
+/// de cada empresa; aqui ela fica explícita e antes de publicar.
+class _DialogoDestinoAtualizacao extends StatefulWidget {
+  final List<Empresa> empresas;
+
+  const _DialogoDestinoAtualizacao({required this.empresas});
+
+  @override
+  State<_DialogoDestinoAtualizacao> createState() =>
+      _DialogoDestinoAtualizacaoState();
+}
+
+class _DialogoDestinoAtualizacaoState
+    extends State<_DialogoDestinoAtualizacao> {
+  bool _global = true;
+  Empresa? _empresa;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.empresas.isNotEmpty) _empresa = widget.empresas.first;
+  }
+
+  String _idCurto(String id) => id.length > 8 ? '${id.substring(0, 8)}…' : id;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: const Color(0xFF1E1E2E),
+      title: const Text(
+        'Publicar Atualização',
+        style: TextStyle(color: Colors.white),
+      ),
+      content: SizedBox(
+        width: 560,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Para quem vai a versão que você vai publicar?',
+              style: TextStyle(color: Colors.white70, fontSize: 13),
+            ),
+            const SizedBox(height: 12),
+            _buildOpcao(
+              selecionado: _global,
+              icone: Icons.public,
+              cor: Colors.teal,
+              titulo: 'TODOS os clientes (global)',
+              descricao: 'app_latest — todo cliente sem atualização direcionada '
+                  'baixa esta versão.',
+              onTap: () => setState(() => _global = true),
+            ),
+            const SizedBox(height: 8),
+            _buildOpcao(
+              selecionado: !_global,
+              icone: Icons.business,
+              cor: Colors.cyan,
+              titulo: 'Uma empresa específica',
+              descricao: 'app_update_<id> — só os computadores dessa empresa '
+                  'são atualizados; as outras continuam como estão.',
+              onTap: () => setState(() => _global = false),
+            ),
+            if (!_global) ...[
+              const SizedBox(height: 12),
+              if (widget.empresas.isEmpty)
+                const Text(
+                  'Nenhuma empresa cadastrada para escolher. '
+                  'Use a publicação global.',
+                  style: TextStyle(color: Colors.orangeAccent, fontSize: 12),
+                )
+              else
+                DropdownButtonFormField<Empresa>(
+                  initialValue: _empresa,
+                  isExpanded: true,
+                  dropdownColor: const Color(0xFF26263A),
+                  style: const TextStyle(color: Colors.white, fontSize: 13),
+                  decoration: InputDecoration(
+                    labelText: 'Empresa',
+                    labelStyle: const TextStyle(color: Colors.white70),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide:
+                          BorderSide(color: Colors.white.withOpacity(0.2)),
+                    ),
+                  ),
+                  items: widget.empresas
+                      .map((empresa) => DropdownMenuItem<Empresa>(
+                            value: empresa,
+                            child: Text(
+                              '${empresa.nomeExibicao}  •  ${_idCurto(empresa.id)}',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ))
+                      .toList(),
+                  onChanged: (empresa) => setState(() => _empresa = empresa),
+                ),
+            ],
+            const SizedBox(height: 12),
+            const Text(
+              'A versão é confirmada na próxima tela.',
+              style: TextStyle(color: Colors.white38, fontSize: 11),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child:
+              const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+        ),
+        ElevatedButton.icon(
+          onPressed: () {
+            if (_global) {
+              Navigator.pop(context, const _DestinoAtualizacao.todos());
+              return;
+            }
+            final empresa = _empresa;
+            if (empresa == null) return; // nenhuma empresa escolhida
+            Navigator.pop(context, _DestinoAtualizacao.paraEmpresa(empresa));
+          },
+          icon: const Icon(Icons.cloud_upload, size: 18),
+          label: const Text('Continuar'),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: _global ? Colors.teal : Colors.cyan,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildOpcao({
+    required bool selecionado,
+    required IconData icone,
+    required Color cor,
+    required String titulo,
+    required String descricao,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: cor.withOpacity(selecionado ? 0.14 : 0.04),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: selecionado ? cor : Colors.white12,
+            width: selecionado ? 2 : 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(icone, color: cor, size: 22),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    titulo,
+                    style: TextStyle(
+                      color: selecionado ? cor : Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    descricao,
+                    style:
+                        const TextStyle(color: Colors.white54, fontSize: 11),
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              selecionado
+                  ? Icons.radio_button_checked
+                  : Icons.radio_button_unchecked,
+              color: selecionado ? cor : Colors.white24,
+              size: 20,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// Classe para armazenar o progresso da importação
 class ImportProgress {
   final int processados;
@@ -456,7 +670,7 @@ class _EmpresasPageState extends State<EmpresasPage> {
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: () => _publicarAtualizacaoGlobal(context),
+          onTap: () => _publicarAtualizacao(),
           borderRadius: BorderRadius.circular(16),
           child: Padding(
             padding: const EdgeInsets.all(20),
@@ -487,7 +701,7 @@ class _EmpresasPageState extends State<EmpresasPage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        '🌍 PUBLICAR ATUALIZAÇÃO GLOBAL',
+                        '📤 PUBLICAR ATUALIZAÇÃO',
                         style: TextStyle(
                           fontSize: 20,
                           fontWeight: FontWeight.bold,
@@ -496,7 +710,7 @@ class _EmpresasPageState extends State<EmpresasPage> {
                       ),
                       SizedBox(height: 6),
                       Text(
-                        'Compilar e subir nova versão para TODOS os clientes. (app_latest)',
+                        'Compilar e enviar para TODOS os clientes ou só para uma empresa específica.',
                         style: TextStyle(
                           fontSize: 14,
                           color: Colors.white70,
@@ -517,6 +731,35 @@ class _EmpresasPageState extends State<EmpresasPage> {
         ),
       ),
     );
+  }
+
+  /// Ponto de entrada do cartão de publicação: pergunta o destino (todos os
+  /// clientes ou uma empresa) e segue para o fluxo correspondente.
+  ///
+  /// Os dois fluxos já existiam, mas o destino de uma empresa só estava
+  /// acessível escondido no menu de cada empresa — quem clicava no cartão
+  /// publicava sempre global, sem escolha.
+  Future<void> _publicarAtualizacao() async {
+    // Mesma fonte de empresas da lista desta tela: respeita a permissão de
+    // quem está publicando.
+    final empresas = Provider.of<AuthService>(context, listen: false)
+        .getEmpresasDoUsuario()
+      ..sort((a, b) =>
+          a.nomeExibicao.toLowerCase().compareTo(b.nomeExibicao.toLowerCase()));
+
+    final destino = await showDialog<_DestinoAtualizacao>(
+      context: context,
+      builder: (context) => _DialogoDestinoAtualizacao(empresas: empresas),
+    );
+
+    if (destino == null) return;
+    if (!mounted) return;
+
+    if (destino.global) {
+      await _publicarAtualizacaoGlobal(context);
+    } else {
+      await _publicarAtualizacaoParaEmpresa(context, destino.empresa!);
+    }
   }
 
   /// Publica atualização GLOBAL (app_latest) - afeta todos os clientes
@@ -1857,6 +2100,37 @@ class _EmpresasPageState extends State<EmpresasPage> {
                         ),
                       ),
                     ],
+                    const SizedBox(height: 4),
+                    InkWell(
+                      onTap: () async {
+                        await Clipboard.setData(ClipboardData(text: empresa.id));
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('✅ ID copiado: ${empresa.id}'),
+                              duration: const Duration(seconds: 2),
+                            ),
+                          );
+                        }
+                      },
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Flexible(
+                            child: Text(
+                              'ID: …${empresa.idFinal}',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Colors.white.withOpacity(0.4),
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          Icon(Icons.copy_rounded, size: 11, color: Colors.white.withOpacity(0.3)),
+                        ],
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -2126,8 +2400,10 @@ class _EmpresasPageState extends State<EmpresasPage> {
 
   /// Publica uma atualização do app direcionada para esta empresa no Supabase
   Future<void> _publicarAtualizacaoParaEmpresa(BuildContext context, Empresa empresa) async {
-    // Pedir a versão
-    final versaoController = TextEditingController(text: '1.0.17');
+    // Pedir a versão (padrão: a versão do app que está rodando, não um número
+    // fixo antigo, que publicava uma versão errada por descuido)
+    final versaoController =
+        TextEditingController(text: AppUpdateService.currentAppVersion);
     final versao = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(

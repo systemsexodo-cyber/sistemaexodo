@@ -8776,7 +8776,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                                 overflow: TextOverflow.ellipsis,
                               ),
                               Text(
-                                'ID: ${currentDataService.currentEmpresaId}',
+                                'ID: ${currentDataService.empresaAtual?.idCurto ?? currentDataService.currentEmpresaId}',
                                 style: const TextStyle(
                                   color: Colors.white38,
                                   fontSize: 10,

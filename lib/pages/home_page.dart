@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'dart:io' show Platform;
 import 'package:provider/provider.dart';
@@ -37,6 +38,8 @@ import 'caixa_page.dart';
 import 'comissoes_page.dart';
 import 'entregas_page.dart';
 import 'empresas_page.dart';
+import 'conferencia_local_nuvem_page.dart';
+import 'selecionar_empresa_page.dart';
 import 'taxas_entrega_page.dart';
 import 'historico_vendas_page.dart';
 import 'historico_operacoes_page.dart';
@@ -47,6 +50,7 @@ import 'whatsapp_gerenciamento_page.dart';
 import '../services/data_service.dart';
 import '../services/theme_service.dart';
 import '../widgets/sync_status_widget.dart';
+import '../widgets/exodo_loading.dart';
 import 'adicionar_empresa_page.dart';
 import '../services/fiscal_automation_service.dart';
 import '../services/bridge_manager_service.dart';
@@ -407,6 +411,45 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  /// Botão "Voltar" do topo da Home.
+  ///
+  /// Voltar daqui sai da empresa e cai na SELEÇÃO DE EMPRESAS — ou seja, TROCAR
+  /// DE EMPRESA. Essa ação é exclusiva do usuário MASTER (ou do usuário "user"),
+  /// então para os demais o botão simplesmente não aparece na Home e eles não
+  /// conseguem sair da empresa pelo topo da tela.
+  ///
+  /// No Dashboard (`_currentPage == 1`) o botão continua valendo para todos, mas
+  /// apenas para retornar ao menu Home — essa navegação não troca de empresa.
+  Widget? _buildBotaoVoltar(bool isMaster) {
+    final estaNoDashboard = _currentPage == 1;
+    if (!isMaster && !estaNoDashboard) return null;
+
+    return IconButton(
+      icon: const Icon(Icons.arrow_back),
+      tooltip: isMaster ? 'Voltar e trocar de empresa' : 'Voltar ao menu',
+      onPressed: () {
+        if (estaNoDashboard) {
+          _pageController.previousPage(
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeInOut,
+          );
+          return;
+        }
+        if (!isMaster) return;
+
+        // IMPORTANTE: entrar na empresa usa `pushReplacement` (ver
+        // selecionar_empresa_page.dart), então a seleção de empresas SAI da pilha
+        // e a Home fica como única rota. Com `maybePop()` não havia nada para
+        // voltar e a seta parecia morta. Aqui navegamos de verdade para a seleção,
+        // do mesmo jeito que a tela de bloqueio de mensalidade já faz.
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (context) => const SelecionarEmpresaPage()),
+          (route) => false,
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final dataService = Provider.of<DataService>(context);
@@ -431,26 +474,27 @@ class _HomePageState extends State<HomePage> {
       }
     }
 
+    // Carga inicial da NUVEM: segura o usuário na tela de carregando até os
+    // dados chegarem. Sem isso a Home abre com as listas vazias enquanto a
+    // nuvem ainda está baixando (parecia que o sistema não tinha carregado).
+    // A tela sai sozinha quando a carga termina (ou no limite de segurança) e o
+    // botão "Continuar sem esperar" libera quando a rede está lenta.
+    if (dataService.sincronizandoInicial) {
+      return ExodoLoading(
+        mensagem: dataService.mensagemLoading,
+        segundosParaMostrarPular: 5,
+        onPular: dataService.pularEsperaSincronizacaoInicial,
+      );
+    }
+
     return AppTheme.appBackground(
       child: Scaffold(
         backgroundColor: Colors.transparent,
         appBar: AppBar(
-          leading: IconButton(
-            icon: const Icon(Icons.arrow_back),
-            tooltip: 'Voltar',
-            // Na tela do Dashboard (página 1 do PageView) volta para o menu Home;
-            // na Home, tenta voltar na pilha de navegação (Home é rota raiz, então vira no-op).
-            onPressed: () {
-              if (_currentPage == 1) {
-                _pageController.previousPage(
-                  duration: const Duration(milliseconds: 300),
-                  curve: Curves.easeInOut,
-                );
-              } else {
-                Navigator.of(context).maybePop();
-              }
-            },
-          ),
+          // Sem seta automática: o Flutter criaria uma sozinho porque a Home foi
+          // empilhada por cima da seleção de empresas.
+          automaticallyImplyLeading: false,
+          leading: _buildBotaoVoltar(isMaster),
           title: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -473,6 +517,54 @@ class _HomePageState extends State<HomePage> {
                   ),
                 ),
               ),
+              if (empresaAtual != null) ...[
+                const SizedBox(width: 8),
+                Tooltip(
+                  message: 'Clique para copiar o ID completo da empresa',
+                  child: GestureDetector(
+                    onTap: () async {
+                      await Clipboard.setData(ClipboardData(text: empresaAtual.id));
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('✅ ID copiado: ${empresaAtual.id}'),
+                            duration: const Duration(seconds: 2),
+                          ),
+                        );
+                      }
+                    },
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 280),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.orangeAccent.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.orangeAccent.withOpacity(0.25)),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Flexible(
+                              child: Text(
+                                '${empresaAtual.nomeExibicao} (…${empresaAtual.idFinal})',
+                                style: TextStyle(
+                                  color: Colors.orangeAccent.withOpacity(0.9),
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Icon(Icons.copy_rounded, size: 12, color: Colors.orangeAccent.withOpacity(0.8)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ],
           ), // Restaurado 'ê' conforme pedido
           centerTitle: true,
@@ -485,19 +577,75 @@ class _HomePageState extends State<HomePage> {
                 final isMaster = auth.usuarioAtual?.isMaster == true || auth.usuarioAtual?.email == 'user';
                 if (!isMaster) return const SizedBox.shrink();
 
-                return Row(
+                // Rolagem horizontal: são vários botões e em janelas estreitas
+                // eles passam da largura disponível na barra.
+                return SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
                   children: [
                     _buildCapsuleActionButton(
                       icon: Icons.delete_sweep,
                       label: 'Limpar Local',
                       color: Colors.redAccent,
-                      tooltip: 'TESTE: Limpar Local (Nuvem Fica)',
+                      tooltip: 'Apaga a base local DESTA empresa (a nuvem fica intacta)',
                       onTap: () async {
                         final dataService = Provider.of<DataService>(context, listen: false);
-                        await dataService.resetLocalCacheOnly();
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Local limpo! Verifique se as listas sumiram.'))
+                        final messenger = ScaffoldMessenger.of(context);
+                        // A empresa ABERTA nesta tela é o alvo da limpeza. Passamos o
+                        // id e o nome daqui para o serviço conferir e limpar só ela.
+                        final empresaAberta = dataService.empresaAtual;
+                        final empresaNome = empresaAberta?.nomeExibicao ?? 'empresa atual';
+
+                        final confirmar = await showDialog<bool>(
+                          context: context,
+                          builder: (ctx) => AlertDialog(
+                            backgroundColor: const Color(0xFF1E1E2E),
+                            title: const Text('🗑️ Limpar a base local?', style: TextStyle(color: Colors.white)),
+                            content: Text(
+                              'Isso apaga do SEU COMPUTADOR os dados da empresa "$empresaNome" '
+                              '(produtos, clientes, pedidos, vendas, caixa...).\n\n'
+                              '✅ A NUVEM NÃO é afetada.\n\n'
+                              'Depois use "Puxar Nuvem" para baixar tudo de novo, limpo, da nuvem.\n\n'
+                              '⚠️ Dados criados aqui que ainda não foram sincronizados serão perdidos.',
+                              style: const TextStyle(color: Colors.white70),
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(ctx, false),
+                                child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+                              ),
+                              TextButton(
+                                onPressed: () => Navigator.pop(ctx, true),
+                                child: const Text('Sim, Limpar Local', style: TextStyle(color: Colors.redAccent)),
+                              ),
+                            ],
+                          ),
                         );
+                        if (confirmar != true) return;
+
+                        try {
+                          final resultado = await dataService.resetLocalCacheOnly(
+                            empresaId: empresaAberta?.id,
+                            empresaNome: empresaAberta?.nomeExibicao,
+                          );
+                          messenger.showSnackBar(SnackBar(
+                            content: Text(
+                              resultado.total == 0
+                                  ? '🗑️ Nenhum registro local encontrado para "$empresaNome". '
+                                      'Outras empresas: ${resultado.linhasDeOutrasEmpresas} registro(s) intactos. '
+                                      'A nuvem ficou intacta.'
+                                  : '🗑️ Local de "$empresaNome" limpo: ${resultado.total} registro(s) em '
+                                      '${resultado.tabelas} tabela(s). Outras empresas: '
+                                      '${resultado.linhasDeOutrasEmpresas} registro(s) intactos. '
+                                      'A nuvem ficou intacta — agora use "Puxar Nuvem".',
+                            ),
+                          ));
+                        } catch (e) {
+                          messenger.showSnackBar(SnackBar(
+                            content: Text('❌ Erro ao limpar o local: $e'),
+                            backgroundColor: Colors.red,
+                          ));
+                        }
                       },
                     ),
                     _buildCapsuleActionButton(
@@ -535,7 +683,7 @@ class _HomePageState extends State<HomePage> {
                           try {
                             await dataService.recarregarTudoDoSupabase();
                             ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('✅ Dados puxados da nuvem!'))
+                              SnackBar(content: Text('✅ Dados puxados da nuvem! ${dataService.produtos.length} produtos, ${dataService.clientes.length} clientes.'))
                             );
                           } catch (e) {
                             ScaffoldMessenger.of(context).showSnackBar(
@@ -543,6 +691,28 @@ class _HomePageState extends State<HomePage> {
                             );
                           }
                         }
+                      },
+                    ),
+                    _buildCapsuleActionButton(
+                      icon: Icons.fact_check_outlined,
+                      label: 'Conferir',
+                      color: Colors.lightBlueAccent,
+                      tooltip: 'Conferir Local × Nuvem, empresa por empresa (só leitura)',
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) {
+                              final empresa = Provider.of<DataService>(context,
+                                      listen: false)
+                                  .empresaAtual;
+                              return ConferenciaLocalNuvemPage(
+                                empresaAberta: empresa?.nomeExibicao,
+                                empresaAbertaId: empresa?.id,
+                              );
+                            },
+                          ),
+                        );
                       },
                     ),
                     _buildCapsuleActionButton(
@@ -585,13 +755,53 @@ class _HomePageState extends State<HomePage> {
                       tooltip: 'Zerar Nuvem desta Empresa (CUIDADO)',
                       onTap: () async {
                         final dataService = Provider.of<DataService>(context, listen: false);
-                        // Mostrar diálogo de confirmação extra
+                        final empresaNome = dataService.empresaAtual?.nomeExibicao ?? 'empresa atual';
+
+                        // Contar o que existe na nuvem APENAS para esta empresa (só leitura)
+                        Map<String, int> contagens = {};
+                        try {
+                          contagens = await dataService.contarDadosDaEmpresa();
+                        } catch (_) {}
+
+                        final tabelasComDados = contagens.entries.where((e) => e.value > 0).toList();
+                        final total = tabelasComDados.fold<int>(0, (soma, e) => soma + e.value);
+
+                        // Mostrar diálogo de confirmação extra com nome e contagem
                         final confirmar = await showDialog<bool>(
                           context: context,
                           builder: (context) => AlertDialog(
                             backgroundColor: const Color(0xFF1E1E2E),
                             title: const Text('⚠️ APAGAR NUVEM?', style: TextStyle(color: Colors.white)),
-                            content: const Text('Isso vai apagar TODOS os dados desta empresa no servidor. Tem certeza?', style: TextStyle(color: Colors.white70)),
+                            content: SingleChildScrollView(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Isso vai apagar APENAS os dados da empresa "$empresaNome" no servidor. Tem certeza?',
+                                    style: const TextStyle(color: Colors.white70),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  if (tabelasComDados.isEmpty)
+                                    const Text(
+                                      'Nenhum registro encontrado na nuvem para esta empresa.',
+                                      style: TextStyle(color: Colors.white38, fontSize: 12),
+                                    )
+                                  else ...[
+                                    const Text('Serão apagados na nuvem:',
+                                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                                    const SizedBox(height: 6),
+                                    ...tabelasComDados.map((e) => Text(
+                                          '  • ${e.key}: ${e.value} registro(s)',
+                                          style: const TextStyle(color: Colors.white60, fontSize: 12),
+                                        )),
+                                    const SizedBox(height: 6),
+                                    Text('Total: $total registro(s)',
+                                        style: const TextStyle(color: Colors.amberAccent, fontSize: 12)),
+                                  ],
+                                ],
+                              ),
+                            ),
                             actions: [
                               TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Não', style: TextStyle(color: Colors.white54))),
                               TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Sim, Apagar Tudo', style: TextStyle(color: Colors.red))),
@@ -600,14 +810,22 @@ class _HomePageState extends State<HomePage> {
                         );
 
                         if (confirmar == true) {
-                          await dataService.deletarTudoNoSupabaseDestaEmpresa();
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('🔥 Nuvem limpada com sucesso!'))
-                          );
+                          try {
+                            final removidos = await dataService.deletarTudoNoSupabaseDestaEmpresa();
+                            final qtd = removidos.values.fold<int>(0, (soma, v) => soma + v);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('🔥 Nuvem limpada! $qtd registro(s) removidos da empresa atual.'))
+                            );
+                          } catch (e) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('❌ $e'), backgroundColor: Colors.red.shade900)
+                            );
+                          }
                         }
                       },
                     ),
                   ],
+                  ),
                 );
               },
             ),
@@ -802,7 +1020,39 @@ class _HomePageState extends State<HomePage> {
                       showSubtitle: true,
                     ),
                     const SizedBox(height: 16),
-                    
+
+                    // Aviso de base local limpa: enquanto estiver assim, as listas
+                    // ficam vazias de propósito e só "Puxar Nuvem" traz os dados.
+                    Consumer<DataService>(
+                      builder: (context, dataService, _) {
+                        if (!dataService.baseLocalLimpa) {
+                          return const SizedBox.shrink();
+                        }
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 16),
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                          decoration: BoxDecoration(
+                            color: Colors.orangeAccent.withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.orangeAccent.withOpacity(0.45)),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.warning_amber_rounded, color: Colors.orangeAccent),
+                              const SizedBox(width: 10),
+                              const Expanded(
+                                child: Text(
+                                  'Base local vazia (Limpar Local feito). Nada é recarregado '
+                                  'automaticamente — clique em "Puxar Nuvem" para baixar tudo de novo.',
+                                  style: TextStyle(color: Colors.orangeAccent, fontSize: 12),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+
                     // Grid de botões de navegação
                     _buildNavigationGrid(context),
                   ],

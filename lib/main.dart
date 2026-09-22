@@ -6,6 +6,7 @@ import 'package:sistema_exodo_novo/pages/bloqueio_mensalidade_page.dart';
 import 'package:sistema_exodo_novo/pages/login_page.dart';
 import 'package:sistema_exodo_novo/pages/selecionar_empresa_page.dart';
 import 'package:sistema_exodo_novo/pages/nfe_page.dart';
+import 'package:sistema_exodo_novo/pages/portal_contador_page.dart';
 import 'package:sistema_exodo_novo/services/data_service.dart';
 import 'package:sistema_exodo_novo/services/auth_service.dart';
 import 'package:sistema_exodo_novo/models/empresa.dart';
@@ -186,7 +187,7 @@ class AppRouter {
     'personalizar-loja', 'agenda-pet', 'gerenciar-imagens', 'caixa',
     'comissoes', 'entregas', 'historico-vendas', 'historico-operacoes',
     'gerenciar-usuarios', 'trocas-devolucoes', 'configuracoes-agenda',
-    'taxas-entrega', 'empresas', 'gerenciar-permissoes', 'nfe'
+    'taxas-entrega', 'empresas', 'gerenciar-permissoes', 'nfe', 'portal-contador'
   };
 
   static Map<String, dynamic> analisarUrl() {
@@ -378,7 +379,9 @@ class _MyAppState extends State<MyApp> {
                   slugEmpresa: slugEmpresa,
                   forceAgendamento: isAgendamentoRoute,
                 )
-              : AuthWrapper(subRota: subRotaInterna),
+              : (subRotaInterna == 'portal-contador'
+                  ? const PortalContadorPage()
+                  : AuthWrapper(subRota: subRotaInterna)),
           builder: (context, child) {
             if (child == null) return const Center(child: CircularProgressIndicator());
             
@@ -665,6 +668,18 @@ class _AuthWrapperState extends State<AuthWrapper> {
             // Se o DataService está carregando, mostrar loading
             if (dataService.isLoading == true) {
               return ExodoLoading(mensagem: dataService.mensagemLoading);
+            }
+
+            // Carga inicial da NUVEM: mantém a tela de carregando até os dados
+            // chegarem, para o sistema não abrir com as telas vazias. Sai sozinho
+            // quando terminar (ou no limite de segurança) e o botão "Continuar
+            // sem esperar" libera caso a rede esteja lenta.
+            if (dataService.sincronizandoInicial == true) {
+              return ExodoLoading(
+                mensagem: dataService.mensagemLoading,
+                segundosParaMostrarPular: 5,
+                onPular: dataService.pularEsperaSincronizacaoInicial,
+              );
             }
             
             // Se não está autenticado, mostra a página de login

@@ -7,11 +7,26 @@ import 'exodo_logo.dart';
 class ExodoLoading extends StatefulWidget {
   final String? mensagem;
   final Color? corLoading;
-  
+
+  /// Ação do botão de escape exibido quando o carregamento demora.
+  /// Quando informado (ex.: carga inicial da nuvem), o botão aparece com o
+  /// texto [textoPular] e libera a tela sem interromper a sincronização.
+  /// Sem ele, mantém o comportamento antigo ("Cancelar e Voltar").
+  final VoidCallback? onPular;
+  final String textoPular;
+  final String textoAjudaPular;
+
+  /// Segundos até exibir o botão de escape.
+  final int segundosParaMostrarPular;
+
   const ExodoLoading({
     super.key,
     this.mensagem,
     this.corLoading,
+    this.onPular,
+    this.textoPular = 'Continuar sem esperar',
+    this.textoAjudaPular = 'A sincronização continua em segundo plano.',
+    this.segundosParaMostrarPular = 15,
   });
 
   @override
@@ -41,12 +56,15 @@ class _ExodoLoadingState extends State<ExodoLoading>
       curve: Curves.easeInOut,
     ));
 
-    // Mostrar botão de cancelar após 15 segundos
-    _timerCancelar = Timer(const Duration(seconds: 15), () {
-      if (mounted) {
-        setState(() => _mostrarCancelar = true);
-      }
-    });
+    // Mostrar botão de escape após alguns segundos
+    _timerCancelar = Timer(
+      Duration(seconds: widget.segundosParaMostrarPular),
+      () {
+        if (mounted) {
+          setState(() => _mostrarCancelar = true);
+        }
+      },
+    );
   }
 
   @override
@@ -127,7 +145,7 @@ class _ExodoLoadingState extends State<ExodoLoading>
             if (_mostrarCancelar) ...[
               const SizedBox(height: 40),
               ElevatedButton.icon(
-                onPressed: () => Navigator.pop(context),
+                onPressed: widget.onPular ?? () => Navigator.pop(context),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.white10,
                   foregroundColor: Colors.white70,
@@ -136,13 +154,19 @@ class _ExodoLoadingState extends State<ExodoLoading>
                     borderRadius: BorderRadius.circular(12),
                   ),
                 ),
-                icon: const Icon(Icons.close, size: 20),
-                label: const Text('Cancelar e Voltar'),
+                icon: Icon(
+                  widget.onPular != null ? Icons.skip_next : Icons.close,
+                  size: 20,
+                ),
+                label: Text(widget.onPular != null ? widget.textoPular : 'Cancelar e Voltar'),
               ),
               const SizedBox(height: 12),
-              const Text(
-                'O processo parece estar demorando mais que o normal.',
-                style: TextStyle(color: Colors.white30, fontSize: 11),
+              Text(
+                widget.onPular != null
+                    ? widget.textoAjudaPular
+                    : 'O processo parece estar demorando mais que o normal.',
+                style: const TextStyle(color: Colors.white30, fontSize: 11),
+                textAlign: TextAlign.center,
               ),
             ],
           ],

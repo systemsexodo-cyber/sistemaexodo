@@ -18,39 +18,47 @@ class CozinhaBarPage extends StatefulWidget {
   State<CozinhaBarPage> createState() => _CozinhaBarPageState();
 }
 
-class _CozinhaBarPageState extends State<CozinhaBarPage> with SingleTickerProviderStateMixin {
-  late TabController _tabController;
-  int _ultimoTamanho = 0;
+class _CozinhaBarPageState extends State<CozinhaBarPage>
+    with TickerProviderStateMixin {
+  TabController? _tabController;
+  int _ultimoTamanho = -1;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // Reconstrói as abas quando os departamentos carregam/mudam
-    final tamanho = _abas(context).length;
-    if (tamanho != _ultimoTamanho) {
+    _rebuildTabController(context);
+  }
+
+  void _rebuildTabController(BuildContext context) {
+    final abas = _abas(context);
+    final tamanho = abas.length;
+    final novoLength = tamanho + 1; // departamentos + 'Todos'
+    if (_tabController == null ||
+        _ultimoTamanho != tamanho ||
+        _tabController!.length != novoLength) {
+      final indiceAtual = _tabController?.index ?? 0;
+      final indiceClamped = indiceAtual.clamp(0, novoLength - 1);
+      _tabController?.dispose();
+      _tabController = TabController(
+        length: novoLength,
+        vsync: this,
+        initialIndex: indiceClamped,
+      );
       _ultimoTamanho = tamanho;
-      final novoLength = tamanho + 1; // departamentos + 'Todos'
-      final indiceAtual = _tabController.index.clamp(0, novoLength - 1);
-      final antigo = _tabController;
-      _tabController = TabController(length: novoLength, vsync: this, initialIndex: indiceAtual);
-      antigo.dispose();
     }
   }
 
   @override
   void dispose() {
-    _tabController.dispose();
+    _tabController?.dispose();
     super.dispose();
   }
 
-  /// Monta a lista de abas a partir dos departamentos cadastrados.
-  /// Fallback para os padrões Cozinha/Bar se ainda não houver departamentos.
   List<Departamento> _abas(BuildContext context) {
     final ds = Provider.of<DataService>(context, listen: true);
     final deps = ds.departamentos;

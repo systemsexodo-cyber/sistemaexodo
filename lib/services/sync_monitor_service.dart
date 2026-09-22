@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart';
+import '../models/status_sync.dart';
 import 'supabase_service.dart';
 
 /// Servico de monitoramento de sincronizacao
@@ -12,18 +13,26 @@ class SyncMonitorService {
 
   bool _initialized = false;
   String _pcName = '';
+  String _empresaId = '';
   Timer? _heartbeatTimer;
 
-  /// Inicializa o monitoramento
+  /// Inicializa o monitoramento.
+  ///
+  /// Pode ser chamado de novo a cada troca de empresa: o timer de heartbeat é
+  /// criado uma única vez, mas a empresa monitorada passa a ser a empresa atual
+  /// (senão o monitor mostraria para sempre a primeira empresa aberta).
   void initialize({String empresaId = '', String pcName = ''}) {
+    if (empresaId.isNotEmpty) _empresaId = empresaId;
+    if (pcName.isNotEmpty) _pcName = pcName;
+    if (_pcName.isEmpty) _pcName = _getPcName();
+
     if (_initialized) return;
     _initialized = true;
-    _pcName = pcName.isNotEmpty ? pcName : _getPcName();
 
     // Iniciar heartbeat periodico (a cada 2 minutos)
     _heartbeatTimer = Timer.periodic(const Duration(minutes: 2), (_) {
-      if (empresaId.isNotEmpty) {
-        _atualizarHeartbeat(empresaId);
+      if (_empresaId.isNotEmpty) {
+        _atualizarHeartbeat(_empresaId);
       }
     });
 
@@ -76,14 +85,18 @@ class SyncMonitorService {
     if (!SupabaseService.isAvailable || empresaId.isEmpty) return;
 
     try {
+      final agora = DateTime.now().toUtc().toIso8601String();
       await SupabaseService.instance.upsert('sync_status', {
         'empresa_id': empresaId,
         'pc_name': _pcName,
-        'ultima_sincronizacao': DateTime.now().toUtc().toIso8601String(),
+        'ultima_sincronizacao': agora,
         'fila_pendente': filaPendente,
         'versao_app': versaoApp,
         'online': true,
-        'online_data': DateTime.now().toUtc().toIso8601String(),
+        'online_data': agora,
+        // Zerar o erro anterior: sem isso o monitor continuaria mostrando
+        // "Com Erros" para sempre, mesmo depois de o cliente se recuperar.
+        'ultimo_erro': '',
       });
 
       await SupabaseService.instance.upsert('sync_logs', {
@@ -156,6 +169,46 @@ class SyncMonitorService {
       return result;
     } catch (e) {
       debugPrint('>>> [SyncMonitor] Erro ao buscar status geral: $e');
+      return [];
+    }
+  }
+
+  /// Status de sync de todas as empresas, já interpretado pelo [StatusSync].
+  ///
+  /// Ordenado do pior para o melhor (erro pendente, dias offline, ...), que é a
+  /// ordem em que o suporte precisa olhar.
+  static Future<List<StatusSync>> buscarStatusInterpretado({DateTime? agora}) async {
+    final agora2 = agora ?? DateTime.now();
+    final status = await buscarStatusTodasEmpresas();
+    final interpretados = status
+        .map((linha) =>
+            StatusSync.fromMap(linha['empresa_id']?.toString() ?? '', linha))
+        .toList();
+    interpretados.sort((a, b) => a.compararCom(b, agora2));
+    return interpretados;
+  }
+
+  /// Ultimos eventos de erro de TODAS as empresas (para o painel "Erros
+  /// recentes" do monitor). A tabela `sync_logs` guarda a mensagem completa do
+  /// erro, o PC de origem e o horario.
+  static Future<List<Map<String, dynamic>>> buscarErrosRecentes({
+    int limite = 40,
+  }) async {
+    if (!SupabaseService.isAvailable) return [];
+
+    try {
+      // Filtra no servidor (`erro <> ''`): sem isso, um erro de dois dias atrás
+      // ficaria fora dos "N" eventos mais recentes — que são quase todos
+      // `sync_ok` de rotina — e o painel diria "nenhum erro registrado".
+      return await SupabaseService.instance.select(
+        'sync_logs',
+        filtrosDiferentes: {'erro': ''},
+        orderBy: 'created_at',
+        descending: true,
+        limit: limite,
+      );
+    } catch (e) {
+      debugPrint('>>> [SyncMonitor] Erro ao buscar erros recentes: $e');
       return [];
     }
   }

@@ -82,8 +82,13 @@ echo.
 echo    Dentro do prompt psql, execute:
 echo.
 echo    CREATE USER exodo_user WITH PASSWORD 'senha123';
-echo    CREATE DATABASE exodo_db OWNER exodo_user;
+echo    CREATE DATABASE exodo_db OWNER exodo_user ENCODING 'UTF8' LC_COLLATE 'Portuguese_Brazil.1252' LC_CTYPE 'Portuguese_Brazil.1252' TEMPLATE template0;
 echo    GRANT ALL PRIVILEGES ON DATABASE exodo_db TO exodo_user;
+echo.
+echo    ATENCAO ao ENCODING 'UTF8': sem ele o banco nasce em WIN1252 (locale do
+echo    Windows) e o sistema nao consegue gravar setas (->) nem emojis - o
+echo    historico de produtos usa "->" e o Postgres recusa com o erro 22P05.
+echo    Se o banco ja foi criado sem UTF8, rode MIGRAR_BANCO_LOCAL_UTF8.bat.
 echo    ALTER ROLE exodo_user CREATEDB;
 echo    \q
 echo.

@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 Sincronizador Bidirecional Otimizado: PostgreSQL Local <-> Supabase
 
@@ -23,6 +23,27 @@ from psycopg2.extras import RealDictCursor, Json
 from dotenv import load_dotenv
 import requests
 
+# ─── Cooldown para tabelas ausentes no Supabase (404) ──────────────────
+# Tabelas que retornam 404 são marcadas com timestamp e ignoradas por
+# COOLDOWN_SEGUNDOS segundos, evitando loops infinitos de retry.
+_tabelas_404_cooldown = {}  # nome_tabela -> datetime da última falha
+COOLDOWN_SEGUNDOS = 1800  # 30 minutos
+
+def _em_cooldown(tabela):
+    """Verifica se a tabela está em cooldown (recentemente falhou com 404)."""
+    if tabela not in _tabelas_404_cooldown:
+        return False
+    elapsed = (datetime.now(timezone.utc) - _tabelas_404_cooldown[tabela]).total_seconds()
+    if elapsed > COOLDOWN_SEGUNDOS:
+        del _tabelas_404_cooldown[tabela]
+        return False
+    return True
+
+def _marcar_cooldown(tabela):
+    """Marca a tabela para ser ignorada nos próximos ciclos."""
+    _tabelas_404_cooldown[tabela] = datetime.now(timezone.utc)
+    print_log(f"[SYNC] ⏸️ Tabela '{tabela}' marcada em cooldown por {COOLDOWN_SEGUNDOS}s (ausente no Supabase)", Colors.CYAN)
+
 # Redirecionar stdout/stderr se forem None (evita crashes no PyInstaller --noconsole)
 if sys.stdout is None:
     class DummyWriter:
@@ -35,7 +56,27 @@ if sys.stderr is None:
         def flush(self, *args, **kwargs): pass
     sys.stderr = DummyWriter()
 
-VERSION = "1.0.11"
+VERSION = "1.0.14"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Erros do ciclo (reportados ao portal / monitor de sincronização)
+# ─────────────────────────────────────────────────────────────────────────────
+# O monitor da nuvem só sabe o que o cliente conta. Antes, falha de upload ou
+# de download só aparecia no log local do PC: a máquina ficava "online e sem
+# erro" no portal enquanto nada sincronizava. Agora os erros do ciclo são
+# acumulados e enviados no fim dele (sync_status.ultimo_erro + sync_logs).
+_erros_do_ciclo = []
+
+def registrar_erro_do_ciclo(mensagem):
+    """Guarda o erro para reportar ao portal no fim do ciclo (limitado)."""
+    texto = str(mensagem).strip()
+    if not texto:
+        return
+    if texto in _erros_do_ciclo:
+        return
+    if len(_erros_do_ciclo) < 15:
+        _erros_do_ciclo.append(texto[:180])
 
 
 class Colors:
@@ -85,26 +126,93 @@ def garantir_tabela_controle(conn):
     conn.commit()
 
 
-def get_ultima_sync_tabela(conn, table_name):
+# ─────────────────────────────────────────────────────────────────────────────
+# Empresa ativa (ponte com o app desktop) e cursores POR EMPRESA
+# ─────────────────────────────────────────────────────────────────────────────
+# O app desktop grava a empresa ABERTA na tabela local `cache_dados`, chave
+# `exodo_empresa_ativa`. Com essa chave preenchida, o sincronizador importa
+# SOMENTE os registros dessa empresa — é o que mantém a base local contendo
+# apenas os dados da empresa que está em uso no app.
+#
+# Cada empresa tem o SEU cursor de sincronização (`sync_<tabela>__<empresa>`).
+# Sem isso, ao abrir outra empresa o cursor global (já avançado) esconderia os
+# registros antigos dela e a base local ficaria incompleta.
+CHAVE_CACHE_EMPRESA_ATIVA = 'exodo_empresa_ativa'
+CHAVE_CTRL_ULTIMA_EMPRESA = 'ultima_empresa_ativa'
+CHAVE_CTRL_LIMPAR_OUTRAS  = 'limpar_outras_empresas_local'
+
+_EPOCH = "1970-01-01T00:00:00+00:00"
+
+
+def ler_cache_dados(conn, chave):
+    """Lê uma chave da tabela local cache_dados (aceita texto puro ou JSON)."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT valor_json FROM cache_dados WHERE chave=%s", (chave,))
+            row = cur.fetchone()
+        if not row or row[0] is None:
+            return None
+        valor = row[0]
+        texto = valor if isinstance(valor, str) else str(valor)
+        texto = texto.strip()
+        if not texto:
+            return None
+        try:
+            decodificado = json.loads(texto)
+            if isinstance(decodificado, str):
+                texto = decodificado
+            elif isinstance(decodificado, dict):
+                texto = decodificado.get('empresaId') or decodificado.get('id') or ''
+            elif decodificado is None:
+                return None
+            elif isinstance(decodificado, (int, float)):
+                texto = str(decodificado)
+        except Exception:
+            pass
+        texto = texto.strip().strip('"')
+        return texto or None
+    except Exception:
+        # cache_dados pode não existir em instalações antigas
+        return None
+
+
+def obter_empresa_ativa(conn):
+    """Empresa aberta no app, ou None quando a ponte ainda não foi preenchida.
+
+    Com None o sincronizador mantém o comportamento antigo (baixa todas as
+    empresas), para não quebrar instalações que ainda não têm o app novo.
+    """
+    return ler_cache_dados(conn, CHAVE_CACHE_EMPRESA_ATIVA)
+
+
+def _chave_sync_tabela(table_name, empresa_id=None):
+    """Nome da chave de cursor: por empresa quando houver, global se não."""
+    return f"sync_{table_name}__{empresa_id}" if empresa_id else f"sync_{table_name}"
+
+
+def get_ultima_sync_tabela(conn, table_name, empresa_id=None):
     """Retorna o timestamp da última sincronização da tabela ou epoch se nunca rodou."""
-    chave = f"sync_{table_name}"
+    chave = _chave_sync_tabela(table_name, empresa_id)
     with conn.cursor() as cur:
         cur.execute("SELECT valor FROM _sync_controle WHERE chave=%s", (chave,))
         row = cur.fetchone()
     if row:
         return row[0]
+    if empresa_id:
+        # Primeira vez que esta empresa é aberta pelo app: baixa ela inteira.
+        return _EPOCH
     # Se não houver timestamp específico para a tabela, tenta buscar a global antiga
     with conn.cursor() as cur:
         cur.execute("SELECT valor FROM _sync_controle WHERE chave='ultima_sincronizacao'")
         row = cur.fetchone()
     if row:
         return row[0]
-    return "1970-01-01T00:00:00+00:00"
+    return _EPOCH
 
 
-def salvar_ultima_sync_tabela(conn, table_name, timestamp_iso):
-    """Salva o timestamp da sincronização de uma tabela específica."""
-    chave = f"sync_{table_name}"
+def salvar_ultima_sync_tabela(conn, table_name, timestamp_iso, empresa_id=None):
+    """Salva o timestamp da sincronização (por empresa, quando houver)."""
+    chave = _chave_sync_tabela(table_name, empresa_id)
     with conn.cursor() as cur:
         cur.execute("""
             INSERT INTO _sync_controle (chave, valor)
@@ -112,6 +220,46 @@ def salvar_ultima_sync_tabela(conn, table_name, timestamp_iso):
             ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor
         """, (chave, timestamp_iso))
     conn.commit()
+
+
+def deve_limpar_outras_empresas(conn, empresa_ativa, ja_limpou_nesta_execucao):
+    """A base local precisa ser limpa das outras empresas agora?
+
+    Sim no PRIMEIRO ciclo de cada execução (garante que, ao subir, a base local
+    passe a conter só a empresa aberta) e sempre que a empresa aberta mudar.
+    Nao roda em todo ciclo para nao ficar apagando à toa.
+    """
+    if not empresa_ativa:
+        return False
+    if not ja_limpou_nesta_execucao:
+        return True
+    return empresa_ativa_mudou(conn, empresa_ativa)
+
+
+def empresa_ativa_mudou(conn, empresa_ativa):
+    """A empresa aberta no app é diferente da última vista por este sincronizador?"""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT valor FROM _sync_controle WHERE chave=%s",
+                        (CHAVE_CTRL_ULTIMA_EMPRESA,))
+            row = cur.fetchone()
+        return (row[0] if row else None) != empresa_ativa
+    except Exception:
+        return False
+
+
+def salvar_empresa_ativa_vista(conn, empresa_ativa):
+    """Registra qual empresa o sincronizador está tratando agora."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO _sync_controle (chave, valor)
+                VALUES (%s, %s)
+                ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor
+            """, (CHAVE_CTRL_ULTIMA_EMPRESA, empresa_ativa))
+        conn.commit()
+    except Exception as e:
+        print_log(f"[EMPRESA] Não foi possível registrar a empresa ativa: {e}", Colors.YELLOW)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -139,6 +287,8 @@ TABELA_PRIORIDADES = {
     'empresas': 0,  # SEMPRE primeiro: pedidos/vendas referenciam empresa_id (evita falhas de FK)
     'vendas_balcao': 1,
     'pedidos': 1,
+    'servicos_realizados': 1,
+    'orcamentos': 1,
     'aberturas_caixa': 1,
     'fechamentos_caixa': 1,
     'sangrias_caixa': 1,
@@ -238,7 +388,9 @@ def get_supabase_colunas(supabase_url, api_key, table_name):
 
 
 def fetch_json(url, api_key):
-    """Executa requisições GET usando a sessão Keep-Alive configurada."""
+    """Executa requisições GET usando a sessão Keep-Alive configurada.
+    Retorna (dados, status_code) onde dados é None em caso de erro.
+    """
     headers = {
         'Accept':        'application/json',
         'apikey':        api_key,
@@ -247,14 +399,16 @@ def fetch_json(url, api_key):
     session = get_http_session()
     try:
         response = session.get(url, headers=headers, timeout=30)
+        if response.status_code == 404:
+            return None, 404
         response.raise_for_status()
-        return response.json()
+        return response.json(), response.status_code
     except requests.exceptions.HTTPError as e:
         print_log(f"HTTP {e.response.status_code}: {e.response.text}", Colors.RED)
-        return None
+        return None, e.response.status_code
     except Exception as e:
         print_log(f"Erro de conexao: {e}", Colors.RED)
-        return None
+        return None, 0
 
 
 def get_colunas_e_tipos_tabela(conn, table_name):
@@ -292,7 +446,7 @@ def coluna_timestamp_tabela(conn, table_name):
         if col in colunas:
             return col
     return None
-def upload_tabela(conn, table_name, supabase_url, api_key):
+def upload_tabela(conn, table_name, supabase_url, api_key, empresa_filtro=None):
     """Envia dados modificados locais de uma tabela para a nuvem."""
     # Tabelas que sao somente leitura (down-only) para o cliente:
     # Apenas limpamos os logs locais correspondentes para nao gerar falhas de RLS
@@ -360,7 +514,10 @@ def upload_tabela(conn, table_name, supabase_url, api_key):
 
         # Tratar conflitos e identificar registros idênticos
         if nuvem_dict:
-            last_sync_time = get_ultima_sync_tabela(conn, table_name)
+            # Mesma chave de cursor usada no download (por empresa, quando há
+            # empresa ativa publicada pelo app) para o julgamento de conflito
+            # ficar coerente com o que foi baixado.
+            last_sync_time = get_ultima_sync_tabela(conn, table_name, empresa_filtro)
             col_ts = coluna_timestamp_tabela(conn, table_name)
             cols_to_check = supabase_cols if supabase_cols else set(get_colunas_tabela(conn, table_name))
             
@@ -424,7 +581,8 @@ def upload_tabela(conn, table_name, supabase_url, api_key):
                                     break
                                     
                         if conflito and diferente:
-                            print_log(f"[CONFLITO] Detectado conflito na tabela '{table_name}' para registro ID '{record_id}'", Colors.YELLOW)
+                            print_log(f"[CONFLITO] Detectado conflito na tabela '{table_name}' para registro ID '{record_id}'. DADOS DA NUVEM MANTIDOS.", Colors.YELLOW)
+                            identical_ids.add(record_id)  # <-- Impede que o dado local sobrescreva a nuvem
                             conflict_id = str(uuid.uuid4())
                             try:
                                 with conn.cursor() as cur_conf:
@@ -473,6 +631,24 @@ def upload_tabela(conn, table_name, supabase_url, api_key):
                 row = rows_dict.get(record_id)
                 if row:
                     row_dict = row
+
+                    # ⛔ TRAVA DE EMPRESA: se a tabela tem empresa_id, verificar
+                    # que o registro pertence à empresa ativa antes de enviar para
+                    # a nuvem. Isso impede que dados de uma empresa contaminem o
+                    # espaço de outra empresa na nuvem.
+                    if empresa_filtro and 'empresa_id' in row_dict:
+                        empresa_do_registro = str(row_dict.get('empresa_id') or '')
+                        if empresa_do_registro and empresa_do_registro != str(empresa_filtro):
+                            print_log(
+                                f"[UPLOAD] 🚨 ALARME: registro bloqueado em '{table_name}' "
+                                f"(id={record_id}): empresa_id='{empresa_do_registro}' "
+                                f"difere da empresa ativa='{empresa_filtro}'. "
+                                "Upload cancelado para este registro.",
+                                Colors.RED
+                            )
+                            log_ids_to_delete.append(log_id)  # Limpar log inválido
+                            continue
+
                     if supabase_cols is not None:
                         # Mantem apenas colunas que de fato existem no Supabase
                         row_dict = {k: v for k, v in row_dict.items() if k in supabase_cols}
@@ -523,11 +699,18 @@ def upload_tabela(conn, table_name, supabase_url, api_key):
         
     except requests.exceptions.HTTPError as e:
         conn.rollback()
-        print_log(f"[UPLOAD] {table_name}: erro no envio HTTP {e.response.status_code} - {e.response.text}", Colors.RED)
+        status = e.response.status_code if e.response is not None else 0
+        if status == 404:
+            if table_name not in _tabelas_404_cooldown:
+                _marcar_cooldown(table_name)
+            return 0
+        print_log(f"[UPLOAD] {table_name}: erro no envio HTTP {status} - {e.response.text}", Colors.RED)
+        registrar_erro_do_ciclo(f"upload {table_name}: HTTP {status}")
         return 0
     except Exception as e:
         conn.rollback()
         print_log(f"[UPLOAD] {table_name}: erro no envio - {e}", Colors.RED)
+        registrar_erro_do_ciclo(f"upload {table_name}: {e}")
         return 0
 
 
@@ -633,14 +816,37 @@ def _serializar_valor_com_tipo(val, col_type):
     return val
 
 
-def fetch_updates_tabela(table_name, desde_timestamp, supabase_url, api_key):
-    """Consulta dados novos na nuvem para uma tabela (executada concorrentemente)."""
+def fetch_updates_tabela(table_name, desde_timestamp, supabase_url, api_key, empresa_filtro=None):
+    """Consulta dados novos na nuvem para uma tabela (executada concorrentemente).
+
+    Quando `empresa_filtro` vem preenchido (empresa aberta no app) e a tabela
+    tem a coluna empresa_id, baixa SOMENTE os registros dessa empresa.
+    """
     if table_name.startswith('vw_') or table_name.startswith('view_'):
         return table_name, None, True
 
     global _colunas_e_tipos_cache
     colunas = _colunas_e_tipos_cache.get(table_name, {})
-    
+
+    # Filtro por empresa: só faz sentido em tabelas que são por empresa.
+    # SEGURANÇA: se empresa_filtro está definida mas o cache de colunas não foi
+    # carregado ainda (colunas vazio), NÃO baixamos dados — seria arriscado baixar
+    # tudo sem o filtro. A próxima rodada do ciclo já terá o cache populado.
+    filtro_empresa = ''
+    if empresa_filtro:
+        if 'empresa_id' in colunas:
+            filtro_empresa = f"&empresa_id=eq.{urllib.parse.quote(str(empresa_filtro), safe='')}"
+        elif not colunas:
+            # Cache ainda não carregado para esta tabela: adiar download para
+            # evitar baixar dados de TODAS as empresas sem filtro.
+            print_log(
+                f"[DOWNLOAD] {table_name}: cache de colunas vazio e empresa_filtro definida. "
+                "Adiando download até o cache ser carregado (próximo ciclo).",
+                Colors.YELLOW
+            )
+            return table_name, None, False, False
+        # else: tabela sem empresa_id (ex.: 'empresas'), baixa normalmente sem filtro.
+
     col_ts = None
     for col in ('updated_at', 'created_at', 'criado_em', 'data_alteracao', 'data_venda', 'data'):
         if col in colunas:
@@ -655,16 +861,21 @@ def fetch_updates_tabela(table_name, desde_timestamp, supabase_url, api_key):
     while True:
         if col_ts:
             ts_encoded = urllib.parse.quote(desde_timestamp)
-            params = f"select=*&{col_ts}=gte.{ts_encoded}&order={col_ts}.asc&limit={BATCH_SIZE}&offset={offset}"
+            params = (f"select=*&{col_ts}=gte.{ts_encoded}{filtro_empresa}"
+                      f"&order={col_ts}.asc&limit={BATCH_SIZE}&offset={offset}")
         else:
-            params = f"select=*&limit={BATCH_SIZE}&offset={offset}"
+            params = f"select=*{filtro_empresa}&limit={BATCH_SIZE}&offset={offset}"
 
         url = f"{supabase_url.rstrip('/')}/rest/v1/{urllib.parse.quote(table_name, safe='')}?{params}"
-        rows = fetch_json(url, api_key)
+        rows, status_code = fetch_json(url, api_key)
         
         if rows is None:
             if offset == 0:
-                return table_name, None, False
+                # status_code 404 = tabela não existe no Supabase (cooldown)
+                # status_code 0 = erro de rede/transitório (não marca cooldown)
+                if status_code == 404:
+                    return table_name, None, False, True   # is_404=True
+                return table_name, None, False, False       # is_404=False
             break
         
         all_rows.extend(rows)
@@ -673,15 +884,22 @@ def fetch_updates_tabela(table_name, desde_timestamp, supabase_url, api_key):
             break
         offset += BATCH_SIZE
     
-    return table_name, all_rows, True
+    return table_name, all_rows, True, False
 
 
-def gravar_registros_locais(conn, table_name, rows):
-    """Persiste no banco de dados local os dados baixados do Supabase."""
+def gravar_registros_locais(conn, table_name, rows, empresa_filtro=None):
+    """Persiste no banco de dados local os dados baixados do Supabase.
+
+    Se `empresa_filtro` for fornecido e a tabela tiver a coluna empresa_id,
+    rejeita silenciosamente qualquer registro cujo empresa_id não coincida —
+    isso garante que dados de empresas diferentes nunca se misturem no banco local.
+    """
     colunas_e_tipos = get_colunas_e_tipos_tabela(conn, table_name)
     colunas_local = set(colunas_e_tipos.keys())
-    
+    tabela_tem_empresa_id = 'empresa_id' in colunas_local
+
     importados = 0
+    rejeitados_empresa = 0
     try:
         with conn.cursor() as cur:
             cur.execute("SET LOCAL exodo.sync_mode = 'on'")
@@ -689,6 +907,17 @@ def gravar_registros_locais(conn, table_name, rows):
                 row_filtrado = {k: v for k, v in row.items() if k in colunas_local}
                 if not row_filtrado or 'id' not in row_filtrado:
                     continue
+
+                # ⛔ TRAVA DE EMPRESA (nível de gravação local): se a tabela tem
+                # empresa_id e há uma empresa ativa definida, rejeitar qualquer
+                # registro de outra empresa. Sem isso, dados de empresas diferentes
+                # poderiam ser gravados no banco local e aparecer na tela errada.
+                if empresa_filtro and tabela_tem_empresa_id:
+                    empresa_do_registro = str(row_filtrado.get('empresa_id') or '')
+                    if empresa_do_registro and empresa_do_registro != str(empresa_filtro):
+                        rejeitados_empresa += 1
+                        continue
+
                 colunas = list(row_filtrado.keys())
                 valores = [_serializar_valor_com_tipo(row_filtrado[k], colunas_e_tipos.get(k, 'TEXT')) for k in colunas]
                 cols_sql = ', '.join([f'"{c}"' for c in colunas])
@@ -702,6 +931,13 @@ def gravar_registros_locais(conn, table_name, rows):
                 cur.execute(sql, valores)
                 importados += 1
         conn.commit()
+        if rejeitados_empresa > 0:
+            print_log(
+                f"[DOWNLOAD] 🚨 ALARME: {rejeitados_empresa} registro(s) de OUTRAS empresas "
+                f"rejeitados ao gravar em '{table_name}' (empresa_filtro='{empresa_filtro}'). "
+                "A nuvem pode conter dados misturados — verifique o Supabase.",
+                Colors.RED
+            )
     except Exception as e_batch:
         conn.rollback()
         print_log(f"[DOWNLOAD] {table_name}: erro na transação em lote ({e_batch}). Iniciando modo resiliente...", Colors.YELLOW)
@@ -710,6 +946,14 @@ def gravar_registros_locais(conn, table_name, rows):
             row_filtrado = {k: v for k, v in row.items() if k in colunas_local}
             if not row_filtrado or 'id' not in row_filtrado:
                 continue
+
+            # ⛔ TRAVA DE EMPRESA (modo resiliente): mesma verificação do modo em lote.
+            if empresa_filtro and tabela_tem_empresa_id:
+                empresa_do_registro = str(row_filtrado.get('empresa_id') or '')
+                if empresa_do_registro and empresa_do_registro != str(empresa_filtro):
+                    rejeitados_empresa += 1
+                    continue
+
             colunas = list(row_filtrado.keys())
             valores = [_serializar_valor_com_tipo(row_filtrado[k], colunas_e_tipos.get(k, 'TEXT')) for k in colunas]
             cols_sql = ', '.join([f'"{c}"' for c in colunas])
@@ -730,23 +974,116 @@ def gravar_registros_locais(conn, table_name, rows):
                 conn.rollback()
                 print_log(f"[DOWNLOAD] {table_name} (Registro {row_filtrado.get('id')}): falha - {e_row}", Colors.RED)
 
+    if rejeitados_empresa > 0:
+        print_log(
+            f"[DOWNLOAD] 🚨 ALARME: {rejeitados_empresa} registro(s) de OUTRAS empresas "
+            f"rejeitados (modo resiliente) em '{table_name}' (empresa_filtro='{empresa_filtro}'). "
+            "A nuvem pode conter dados misturados — verifique o Supabase.",
+            Colors.RED
+        )
+
     if importados > 0:
         print_log(f"[DOWNLOAD] {table_name}: {importados} registro(s) recebidos da nuvem", Colors.GREEN)
         
     return importados
 
 
-def download_tabela(conn, table_name, supabase_url, api_key, desde_timestamp):
+def download_tabela(conn, table_name, supabase_url, api_key, desde_timestamp, empresa_filtro=None):
     """Baixa registros (wrapper síncrono legado para compatibilidade com outras chamadas)."""
     carregar_meta_colunas(conn)
-    _, rows, sucesso = fetch_updates_tabela(table_name, desde_timestamp, supabase_url, api_key)
+    _, rows, sucesso, _ = fetch_updates_tabela(table_name, desde_timestamp, supabase_url, api_key, empresa_filtro)
     if not sucesso:
         return 0, False
     if not rows:
         return 0, True
     
-    importados = gravar_registros_locais(conn, table_name, rows)
+    importados = gravar_registros_locais(conn, table_name, rows, empresa_filtro=empresa_filtro)
     return importados, True
+
+
+# Vira True depois da primeira limpeza desta execução do sincronizador.
+_limpou_outras_empresas_nesta_execucao = False
+
+_tem_tabela_log_cache = None
+
+
+def _tem_tabela_log(conn):
+    """A tabela de log do trigger existe? (cacheado por processo)"""
+    global _tem_tabela_log_cache
+    if _tem_tabela_log_cache is None:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables
+                        WHERE table_schema = 'public' AND table_name = '_exodo_sync_log'
+                    )
+                """)
+                _tem_tabela_log_cache = bool(cur.fetchone()[0])
+        except Exception:
+            _tem_tabela_log_cache = False
+    return _tem_tabela_log_cache
+
+
+def remover_dados_de_outras_empresas(conn, empresa_ativa, tabelas):
+    """Apaga da base LOCAL as linhas das OUTRAS empresas.
+
+    É o que faz a base local conter SOMENTE a empresa aberta no app.
+
+    Seguranças:
+      - roda com `exodo.sync_mode = 'on'`, então o trigger `log_sync_event` NÃO
+        registra estes DELETEs e o sincronizador nunca os propaga para a nuvem
+        (a nuvem não é tocada em nenhuma hipótese);
+      - NUNCA apaga registro com alteração PENDENTE de envio (linha em
+        `_exodo_sync_log`): o que ainda não subiu para a nuvem fica onde está;
+      - respeita `_sincronizado_nuvem` quando a tabela tiver essa coluna;
+      - tabelas sem a coluna empresa_id são ignoradas;
+      - pode ser desligado com `_sync_controle['limpar_outras_empresas_local'] = false`.
+
+    Nada se perde de vez: quando a outra empresa for aberta no app, o cursor
+    dela (que é por empresa) é novo, então ela é baixada inteira de volta.
+    """
+    desligado = ler_cache_dados(conn, CHAVE_CTRL_LIMPAR_OUTRAS)
+    if desligado is not None and str(desligado).strip().lower() in ('0', 'false', 'nao', 'não', 'off'):
+        print_log("[EMPRESA] Limpeza local das outras empresas está desativada "
+                  f"(_sync_controle.{CHAVE_CTRL_LIMPAR_OUTRAS}).", Colors.YELLOW)
+        return 0
+
+    tem_log = _tem_tabela_log(conn)
+    total_geral = 0
+    for tabela in tabelas:
+        colunas = _colunas_e_tipos_cache.get(tabela) or {}
+        if 'empresa_id' not in colunas:
+            continue
+        where = "empresa_id IS DISTINCT FROM %s"
+        params = [empresa_ativa]
+        if '_sincronizado_nuvem' in colunas:
+            where += " AND _sincronizado_nuvem IS NOT FALSE"
+        if tem_log and 'id' in colunas:
+            where += (" AND id NOT IN (SELECT record_id FROM _exodo_sync_log "
+                      "WHERE table_name = %s)")
+            params.append(tabela)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SET exodo.sync_mode = 'on'")
+                cur.execute(f'DELETE FROM "{tabela}" WHERE {where}', tuple(params))
+                removidas = cur.rowcount
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            print_log(f"[EMPRESA] {tabela}: falha ao limpar outras empresas ({e})", Colors.RED)
+            continue
+        if removidas:
+            total_geral += removidas
+            print_log(f"[EMPRESA] {tabela}: {removidas} linha(s) de OUTRAS empresas "
+                      f"removidas da base local (somente local).", Colors.YELLOW)
+
+    if total_geral:
+        print_log(f"[EMPRESA] Base local agora contém somente a empresa ativa "
+                  f"({total_geral} linha(s) de outras empresas removidas).", Colors.GREEN)
+    else:
+        print_log("[EMPRESA] Base local já continha somente a empresa ativa.", Colors.GREEN)
+    return total_geral
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -939,35 +1276,49 @@ def executar_atualizacao_completa(supabase_url, api_key):
             return False, "Nenhum executavel foi baixado com sucesso."
             
         # Gravar o BAT de substituição
-        bat_path = os.path.join(base_dir, "update_exodo_system.bat")
+        # Usar VBScript em vez de .bat para NÃO abrir janela CMD visível.
+        # O .bat com 'start ""' cria uma janela preta no cliente.
+        vbs_path = os.path.join(base_dir, "update_exodo_system.vbs")
         
-        # Construir comandos do BAT
-        bat_lines = [
-            "@echo off",
-            "timeout /t 3 /nobreak >nul",
-            "taskkill /F /IM sistema_exodo_novo.exe >nul 2>&1",
-            "taskkill /F /IM ExodoNfceBridge.exe >nul 2>&1",
-            "taskkill /F /IM ExodoNfceBridgeWatchdog.exe >nul 2>&1",
-            "taskkill /F /IM SincronizadorNuvem.exe >nul 2>&1",
-            "taskkill /F /IM python.exe >nul 2>&1",
-            "timeout /t 1 /nobreak >nul"
+        vbs_lines = [
+            'Set sh = CreateObject("WScript.Shell")',
+            'WScript.Sleep 3000',
         ]
         
-        for filename in baixados:
-            bat_lines.append(f'if exist "{filename}.new" move /Y "{filename}.new" "{filename}"')
-            
-        # Reiniciar os serviços
-        bat_lines.append('if exist "ExodoNfceBridgeWatchdog.exe" (start "" "ExodoNfceBridgeWatchdog.exe") else (if exist "ExodoNfceBridge.exe" start "" "ExodoNfceBridge.exe")')
-        bat_lines.append('if exist "SincronizadorNuvem.exe" start "" "SincronizadorNuvem.exe"')
-        bat_lines.append('if exist "sistema_exodo_novo.exe" start "" "sistema_exodo_novo.exe"')
-        bat_lines.append('del "%~f0"')
+        # Matar processos antigos
+        for proc in ['sistema_exodo_novo.exe', 'ExodoNfceBridge.exe', 
+                      'ExodoNfceBridgeWatchdog.exe', 'SincronizadorNuvem.exe', 'python.exe']:
+            vbs_lines.append(f'sh.Run "cmd /c taskkill /F /IM {proc}", 0, False')
         
-        with open(bat_path, "w", encoding="ansi") as f:
-            f.write("\n".join(bat_lines))
+        vbs_lines.append('WScript.Sleep 1500')
+        
+        # Mover arquivos baixados
+        for filename in baixados:
+            vbs_lines.append(f'sh.Run "cmd /c if exist \"{filename}.new\" move /Y \"{filename}.new\" \"{filename}\"", 0, True')
+        
+        # Reiniciar serviços (2º arg = 0 → sem janela)
+        if 'ExodoNfceBridgeWatchdog.exe' in baixados:
+            vbs_lines.append('sh.Run "cmd /c if exist \"ExodoNfceBridgeWatchdog.exe\" start /b \"\" \"ExodoNfceBridgeWatchdog.exe\"", 0, False')
+        elif 'ExodoNfceBridge.exe' in baixados:
+            vbs_lines.append('sh.Run "cmd /c if exist \"ExodoNfceBridge.exe\" start /b \"\" \"ExodoNfceBridge.exe\" --silent", 0, False')
+        if 'SincronizadorNuvem.exe' in baixados:
+            vbs_lines.append('sh.Run "cmd /c if exist \"SincronizadorNuvem.exe\" start /b \"\" \"SincronizadorNuvem.exe\"", 0, False')
+        if 'sistema_exodo_novo.exe' in baixados:
+            vbs_lines.append('sh.Run "cmd /c if exist \"sistema_exodo_novo.exe\" start /b \"\" \"sistema_exodo_novo.exe\"", 0, False')
+        
+        # Auto-deletar
+        vbs_lines.append('WScript.Sleep 500')
+        vbs_lines.append('Set fso = CreateObject("Scripting.FileSystemObject")')
+        vbs_lines.append('fso.DeleteFile WScript.ScriptFullName')
+        
+        with open(vbs_path, "w", encoding="utf-8") as f:
+            f.write("\r\n".join(vbs_lines))
             
-        # Disparar BAT e sair
-        print_log(f"[CMD] Executando script de swap e fechando: {bat_path}", Colors.BLUE)
-        subprocess.Popen([bat_path], shell=True)
+        # Disparar VBScript (roda tudo escondido, sem janela CMD)
+        print_log(f"[CMD] Executando script de swap (VBScript) e fechando: {vbs_path}", Colors.BLUE)
+        subprocess.Popen(['wscript.exe', vbs_path],
+                         creationflags=0x08000000 if os.name == 'nt' else 0,
+                         close_fds=True)
         
         # Usar um thread separado para fechar o synchronizador após o delay do BAT
         def self_exit():
@@ -1058,6 +1409,9 @@ def processar_comandos_no_supabase(conn, supabase_url, api_key):
 
 def executar_ciclo_sincronizacao(conn, supabase_url, api_key, on_state_change=None):
     """Executa o ciclo completo de sincronização utilizando downloads concorrentes em threads."""
+    global _erros_do_ciclo
+    _erros_do_ciclo = []
+
     if on_state_change:
         on_state_change('syncing')
 
@@ -1070,6 +1424,16 @@ def executar_ciclo_sincronizacao(conn, supabase_url, api_key, on_state_change=No
 
     carregar_meta_colunas(conn)
     garantir_tabela_controle(conn)
+
+    # Empresa ABERTA no app (ponte via tabela local cache_dados). Preenchida =
+    # importa somente ela. Vazia = comportamento antigo (todas as empresas).
+    empresa_ativa = obter_empresa_ativa(conn)
+    if empresa_ativa:
+        print_log(f"[EMPRESA] Empresa ativa no app: {empresa_ativa} — "
+                  f"importando somente os dados dela.", Colors.BLUE)
+    else:
+        print_log("[EMPRESA] O app ainda não publicou a empresa ativa: "
+                  "importando todas (comportamento antigo).", Colors.YELLOW)
     
     # Configurar exodo.sync_mode = 'on' na sessão para desativar triggers em todas as conexões/transações do sincronizador
     with conn.cursor() as cur:
@@ -1106,29 +1470,45 @@ def executar_ciclo_sincronizacao(conn, supabase_url, api_key, on_state_change=No
     
     # 1. UPLOAD SEQUENCIAL (evita concorrência na tabela _exodo_sync_log)
     for tabela in tabelas:
-        enviados = upload_tabela(conn, tabela, supabase_url, api_key)
+        if _em_cooldown(tabela):
+            continue
+        enviados = upload_tabela(conn, tabela, supabase_url, api_key, empresa_ativa)
         total_enviados += enviados
 
     # 2. SAFEGUARD: Se tabelas críticas estão vazias mas _sync_controle tem
     #    timestamp antigo (desinstalação/corrupção), forçar full download.
     #    Sem isso, registros antigos nunca seriam baixados do Supabase.
-    _EPOCH = "1970-01-01T00:00:00+00:00"
+    tabelas_vazias_localmente = set()
     for tabela in tabelas:
         try:
             with conn.cursor() as cur:
                 cur.execute(f'SELECT COUNT(*) FROM "{tabela}"')
                 count = cur.fetchone()[0]
             if count == 0:
-                ultima_salva = get_ultima_sync_tabela(conn, tabela)
+                tabelas_vazias_localmente.add(tabela)
+                ultima_salva = get_ultima_sync_tabela(conn, tabela, empresa_ativa)
                 if ultima_salva != _EPOCH:
                     print_log(
                         f"[SYNC] ⚠️ Tabela '{tabela}' vazia mas timestamp de sync existe "
                         f"({ultima_salva}). Resetando para full download.",
                         Colors.YELLOW
                     )
-                    salvar_ultima_sync_tabela(conn, tabela, _EPOCH)
+                    salvar_ultima_sync_tabela(conn, tabela, _EPOCH, empresa_ativa)
         except Exception:
             pass  # Tabela pode não existir ainda; sem problema
+
+    # 2.b Base local somente com a empresa ativa: quando a empresa aberta no app
+    #     muda, remove da base LOCAL as linhas das outras empresas. A nuvem não
+    #     é tocada (os DELETEs não entram no log de sincronização).
+    if empresa_ativa:
+        global _limpou_outras_empresas_nesta_execucao
+        if deve_limpar_outras_empresas(
+                conn, empresa_ativa, _limpou_outras_empresas_nesta_execucao):
+            print_log(f"[EMPRESA] Empresa ativa {empresa_ativa}: limpando da base "
+                      f"local os dados das outras empresas...", Colors.YELLOW)
+            remover_dados_de_outras_empresas(conn, empresa_ativa, tabelas)
+            _limpou_outras_empresas_nesta_execucao = True
+        salvar_empresa_ativa_vista(conn, empresa_ativa)
 
     # 3. DOWNLOAD PARALELO: Executa as requisições HTTP na nuvem em paralelo
     futuros = []
@@ -1136,36 +1516,55 @@ def executar_ciclo_sincronizacao(conn, supabase_url, api_key, on_state_change=No
     
     with ThreadPoolExecutor(max_workers=10) as executor:
         for tabela in tabelas:
-            ultima_sync_tabela = get_ultima_sync_tabela(conn, tabela)
+            # Pular tabelas em cooldown (404 recente no Supabase)
+            if _em_cooldown(tabela):
+                continue
+            ultima_sync_tabela = get_ultima_sync_tabela(conn, tabela, empresa_ativa)
             futuros.append(
                 executor.submit(
                     fetch_updates_tabela,
                     tabela,
                     ultima_sync_tabela,
                     supabase_url,
-                    api_key
+                    api_key,
+                    empresa_ativa
                 )
             )
 
     # Grava os resultados de download de forma síncrona/sequencial no banco local
     for f in futuros:
         try:
-            tabela, rows, sucesso = f.result()
+            tabela, rows, sucesso, is_404 = f.result()
             if sucesso:
                 if rows:
-                    recebidos = gravar_registros_locais(conn, tabela, rows)
+                    recebidos = gravar_registros_locais(conn, tabela, rows, empresa_filtro=empresa_ativa)
                     total_recebidos += recebidos
                     # So avanca o timestamp da tabela se a gravacao teve sucesso.
                     # Se TODOS os registros falharam, o timestamp NAO avanca e a
                     # proxima rodada tenta de novo (evita perder registros).
                     if recebidos > 0:
-                        salvar_ultima_sync_tabela(conn, tabela, agora_iso)
-                else:
-                    salvar_ultima_sync_tabela(conn, tabela, agora_iso)
+                        salvar_ultima_sync_tabela(conn, tabela, agora_iso, empresa_ativa)
+                elif tabela not in tabelas_vazias_localmente:
+                    # Tabela com dados local e nada novo na nuvem: avanca o cursor.
+                    salvar_ultima_sync_tabela(conn, tabela, agora_iso, empresa_ativa)
+                # Tabela VAZIA localmente: o cursor fica onde está (epoch, logo
+                # após o reset) e ela é re-checada no próximo ciclo — sem ficar
+                # resetando e logando para sempre.
             else:
-                print_log(f"[SYNC] Falha ao baixar dados da tabela {tabela}", Colors.YELLOW)
+                if is_404:
+                    # Tabela não existe no Supabase (404) — marcar cooldown
+                    if tabela not in _tabelas_404_cooldown:
+                        _marcar_cooldown(tabela)
+                    # else: já em cooldown, silencioso
+                else:
+                    # Erro transiente (rede, timeout, 5xx) — não marca cooldown
+                    # mas limita o log para não poluir
+                    if tabela not in _tabelas_404_cooldown:
+                        print_log(f"[SYNC] Falha transiente ao baixar tabela {tabela} (será reintentado)", Colors.YELLOW)
+                        registrar_erro_do_ciclo(f"download {tabela}: falha na nuvem")
         except Exception as e:
             print_log(f"[SYNC] Excecao ao baixar/salvar tabela {tabela}: {e}", Colors.RED)
+            registrar_erro_do_ciclo(f"download {tabela}: {e}")
 
     # Commit final para garantir que nenhuma transação fique aberta (idle in transaction)
     try:
@@ -1183,8 +1582,17 @@ def executar_ciclo_sincronizacao(conn, supabase_url, api_key, on_state_change=No
         else:
             on_state_change('online')
 
-    # Reportar status de sync para o portal (sync_status + sync_logs no Supabase)
-    reportar_sync_status_supabase(conn, supabase_url, api_key, total_enviados, total_recebidos)
+    # Reportar status de sync para o portal (sync_status + sync_logs no Supabase).
+    # Vai junto o resumo dos erros do ciclo: é isso que acende o alerta no
+    # monitor de sincronização do admin.
+    resumo_erros = None
+    if _erros_do_ciclo:
+        resumo_erros = ("; ".join(_erros_do_ciclo))[:1500]
+        print_log(f"[SYNC] ⚠️ Ciclo com {len(_erros_do_ciclo)} erro(s) — reportando ao portal", Colors.YELLOW)
+    reportar_sync_status_supabase(
+        conn, supabase_url, api_key, total_enviados, total_recebidos,
+        erro=resumo_erros
+    )
 
     return total_enviados, total_recebidos
 
@@ -1195,7 +1603,8 @@ def aguardar_notificacao_ou_timeout(db_host, db_port, db_name, db_user, db_passw
     try:
         conn = psycopg2.connect(
             host=db_host, port=db_port, dbname=db_name,
-            user=db_user, password=db_password, connect_timeout=5
+            user=db_user, password=db_password, connect_timeout=5,
+            client_encoding='UTF8'
         )
         conn.autocommit = True
         with conn.cursor() as cur:
@@ -1261,7 +1670,8 @@ def run_sync_loop(interval_seconds=10, status_callback=None):
             conn = psycopg2.connect(
                 host=db_host, port=db_port,
                 dbname=db_name, user=db_user, password=db_password,
-                connect_timeout=10
+                connect_timeout=10,
+                client_encoding='UTF8'
             )
 
             # Verificar se existem alterações locais pendentes na fila de envio

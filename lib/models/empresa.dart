@@ -118,6 +118,12 @@ class Empresa {
   /// Retorna o nome de exibição (nome fantasia ou razão social)
   String get nomeExibicao => nomeFantasia ?? razaoSocial;
 
+  /// Identificador curto para exibição (evita mostrar o UUID completo)
+  String get idCurto => id.length > 10 ? id.substring(0, 10) : id;
+
+  /// Últimos 8 caracteres do ID (para exibir o "final" do UUID)
+  String get idFinal => id.length > 8 ? id.substring(id.length - 8) : id;
+
   /// Retorna as regras completas configuradas para um perfil de preço
   Map<String, dynamic>? getConfigPerfilPreco(String? perfil) {
     if (perfil == null || configuracoes == null || configuracoes!['perfis_preco'] == null) {

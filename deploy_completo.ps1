@@ -148,7 +148,13 @@ $buildStep = 7
 foreach ($platform in $platformsToBuild) {
     Write-Host "[$buildStep/10] Construindo para $platform (Release)..." -ForegroundColor Yellow
     
-    $buildCommand = "flutter build $platform --release"
+    # No Web, o --no-wasm-dry-run evita que o build JS falhe acusando import de
+    # dar:ffi (ffi/win32 existem só no app desktop, mas o dry-run do Wasm reprova).
+    $buildCommand = if ($platform -eq "web") {
+        "flutter build web --release --no-wasm-dry-run"
+    } else {
+        "flutter build $platform --release"
+    }
     Write-Host "  Executando: $buildCommand" -ForegroundColor Cyan
     Write-Host "  Isso pode levar alguns minutos..." -ForegroundColor Gray
     

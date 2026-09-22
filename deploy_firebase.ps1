@@ -27,7 +27,9 @@ Write-Host ""
 
 Write-Host "[3/5] Construindo para web (Release)..." -ForegroundColor Yellow
 Write-Host "  Isso pode levar alguns minutos..." -ForegroundColor Gray
-$buildResult = flutter build web --release 2>&1
+# O --no-wasm-dry-run evita que o build JS falhe acusando import de dar:ffi
+# (ffi/win32 sao usados apenas no app desktop, mas o dry-run do Wasm reprova).
+$buildResult = flutter build web --release --no-wasm-dry-run 2>&1
 
 if ($LASTEXITCODE -eq 0) {
     Write-Host "  OK: Build concluido!" -ForegroundColor Green

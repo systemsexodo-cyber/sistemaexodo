@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:intl/intl.dart';
 import '../services/data_service.dart';
-import '../models/servico.dart';
-import '../models/cliente.dart';
+import '../services/pedido_impressao_service.dart';
+import '../models/servico_realizado.dart';
+import '../models/forma_pagamento.dart';
 import '../theme.dart';
 import 'lancar_servico_page.dart';
 import 'agenda_servicos_page.dart';
@@ -10,17 +12,383 @@ import 'pdv_page.dart';
 import 'clientes_servicos_page.dart';
 import 'comissoes_page.dart';
 import 'historico_vendas_page.dart';
+import 'tipos_servico_page.dart';
 import '../widgets/sync_status_widget.dart';
+import '../widgets/pedido_detalhes_dialog.dart';
 
-
-class ServicosPage extends StatelessWidget {
+/// Tela de Serviços realizados.
+///
+/// Lista os serviços lançados na entidade PRÓPRIA de serviço (tabela
+/// `servicos_realizados`, série SRV), separados em abas: "Orçamentos"
+/// (propostas), "Em Aberto" (ainda não recebidos) e "Recebidos" (quitados).
+/// O cadastro dos tipos de serviço fica em [TiposServicoPage].
+class ServicosPage extends StatefulWidget {
   const ServicosPage({super.key});
 
   @override
+  State<ServicosPage> createState() => _ServicosPageState();
+}
+
+class _ServicosPageState extends State<ServicosPage>
+    with SingleTickerProviderStateMixin {
+  late final TabController _tabController;
+  final _buscaController = TextEditingController();
+  String _termoBusca = '';
+  int _abaAtual = 0;
+  DateTime? _dataInicioFiltro;
+  DateTime? _dataFimFiltro;
+  String? _periodoRapido; // 'Hoje', '7 dias', '30 dias', 'Este mês' ou null (personalizado)
+
+  static const _coresAba = [
+    Colors.purpleAccent,
+    Colors.orangeAccent,
+    Colors.greenAccent,
+    Colors.blueAccent,
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 4, vsync: this);
+    _tabController.addListener(_aoTrocarAba);
+  }
+
+  @override
+  void dispose() {
+    _tabController.removeListener(_aoTrocarAba);
+    _tabController.dispose();
+    _buscaController.dispose();
+    super.dispose();
+  }
+
+  void _aoTrocarAba() {
+    if (_tabController.index != _abaAtual) {
+      setState(() => _abaAtual = _tabController.index);
+    }
+  }
+
+  bool _cancelado(ServicoRealizado s) => s.cancelado;
+
+  bool _orcamento(ServicoRealizado s) => s.ehOrcamento;
+
+  bool _recebido(ServicoRealizado s) => s.totalmenteRecebido;
+
+  bool _emAberto(ServicoRealizado s) => s.emAberto;
+
+  /// Serviços lançados que batem com o termo de busca e com o período escolhido.
+  List<ServicoRealizado> _filtrar(List<ServicoRealizado> servicos) {
+    var lista = servicos;
+
+    // Filtro de período (pela data do serviço)
+    if (_dataInicioFiltro != null || _dataFimFiltro != null) {
+      final inicio = _dataInicioFiltro != null
+          ? DateTime(_dataInicioFiltro!.year, _dataInicioFiltro!.month,
+              _dataInicioFiltro!.day)
+          : null;
+      final fim = _dataFimFiltro != null
+          ? DateTime(_dataFimFiltro!.year, _dataFimFiltro!.month,
+              _dataFimFiltro!.day, 23, 59, 59)
+          : null;
+      lista = lista.where((s) {
+        if (inicio != null && s.dataServico.isBefore(inicio)) return false;
+        if (fim != null && s.dataServico.isAfter(fim)) return false;
+        return true;
+      }).toList();
+    }
+
+    final busca = _termoBusca.trim().toLowerCase();
+    if (busca.isEmpty) return lista;
+    return lista.where((s) {
+      if ((s.clienteNome ?? '').toLowerCase().contains(busca)) return true;
+      if (s.numero.toLowerCase().contains(busca)) return true;
+      if ((s.observacoes ?? '').toLowerCase().contains(busca)) return true;
+      return s.servicos.any(
+        (item) =>
+            item.descricao.toLowerCase().contains(busca) ||
+            (item.descricaoAdicional ?? '').toLowerCase().contains(busca),
+      );
+    }).toList();
+  }
+
+  /// Atalhos rápidos de período: Hoje, 7 dias, 30 dias e mês atual.
+  void _aplicarPeriodoRapido(String periodo) {
+    final agora = DateTime.now();
+    final hoje = DateTime(agora.year, agora.month, agora.day);
+    final DateTime inicio;
+    switch (periodo) {
+      case 'Hoje':
+        inicio = hoje;
+        break;
+      case '7 dias':
+        inicio = hoje.subtract(const Duration(days: 6));
+        break;
+      case '30 dias':
+        inicio = hoje.subtract(const Duration(days: 29));
+        break;
+      default: // Este mês
+        inicio = DateTime(agora.year, agora.month, 1);
+    }
+
+    setState(() {
+      _periodoRapido = periodo;
+      _dataInicioFiltro = inicio;
+      _dataFimFiltro = hoje;
+    });
+  }
+
+  void _limparPeriodo() {
+    setState(() {
+      _periodoRapido = null;
+      _dataInicioFiltro = null;
+      _dataFimFiltro = null;
+    });
+  }
+
+  /// Escolhe a data inicial ou final do período personalizado.
+  Future<void> _selecionarDataFiltro(bool isInicio) async {
+    final dataAtual = isInicio ? _dataInicioFiltro : _dataFimFiltro;
+    final data = await showDatePicker(
+      context: context,
+      initialDate: dataAtual ?? DateTime.now(),
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+      builder: (context, child) => Theme(
+        data: ThemeData.dark().copyWith(
+          colorScheme: const ColorScheme.dark(
+            primary: Colors.orange,
+            surface: Color(0xFF1E1E2E),
+          ),
+        ),
+        child: child!,
+      ),
+    );
+
+    if (data == null) return;
+
+    setState(() {
+      _periodoRapido = null;
+      if (isInicio) {
+        _dataInicioFiltro = data;
+        if (_dataFimFiltro != null && _dataInicioFiltro!.isAfter(_dataFimFiltro!)) {
+          _dataFimFiltro = _dataInicioFiltro;
+        }
+      } else {
+        _dataFimFiltro = data;
+        if (_dataInicioFiltro != null && _dataFimFiltro!.isBefore(_dataInicioFiltro!)) {
+          _dataInicioFiltro = _dataFimFiltro;
+        }
+      }
+    });
+  }
+
+  void _abrirLancamento({ServicoRealizado? servico}) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => LancarServicoPage(servicoExistente: servico),
+      ),
+    );
+    if (mounted) setState(() {});
+  }
+
+  /// Recebe o serviço: quita as parcelas pendentes ou o valor total.
+  Future<void> _abrirRecebimento(ServicoRealizado servico) async {
+    final dataService = Provider.of<DataService>(context, listen: false);
+
+    if (servico.pagamentos.isEmpty) {
+      final tipo = await _escolherFormaPagamento();
+      if (tipo == null) return;
+      await dataService.receberServicoTotal(servico.id, tipo: tipo);
+    } else {
+      final opcao = await showDialog<String>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          backgroundColor: const Color(0xFF1E1E2E),
+          title: Text('Receber ${servico.numero}'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Falta receber: ${_moeda.format(servico.valorPendente)}',
+                style: const TextStyle(color: Colors.orangeAccent),
+              ),
+              const SizedBox(height: 12),
+              for (final pag in servico.pagamentos.where((p) => !p.recebido))
+                ListTile(
+                  leading: Icon(pag.tipo.icone, color: pag.tipo.cor),
+                  title: Text(
+                    '${pag.tipo.nome}${pag.isParcela ? ' (${pag.descricaoParcela})' : ''}',
+                    style: const TextStyle(color: Colors.white, fontSize: 14),
+                  ),
+                  subtitle: pag.dataVencimento != null
+                      ? Text(
+                          'Vence ${DateFormat('dd/MM/yyyy').format(pag.dataVencimento!)}',
+                          style: TextStyle(
+                            color: pag.isVencida
+                                ? Colors.redAccent
+                                : Colors.white54,
+                            fontSize: 12,
+                          ),
+                        )
+                      : null,
+                  trailing: Text(
+                    _moeda.format(pag.valor),
+                    style: const TextStyle(color: Colors.white70),
+                  ),
+                  onTap: () => Navigator.pop(dialogContext, 'parcela:${pag.id}'),
+                ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton.icon(
+              onPressed: () => Navigator.pop(dialogContext, 'tudo'),
+              icon: const Icon(Icons.payments),
+              label: const Text('Receber tudo'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.green.shade700,
+                foregroundColor: Colors.white,
+              ),
+            ),
+          ],
+        ),
+      );
+
+      if (opcao == null) return;
+      if (opcao == 'tudo') {
+        await dataService.receberServicoTotal(servico.id);
+      } else {
+        await dataService.receberPagamentoServico(
+          servico.id,
+          opcao.replaceFirst('parcela:', ''),
+        );
+      }
+    }
+
+    if (mounted) {
+      setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Recebimento registrado em ${servico.numero}'),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  /// Forma de pagamento para serviços lançados sem pagamento (recebimento avulso).
+  Future<TipoPagamento?> _escolherFormaPagamento() async {
+    TipoPagamento selecionada = TipoPagamento.dinheiro;
+    return showDialog<TipoPagamento>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: const Color(0xFF1E1E2E),
+          title: const Text('Forma de pagamento'),
+          content: DropdownButtonFormField<TipoPagamento>(
+            initialValue: selecionada,
+            dropdownColor: const Color(0xFF1E1E2E),
+            style: const TextStyle(color: Colors.white),
+            items: TipoPagamento.values
+                .map(
+                  (t) => DropdownMenuItem(
+                    value: t,
+                    child: Row(
+                      children: [
+                        Icon(t.icone, color: t.cor, size: 18),
+                        const SizedBox(width: 8),
+                        Text(t.nome),
+                      ],
+                    ),
+                  ),
+                )
+                .toList(),
+            onChanged: (valor) {
+              if (valor != null) setDialogState(() => selecionada = valor);
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(dialogContext, selecionada),
+              child: const Text('Receber'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Aprova o orçamento: vira serviço em aberto (passa a ser recebível de serviço).
+  Future<void> _aprovarOrcamento(ServicoRealizado servico) async {
+    final dataService = Provider.of<DataService>(context, listen: false);
+    await dataService.aprovarOrcamentoServico(servico.id);
+    if (mounted) {
+      setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Orçamento ${servico.numero} aprovado — agora está em aberto'),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  /// Visualização completa do serviço (cliente, itens, pagamentos...).
+  void _mostrarDetalhes(ServicoRealizado servico) {
+    mostrarDetalhesPedido(
+      context,
+      servico.toPedido(),
+      rotuloStatusOverride: servico.ehOrcamento
+          ? (servico.orcamentoVencido ? 'ORÇAMENTO VENCIDO' : 'ORÇAMENTO')
+          : null,
+      corStatusOverride: servico.ehOrcamento ? Colors.purpleAccent : null,
+      onImprimir: () => _mostrarMenuImpressao(servico),
+      onEditar: () => _abrirLancamento(servico: servico),
+      onReceber:
+          servico.ehOrcamento ? null : () => _abrirRecebimento(servico),
+      onAprovar: servico.ehOrcamento ? () => _aprovarOrcamento(servico) : null,
+    );
+  }
+
+  /// Mesmo menu de impressão disponível na tela de Pedidos.
+  void _mostrarMenuImpressao(ServicoRealizado servico) {
+    PedidoImpressaoService.mostrarMenuImpressao(
+      context,
+      servico.toPedido(),
+      incluirRomaneio: _temEntrega(servico),
+    );
+  }
+
+  /// Serviços com Taxi Dog / entrega podem imprimir o romaneio de separação.
+  bool _temEntrega(ServicoRealizado servico) =>
+      servico.servicos.any((s) => (s.tipoEntrega ?? '').isNotEmpty);
+
+  final _moeda =
+      NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$', decimalDigits: 2);
+
+  @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    
+    final dataService = Provider.of<DataService>(context, listen: true);
+
+    // Fonte: entidade PRÓPRIA de serviço realizado (série SRV, tabela
+    // `servicos_realizados`) — não são pedidos.
+    final todos = List<ServicoRealizado>.from(dataService.servicosRealizados)
+      ..sort((a, b) => b.dataServico.compareTo(a.dataServico));
+
+    final filtrados = _filtrar(todos);
+    final orcamentos = filtrados.where(_orcamento).toList();
+    final emAberto = filtrados.where(_emAberto).toList();
+    final recebidos = filtrados.where(_recebido).toList();
+
     return AppTheme.appBackground(
       child: Scaffold(
         backgroundColor: Colors.transparent,
@@ -95,1174 +463,560 @@ class ServicosPage extends StatelessWidget {
             IconButton(
               icon: const Icon(Icons.playlist_add, color: Colors.greenAccent),
               onPressed: () {
-                showDialog(
-                  context: context,
-                  builder: (context) => const _CriarServicoDialog(),
-                );
-              },
-              tooltip: 'Cadastrar Novo Tipo de Serviço',
-            ),
-            IconButton(
-              icon: const Icon(Icons.add),
-              onPressed: () {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (context) => const LancarServicoPage(),
+                    builder: (context) => const TiposServicoPage(),
                   ),
-                ).then((pedido) {
-                  if (pedido != null) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Serviço lançado com sucesso!'),
-                        backgroundColor: Colors.green,
-                      ),
-                    );
-                  }
-                });
+                );
               },
+              tooltip: 'Tipos de Serviço (Cadastro)',
+            ),
+            IconButton(
+              icon: const Icon(Icons.add),
+              onPressed: () => _abrirLancamento(),
+              tooltip: 'Lançar Serviço',
             ),
             const SyncStatusWidget(),
-
           ],
         ),
-        body: Consumer<DataService>(
-          builder: (context, dataService, _) {
-            final servicos = dataService.servicos;
-            
-            return ListView.separated(
-              padding: const EdgeInsets.all(16),
-              cacheExtent: 1000, // Otimização para mobile: pré-carrega itens próximos
-              itemCount: servicos.length,
-          separatorBuilder: (_, __) => const SizedBox(height: 16),
-          itemBuilder: (context, index) {
-            final servico = servicos[index];
-            // Garante que o valor adicional seja exibido corretamente
-            final valorAdicional = servico.valorAdicional;
-            final precoBase = servico.preco;
-            final temAdicional = valorAdicional > 0.001;
-            
-            return Card(
-              elevation: theme.cardTheme.elevation ?? 2,
-              shape: theme.cardTheme.shape,
-              color: theme.cardTheme.color,
-              child: ListTile(
-                title: Text(
-                  servico.nome,
-                  style: TextStyle(
-                    color: colorScheme.onSurface,
-                    fontWeight: FontWeight.bold,
+        body: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+              child: TextField(
+                controller: _buscaController,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  hintText: 'Buscar por cliente, serviço ou número...',
+                  hintStyle: const TextStyle(color: Colors.white54),
+                  prefixIcon: const Icon(Icons.search, color: Colors.white70),
+                  suffixIcon: _termoBusca.isEmpty
+                      ? null
+                      : IconButton(
+                          icon: const Icon(Icons.clear, color: Colors.white70),
+                          onPressed: () {
+                            setState(() {
+                              _termoBusca = '';
+                              _buscaController.clear();
+                            });
+                          },
+                        ),
+                  filled: true,
+                  fillColor: const Color(0xFF181A1B),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
                   ),
                 ),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (servico.descricaoAdicional != null && servico.descricaoAdicional!.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        servico.descricaoAdicional!,
-                        style: TextStyle(
-                          color: colorScheme.primary,
-                          fontStyle: FontStyle.italic,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 6),
-                    // Preço Base - SEMPRE mostra o valor base puro (sem adicional)
-                    Row(
-                      children: [
-                        const Text(
-                          'Preço Base: ',
-                          style: TextStyle(
-                            color: Colors.white70,
-                            fontSize: 12,
-                          ),
-                        ),
-                        Text(
-                          'R\$ ${precoBase.toStringAsFixed(2)}',
-                          style: TextStyle(
-                            color: colorScheme.onSurfaceVariant,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ],
-                    ),
-                    // Valor Adicional - SEMPRE mostra quando houver valor adicional
-                    if (temAdicional) ...[
-                      const SizedBox(height: 6),
-                      Row(
-                        children: [
-                          const Text(
-                            '+ ',
-                            style: TextStyle(
-                              color: Colors.green,
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const Text(
-                            'Adicional: ',
-                            style: TextStyle(
-                              color: Colors.white70,
-                              fontSize: 12,
-                            ),
-                          ),
-                          Text(
-                            'R\$ ${valorAdicional.toStringAsFixed(2)}',
-                            style: const TextStyle(
-                              color: Colors.green,
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                    const SizedBox(height: 6),
-                    // Total - SEMPRE mostra (preço base + valor adicional)
-                    Container(
-                      padding: const EdgeInsets.symmetric(vertical: 4),
-                      decoration: BoxDecoration(
-                        border: Border(
-                          top: BorderSide(
-                            color: Colors.white.withOpacity(0.1),
-                            width: 1,
-                          ),
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          const Text(
-                            'Total: ',
-                            style: TextStyle(
-                              color: Colors.white70,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          Text(
-                            'R\$ ${(precoBase + valorAdicional).toStringAsFixed(2)}',
-                            style: TextStyle(
-                              color: colorScheme.primary,
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
+                onChanged: (value) => setState(() => _termoBusca = value),
+              ),
+            ),
+            _buildFiltroPeriodo(),
+            TabBar(
+              controller: _tabController,
+              labelColor: Colors.white,
+              unselectedLabelColor: Colors.white60,
+              indicatorColor: _coresAba[_abaAtual],
+              tabs: [
+                Tab(text: 'Orçamentos (${orcamentos.length})'),
+                Tab(text: 'Em Aberto (${emAberto.length})'),
+                Tab(text: 'Recebidos (${recebidos.length})'),
+                Tab(text: 'Todos (${filtrados.length})'),
+              ],
+            ),
+            _buildResumo(orcamentos, emAberto, recebidos, filtrados),
+            Expanded(
+              child: TabBarView(
+                controller: _tabController,
+                children: [
+                  _buildLista(orcamentos, 'Nenhum orçamento'),
+                  _buildLista(emAberto, 'Nenhum serviço em aberto'),
+                  _buildLista(recebidos, 'Nenhum serviço recebido'),
+                  _buildLista(filtrados, 'Nenhum serviço encontrado'),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Barra de filtro por período (atalhos rápidos + datas personalizadas).
+  Widget _buildFiltroPeriodo() {
+    final formato = DateFormat('dd/MM/yyyy');
+    final temFiltro = _dataInicioFiltro != null || _dataFimFiltro != null;
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withOpacity(0.1)),
+      ),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          const Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.calendar_today, size: 16, color: Colors.orange),
+              SizedBox(width: 6),
+              Text(
+                'Período:',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
                 ),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    IconButton(
-                      icon: Icon(Icons.edit, color: colorScheme.primary),
-                      onPressed: () {
-                        showDialog(
-                          context: context,
-                          builder: (context) => _EditarServicoDialog(servico: servico),
-                        );
-                      },
-                      tooltip: 'Editar serviço',
+              ),
+            ],
+          ),
+          for (final periodo in const ['Hoje', '7 dias', '30 dias', 'Este mês'])
+            _chipPeriodo(
+              periodo,
+              selecionado: _periodoRapido == periodo,
+              onTap: () => _aplicarPeriodoRapido(periodo),
+            ),
+          _botaoData(
+            _dataInicioFiltro != null
+                ? formato.format(_dataInicioFiltro!)
+                : 'Data inicial',
+            temData: _dataInicioFiltro != null,
+            onTap: () => _selecionarDataFiltro(true),
+          ),
+          const Text('até', style: TextStyle(color: Colors.white54, fontSize: 12)),
+          _botaoData(
+            _dataFimFiltro != null
+                ? formato.format(_dataFimFiltro!)
+                : 'Data final',
+            temData: _dataFimFiltro != null,
+            onTap: () => _selecionarDataFiltro(false),
+          ),
+          if (temFiltro)
+            TextButton.icon(
+              onPressed: _limparPeriodo,
+              icon: const Icon(Icons.clear, size: 16),
+              label: const Text('Limpar'),
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.orange,
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _chipPeriodo(
+    String label, {
+    required bool selecionado,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: selecionado
+              ? Colors.orange.withOpacity(0.25)
+              : Colors.white.withOpacity(0.06),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: selecionado ? Colors.orange : Colors.white.withOpacity(0.15),
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: selecionado ? Colors.orange : Colors.white70,
+            fontSize: 12,
+            fontWeight: selecionado ? FontWeight.bold : FontWeight.normal,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _botaoData(
+    String label, {
+    required bool temData,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: Colors.orange.withOpacity(0.15),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.orange.withOpacity(0.3)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.event, size: 14, color: Colors.orange),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                color: temData ? Colors.white : Colors.white54,
+                fontSize: 12,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildResumo(
+    List<ServicoRealizado> orcamentos,
+    List<ServicoRealizado> emAberto,
+    List<ServicoRealizado> recebidos,
+    List<ServicoRealizado> todos,
+  ) {
+    final moeda = _moeda;
+    final faltaReceber = emAberto.fold<double>(
+      0.0,
+      (s, p) => s + (p.totalGeral - p.totalRecebido),
+    );
+    final totalRecebido = recebidos.fold<double>(0.0, (s, p) => s + p.totalRecebido);
+    final totalGeral = todos.fold<double>(0.0, (s, p) => s + p.totalGeral);
+    final totalOrcamentos =
+        orcamentos.fold<double>(0.0, (s, p) => s + p.totalGeral);
+
+    late final String texto;
+    late final Color cor;
+    switch (_abaAtual) {
+      case 1:
+        texto = '${emAberto.length} em aberto • Falta receber ${moeda.format(faltaReceber)}';
+        cor = Colors.orangeAccent;
+        break;
+      case 2:
+        texto = '${recebidos.length} serviço(s) recebido(s) • ${moeda.format(totalRecebido)}';
+        cor = Colors.greenAccent;
+        break;
+      case 3:
+        texto = '${todos.length} serviço(s) • ${moeda.format(totalGeral)}';
+        cor = Colors.blueAccent;
+        break;
+      default:
+        texto =
+            '${orcamentos.length} orçamento(s) • ${moeda.format(totalOrcamentos)} em proposta';
+        cor = Colors.purpleAccent;
+    }
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: cor.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: cor.withOpacity(0.35)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.summarize, size: 16, color: cor),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              texto,
+              style: TextStyle(color: cor, fontSize: 12, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLista(List<ServicoRealizado> pedidos, String vazio) {
+    if (pedidos.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.build_circle_outlined, size: 56, color: Colors.white.withOpacity(0.4)),
+            const SizedBox(height: 12),
+            Text(vazio, style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 15)),
+          ],
+        ),
+      );
+    }
+
+    return ListView.separated(
+      padding: const EdgeInsets.all(16),
+      cacheExtent: 1000,
+      itemCount: pedidos.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 12),
+      itemBuilder: (context, index) => _buildCardServico(pedidos[index]),
+    );
+  }
+
+  Widget _buildCardServico(ServicoRealizado pedido) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final moeda =
+        NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$', decimalDigits: 2);
+    final formatoData = DateFormat('dd/MM/yyyy HH:mm');
+
+    final isCancelado = _cancelado(pedido);
+    final isRecebido = _recebido(pedido);
+    final isOrcamento = _orcamento(pedido);
+    final falta = pedido.totalGeral - pedido.totalRecebido;
+
+    final corStatus = isCancelado
+        ? Colors.redAccent
+        : isOrcamento
+            ? Colors.purpleAccent
+            : isRecebido
+                ? Colors.greenAccent
+                : Colors.orangeAccent;
+    final labelStatus = isCancelado
+        ? 'CANCELADO'
+        : isOrcamento
+            ? (pedido.orcamentoVencido ? 'ORÇAMENTO VENCIDO' : 'ORÇAMENTO')
+            : isRecebido
+                ? 'RECEBIDO'
+                : 'EM ABERTO';
+
+    final servicosVisiveis = pedido.servicos.take(3).toList();
+    final restantes = pedido.servicos.length - servicosVisiveis.length;
+
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: isCancelado
+              ? [Colors.red.shade900, Colors.red.shade800]
+              : isOrcamento
+                  ? [const Color(0xFF4A148C), const Color(0xFF311B92)]
+                  : isRecebido
+                      ? [const Color(0xFF1B5E20), const Color(0xFF2E7D32)]
+                      : [const Color(0xFF2C3E50), const Color(0xFF34495E)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: corStatus.withOpacity(0.6), width: 1.5),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => _mostrarDetalhes(pedido),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Text(
+                    pedido.numero.isNotEmpty ? pedido.numero : '#${pedido.id}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
                     ),
-                    IconButton(
-                      icon: const Icon(Icons.delete, color: Colors.redAccent),
-                      onPressed: () {
-                        showDialog(
-                          context: context,
-                          builder: (context) => AlertDialog(
-                            title: const Text('Deletar Serviço'),
-                            content: Text('Tem certeza que deseja deletar o serviço "${servico.nome}"?'),
-                            actions: [
-                              TextButton(
-                                onPressed: () => Navigator.pop(context),
-                                child: const Text('Cancelar'),
-                              ),
-                              TextButton(
-                                onPressed: () {
-                                  dataService.deleteTipoServico(servico.id);
-                                  Navigator.pop(context);
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text('Serviço removido com sucesso!'),
-                                      backgroundColor: Colors.redAccent,
-                                    ),
-                                  );
-                                },
-                                child: const Text('Deletar', style: TextStyle(color: Colors.redAccent)),
-                              ),
-                            ],
-                          ),
-                        );
-                      },
-                      tooltip: 'Deletar serviço',
+                  ),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: corStatus.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: corStatus.withOpacity(0.6)),
                     ),
-                    const SizedBox(width: 8),
-                    Text(
-                      'R\$ ${(precoBase + valorAdicional).toStringAsFixed(2)}',
+                    child: Text(
+                      labelStatus,
                       style: TextStyle(
-                        color: colorScheme.primary,
-                        fontSize: 16,
+                        color: corStatus,
+                        fontSize: 10,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
-                  ],
-                ),
-              ),
-            );
-          },
-            );
-          },
-        ),
-      ),
-    );
-  }
-}
-
-// Modal de adicionar serviço
-class _AdicionarServicoDialog extends StatefulWidget {
-  @override
-  State<_AdicionarServicoDialog> createState() =>
-      _AdicionarServicoDialogState();
-}
-
-class _AdicionarServicoDialogState extends State<_AdicionarServicoDialog> {
-  Servico? _servicoSelecionado;
-  final _descricaoController = TextEditingController();
-  final _valorController = TextEditingController();
-
-  @override
-  void dispose() {
-    _descricaoController.dispose();
-    _valorController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final dataService = Provider.of<DataService>(context);
-    final clientes = dataService.clientes;
-    final servicosCadastrados = dataService.servicos;
-
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    
-    return Dialog(
-      backgroundColor: theme.dialogBackgroundColor,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-      child: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Autocomplete<Cliente>(
-                optionsBuilder: (TextEditingValue textEditingValue) {
-                  if (textEditingValue.text.isEmpty) {
-                    return clientes;
-                  }
-                  return clientes.where(
-                    (Cliente c) => c.nome.toLowerCase().contains(
-                      textEditingValue.text.toLowerCase(),
-                    ),
-                  );
-                },
-                displayStringForOption: (Cliente c) => c.nome,
-                fieldViewBuilder:
-                    (context, controller, focusNode, onFieldSubmitted) {
-                      return TextFormField(
-                        controller: controller,
-                        focusNode: focusNode,
-                        decoration: InputDecoration(
-                          labelText: 'Cliente',
-                          labelStyle: TextStyle(
-                            color: colorScheme.onSurfaceVariant,
-                          ),
-                          filled: true,
-                          fillColor: theme.inputDecorationTheme.fillColor,
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide(
-                              color: colorScheme.outline,
-                            ),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide(
-                              color: colorScheme.primary,
-                            ),
-                          ),
-                        ),
-                        style: TextStyle(
-                          color: colorScheme.onSurface,
-                        ),
-                      );
-                    },
-                onSelected: (Cliente selection) {
-                  setState(() {
-                    // ação ao selecionar cliente (se necessário)
-                  });
-                },
-              ),
-              const SizedBox(height: 12),
-              Autocomplete<Servico>(
-                optionsBuilder: (TextEditingValue textEditingValue) {
-                  if (textEditingValue.text.isEmpty) {
-                    return servicosCadastrados;
-                  }
-                  return servicosCadastrados.where(
-                    (Servico s) => s.nome.toLowerCase().contains(
-                      textEditingValue.text.toLowerCase(),
-                    ),
-                  );
-                },
-                displayStringForOption: (Servico s) {
-              if (s.temAdicional) {
-                return '${s.nome} + R\$ ${s.preco.toStringAsFixed(2)} + R\$ ${s.valorAdicional.toStringAsFixed(2)} = R\$ ${s.precoTotal.toStringAsFixed(2)}';
-              }
-              return '${s.nome} + R\$ ${s.preco.toStringAsFixed(2)}';
-            },
-                fieldViewBuilder:
-                    (context, controller, focusNode, onFieldSubmitted) {
-                      return TextFormField(
-                        controller: controller,
-                        focusNode: focusNode,
-                        decoration: InputDecoration(
-                          labelText: 'Serviço',
-                          labelStyle: TextStyle(
-                            color: colorScheme.onSurfaceVariant,
-                          ),
-                          filled: true,
-                          fillColor: theme.inputDecorationTheme.fillColor,
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide(
-                              color: colorScheme.outline,
-                            ),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide(
-                              color: colorScheme.primary,
-                            ),
-                          ),
-                        ),
-                        style: TextStyle(
-                          color: colorScheme.onSurface,
-                        ),
-                      );
-                    },
-                onSelected: (Servico selection) {
-                  setState(() {
-                    _servicoSelecionado = selection;
-                    _valorController.text = selection.precoTotal.toStringAsFixed(2);
-                  });
-                },
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _descricaoController,
-                style: TextStyle(
-                  color: colorScheme.onSurface,
-                ),
-                decoration: InputDecoration(
-                  labelText: 'Descrição',
-                  labelStyle: TextStyle(
-                    color: colorScheme.onSurfaceVariant,
                   ),
-                  filled: true,
-                  fillColor: theme.inputDecorationTheme.fillColor,
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(
-                      color: colorScheme.outline,
-                    ),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(
+                  const Spacer(),
+                  Text(
+                    moeda.format(pedido.totalGeral),
+                    style: TextStyle(
                       color: colorScheme.primary,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _valorController,
-                keyboardType: TextInputType.number,
-                style: TextStyle(
-                  color: colorScheme.onSurface,
-                ),
-                decoration: InputDecoration(
-                  labelText: 'Valor do Serviço',
-                  labelStyle: TextStyle(
-                    color: colorScheme.onSurfaceVariant,
-                  ),
-                  filled: true,
-                  fillColor: theme.inputDecorationTheme.fillColor,
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(
-                      color: colorScheme.outline,
-                    ),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(
-                      color: colorScheme.primary,
-                    ),
-                  ),
-                ),
-                readOnly: _servicoSelecionado != null,
-              ),
-              const SizedBox(height: 24),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Theme.of(context).colorScheme.primary,
-                  foregroundColor: Theme.of(context).colorScheme.onPrimary,
-                  textStyle: const TextStyle(fontSize: 16),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                ),
-                onPressed: () async {
-                  // Aqui você pode salvar o serviço usando _clienteSelecionado e _servicoSelecionado
-                  Navigator.of(context).pop();
-                },
-                child: const Text('Cadastrar'),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// Modal de edição de serviço
-class _EditarServicoDialog extends StatefulWidget {
-  final Servico servico;
-  const _EditarServicoDialog({required this.servico});
-
-  @override
-  State<_EditarServicoDialog> createState() => _EditarServicoDialogState();
-}
-
-class _EditarServicoDialogState extends State<_EditarServicoDialog> {
-  late TextEditingController _nomeController;
-  late TextEditingController _descricaoController;
-  late TextEditingController _precoController;
-  late TextEditingController _valorAdicionalController;
-  late TextEditingController _descricaoAdicionalController;
-  late TextEditingController _duracaoController;
-  late TextEditingController _intervaloController;
-  late TextEditingController _comissaoController;
-  late String _tipoComissao;
-
-  @override
-  void initState() {
-    super.initState();
-    _nomeController = TextEditingController(text: widget.servico.nome);
-    _descricaoController = TextEditingController(
-      text: widget.servico.descricao ?? '',
-    );
-    _precoController = TextEditingController(
-      text: widget.servico.preco.toStringAsFixed(2),
-    );
-    _valorAdicionalController = TextEditingController(
-      text: widget.servico.valorAdicional > 0 
-          ? widget.servico.valorAdicional.toStringAsFixed(2).replaceAll('.', ',')
-          : '',
-    );
-    _descricaoAdicionalController = TextEditingController(
-      text: widget.servico.descricaoAdicional ?? '',
-    );
-    _duracaoController = TextEditingController(
-      text: widget.servico.duracaoPadraoMinutos?.toString() ?? '60',
-    );
-    _intervaloController = TextEditingController(
-      text: widget.servico.intervaloMinutos?.toString() ?? '0',
-    );
-    _comissaoController = TextEditingController(
-      text: widget.servico.tipoComissao == 'Porcentagem' 
-          ? widget.servico.porcentagemComissao.toString().replaceAll('.', ',') 
-          : widget.servico.valorComissao.toString().replaceAll('.', ','),
-    );
-    _tipoComissao = widget.servico.tipoComissao;
-  }
-
-  @override
-  void dispose() {
-    _nomeController.dispose();
-    _descricaoController.dispose();
-    _precoController.dispose();
-    _valorAdicionalController.dispose();
-    _descricaoAdicionalController.dispose();
-    _duracaoController.dispose();
-    _intervaloController.dispose();
-    _comissaoController.dispose();
-    super.dispose();
-  }
-
-  void _salvarAlteracoes() {
-    final dataService = Provider.of<DataService>(context, listen: false);
-    final preco = double.tryParse(_precoController.text.replaceAll(',', '.')) ?? 0.0;
-    
-    if (_nomeController.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('O nome do serviço é obrigatório'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-
-    if (preco <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('O preço deve ser maior que zero'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-
-    final valorAdicionalTexto = _valorAdicionalController.text.trim().replaceAll(',', '.');
-    final valorAdicional = double.tryParse(valorAdicionalTexto) ?? 0.0;
-    
-    final duracao = int.tryParse(_duracaoController.text) ?? 60;
-    final intervalo = int.tryParse(_intervaloController.text) ?? 0;
-    
-    // Debug para verificar valores antes de salvar
-    debugPrint('>>> SALVANDO SERVIÇO:');
-    debugPrint('>>> Nome: ${_nomeController.text}');
-    debugPrint('>>> Preço Base: $preco');
-    debugPrint('>>> Valor Adicional Texto: ${_valorAdicionalController.text}');
-    debugPrint('>>> Valor Adicional Parseado: $valorAdicional');
-    debugPrint('>>> Descrição Adicional: ${_descricaoAdicionalController.text}');
-    
-    final servicoAtualizado = Servico(
-      id: widget.servico.id,
-      nome: _nomeController.text,
-      descricao: _descricaoController.text.isEmpty ? null : _descricaoController.text,
-      preco: preco,
-      valorAdicional: valorAdicional,
-      descricaoAdicional: _descricaoAdicionalController.text.isEmpty ? null : _descricaoAdicionalController.text,
-      duracaoPadraoMinutos: duracao,
-      intervaloMinutos: intervalo,
-      tipoComissao: _tipoComissao,
-      porcentagemComissao: _tipoComissao == 'Porcentagem' ? (double.tryParse(_comissaoController.text.replaceAll(',', '.')) ?? 0.0) : 0.0,
-      valorComissao: _tipoComissao == 'Fixo' ? (double.tryParse(_comissaoController.text.replaceAll(',', '.')) ?? 0.0) : 0.0,
-      createdAt: widget.servico.createdAt,
-      updatedAt: DateTime.now(),
-    );
-    
-    debugPrint('>>> Serviço Criado:');
-    debugPrint('>>> Preço: ${servicoAtualizado.preco}');
-    debugPrint('>>> Valor Adicional: ${servicoAtualizado.valorAdicional}');
-    debugPrint('>>> Preço Total: ${servicoAtualizado.precoTotal}');
-
-    dataService.updateTipoServico(servicoAtualizado);
-    Navigator.of(context).pop();
-    
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Serviço atualizado com sucesso!'),
-        backgroundColor: Colors.green,
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    
-    return Dialog(
-      backgroundColor: theme.dialogBackgroundColor,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-      child: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                'Editar Serviço',
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: colorScheme.onSurface,
-                ),
-              ),
-              const SizedBox(height: 24),
-              TextField(
-                controller: _nomeController,
-                style: TextStyle(color: colorScheme.onSurface),
-                decoration: InputDecoration(
-                  labelText: 'Nome do Serviço *',
-                  labelStyle: TextStyle(
-                    color: colorScheme.onSurfaceVariant,
-                  ),
-                  filled: true,
-                  fillColor: theme.inputDecorationTheme.fillColor,
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(
-                      color: colorScheme.outline,
-                    ),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(
-                      color: colorScheme.primary,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _descricaoController,
-                style: TextStyle(color: colorScheme.onSurface),
-                maxLines: 3,
-                decoration: InputDecoration(
-                  labelText: 'Descrição',
-                  labelStyle: TextStyle(
-                    color: colorScheme.onSurfaceVariant,
-                  ),
-                  filled: true,
-                  fillColor: theme.inputDecorationTheme.fillColor,
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(
-                      color: colorScheme.outline,
-                    ),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(
-                      color: colorScheme.primary,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _precoController,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                style: TextStyle(color: colorScheme.onSurface),
-                decoration: InputDecoration(
-                  labelText: 'Preço Base (R\$) *',
-                  prefixText: 'R\$ ',
-                  labelStyle: TextStyle(
-                    color: colorScheme.onSurfaceVariant,
-                  ),
-                  filled: true,
-                  fillColor: theme.inputDecorationTheme.fillColor,
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(
-                      color: colorScheme.outline,
-                    ),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(
-                      color: colorScheme.primary,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _valorAdicionalController,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                style: TextStyle(color: colorScheme.onSurface),
-                enabled: true,
-                decoration: InputDecoration(
-                  labelText: 'Valor Adicional (R\$)',
-                  hintText: 'Ex: 10,00',
-                  prefixText: 'R\$ ',
-                  labelStyle: TextStyle(
-                    color: colorScheme.onSurfaceVariant,
-                  ),
-                  filled: true,
-                  fillColor: theme.inputDecorationTheme.fillColor,
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(
-                      color: colorScheme.outline,
-                    ),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(
-                      color: Colors.orange,
-                      width: 2,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _descricaoAdicionalController,
-                style: TextStyle(color: colorScheme.onSurface),
-                maxLines: 3,
-                enabled: true,
-                decoration: InputDecoration(
-                  labelText: 'Descrição do Adicional (Opcional)',
-                  hintText: 'Ex: Lavagem premium, Corte + barba...',
-                  labelStyle: TextStyle(
-                    color: colorScheme.onSurfaceVariant,
-                  ),
-                  filled: true,
-                  fillColor: theme.inputDecorationTheme.fillColor,
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(
-                      color: colorScheme.outline,
-                    ),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(
-                      color: Colors.orange,
-                      width: 2,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              // Linha: Duração e Intervalo
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _duracaoController,
-                      keyboardType: TextInputType.number,
-                      style: TextStyle(color: colorScheme.onSurface),
-                      decoration: InputDecoration(
-                        labelText: 'Duração (min) *',
-                        hintText: 'Ex: 40',
-                        labelStyle: TextStyle(color: colorScheme.onSurfaceVariant),
-                        filled: true,
-                        fillColor: theme.inputDecorationTheme.fillColor,
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide(color: colorScheme.outline),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide(color: colorScheme.primary),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: TextField(
-                      controller: _intervaloController,
-                      keyboardType: TextInputType.number,
-                      style: TextStyle(color: colorScheme.onSurface),
-                      decoration: InputDecoration(
-                        labelText: 'Intervalo (min)',
-                        hintText: 'Ex: 10',
-                        labelStyle: TextStyle(color: colorScheme.onSurfaceVariant),
-                        filled: true,
-                        fillColor: theme.inputDecorationTheme.fillColor,
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide(color: colorScheme.outline),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide(color: colorScheme.primary),
-                        ),
-                      ),
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 12),
-              // Comissão
-              DropdownButtonFormField<String>(
-                value: _tipoComissao,
-                dropdownColor: theme.dialogBackgroundColor,
-                style: TextStyle(color: colorScheme.onSurface),
-                decoration: InputDecoration(
-                  labelText: 'Tipo de Comissão',
-                  labelStyle: TextStyle(color: colorScheme.onSurfaceVariant),
-                  filled: true,
-                  fillColor: theme.inputDecorationTheme.fillColor,
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                ),
-                items: ['Porcentagem', 'Fixo'].map((String value) {
-                  return DropdownMenuItem<String>(
-                    value: value,
-                    child: Text(value),
-                  );
-                }).toList(),
-                onChanged: (value) {
-                  setState(() {
-                    _tipoComissao = value ?? 'Porcentagem';
-                  });
-                },
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _comissaoController,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                style: TextStyle(color: colorScheme.onSurface),
-                decoration: InputDecoration(
-                  labelText: _tipoComissao == 'Porcentagem' ? 'Comissão (%)' : 'Comissão (R\$)',
-                  labelStyle: TextStyle(color: colorScheme.onSurfaceVariant),
-                  prefixText: _tipoComissao == 'Porcentagem' ? '' : 'R\$ ',
-                  suffixText: _tipoComissao == 'Porcentagem' ? '%' : '',
-                  filled: true,
-                  fillColor: theme.inputDecorationTheme.fillColor,
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(color: colorScheme.outline),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(color: colorScheme.primary),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 8),
               Row(
                 children: [
+                  const Icon(Icons.person, size: 14, color: Colors.white70),
+                  const SizedBox(width: 4),
                   Expanded(
-                    child: TextButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      child: const Text('Cancelar'),
+                    child: Text(
+                      pedido.clienteNome?.isNotEmpty == true
+                          ? pedido.clienteNome!
+                          : 'Consumidor final',
+                      style: const TextStyle(color: Colors.white, fontSize: 13),
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Theme.of(context).colorScheme.primary,
-                        foregroundColor: Theme.of(context).colorScheme.onPrimary,
-                        textStyle: const TextStyle(fontSize: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                      ),
-                      onPressed: _salvarAlteracoes,
-                      child: const Text('Salvar'),
-                    ),
+                  const Icon(Icons.event, size: 14, color: Colors.white70),
+                  const SizedBox(width: 4),
+                  Text(
+                    formatoData.format(pedido.dataServico),
+                    style: const TextStyle(color: Colors.white70, fontSize: 12),
                   ),
                 ],
               ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// Modal de cadastro de novo tipo de serviço (Catálogo)
-class _CriarServicoDialog extends StatefulWidget {
-  const _CriarServicoDialog();
-
-  @override
-  State<_CriarServicoDialog> createState() => _CriarServicoDialogState();
-}
-
-class _CriarServicoDialogState extends State<_CriarServicoDialog> {
-  final _nomeController = TextEditingController();
-  final _descricaoController = TextEditingController();
-  final _precoController = TextEditingController();
-  final _valorAdicionalController = TextEditingController();
-  final _descricaoAdicionalController = TextEditingController();
-  final _duracaoController = TextEditingController(text: '60');
-  final _intervaloController = TextEditingController(text: '0');
-  final _comissaoController = TextEditingController(text: '0');
-  String _tipoComissao = 'Porcentagem';
-
-  @override
-  void dispose() {
-    _nomeController.dispose();
-    _descricaoController.dispose();
-    _precoController.dispose();
-    _valorAdicionalController.dispose();
-    _descricaoAdicionalController.dispose();
-    _duracaoController.dispose();
-    _intervaloController.dispose();
-    _comissaoController.dispose();
-    super.dispose();
-  }
-
-  void _cadastrar() {
-    final dataService = Provider.of<DataService>(context, listen: false);
-    final preco = double.tryParse(_precoController.text.replaceAll(',', '.')) ?? 0.0;
-    final valorAdicional = double.tryParse(_valorAdicionalController.text.replaceAll(',', '.')) ?? 0.0;
-    final duracao = int.tryParse(_duracaoController.text) ?? 60;
-    final intervalo = int.tryParse(_intervaloController.text) ?? 0;
-
-    if (_nomeController.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('O nome é obrigatório'), backgroundColor: Colors.red),
-      );
-      return;
-    }
-
-    if (preco <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('O preço deve ser maior que zero'), backgroundColor: Colors.red),
-      );
-      return;
-    }
-
-    final novoServico = Servico(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      nome: _nomeController.text,
-      descricao: _descricaoController.text.isEmpty ? null : _descricaoController.text,
-      preco: preco,
-      valorAdicional: valorAdicional,
-      descricaoAdicional: _descricaoAdicionalController.text.isEmpty ? null : _descricaoAdicionalController.text,
-      duracaoPadraoMinutos: duracao,
-      intervaloMinutos: intervalo,
-      tipoComissao: _tipoComissao,
-      porcentagemComissao: _tipoComissao == 'Porcentagem' ? (double.tryParse(_comissaoController.text.replaceAll(',', '.')) ?? 0.0) : 0.0,
-      valorComissao: _tipoComissao == 'Fixo' ? (double.tryParse(_comissaoController.text.replaceAll(',', '.')) ?? 0.0) : 0.0,
-      createdAt: DateTime.now(),
-      updatedAt: DateTime.now(),
-    );
-
-    dataService.addTipoServico(novoServico);
-    Navigator.of(context).pop();
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Serviço cadastrado no catálogo com sucesso!'),
-        backgroundColor: Colors.green,
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    
-    return Dialog(
-      backgroundColor: const Color(0xFF121212),
-      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          width: MediaQuery.of(context).size.width * 0.95,
-          constraints: const BoxConstraints(maxWidth: 800),
-          decoration: const BoxDecoration(
-            color: Color(0xFF1A1A1A),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Header com Gradiente Púrpura (Igual ao original)
+              const SizedBox(height: 8),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [Color(0xFF4A148C), Color(0xFF880E4F)],
-                    begin: Alignment.centerLeft,
-                    end: Alignment.centerRight,
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                decoration: BoxDecoration(
+                  border: Border(
+                    top: BorderSide(color: Colors.white.withOpacity(0.15)),
                   ),
                 ),
-                child: const Text(
-                  'Cadastrar Novo Serviço',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
-                  ),
-                ),
-              ),
-              
-              Padding(
-                padding: const EdgeInsets.all(20.0),
                 child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Campo: Nome do Serviço *
-                    _buildField(
-                      controller: _nomeController,
-                      label: 'Nome do Serviço *',
-                    ),
-                    const SizedBox(height: 12),
-                    
-                    // Campo: Descrição
-                    _buildField(
-                      controller: _descricaoController,
-                      label: 'Descrição',
-                      maxLines: 3,
-                    ),
-                    const SizedBox(height: 12),
-                    
-                    // Linha: Preço Base e Valor Adicional
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _buildField(
-                            controller: _precoController,
-                            label: 'Preço Base (R\$) *',
-                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _buildField(
-                            controller: _valorAdicionalController,
-                            label: 'Valor Adicional (R\$)',
-                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    
-                    // Campo: Descrição do Valor Adicional
-                    _buildField(
-                      controller: _descricaoAdicionalController,
-                      label: 'Descrição do Valor Adicional',
-                    ),
-                    const SizedBox(height: 12),
-                    
-                    // Linha: Duração e Intervalo
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _buildField(
-                            controller: _duracaoController,
-                            label: 'Duração (min) *',
-                            keyboardType: TextInputType.number,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _buildField(
-                            controller: _intervaloController,
-                            label: 'Intervalo (min)',
-                            keyboardType: TextInputType.number,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    
-                    // Linha: Tipo e Valor de Comissão
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF121212),
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(color: Colors.white.withOpacity(0.05)),
-                            ),
-                            child: DropdownButtonFormField<String>(
-                              value: _tipoComissao,
-                              dropdownColor: const Color(0xFF1A1A1A),
-                              style: const TextStyle(color: Colors.white, fontSize: 14),
-                              decoration: const InputDecoration(
-                                labelText: 'Tipo de Comissão',
-                                labelStyle: TextStyle(color: Colors.white54, fontSize: 13),
-                                contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                                border: InputBorder.none,
+                    ...servicosVisiveis.map(
+                      (s) => Padding(
+                        padding: const EdgeInsets.only(bottom: 2),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.build, size: 12, color: Colors.lightBlueAccent),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                s.valorAdicional > 0.001
+                                    ? '${s.descricao} (+ ${moeda.format(s.valorAdicional)})'
+                                    : s.descricao,
+                                style: const TextStyle(color: Colors.white, fontSize: 12),
+                                overflow: TextOverflow.ellipsis,
                               ),
-                              items: ['Porcentagem', 'Fixo'].map((String value) {
-                                return DropdownMenuItem<String>(
-                                  value: value,
-                                  child: Text(value),
-                                );
-                              }).toList(),
-                              onChanged: (value) {
-                                setState(() {
-                                  _tipoComissao = value ?? 'Porcentagem';
-                                });
-                              },
                             ),
-                          ),
+                            Text(
+                              moeda.format(s.valor + s.valorAdicional),
+                              style: const TextStyle(color: Colors.white70, fontSize: 12),
+                            ),
+                          ],
                         ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _buildField(
-                            controller: _comissaoController,
-                            label: _tipoComissao == 'Porcentagem' ? 'Comissão (%)' : 'Comissão (R\$)',
-                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
-                    
-                    const SizedBox(height: 24),
-                    
-                    // Botões de Ação
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        TextButton(
-                          onPressed: () => Navigator.of(context).pop(),
-                          child: const Text('Cancelar', style: TextStyle(color: Colors.white70)),
-                        ),
-                        const SizedBox(width: 12),
-                        ElevatedButton(
-                          onPressed: _cadastrar,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF4A148C),
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                          ),
-                          child: const Text('Cadastrar'),
-                        ),
-                      ],
-                    ),
+                    if (restantes > 0)
+                      Text(
+                        '+ $restantes serviço(s)',
+                        style: const TextStyle(color: Colors.white70, fontSize: 11),
+                      ),
                   ],
                 ),
               ),
+              const SizedBox(height: 6),
+              if (isOrcamento && pedido.validadeOrcamento != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(
+                    'Válido até ${DateFormat('dd/MM/yyyy').format(pedido.validadeOrcamento!)}',
+                    style: TextStyle(
+                      color: pedido.orcamentoVencido
+                          ? Colors.redAccent
+                          : Colors.white70,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              if (!isCancelado && !isOrcamento) ...[
+                Row(
+                  children: [
+                    Text(
+                      'Recebido: ${moeda.format(pedido.totalRecebido)}',
+                      style: const TextStyle(color: Colors.greenAccent, fontSize: 12),
+                    ),
+                    const SizedBox(width: 12),
+                    if (!isRecebido)
+                      Text(
+                        'Falta: ${moeda.format(falta)}',
+                        style: const TextStyle(
+                          color: Colors.orangeAccent,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: LinearProgressIndicator(
+                    value: pedido.totalGeral > 0
+                        ? (pedido.totalRecebido / pedido.totalGeral).clamp(0.0, 1.0)
+                        : 0.0,
+                    minHeight: 5,
+                    backgroundColor: Colors.white.withOpacity(0.15),
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      isRecebido ? Colors.greenAccent : Colors.orangeAccent,
+                    ),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 10),
+              Wrap(
+                alignment: WrapAlignment.end,
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  TextButton.icon(
+                    onPressed: () => _mostrarDetalhes(pedido),
+                    icon: const Icon(Icons.visibility, size: 16),
+                    label: const Text('Ver'),
+                    style: TextButton.styleFrom(foregroundColor: Colors.lightBlueAccent),
+                  ),
+                  TextButton.icon(
+                    onPressed: () => _mostrarMenuImpressao(pedido),
+                    icon: const Icon(Icons.print, size: 16),
+                    label: const Text('Imprimir'),
+                    style: TextButton.styleFrom(foregroundColor: Colors.orange),
+                  ),
+                  TextButton.icon(
+                    onPressed: () => _abrirLancamento(servico: pedido),
+                    icon: const Icon(Icons.edit, size: 16),
+                    label: const Text('Editar'),
+                    style: TextButton.styleFrom(foregroundColor: Colors.white70),
+                  ),
+                  if (isOrcamento)
+                    ElevatedButton.icon(
+                      onPressed: () => _aprovarOrcamento(pedido),
+                      icon: const Icon(Icons.thumb_up, size: 16),
+                      label: const Text('Aprovar'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.purple.shade600,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                        textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  if (!isCancelado && !isOrcamento && !isRecebido)
+                    ElevatedButton.icon(
+                      onPressed: () => _abrirRecebimento(pedido),
+                      icon: const Icon(Icons.payments, size: 16),
+                      label: const Text('Receber'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.green.shade700,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                        textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                ],
+              ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildField({
-    required TextEditingController controller,
-    required String label,
-    int maxLines = 1,
-    TextInputType keyboardType = TextInputType.text,
-  }) {
-    return Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFF121212),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.white.withOpacity(0.05)),
-      ),
-      child: TextField(
-        controller: controller,
-        maxLines: maxLines,
-        keyboardType: keyboardType,
-        style: const TextStyle(color: Colors.white, fontSize: 14),
-        decoration: InputDecoration(
-          labelText: label,
-          labelStyle: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 13),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          border: InputBorder.none,
-          isDense: true,
         ),
       ),
     );

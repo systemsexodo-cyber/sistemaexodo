@@ -5,6 +5,7 @@ import '../services/data_service.dart';
 import '../services/producao_pdf_service.dart';
 import '../services/pedido_service.dart';
 import '../models/pedido.dart';
+import '../models/orcamento.dart';
 import '../models/produto.dart';
 import '../models/cliente.dart';
 import '../models/tabela_preco.dart';
@@ -57,10 +58,19 @@ class LancarPedidoPage extends StatefulWidget {
   final Pedido? pedidoExistente;
   final Cliente? clienteInicial; // Cliente já selecionado
 
+  /// Orçamento sendo editado (entidade própria, série ORC-).
+  final Orcamento? orcamentoExistente;
+
+  /// Tela aberta a partir de "Orçamentos": o botão principal salva como
+  /// proposta (ORC-) em vez de pedido (PED-).
+  final bool modoOrcamento;
+
   const LancarPedidoPage({
     super.key,
     this.pedidoExistente,
     this.clienteInicial,
+    this.orcamentoExistente,
+    this.modoOrcamento = false,
   });
 
   @override
@@ -80,6 +90,7 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
   List<PagamentoPedido> _pagamentos = []; // Formas de pagamento
   String _statusPedido = 'Pendente';
   String _numeroPedido = '';
+  DateTime? _validadeOrcamento; // Prazo da proposta (só para orçamento)
   bool _mostrarPagamentos = false; // Controla exibição do painel de pagamentos
 
   // Estado da busca
@@ -111,8 +122,10 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
     super.initState();
     _buscaController.addListener(_onBuscaChanged);
 
-    // Se for edição, carregar dados do pedido existente
-    if (widget.pedidoExistente != null) {
+    // Se for edição, carregar dados do registro existente
+    if (widget.orcamentoExistente != null) {
+      _carregarOrcamentoExistente();
+    } else if (widget.pedidoExistente != null) {
       _carregarPedidoExistente();
     } else {
       // Carregar cliente inicial se fornecido
@@ -120,13 +133,58 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
         _clienteSelecionado = widget.clienteInicial;
         _buscaClienteController.text = widget.clienteInicial!.nome;
       }
-      // Gerar próximo número de pedido
+      // Gerar próximo número (PED- ou ORC-, conforme a tela de origem)
       WidgetsBinding.instance.addPostFrameCallback((_) {
         final dataService = Provider.of<DataService>(context, listen: false);
         setState(() {
-          _numeroPedido = dataService.getProximoNumeroPedido();
+          _numeroPedido = widget.modoOrcamento
+              ? dataService.getProximoNumeroOrcamento()
+              : dataService.getProximoNumeroPedido();
         });
       });
+    }
+  }
+
+  /// Carrega um Orçamento (ORC-) para edição: cliente, carrinho, entrega e prazo.
+  void _carregarOrcamentoExistente() {
+    final orcamento = widget.orcamentoExistente!;
+    final dataService = Provider.of<DataService>(context, listen: false);
+
+    _numeroPedido = orcamento.numero;
+    _validadeOrcamento = orcamento.validadeOrcamento;
+
+    if (orcamento.clienteId != null) {
+      _clienteSelecionado = dataService.clientes
+          .where((c) => c.id == orcamento.clienteId)
+          .firstOrNull;
+      if (_clienteSelecionado != null) {
+        _buscaClienteController.text = _clienteSelecionado!.nome;
+      }
+    }
+
+    for (final item in orcamento.itens) {
+      final produto =
+          dataService.produtos.where((p) => p.id == item.id).firstOrNull;
+      if (produto != null) {
+        _carrinho.add(
+          ItemCarrinho(
+            produto: produto,
+            quantidade: item.quantidade,
+            precoUnitario: item.preco,
+            observacao: item.observacao,
+          ),
+        );
+      }
+    }
+
+    _observacoesController.text = orcamento.observacoes ?? '';
+
+    if (orcamento.deliveryInfo != null) {
+      _isEntrega = true;
+      _dataEntrega = orcamento.deliveryInfo!.dataEntrega;
+      if (_dataEntrega != null) {
+        _horaEntrega = TimeOfDay.fromDateTime(_dataEntrega!);
+      }
     }
   }
 
@@ -732,6 +790,178 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
     );
   }
 
+  /// Endereço resumido do cliente (para o orçamento e o pedido gerado).
+  String? _enderecoResumidoCliente() {
+    final cliente = _clienteSelecionado;
+    if (cliente == null) return null;
+    final partes = <String>[
+      if (cliente.endereco != null && cliente.endereco!.isNotEmpty)
+        cliente.endereco!,
+      if (cliente.numero != null && cliente.numero!.isNotEmpty) cliente.numero!,
+      if (cliente.bairro != null && cliente.bairro!.isNotEmpty) cliente.bairro!,
+    ];
+    if (partes.isEmpty) return null;
+    return partes.join(', ');
+  }
+
+  /// DeliveryInfo do estado atual da tela (entrega marcada ou retirada).
+  DeliveryInfo? _montarDeliveryInfo(DeliveryInfo? existente) {
+    if (!_isEntrega) return null;
+
+    DateTime? dataFinalEntrega;
+    if (_dataEntrega != null) {
+      dataFinalEntrega = DateTime(
+        _dataEntrega!.year,
+        _dataEntrega!.month,
+        _dataEntrega!.day,
+        _horaEntrega?.hour ?? 0,
+        _horaEntrega?.minute ?? 0,
+      );
+    }
+
+    return (existente ??
+            DeliveryInfo(
+              id: const Uuid().v4(),
+              enderecoId: _clienteSelecionado?.id ?? 'balcao',
+              logradouro: _clienteSelecionado?.endereco ?? '',
+              numero: _clienteSelecionado?.numero ?? '',
+              bairro: _clienteSelecionado?.bairro ?? '',
+              cidade: _clienteSelecionado?.cidade ?? '',
+              uf: _clienteSelecionado?.estado ?? '',
+              status: 'Pendente',
+            ))
+        .copyWith(dataEntrega: dataFinalEntrega);
+  }
+
+  /// Pergunta o prazo da proposta e salva como Orçamento (ORC-).
+  Future<void> _salvarComoOrcamento() async {
+    final opcao = await showDialog<int>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        title: const Text('Salvar como orçamento'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Orçamento é uma proposta: não entra no PDV, nos recebíveis nem nos '
+              'relatórios de venda. Vira pedido só quando o cliente aprovar.',
+              style: TextStyle(color: Colors.white70, fontSize: 13),
+            ),
+            const SizedBox(height: 16),
+            const Text('Validade da proposta:',
+                style: TextStyle(color: Colors.white70, fontSize: 13)),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              children: [
+                for (final dias in const [3, 7, 15, 30])
+                  ActionChip(
+                    label: Text('$dias dias'),
+                    onPressed: () => Navigator.pop(dialogContext, dias),
+                  ),
+                ActionChip(
+                  label: const Text('Sem validade'),
+                  onPressed: () => Navigator.pop(dialogContext, 0),
+                ),
+              ],
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancelar'),
+          ),
+        ],
+      ),
+    );
+
+    if (opcao == null) return;
+
+    await _salvarOrcamento(
+      validade: opcao == 0
+          ? null
+          : DateTime.now().add(Duration(days: opcao)),
+      definirValidade: true,
+    );
+  }
+
+  /// Salva como ORÇAMENTO (série ORC-) — entidade própria, com validade.
+  /// Não imprime ticket de produção e não gera recebível.
+  Future<void> _salvarOrcamento({
+    DateTime? validade,
+    bool definirValidade = false,
+  }) async {
+    if (!mounted) return;
+
+    if (_carrinho.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Adicione pelo menos um produto ao orçamento'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    final dataService = Provider.of<DataService>(context, listen: false);
+
+    final existente = widget.orcamentoExistente;
+    final validadeFinal = definirValidade
+        ? validade
+        : (existente?.validadeOrcamento ??
+            _validadeOrcamento ??
+            DateTime.now().add(const Duration(days: 7)));
+
+    final orcamentoFinal = Orcamento(
+      id: existente?.id ?? const Uuid().v4(),
+      numero: _numeroPedido.isNotEmpty
+          ? _numeroPedido
+          : dataService.getProximoNumeroOrcamento(),
+      clienteId: _clienteSelecionado?.id,
+      clienteNome: _clienteSelecionado?.nome,
+      clienteTelefone: _clienteSelecionado?.telefone,
+      clienteEndereco: _enderecoResumidoCliente(),
+      clienteCpfCnpj: _clienteSelecionado?.cpfCnpj,
+      operador: dataService.usuarioAtualNome,
+      dataOrcamento: existente?.dataOrcamento ?? DateTime.now(),
+      validadeOrcamento: validadeFinal,
+      status: existente?.status ?? Orcamento.statusOrcamento,
+      total: _totalPedido,
+      observacoes: _observacoesController.text.isNotEmpty
+          ? _observacoesController.text
+          : null,
+      itens: _carrinho.map((item) => item.toItemPedido()).toList(),
+      servicos: existente?.servicos ?? [],
+      deliveryInfo: _montarDeliveryInfo(existente?.deliveryInfo),
+      pedidoGeradoId: existente?.pedidoGeradoId,
+      pedidoGeradoNumero: existente?.pedidoGeradoNumero,
+      dataAprovacao: existente?.dataAprovacao,
+      createdAt: existente?.createdAt ?? DateTime.now(),
+      updatedAt: DateTime.now(),
+    );
+
+    if (existente != null) {
+      await dataService.updateOrcamento(orcamentoFinal);
+    } else {
+      await dataService.addOrcamento(orcamentoFinal);
+    }
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Orçamento ${orcamentoFinal.numero} salvo!'),
+        backgroundColor: Colors.green,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+
+    Navigator.of(context).pop(orcamentoFinal);
+  }
+
   Future<void> _salvarPedido() async {
     if (_carrinho.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -898,7 +1128,8 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
   Widget build(BuildContext context) {
     final dataService = Provider.of<DataService>(context);
     final clientes = dataService.clientes;
-    final isEdicao = widget.pedidoExistente != null;
+    final isEdicao =
+        widget.pedidoExistente != null || widget.orcamentoExistente != null;
     final isPago = widget.pedidoExistente?.totalmenteRecebido ?? false;
 
     // Se o pedido já foi pago, mostrar tela de visualização apenas
@@ -912,7 +1143,9 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
         appBar: AppBar(
           title: Column(
             children: [
-              Text(isEdicao ? 'Editar Pedido' : 'Novo Pedido'),
+              Text(widget.modoOrcamento
+                  ? (isEdicao ? 'Editar Orçamento' : 'Novo Orçamento')
+                  : (isEdicao ? 'Editar Pedido' : 'Novo Pedido')),
               if (_numeroPedido.isNotEmpty)
                 Text(
                   _numeroPedido,
@@ -933,11 +1166,25 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
           ),
           actions: [
             SyncStatusWidget(),
+            // Da tela de Pedidos dá para salvar a montagem como proposta (ORC-).
+            if (!widget.modoOrcamento)
+              TextButton.icon(
+                onPressed: _carrinho.isNotEmpty ? _salvarComoOrcamento : null,
+                icon: const Icon(Icons.request_quote, color: Colors.white),
+                label: const Text(
+                  'Orçamento',
+                  style: TextStyle(color: Colors.white),
+                ),
+              ),
             TextButton.icon(
-              onPressed: _carrinho.isNotEmpty ? _salvarPedido : null,
+              onPressed: _carrinho.isNotEmpty
+                  ? (widget.modoOrcamento ? _salvarOrcamento : _salvarPedido)
+                  : null,
               icon: const Icon(Icons.save, color: Colors.white),
               label: Text(
-                isEdicao ? 'Atualizar' : 'Salvar',
+                widget.modoOrcamento
+                    ? (isEdicao ? 'Atualizar Orçamento' : 'Salvar Orçamento')
+                    : (isEdicao ? 'Atualizar' : 'Salvar'),
                 style: const TextStyle(color: Colors.white),
               ),
             ),

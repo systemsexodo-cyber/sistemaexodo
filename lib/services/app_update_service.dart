@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'package:supabase_flutter/supabase_flutter.dart' show FileOptions, BucketOptions;
 import 'package:sistema_exodo_novo/services/supabase_service.dart';
+import 'package:sistema_exodo_novo/services/win32_process_helper.dart';
 
 class AppUpdateService {
   static const String currentAppVersion = "1.0.36";
@@ -163,9 +164,9 @@ class AppUpdateService {
 @echo off
 title Atualizando Sistema Exodo
 echo Aguardando o aplicativo fechar...
-timeout /t 2 /nobreak >nul
+ping -n 3 127.0.0.1 >nul
 taskkill /F /IM sistema_exodo_novo.exe >nul 2>&1
-timeout /t 1 /nobreak >nul
+ping -n 2 127.0.0.1 >nul
 move /Y "$newExePath" "$currentExePath"
 echo Iniciando nova versao...
 start "" "$currentExePath"
@@ -175,7 +176,16 @@ del "%~f0"
 
       debugPrint('>>> [AppUpdateService] Executando script de swap e fechando...');
       // Disparar o BAT sem janela CMD
-      await Process.start('cmd.exe', ['/c', batPath], mode: ProcessStartMode.detached);
+      // (CreateProcessW + CREATE_NO_WINDOW: o app é GUI, então um cmd.exe comum
+      // abriria uma janela de console visível)
+      final pid = Win32ProcessHelper.startProcessHidden(
+        'cmd.exe',
+        arguments: ['/c', batPath],
+      );
+      if (pid == null) {
+        debugPrint('>>> [AppUpdateService] ⚠️ Falha ao executar o BAT de atualização');
+        return false;
+      }
       // Fechar a si mesmo imediatamente
       exit(0);
     } catch (e) {

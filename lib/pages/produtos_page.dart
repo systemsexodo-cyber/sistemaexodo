@@ -45,6 +45,7 @@ class _ProdutosPageState extends State<ProdutosPage> {
   int? _filtroEstoque; // null = todos, 10, 20, 30
   String? _filtroGrupo; 
   String? _filtroUnidade; // Novo: Filtro por unidade (UN, KG, etc)
+  bool? _filtroAtivo; // null = todos, true = ativos, false = desativados
 
   // Seleção para edição em massa
   final Set<String> _selecionados = {};
@@ -63,6 +64,7 @@ class _ProdutosPageState extends State<ProdutosPage> {
   int? _cacheEstoque;
   String? _cacheGrupo;
   String? _cacheUnidade;
+  bool? _cacheAtivo;
   SortOption _cacheSort = SortOption.codigo;
   int _cacheTotalService = 0;
   // Hash baseado no updatedAt do produto mais recente — invalida cache após qualquer edição
@@ -275,6 +277,28 @@ class _ProdutosPageState extends State<ProdutosPage> {
     _showForm(context, produto: clone, isClone: true);
   }
 
+  void _toggleAtivoProduto(Produto produto) async {
+    final service = Provider.of<DataService>(context, listen: false);
+    final novoStatus = !produto.ativo;
+    final produtoAtualizado = produto.copyWith(
+      ativo: novoStatus,
+      updatedAt: DateTime.now(),
+    );
+    await service.updateProduto(produtoAtualizado);
+    setState(() {});
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(novoStatus
+              ? '✅ ${produto.nome} foi ATIVADO no PDV!'
+              : '🚫 ${produto.nome} foi DESATIVADO no PDV!'),
+          backgroundColor: novoStatus ? Colors.green : Colors.orange,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
   /// Abre diálogo de opções e imprime o inventário para contagem física.
   void _imprimirInventarioContagem(BuildContext context, DataService service, List<Produto> produtos) async {
     if (produtos.isEmpty) {
@@ -466,7 +490,8 @@ class _ProdutosPageState extends State<ProdutosPage> {
         _cacheBusca != _busca || 
         _cacheEstoque != _filtroEstoque || 
         _cacheGrupo != _filtroGrupo || 
-        _cacheUnidade != _filtroUnidade || 
+        _cacheUnidade != _filtroUnidade ||
+        _cacheAtivo != _filtroAtivo ||
         _cacheSort != _sortOption ||
         _cacheTotalService != service.produtos.length ||
         _cacheUpdateHash != currentUpdateHash) {
@@ -475,6 +500,7 @@ class _ProdutosPageState extends State<ProdutosPage> {
         if (_filtroEstoque != null && p.estoque >= _filtroEstoque!) return false;
         if (_filtroGrupo != null && p.grupo != _filtroGrupo) return false;
         if (_filtroUnidade != null && p.unidade != _filtroUnidade) return false;
+        if (_filtroAtivo != null && p.ativo != _filtroAtivo) return false;
         
         if (_busca.isEmpty) return true;
 
@@ -539,6 +565,7 @@ class _ProdutosPageState extends State<ProdutosPage> {
       _cacheEstoque = _filtroEstoque;
       _cacheGrupo = _filtroGrupo;
       _cacheUnidade = _filtroUnidade;
+      _cacheAtivo = _filtroAtivo;
       _cacheSort = _sortOption;
       _cacheTotalService = service.produtos.length;
       _cacheUpdateHash = currentUpdateHash;
@@ -549,7 +576,7 @@ class _ProdutosPageState extends State<ProdutosPage> {
     return AppTheme.appBackground(
       child: Scaffold(
         appBar: CustomAppBar(
-          title: 'Produtos • ${service.empresaAtual?.nomeExibicao ?? 'Catálogo'}',
+          title: 'Produtos • ${service.empresaAtual?.nomeExibicao ?? 'Catálogo'}${service.empresaAtual != null ? ' (${service.empresaAtual!.idCurto})' : ''}',
           actions: [
             // Botão Produção/Manufatura
             IconButton(
@@ -1042,6 +1069,21 @@ class _ProdutosPageState extends State<ProdutosPage> {
                     },
                   ),
                   const VerticalDivider(width: 12, indent: 14, endIndent: 14, color: Colors.white10),
+                  // Filtro por Status (Ativo/Desativado)
+                  PopupMenuButton<bool?>(
+                    icon: Icon(Icons.toggle_on,
+                      color: _filtroAtivo == false ? Colors.redAccent : (_filtroAtivo == true ? Colors.greenAccent : Colors.white60),
+                      size: 22
+                    ),
+                    tooltip: 'Filtrar por Status',
+                    onSelected: (v) { setState(() { _filtroAtivo = v; _resetPaginacao(); }); },
+                    itemBuilder: (context) => [
+                      const PopupMenuItem(value: null, child: Row(children: [Icon(Icons.select_all, size: 16, color: Colors.white70), SizedBox(width: 8), Text('Todos', style: TextStyle(color: Colors.white))])),
+                      const PopupMenuItem(value: true, child: Row(children: [Icon(Icons.check_circle, size: 16, color: Colors.greenAccent), SizedBox(width: 8), Text('Ativos no PDV', style: TextStyle(color: Colors.greenAccent))])),
+                      const PopupMenuItem(value: false, child: Row(children: [Icon(Icons.cancel, size: 16, color: Colors.redAccent), SizedBox(width: 8), Text('Desativados do PDV', style: TextStyle(color: Colors.redAccent))])),
+                    ],
+                  ),
+                  const VerticalDivider(width: 12, indent: 14, endIndent: 14, color: Colors.white10),
                   PopupMenuButton<int?>(
                     icon: Icon(Icons.filter_list, 
                       color: _filtroEstoque != null ? Colors.orangeAccent : Colors.white60, 
@@ -1058,7 +1100,7 @@ class _ProdutosPageState extends State<ProdutosPage> {
                 ],
               ),
             ),
-            if (_filtroEstoque != null || _filtroGrupo != null)
+            if (_filtroEstoque != null || _filtroGrupo != null || _filtroAtivo != null)
               Padding(
                 padding: const EdgeInsets.only(left: 16, bottom: 8, right: 16),
                 child: Wrap(
@@ -1092,6 +1134,16 @@ class _ProdutosPageState extends State<ProdutosPage> {
                         onSelected: (_) => setState(() => _filtroUnidade = null),
                         backgroundColor: Colors.teal.shade900.withOpacity(0.4),
                         selectedColor: Colors.teal.shade800,
+                        avatar: const Icon(Icons.close, size: 14, color: Colors.white),
+                        padding: EdgeInsets.zero,
+                      ),
+                    if (_filtroAtivo != null)
+                      ChoiceChip(
+                        label: Text(_filtroAtivo == true ? 'Ativos no PDV' : 'Desativados do PDV', style: const TextStyle(fontSize: 11, color: Colors.white)),
+                        selected: true,
+                        onSelected: (_) => setState(() => _filtroAtivo = null),
+                        backgroundColor: _filtroAtivo == true ? Colors.green.shade900.withOpacity(0.4) : Colors.red.shade900.withOpacity(0.4),
+                        selectedColor: _filtroAtivo == true ? Colors.green.shade800 : Colors.red.shade800,
                         avatar: const Icon(Icons.close, size: 14, color: Colors.white),
                         padding: EdgeInsets.zero,
                       ),
@@ -1176,6 +1228,7 @@ class _ProdutosPageState extends State<ProdutosPage> {
                           final estaEditando = _editandoId == produto.id;
                           final isSelected = _selectedIndex == index;
                           final estoqueBaixo = produto.estoque < 10;
+                          final isDesativado = !produto.ativo;
   
                           if (estaEditando) {
                             return _buildEdicaoRapida(produto);
@@ -1187,10 +1240,12 @@ class _ProdutosPageState extends State<ProdutosPage> {
                             decoration: BoxDecoration(
                               color: isSelected 
                                   ? Colors.blueAccent.withOpacity(0.15) 
-                                  : Colors.white.withOpacity(0.04),
+                                  : (isDesativado ? Colors.redAccent.withOpacity(0.06) : Colors.white.withOpacity(0.04)),
                               borderRadius: BorderRadius.circular(16),
                               border: Border.all(
-                                color: isSelected ? Colors.blueAccent : Colors.white.withOpacity(0.05),
+                                color: isSelected 
+                                    ? Colors.blueAccent 
+                                    : (isDesativado ? Colors.redAccent.withOpacity(0.3) : Colors.white.withOpacity(0.05)),
                                 width: isSelected ? 3 : 1,
                               ),
                               boxShadow: isSelected ? [
@@ -1366,6 +1421,26 @@ class _ProdutosPageState extends State<ProdutosPage> {
                                                 );
                                               }),
                                             ],
+                                            if (isDesativado) ...[
+                                              const SizedBox(width: 8),
+                                              Container(
+                                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                                decoration: BoxDecoration(
+                                                  color: Colors.redAccent.withOpacity(0.15),
+                                                  borderRadius: BorderRadius.circular(8),
+                                                  border: Border.all(color: Colors.redAccent.withOpacity(0.3)),
+                                                ),
+                                                child: Row(
+                                                  mainAxisSize: MainAxisSize.min,
+                                                  children: const [
+                                                    Icon(Icons.cancel_outlined, size: 10, color: Colors.redAccent),
+                                                    SizedBox(width: 4),
+                                                    Text('DESATIVADO PDV',
+                                                      style: TextStyle(fontSize: 9, color: Colors.redAccent, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
+                                                  ],
+                                                ),
+                                              ),
+                                            ],
                                             if (produto.enviaBalanca) ...[
                                               const SizedBox(width: 8),
                                               // Badge de Balança
@@ -1426,6 +1501,46 @@ class _ProdutosPageState extends State<ProdutosPage> {
                                     ],
                                   ),
                                   const SizedBox(width: 12),
+                                  // Botão visível de Ativar/Desativar no PDV
+                                  GestureDetector(
+                                    onTap: () => _toggleAtivoProduto(produto),
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                                      decoration: BoxDecoration(
+                                        color: produto.ativo 
+                                            ? Colors.greenAccent.withOpacity(0.12) 
+                                            : Colors.redAccent.withOpacity(0.15),
+                                        borderRadius: BorderRadius.circular(8),
+                                        border: Border.all(
+                                          color: produto.ativo 
+                                              ? Colors.greenAccent.withOpacity(0.3) 
+                                              : Colors.redAccent.withOpacity(0.4),
+                                          width: 1.5,
+                                        ),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(
+                                            produto.ativo ? Icons.toggle_on_rounded : Icons.toggle_off_rounded,
+                                            size: 20,
+                                            color: produto.ativo ? Colors.greenAccent : Colors.redAccent,
+                                          ),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            produto.ativo ? 'ATIVO' : 'OFF',
+                                            style: TextStyle(
+                                              fontSize: 9,
+                                              fontWeight: FontWeight.bold,
+                                              color: produto.ativo ? Colors.greenAccent : Colors.redAccent,
+                                              letterSpacing: 0.5,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 4),
                                   PopupMenuButton<String>(
                                     icon: const Icon(Icons.more_vert, color: Colors.white30, size: 20),
                                     color: const Color(0xFF1A1A2E),

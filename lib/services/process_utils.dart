@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:path/path.dart' as p;
 import 'win32_process_helper.dart';
 
 /// Utilitário para executar processos no Windows sem abrir janela CMD.
@@ -11,6 +12,7 @@ Future<ProcessResult> runProcessHidden(
   List<String> arguments, {
   String? workingDirectory,
   Map<String, String>? environment,
+  Duration? timeout,
 }) async {
   if (!Platform.isWindows) {
     // No Linux/Mac, Process.run não cria janela visível
@@ -22,47 +24,65 @@ Future<ProcessResult> runProcessHidden(
     );
   }
 
-  // No Windows, usar Win32 API para iniciar sem janela de console
-  final pid = Win32ProcessHelper.startProcessHidden(
+  // No Windows: CreateProcessW + CREATE_NO_WINDOW, com stdout/stderr
+  // redirecionados para arquivos temporários (sem janela CMD e com saída real).
+  return Win32ProcessHelper.runProcessHiddenCapture(
     executable,
     arguments: arguments,
     workingDirectory: workingDirectory,
+    environment: environment,
+    timeout: timeout,
   );
+}
 
-  if (pid != null) {
-    // Processo iniciado com sucesso via Win32, aguardar conclusão
-    // Como não temos stdout/stderr, retornar resultado vazio
-    return ProcessResult(pid, 0, '', '');
+/// Procura um binário do PostgreSQL (psql, pg_dump, pg_restore, createdb...).
+///
+/// Procura nesta ordem:
+///  1. PATH do sistema;
+///  2. o PostgreSQL embutido que acompanha o app (`postgresql/bin` e
+///     `postgresql/pgsql/bin`), relativo ao diretório atual e à pasta do
+///     executável;
+///  3. o próprio diretório do executável.
+///
+/// Devolve null quando não encontrar em nenhum lugar.
+Future<String?> findPostgresBinary(String nome) async {
+  final nomeExe = Platform.isWindows ? '$nome.exe' : nome;
+
+  // 1) PATH do sistema
+  try {
+    final result = await runProcessHidden(
+      Platform.isWindows ? 'where' : 'which',
+      [nome],
+    );
+    if (result.exitCode == 0) {
+      final linhas = result.stdout.toString().trim().split(RegExp(r'\r?\n'));
+      if (linhas.isNotEmpty && linhas.first.trim().isNotEmpty) {
+        return linhas.first.trim();
+      }
+    }
+  } catch (_) {}
+
+  // 2) e 3) instalação que acompanha o app
+  final candidatos = <String>[];
+  void adicionarAoRedorDe(String base) {
+    candidatos.add(p.join(base, 'postgresql', 'bin', nomeExe));
+    candidatos.add(p.join(base, 'postgresql', 'pgsql', 'bin', nomeExe));
   }
 
-  // Fallback: Process.start com inherit (conecta stdio ao processo pai)
-  // NOTA: detached NÃO conecta stdio, causando 'Bad state: stdio is not connected'
-  final process = await Process.start(
-    executable,
-    arguments,
-    mode: ProcessStartMode.normal,
-    workingDirectory: workingDirectory,
-    environment: environment,
-  );
+  adicionarAoRedorDe(Directory.current.path);
+  try {
+    final exeDir = File(Platform.resolvedExecutable).parent.path;
+    adicionarAoRedorDe(exeDir);
+    candidatos.add(p.join(exeDir, nomeExe));
+  } catch (_) {}
 
-  // Ler stdout e stderr para obter o resultado
-  final stdoutBytes = await process.stdout.fold<List<int>>(
-    <int>[],
-    (previous, element) => previous..addAll(element),
-  );
-  final stderrBytes = await process.stderr.fold<List<int>>(
-    <int>[],
-    (previous, element) => previous..addAll(element),
-  );
+  for (final caminho in candidatos) {
+    try {
+      if (File(caminho).existsSync()) return caminho;
+    } catch (_) {}
+  }
 
-  final exitCode = await process.exitCode;
-
-  return ProcessResult(
-    process.pid,
-    exitCode,
-    String.fromCharCodes(stdoutBytes),
-    String.fromCharCodes(stderrBytes),
-  );
+  return null;
 }
 
 /// Executa um processo sem esperar resultado e sem criar janela CMD.

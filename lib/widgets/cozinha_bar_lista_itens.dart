@@ -4,7 +4,14 @@ import '../services/data_service.dart';
 import '../models/mesa_comanda.dart';
 import 'cozinha_bar_card_item.dart';
 
-/// Widget compartilhado para lista de itens da cozinha/bar
+/// Widget compartilhado para lista de itens da cozinha/bar.
+///
+/// Esta página reconstrói o TabController dinamicamente conforme os
+/// departamentos mudam. Cada aba deve manter seu estado vivo entre o foco,
+/// para não conflitar com o ciclo de vida do TabController.
+///
+/// Para garantir isso, CozinhaBarListaItens é um StatelessWidget de
+/// disposição que encapsula um StatefulWidget com AutomaticKeepAliveClientMixin.
 class CozinhaBarListaItens extends StatelessWidget {
   final String setor;
   final Function(ItemMesaComanda, MesaComanda)? onMarcarEmPreparo;
@@ -21,8 +28,44 @@ class CozinhaBarListaItens extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return _CozinhaBarListaItensKeepAlive(
+      setor: setor,
+      onMarcarEmPreparo: onMarcarEmPreparo,
+      onMarcarPronto: onMarcarPronto,
+      onDesmarcarPronto: onDesmarcarPronto,
+    );
+  }
+}
+
+class _CozinhaBarListaItensKeepAlive extends StatefulWidget {
+  final String setor;
+  final Function(ItemMesaComanda, MesaComanda)? onMarcarEmPreparo;
+  final Function(ItemMesaComanda, MesaComanda)? onMarcarPronto;
+  final Function(ItemMesaComanda, MesaComanda)? onDesmarcarPronto;
+
+  const _CozinhaBarListaItensKeepAlive({
+    required this.setor,
+    this.onMarcarEmPreparo,
+    this.onMarcarPronto,
+    this.onDesmarcarPronto,
+  });
+
+  @override
+  State<_CozinhaBarListaItensKeepAlive> createState() =>
+      _CozinhaBarListaItensKeepAliveState();
+}
+
+class _CozinhaBarListaItensKeepAliveState
+    extends State<_CozinhaBarListaItensKeepAlive>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
     final dataService = Provider.of<DataService>(context, listen: true);
-    
+
     // Buscar todas as mesas/comandas abertas
     final mesasComandasAbertas = dataService.mesasComandas
         .where((m) => m.status == 'Aberta')
@@ -30,11 +73,11 @@ class CozinhaBarListaItens extends StatelessWidget {
 
     // Coletar todos os itens de todas as mesas
     final todosItens = <Map<String, dynamic>>[];
-    
+
     for (final mesaComanda in mesasComandasAbertas) {
       List<ItemMesaComanda> itensFiltrados;
-      
-      if (setor == 'Todos') {
+
+      if (widget.setor == 'Todos') {
         itensFiltrados = mesaComanda.itens;
       } else {
         // Filtra por departamento: usa o `local` do item (nome do departamento)
@@ -42,18 +85,18 @@ class CozinhaBarListaItens extends StatelessWidget {
         itensFiltrados = mesaComanda.itens.where((i) {
           final local = (i.local ?? '').trim();
           if (local.isNotEmpty) {
-            return local.toLowerCase() == setor.toLowerCase();
+            return local.toLowerCase() == widget.setor.toLowerCase();
           }
-          if (setor.toLowerCase() == 'cozinha') return i.paraCozinha == true;
-          if (setor.toLowerCase() == 'bar') return i.paraBar == true;
+          if (widget.setor.toLowerCase() == 'cozinha') return i.paraCozinha == true;
+          if (widget.setor.toLowerCase() == 'bar') return i.paraBar == true;
           return false;
         }).toList();
       }
 
       for (final item in itensFiltrados) {
         // Incluir itens pendentes, em preparo, prontos ou cancelados
-        if (item.status == StatusItem.pendente || 
-            item.status == StatusItem.emPreparo || 
+        if (item.status == StatusItem.pendente ||
+            item.status == StatusItem.emPreparo ||
             item.status == StatusItem.pronto ||
             item.status == StatusItem.cancelado) {
           todosItens.add({
@@ -77,9 +120,9 @@ class CozinhaBarListaItens extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(
-              setor == 'Cozinha'
+              widget.setor == 'Cozinha'
                   ? Icons.restaurant
-                  : setor == 'Bar'
+                  : widget.setor == 'Bar'
                       ? Icons.local_bar
                       : Icons.inventory,
               size: 80,
@@ -87,13 +130,13 @@ class CozinhaBarListaItens extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             Text(
-              setor == 'Todos'
+              widget.setor == 'Todos'
                   ? 'Nenhum item pendente'
-                  : 'Nenhum item pendente para $setor',
-              style: TextStyle(
+                  : 'Nenhum item pendente para ${widget.setor}',
+              style: const TextStyle(
                 fontSize: 18,
-                color: Colors.grey.withOpacity(0.7),
-              ),
+                color: Colors.grey,
+              ).apply(color: Colors.grey.withOpacity(0.7)),
             ),
           ],
         ),
@@ -114,17 +157,12 @@ class CozinhaBarListaItens extends StatelessWidget {
             item: item,
             mesaComanda: mesaComanda,
             dataService: dataService,
-            onMarcarEmPreparo: onMarcarEmPreparo,
-            onMarcarPronto: onMarcarPronto,
-            onDesmarcarPronto: onDesmarcarPronto,
+            onMarcarEmPreparo: widget.onMarcarEmPreparo,
+            onMarcarPronto: widget.onMarcarPronto,
+            onDesmarcarPronto: widget.onDesmarcarPronto,
           );
         },
       ),
     );
   }
 }
-
-
-
-
-

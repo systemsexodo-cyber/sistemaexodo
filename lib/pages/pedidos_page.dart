@@ -23,6 +23,7 @@ import '../services/producao_pdf_service.dart';
 import '../services/auth_service.dart';
 import '../models/empresa.dart';
 import '../widgets/sync_status_widget.dart';
+import 'orcamentos_page.dart';
 import 'criar_romaneio_page.dart';
 import 'romaneios_page.dart';
 
@@ -109,6 +110,18 @@ class _PedidosPageState extends State<PedidosPage> {
                 },
               ),
             ] else ...[
+              IconButton(
+                icon: const Icon(Icons.request_quote, color: Colors.purpleAccent),
+                tooltip: 'Orçamentos (propostas com validade)',
+                onPressed: () async {
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (context) => const OrcamentosPage()),
+                  );
+                  if (mounted) setState(() {});
+                },
+              ),
               IconButton(
                 icon: const Icon(Icons.assignment_outlined),
                 tooltip: 'Ver Romaneios',
@@ -1428,6 +1441,22 @@ class _PedidosPageState extends State<PedidosPage> {
                             ),
                           ],
                         ),
+                      if (_orcamentoDeOrigem(pedido) != null)
+                        Row(
+                          children: [
+                            const Icon(Icons.request_quote,
+                                size: 10, color: Colors.purpleAccent),
+                            const SizedBox(width: 4),
+                            Text(
+                              'Orçamento ${_orcamentoDeOrigem(pedido)}',
+                              style: const TextStyle(
+                                color: Colors.purpleAccent,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
                     ],
                   ),
                   const SizedBox(width: 12),
@@ -2353,6 +2382,15 @@ class _PedidosPageState extends State<PedidosPage> {
         ),
       ],
     );
+  }
+
+  /// Número do orçamento (ORC-) que originou este pedido, quando houver.
+  /// O pedido nasce de um orçamento APROVADO e guarda essa referência nas
+  /// observações — são numerações separadas de propósito.
+  String? _orcamentoDeOrigem(Pedido pedido) {
+    final obs = pedido.observacoes ?? '';
+    final match = RegExp('^Orçamento (ORC-\\d+)').firstMatch(obs);
+    return match?.group(1);
   }
 
   String _formatarDataCurta(DateTime data) {

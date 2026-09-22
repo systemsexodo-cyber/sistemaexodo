@@ -345,6 +345,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   String? _cacheCategoriaAtiva;
   SortOption _cacheSortPDV = SortOption.codigo;
   int _cacheTotalProdutosPDV = 0;
+  int _cacheTotalProdutosAtivosPDV = 0; // Conta produtos ativos para invalidar cache ao desativar
   int _cacheTotalPerguntasPDV = 0;
 
   // ESTADO DE DELIVERY
@@ -1110,6 +1111,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       _cacheProdutosCategoria = [];
       _cacheCategoriaAtiva = null;
       _cacheTotalProdutosPDV = 0;
+      _cacheTotalProdutosAtivosPDV = 0;
 
       _clienteSelecionado = null;
       _tabelaPrecoAtiva = null;
@@ -2125,6 +2127,37 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     }
 
     final produto = item as Produto;
+
+    // BLOQUEAR PRODUTO DESATIVADO
+    if (!produto.ativo) {
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            backgroundColor: const Color(0xFF1E1E2E),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: Row(
+              children: [
+                Icon(Icons.lock_outline, color: Colors.redAccent, size: 28),
+                const SizedBox(width: 10),
+                const Text('Produto Desativado', style: TextStyle(color: Colors.white, fontSize: 18)),
+              ],
+            ),
+            content: Text(
+              'O produto "${produto.nome}" está desativado no PDV e não pode ser vendido.\n\nPara vender, reative o produto na tela de Cadastro de Produtos.',
+              style: const TextStyle(color: Colors.white70, fontSize: 14),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('ENTENDI', style: TextStyle(color: Colors.blueAccent)),
+              ),
+            ],
+          ),
+        );
+      }
+      return;
+    }
     final isServico = item is Servico;
 
     // INTERCEPTADOR DE COMBOS / PERGUNTAS DE SELEÇÃO
@@ -3602,7 +3635,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                 setState(() {
                   _descontoTotal = 0.0;
                 });
-                await _storage.salvar(_keyDescontoTotalPDV, 0.0);
+                // Chave POR EMPRESA: gravar na chave crua fazia o desconto vazar
+                // para outra empresa e nunca ser lido de volta (a leitura usa _chavePDV).
+                await _storage.salvar(_chavePDV(_keyDescontoTotalPDV), 0.0);
                 Navigator.pop(dialogContext);
               },
               child: const Text(
@@ -3650,7 +3685,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                 setState(() {
                   _descontoTotal = desconto;
                 });
-                await _storage.salvar(_keyDescontoTotalPDV, desconto);
+                await _storage.salvar(_chavePDV(_keyDescontoTotalPDV), desconto);
                 Navigator.pop(dialogContext);
 
                 ScaffoldMessenger.of(context).showSnackBar(
@@ -3702,10 +3737,12 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     final totalPerguntas = dataService.produtos.fold<int>(0, (sum, p) => sum + p.perguntasSelecao.length);
 
     // Se o cache for válido, retorna ele
+    final totalAtivos = dataService.produtos.where((p) => p.ativo).length;
     if (_cacheProdutosCategoria.isNotEmpty &&
         _cacheCategoriaAtiva == _categoriaAtiva &&
         _cacheSortPDV == _sortOption &&
         _cacheTotalProdutosPDV == dataService.produtos.length &&
+        _cacheTotalProdutosAtivosPDV == totalAtivos &&
         _cacheTotalPerguntasPDV == totalPerguntas) {
       return _cacheProdutosCategoria;
     }
@@ -3749,6 +3786,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     _cacheCategoriaAtiva = _categoriaAtiva;
     _cacheSortPDV = _sortOption;
     _cacheTotalProdutosPDV = dataService.produtos.length;
+    _cacheTotalProdutosAtivosPDV = totalAtivos;
     _cacheTotalPerguntasPDV = totalPerguntas;
     
     return lista;
@@ -6856,8 +6894,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     
     try {
       String numero = _pedidoOriginal?.numero ?? (isDeliveryCapturado 
-          ? dataService.getProximoNumeroPedido() 
-          : dataService.getProximoNumeroVenda());
+          ? await dataService.getProximoNumeroPedidoSeguro() 
+          : await dataService.getProximoNumeroVendaSeguro());
           
       if (mesaNumero != null && _pedidoOriginal == null) {
         final bool isComanda = mesaComandaOriginal?.tipo == TipoControle.comanda || 
@@ -7116,9 +7154,12 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           operador: vendaBalcao.operador,
         );
 
-        await dataService.addPedido(pedido);
+        // Se este pedido já existia (aberto para edição), ATUALIZA o registro
+        // existente — com addPedido() o pedido era duplicado na lista e o
+        // detalhe do PDV continuava mostrando o registro antigo.
+        await dataService.addOrUpdatePedido(pedido);
 
-        // CRIAR REGISTRO DE ENTREGA (Para aparecer no Controle de Entregas)
+        // CRIAR/ATUALIZAR REGISTRO DE ENTREGA (Para aparecer no Controle de Entregas)
         if (pedido.deliveryInfo != null) {
           final entrega = Entrega(
             id: uuid.v4(),
@@ -7137,7 +7178,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
             taxaEntrega: pedido.deliveryInfo!.taxaEntrega,
             observacoes: pedido.observacoes,
           );
-          await dataService.addEntrega(entrega);
+          await dataService.addOrUpdateEntregaDoPedido(entrega);
         }
       }
 
@@ -7453,8 +7494,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     }
 
     final String numero = _pedidoOriginal?.numero ?? (isDeliveryCapturado 
-        ? dataService.getProximoNumeroPedido() 
-        : dataService.getProximoNumeroVenda());
+        ? await dataService.getProximoNumeroPedidoSeguro() 
+        : await dataService.getProximoNumeroVendaSeguro());
         
     String numeroFinal = numero;
     if (mesaNumero != null && _pedidoOriginal == null) {
@@ -7584,14 +7625,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       if (vendaOriginal != null) {
         await dataService.deleteVendaBalcao(vendaOriginal.id);
       }
-      
-      // Também remover registro de entrega antigo se houver
-      final entregaOriginal = dataService.entregas
-          .where((e) => e.pedidoId == _pedidoOriginal!.id)
-          .firstOrNull;
-      if (entregaOriginal != null) {
-        dataService.deleteEntrega(entregaOriginal.id);
-      }
+      // O registro de entrega NÃO é mais apagado aqui: ele é atualizado no
+      // lugar (dataService.addOrUpdateEntregaDoPedido), preservando status,
+      // motorista e histórico da entrega ao editar o pedido.
     }
 
     // =============== LOGIC SEPARATION (DELIVERY VS BALCÃO) ===============
@@ -7599,7 +7635,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
 
     if (isDelivery) {
       // 1. DELIVERY: Salvar como Pedido para aparecer na Central de Pedidos
-      await dataService.addPedido(pedidoVendaSalva);
+      // Se o pedido já existia (edição), ATUALIZA mantendo o mesmo número.
+      await dataService.addOrUpdatePedido(pedidoVendaSalva);
 
       // IMPRIMIR TICKETS DE PRODUÇÃO
       await _imprimirTicketsProducaoVendaDireta(pedidoVendaSalva);
@@ -7622,7 +7659,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         taxaEntrega: pedidoVendaSalva.deliveryInfo!.taxaEntrega,
         observacoes: pedidoVendaSalva.observacoes,
       );
-      await dataService.addEntrega(registroEntrega);
+      await dataService.addOrUpdateEntregaDoPedido(registroEntrega);
 
       // 3. Notificação de Sucesso Gourmet
       _mostrarSucessoPedidoGerado(vendaBalcao.numero);
@@ -8196,7 +8233,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                                 }
                               }
 
-                              final numero = dataService.getProximoNumeroVenda();
+                              final numero = await dataService.getProximoNumeroVendaSeguro();
                               final vendaBalcao = VendaBalcao(
                                 id: uuid.v4(),
                                 numero: numero,
@@ -8222,7 +8259,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                               // Se tem restante, criar venda pendente e pedido pendente para o que falta
                               if (restante > 0.01) {
                                 final idRestante = uuid.v4();
-                                final numeroRestante = dataService.getProximoNumeroVenda();
+                                final numeroRestante = await dataService.getProximoNumeroVendaSeguro();
                                 final vendaRestante = VendaBalcao(
                                   id: idRestante,
                                   numero: numeroRestante,
@@ -8515,7 +8552,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       );
     }
 
-    final String numero = _pedidoOriginal?.numero ?? dataService.getProximoNumeroVenda();
+    final String numero = _pedidoOriginal?.numero ?? await dataService.getProximoNumeroVendaSeguro();
     final String numeroParte = '$numero-DIV';
 
     // Cria o Pedido para a parte selecionada
@@ -8569,8 +8606,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       _descontoTotal = (_descontoTotal - descontoProporcional).clamp(0.0, double.infinity);
     });
 
-    // Salva o estado atualizado do carrinho no local storage
-    await _storage.salvarLista(_keyCarrinhoPDV, _carrinho);
+    // Salva o estado atualizado do carrinho no local storage (chave POR EMPRESA:
+    // na chave crua o carrinho vazava para as outras empresas)
+    await _storage.salvarLista(_chavePDV(_keyCarrinhoPDV), _carrinho);
 
     // 4. Navega direto para a tela de pagamento do PDV
     if (mounted) {
@@ -8706,7 +8744,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     final uuid = const Uuid();
 
     try {
-      final String numeroOriginal = _pedidoOriginal?.numero ?? dataService.getProximoNumeroVenda();
+      final String numeroOriginal = _pedidoOriginal?.numero ?? await dataService.getProximoNumeroVendaSeguro();
       final String numero = '$numeroOriginal-DIV';
 
       final pagamentosAtualizados = pagamentos.map((p) {
@@ -8904,7 +8942,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         }
       });
 
-      await _storage.salvarLista(_keyCarrinhoPDV, _carrinho);
+      await _storage.salvarLista(_chavePDV(_keyCarrinhoPDV), _carrinho);
       dataService.salvarImediatamente();
 
       final trocoTotal = pagamentosAtualizados
@@ -10388,7 +10426,7 @@ recusando a emissão de NFC-e (erro 403).
     final uuid = const Uuid();
     
     try {
-      final numero = dataService.getProximoNumeroPedido();
+      final numero = await dataService.getProximoNumeroPedidoSeguro();
       final vendaId = uuid.v4();
       
       final itensVenda = _carrinho.map((item) => ItemVendaBalcao(
@@ -11394,13 +11432,16 @@ recusando a emissão de NFC-e (erro 403).
                   };
                   await balancaService.salvarConfiguracao(novaConfigBalanca);
                   
-                    // Salvar se som está ativo
-                    await _storage.salvar(_keySomPDV, somHabilitadoLocal);
-                    await _storage.salvar(_keySomAdicionar, somAdicionarLocal);
-                    await _storage.salvar(_keySomRemover, somRemoverLocal);
-                    await _storage.salvar(_keySomFinalizar, somFinalizarLocal);
-                    await _storage.salvar(_keyAlertarLimiteGaveta, alertarLimiteLocal);
-                    await _storage.salvar(_keyLimiteGavetaValor, limiteValorLocal);
+                    // Salvar se som está ativo (chave POR EMPRESA — a leitura em
+                    // _carregarPreferencias usa _chavePDV; gravar na chave crua
+                    // fazia a configuração não voltar e vazar entre empresas)
+                    _empresaIdStorage ??= dataService.currentEmpresaId;
+                    await _storage.salvar(_chavePDV(_keySomPDV), somHabilitadoLocal);
+                    await _storage.salvar(_chavePDV(_keySomAdicionar), somAdicionarLocal);
+                    await _storage.salvar(_chavePDV(_keySomRemover), somRemoverLocal);
+                    await _storage.salvar(_chavePDV(_keySomFinalizar), somFinalizarLocal);
+                    await _storage.salvar(_chavePDV(_keyAlertarLimiteGaveta), alertarLimiteLocal);
+                    await _storage.salvar(_chavePDV(_keyLimiteGavetaValor), limiteValorLocal);
 
                     // Atualizar o estado da própria VendaDiretaPage
                     if (mounted) {
@@ -13613,6 +13654,7 @@ recusando a emissão de NFC-e (erro 403).
               body: Column(
                 children: [
                   _buildBarraSuperior(dataService),
+                  _buildBarraResumoFiscal(dataService),
                   _buildAlertaLimiteDinheiro(dataService),
                   Expanded(
                     child: DefaultTabController(
@@ -13935,6 +13977,125 @@ recusando a emissão de NFC-e (erro 403).
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Barra de resumo fiscal - mostra NFC-e emitidas hoje e no mês
+  Widget _buildBarraResumoFiscal(DataService dataService) {
+    final now = DateTime.now();
+    final nfces = dataService.nfces;
+    
+    final pendentes = nfces.where((n) => n.status == 'contingencia' || n.status == 'pendente').length;
+    final autorizadasHoje = nfces.where((n) => 
+      (n.status == 'autorizada' || n.status == 'sucesso') &&
+      n.createdAt.year == now.year && n.createdAt.month == now.month && n.createdAt.day == now.day
+    );
+    final totalHoje = autorizadasHoje.fold(0.0, (sum, n) => sum + n.valorTotal);
+    final qtdHoje = autorizadasHoje.length;
+    
+    final autorizadasMes = nfces.where((n) => 
+      (n.status == 'autorizada' || n.status == 'sucesso') &&
+      n.createdAt.year == now.year && n.createdAt.month == now.month
+    );
+    final totalMes = autorizadasMes.fold(0.0, (sum, n) => sum + n.valorTotal);
+    final qtdMes = autorizadasMes.length;
+    
+    final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+    
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: pendentes > 0
+            ? [Colors.orange.shade900.withOpacity(0.5), Colors.deepOrange.shade900.withOpacity(0.3)]
+            : [Colors.green.shade900.withOpacity(0.3), Colors.teal.shade900.withOpacity(0.2)],
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+        ),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: pendentes > 0 ? Colors.orange.withOpacity(0.3) : Colors.green.withOpacity(0.2),
+        ),
+      ),
+      child: GestureDetector(
+        onTap: () {
+          final empresa = dataService.empresaAtual;
+          if (empresa != null) {
+            showDialog(
+              context: context,
+              builder: (_) => HistoricoNFCePDVDialog(empresa: empresa),
+            );
+          }
+        },
+        child: Row(
+          children: [
+            Icon(
+              pendentes > 0 ? Icons.warning_amber_rounded : Icons.receipt_long,
+              color: pendentes > 0 ? Colors.orangeAccent : Colors.greenAccent,
+              size: 18,
+            ),
+            const SizedBox(width: 8),
+            
+            // Fiscal Hoje
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+              decoration: BoxDecoration(
+                color: Colors.green.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(5),
+              ),
+              child: Text(
+                'Hoje: $qtdHoje notas | ${formatoMoeda.format(totalHoje)}',
+                style: const TextStyle(color: Colors.greenAccent, fontSize: 11, fontWeight: FontWeight.bold),
+              ),
+            ),
+            
+            const SizedBox(width: 6),
+            
+            // Fiscal Mês
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+              decoration: BoxDecoration(
+                color: Colors.blue.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(5),
+              ),
+              child: Text(
+                'Mês: $qtdMes notas | ${formatoMoeda.format(totalMes)}',
+                style: const TextStyle(color: Colors.lightBlueAccent, fontSize: 11, fontWeight: FontWeight.bold),
+              ),
+            ),
+            
+            // Pendentes
+            if (pendentes > 0) ...[
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withOpacity(0.25),
+                  borderRadius: BorderRadius.circular(5),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.sync_problem, color: Colors.orangeAccent, size: 12),
+                    const SizedBox(width: 3),
+                    Text(
+                      '$pendentes pendente${pendentes != 1 ? 's' : ''}',
+                      style: const TextStyle(color: Colors.orangeAccent, fontSize: 11, fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            
+            const Spacer(),
+            Text(
+              'Histórico  ›',
+              style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 10),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -15501,6 +15662,7 @@ recusando a emissão de NFC-e (erro 403).
         : (item as Servico).preco;
     final codigo = isProduto ? (item as Produto).codigo : null;
     final estoque = isProduto ? (item as Produto).estoque : null;
+    final isDesativado = isProduto && !(item as Produto).ativo;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
@@ -15511,12 +15673,16 @@ recusando a emissão de NFC-e (erro 403).
           duration: const Duration(milliseconds: 200),
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
-            color: isSelected 
-                ? Colors.blueAccent.withOpacity(0.15) 
-                : (isDark ? Colors.white.withOpacity(0.04) : Colors.white),
+            color: isDesativado
+                ? Colors.redAccent.withOpacity(0.08)
+                : (isSelected 
+                    ? Colors.blueAccent.withOpacity(0.15) 
+                    : (isDark ? Colors.white.withOpacity(0.04) : Colors.white)),
             borderRadius: BorderRadius.circular(8),
             border: Border.all(
-              color: isSelected ? Colors.blueAccent : (isDark ? Colors.white.withOpacity(0.05) : Colors.black12),
+              color: isDesativado
+                  ? Colors.redAccent.withOpacity(0.3)
+                  : (isSelected ? Colors.blueAccent : (isDark ? Colors.white.withOpacity(0.05) : Colors.black12)),
               width: isSelected ? 3 : 1,
             ),
             boxShadow: isSelected ? [
@@ -15542,12 +15708,14 @@ recusando a emissão de NFC-e (erro 403).
                 width: 40,
                 height: 40,
                 decoration: BoxDecoration(
-                  color: isProduto ? Colors.blueAccent.withOpacity(0.1) : Colors.purpleAccent.withOpacity(0.1),
+                  color: isDesativado
+                      ? Colors.redAccent.withOpacity(0.1)
+                      : (isProduto ? Colors.blueAccent.withOpacity(0.1) : Colors.purpleAccent.withOpacity(0.1)),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Icon(
-                  isProduto ? Icons.inventory_2_rounded : Icons.miscellaneous_services_rounded,
-                  color: isProduto ? Colors.blueAccent : Colors.purpleAccent,
+                  isDesativado ? Icons.lock_outline : (isProduto ? Icons.inventory_2_rounded : Icons.miscellaneous_services_rounded),
+                  color: isDesativado ? Colors.redAccent : (isProduto ? Colors.blueAccent : Colors.purpleAccent),
                   size: 20,
                 ),
               ),
@@ -15576,9 +15744,13 @@ recusando a emissão de NFC-e (erro 403).
                           child: Text(
                             nome,
                             style: TextStyle(
-                              color: isDark ? Colors.white.withOpacity(0.9) : Colors.black87,
+                              color: isDesativado
+                                  ? Colors.white38
+                                  : (isDark ? Colors.white.withOpacity(0.9) : Colors.black87),
                               fontWeight: FontWeight.bold,
                               fontSize: 14,
+                              decoration: isDesativado ? TextDecoration.lineThrough : null,
+                              decorationColor: Colors.redAccent.withOpacity(0.6),
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
@@ -15599,8 +15771,12 @@ recusando a emissão de NFC-e (erro 403).
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Text(
-                    _formatoMoeda.format(preco),
-                    style: TextStyle(color: isDark ? Colors.greenAccent : const Color(0xFF15803D), fontWeight: FontWeight.bold, fontSize: 15),
+                    isDesativado ? 'DESATIVADO' : _formatoMoeda.format(preco),
+                    style: TextStyle(
+                      color: isDesativado ? Colors.redAccent : (isDark ? Colors.greenAccent : const Color(0xFF15803D)),
+                      fontWeight: FontWeight.bold,
+                      fontSize: isDesativado ? 10 : 15,
+                    ),
                   ),
                   if (isProduto && estoque != null)
                     Text(
@@ -15615,7 +15791,11 @@ recusando a emissão de NFC-e (erro 403).
               const SizedBox(width: 8),
               // Botão de adicionar
               IconButton(
-                icon: const Icon(Icons.add_circle_outline_rounded, color: Colors.blueAccent, size: 24),
+                icon: Icon(
+                  isDesativado ? Icons.lock_outline : Icons.add_circle_outline_rounded,
+                  color: isDesativado ? Colors.redAccent : Colors.blueAccent,
+                  size: 24,
+                ),
                 onPressed: () => _adicionarAoCarrinho(item, manterFoco: true),
               ),
             ],
@@ -15633,6 +15813,7 @@ recusando a emissão de NFC-e (erro 403).
     final promocao = isProduto ? (item as Produto).promocaoAtiva : false;
     final codigo = isProduto ? (item as Produto).codigo : null;
     final estoque = isProduto ? (item as Produto).estoque : null;
+    final isDesativado = isProduto && !(item as Produto).ativo;
 
     final screenHeight = MediaQuery.of(context).size.height;
     final isSmallHeight = screenHeight < 750;
@@ -15662,9 +15843,11 @@ recusando a emissão de NFC-e (erro 403).
         child: Container(
           decoration: BoxDecoration(
             gradient: LinearGradient(
-              colors: isProduto
-                  ? (isDark ? [const Color(0xFF1E3A5F), const Color(0xFF2C3E50)] : [Colors.white, const Color(0xFFF1F5F9)])
-                  : (isDark ? [const Color(0xFF4A1E5F), const Color(0xFF3E2C50)] : [Colors.white, const Color(0xFFF3E8FF)]),
+              colors: isDesativado
+                  ? (isDark ? [const Color(0xFF3A1E1E), const Color(0xFF2C2020)] : [const Color(0xFFFFF0F0), const Color(0xFFF5E5E5)])
+                  : (isProduto
+                      ? (isDark ? [const Color(0xFF1E3A5F), const Color(0xFF2C3E50)] : [Colors.white, const Color(0xFFF1F5F9)])
+                      : (isDark ? [const Color(0xFF4A1E5F), const Color(0xFF3E2C50)] : [Colors.white, const Color(0xFFF3E8FF)])),
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
@@ -15672,9 +15855,11 @@ recusando a emissão de NFC-e (erro 403).
             border: Border.all(
               color: isSelected
                   ? Colors.cyanAccent
-                  : (promocao
-                        ? Colors.orange.withOpacity(0.5)
-                        : (isDark ? Colors.transparent : Colors.black12)),
+                  : isDesativado
+                      ? Colors.redAccent.withOpacity(0.5)
+                      : (promocao
+                            ? Colors.orange.withOpacity(0.5)
+                            : (isDark ? Colors.transparent : Colors.black12)),
               width: isSelected ? 3 : (isDark ? 2 : 1),
             ),
             boxShadow: isSelected
@@ -15776,10 +15961,29 @@ recusando a emissão de NFC-e (erro 403).
                         ),
                       ),
                     ],
+                    if (isDesativado) ...[
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: Colors.redAccent.withOpacity(0.8),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: const Text(
+                          'DESATIVADO',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 7,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
                     const Spacer(),
                     Icon(
-                      Icons.add_circle,
-                      color: isDark ? Colors.greenAccent.withOpacity(0.6) : Colors.green.shade700,
+                      isDesativado ? Icons.lock_outline : Icons.add_circle,
+                      color: isDesativado
+                          ? Colors.redAccent.withOpacity(0.7)
+                          : (isDark ? Colors.greenAccent.withOpacity(0.6) : Colors.green.shade700),
                       size: 18,
                     ),
                   ],
@@ -15788,12 +15992,16 @@ recusando a emissão de NFC-e (erro 403).
                 Text(
                   nome.toUpperCase(),
                   style: TextStyle(
-                    color: isDark ? Colors.yellow.shade200 : const Color(0xFF0F172A),
+                    color: isDesativado
+                        ? Colors.white38
+                        : (isDark ? Colors.yellow.shade200 : const Color(0xFF0F172A)),
                     fontWeight: FontWeight.w900,
                     fontSize: 15,
                     height: 1.1,
                     letterSpacing: 0.3,
-                    shadows: isDark ? const [
+                    decoration: isDesativado ? TextDecoration.lineThrough : null,
+                    decorationColor: Colors.redAccent.withOpacity(0.6),
+                    shadows: isDark && !isDesativado ? const [
                       Shadow(
                         color: Colors.black87,
                         blurRadius: 3,
@@ -15806,11 +16014,14 @@ recusando a emissão de NFC-e (erro 403).
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  'R\$ ${preco.toStringAsFixed(2)}',
+                  isDesativado ? 'INDISPONÍVEL' : 'R\$ ${preco.toStringAsFixed(2)}',
                   style: TextStyle(
-                    color: promocao ? Colors.orange.shade800 : (isDark ? Colors.greenAccent : const Color(0xFF15803D)),
+                    color: isDesativado
+                        ? Colors.redAccent.withOpacity(0.6)
+                        : (promocao ? Colors.orange.shade800 : (isDark ? Colors.greenAccent : const Color(0xFF15803D))),
                     fontWeight: FontWeight.w900,
-                    fontSize: 13,
+                    fontSize: isDesativado ? 10 : 13,
+                    decoration: isDesativado ? TextDecoration.lineThrough : null,
                   ),
                 ),
               ],
@@ -16398,7 +16609,7 @@ recusando a emissão de NFC-e (erro 403).
                                          setState(() {
                                            _descontoTotal = 0.0;
                                          });
-                                         _storage.salvar(_keyDescontoTotalPDV, 0.0);
+                                         _storage.salvar(_chavePDV(_keyDescontoTotalPDV), 0.0);
                                       },
                                       child: Icon(
                                         Icons.close_rounded,

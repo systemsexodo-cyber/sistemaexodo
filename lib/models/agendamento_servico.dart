@@ -328,7 +328,7 @@ class AgendamentoServico {
       servicosIds: sIds,
       clienteId: map['clienteId']?.toString(),
       petId: map['petId']?.toString(),
-      dataAgendamento: DateParser.parse(map['dataAgendamento']),
+      dataAgendamento: DateParser.parse(map['dataAgendamento'] ?? map['data_agendamento']),
       duracaoMinutos: (map['duracaoMinutos'] as num?)?.toInt() ?? 60,
       intervaloMinutos: (map['intervaloMinutos'] as num?)?.toInt() ?? 0,
       observacoes: map['observacoes']?.toString(),

@@ -58,6 +58,30 @@ class RealtimeSyncService {
   // Timers para debounce/flush de cada tabela
   final Map<String, Timer> _timersTabelas = {};
 
+  /// Registro recente de eventos RECEBIDOS (tabela -> conjunto de ids).
+  /// O próprio broadcast da escrita volta para esta máquina via WebSocket,
+  /// então guardar esses ids permite confirmar que um registro chegou à nuvem
+  /// e foi divulgado para os outros PCs (multi-PC).
+  final Map<String, Set<String>> _eventosRecebidos = {};
+
+  /// Aguarda até que o Realtime confirme ter recebido um evento para
+  /// (tabela, id). Se o evento chegar dentro do timeout, o dado foi
+  /// persistido na nuvem e transmitido aos outros PCs.
+  Future<bool> aguardarConfirmacao(
+    String tabela,
+    String id, {
+    Duration timeout = const Duration(seconds: 2),
+  }) async {
+    final inicio = DateTime.now();
+    while (DateTime.now().difference(inicio) < timeout) {
+      if (_eventosRecebidos[tabela]?.contains(id) ?? false) {
+        return true;
+      }
+      await Future.delayed(const Duration(milliseconds: 100));
+    }
+    return false;
+  }
+
   bool get ativo => _ativo;
   DateTime? get lastSyncAt => _lastSyncAt;
 
@@ -165,6 +189,9 @@ class RealtimeSyncService {
 
       final id = dados['id'] as String?;
       if (id == null) return;
+
+      // Registrar o evento recebido para confirmação de envio (multi-PC)
+      _eventosRecebidos.putIfAbsent(tabela, () => <String>{}).add(id);
 
       // Adicionar alteração ao buffer agrupado para evitar I/O excessivo
       _bufferTabelas.putIfAbsent(tabela, () => {})[id] = _BufferedUpdate(evento, dados);

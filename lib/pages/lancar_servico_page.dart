@@ -8,6 +8,7 @@ import '../models/pedido.dart';
 import '../models/cliente.dart';
 import '../models/pet.dart';
 import '../models/servico.dart';
+import '../models/servico_realizado.dart';
 import '../models/item_servico.dart';
 import '../models/item_material.dart';
 import '../models/produto.dart';
@@ -17,18 +18,22 @@ import '../models/forma_pagamento.dart';
 import '../models/taxa_entrega.dart';
 import '../widgets/pagamento_widget.dart';
 import '../theme.dart';
-import 'pdv_page.dart';
 import '../widgets/sync_status_widget.dart';
 import 'package:flutter/services.dart';
 
 /// Página de lançamento de serviços com cadastro integrado
 class LancarServicoPage extends StatefulWidget {
+  /// Mantido para telas antigas que abriam a edição a partir de um pedido.
   final Pedido? pedidoExistente;
+
+  /// Serviço realizado (entidade própria) sendo editado.
+  final ServicoRealizado? servicoExistente;
   final Cliente? clienteInicial;
 
   const LancarServicoPage({
     super.key,
     this.pedidoExistente,
+    this.servicoExistente,
     this.clienteInicial,
   });
 
@@ -91,18 +96,21 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
   bool _salvandoPedido = false;
 
   // Lista de status disponíveis
+  /// Situações do serviço. 'Orçamento' é uma proposta (não gera recebível);
+  /// 'Recebido' é calculado pelos pagamentos quitados.
   final List<String> _statusDisponiveis = [
     'Pendente',
     'Em Andamento',
     'Concluído',
     'Cancelado',
+    'Orçamento',
   ];
 
   @override
   void initState() {
     super.initState();
     
-    if (widget.pedidoExistente != null) {
+    if (widget.pedidoExistente != null || widget.servicoExistente != null) {
       _carregarPedidoExistente();
     } else {
       if (widget.clienteInicial != null) {
@@ -142,7 +150,47 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
     });
   }
 
+  /// Carrega um Serviço Realizado para edição (entidade própria).
+  void _carregarServicoExistente(ServicoRealizado servico) {
+    final dataService = Provider.of<DataService>(context, listen: false);
+
+    _numeroPedido = servico.numero;
+
+    if (servico.clienteId != null) {
+      _clienteSelecionado = dataService.clientes
+          .where((c) => c.id == servico.clienteId)
+          .firstOrNull;
+      if (_clienteSelecionado != null) {
+        _buscaClienteController.text = _clienteSelecionado!.nome;
+      }
+    }
+
+    _servicosSelecionados = List.from(servico.servicos);
+    _pagamentos = List.from(servico.pagamentos);
+    _statusPedido = servico.ehOrcamento
+        ? ServicoRealizado.statusOrcamento
+        : (servico.cancelado ? 'Cancelado' : 'Pendente');
+    _observacoesController.text = servico.observacoes ?? '';
+
+    // Pet do serviço, quando existir (os pets vivem dentro do cliente)
+    _petSelecionado = null;
+    if (servico.petId != null && _clienteSelecionado != null) {
+      for (final pet in _clienteSelecionado!.pets) {
+        if (pet.id == servico.petId) {
+          _petSelecionado = pet;
+          break;
+        }
+      }
+    }
+  }
+
   void _carregarPedidoExistente() {
+    final servico = widget.servicoExistente;
+    if (servico != null) {
+      _carregarServicoExistente(servico);
+      return;
+    }
+
     final pedido = widget.pedidoExistente!;
     final dataService = Provider.of<DataService>(context, listen: false);
 
@@ -475,7 +523,7 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
     }
   }
 
-  Future<void> _salvarPedido() async {
+  Future<void> _salvarServico({bool comoOrcamento = false}) async {
     // Mostrar popup de seleção de cliente se não houver cliente selecionado
     if (_clienteSelecionado == null) {
       final cliente = await _mostrarPopupSelecaoCliente();
@@ -550,60 +598,80 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
       // Coletar todos os materiais consumidos para histórico
       final materiaisConsumidos = _coletarMateriaisServicos(servicosUnicos);
 
-      final pedido = Pedido(
-        id: widget.pedidoExistente?.id ??
-            DateTime.now().millisecondsSinceEpoch.toString(),
+      // Serviço REALIZADO: entidade própria (tabela `servicos_realizados`),
+      // com numeração SRV própria — não é um Pedido e não entra nos
+      // recebíveis/PDV de pedido.
+      final idServico = widget.servicoExistente?.id ??
+          DateTime.now().millisecondsSinceEpoch.toString();
+
+      var servico = ServicoRealizado(
+        id: idServico,
         numero: _numeroPedido,
         clienteId: _clienteSelecionado?.id,
         clienteNome: _clienteSelecionado?.nome,
-        dataPedido: widget.pedidoExistente?.dataPedido ?? DateTime.now(),
-        status: _statusPedido,
-        total: servicosUnicos.fold(0.0, (sum, item) => sum + item.valor + item.valorAdicional),
+        clienteTelefone: _clienteSelecionado?.telefone,
+        clienteEndereco: _clienteSelecionado?.endereco,
+        petId: _petSelecionado?.id,
+        petNome: _petSelecionado?.nome,
+        operador: dataService.usuarioAtualNome,
+        dataServico: widget.servicoExistente?.dataServico ?? DateTime.now(),
+        status: comoOrcamento
+            ? ServicoRealizado.statusOrcamento
+            : (_statusPedido == ServicoRealizado.statusOrcamento
+                ? ServicoRealizado.statusOrcamento
+                : (_statusPedido == 'Cancelado'
+                    ? ServicoRealizado.statusCancelado
+                    : ServicoRealizado.statusEmAberto)),
+        total: servicosUnicos.fold(
+            0.0, (sum, item) => sum + item.valor + item.valorAdicional),
         observacoes: _observacoesController.text.isNotEmpty
             ? _observacoesController.text
             : null,
-        produtos: [],
         servicos: servicosUnicos,
         pagamentos: _pagamentos,
         materiaisConsumidos: materiaisConsumidos,
-        createdAt: widget.pedidoExistente?.createdAt ?? DateTime.now(),
+        dataOrcamento: comoOrcamento
+            ? DateTime.now()
+            : widget.servicoExistente?.dataOrcamento,
+        validadeOrcamento: widget.servicoExistente?.validadeOrcamento,
+        dataConclusao: widget.servicoExistente?.dataConclusao,
+        createdAt: widget.servicoExistente?.createdAt ?? DateTime.now(),
         updatedAt: DateTime.now(),
       );
 
-      if (widget.pedidoExistente != null) {
-        dataService.updatePedido(pedido);
-        // Aguardar salvamento
-        await Future.delayed(const Duration(milliseconds: 500));
-        
-        // Dar baixa no estoque dos materiais consumidos pelos serviços
-        await _darBaixaMateriaisServico(servicosUnicos, dataService);
-        
-        // Criar agendamentos para vacinas que precisam de próxima dose
-        await _criarAgendamentosVacinas(
-          servicosUnicos,
-          _clienteSelecionado,
-          dataService,
-        );
-        
-        if (mounted) {
-          Navigator.of(context).pop(pedido);
+      // Quitado = Recebido; ainda com valor a receber = Em Aberto.
+      if (!servico.ehOrcamento && !servico.cancelado) {
+        if (servico.pagamentos.isNotEmpty && servico.totalmenteRecebido) {
+          servico = servico.copyWith(
+            status: ServicoRealizado.statusRecebido,
+            dataConclusao: servico.dataConclusao ?? DateTime.now(),
+          );
+        } else {
+          servico = servico.copyWith(status: ServicoRealizado.statusEmAberto);
         }
+      }
+
+      if (widget.servicoExistente != null) {
+        await dataService.updateServicoRealizado(servico);
       } else {
-        await dataService.addPedido(pedido);
-        
+        await dataService.addServicoRealizado(servico);
+      }
+
+      // Orçamento é proposta: não baixa material nem cria agendamento.
+      if (!servico.ehOrcamento) {
         // Aguardar salvamento antes de continuar
         await Future.delayed(const Duration(milliseconds: 500));
-        
+
         // Dar baixa no estoque dos materiais consumidos pelos serviços
         await _darBaixaMateriaisServico(servicosUnicos, dataService);
-        
+
         // Criar agendamentos para vacinas que precisam de próxima dose
         await _criarAgendamentosVacinas(
           servicosUnicos,
           _clienteSelecionado,
           dataService,
         );
-        
+
         // Criar agendamentos para serviços com data/hora (usando servicos únicos)
         for (final itemServico in servicosUnicos) {
           try {
@@ -668,8 +736,8 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
                   tipoEntrega: itemServico.tipoEntrega,
                   valorTaxiDog: itemServico.valorTaxiDog,
                   bairroEntrega: itemServico.bairroEntrega,
-                  pedidoId: pedido.id, // ID do pedido relacionado
-                  numeroPedido: pedido.numero, // Número do pedido (SRV-0001, etc.)
+                  pedidoId: servico.id, // ID do serviço realizado
+                  numeroPedido: servico.numero, // Número do serviço (SRV-0001, etc.)
                   endereco: itemServico.endereco,
                   numeroEndereco: itemServico.numeroEndereco,
                   complemento: itemServico.complemento,
@@ -708,29 +776,23 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
           }
         }
         
-        // Mostrar mensagem de sucesso
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Serviço salvo com sucesso!'),
-              backgroundColor: Colors.green,
-              duration: Duration(seconds: 2),
-            ),
-          );
-        }
-        
-        // Navegar para a tela de receber (PDV) após salvar
-        if (mounted) {
-          Navigator.of(context).pop(); // Fechar a tela de lançamento
-          Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (context) => PdvPage(
-                pedidoInicial: pedido,
-                abaInicial: 0, // Aba de receber
-              ),
-            ),
-          );
-        }
+      }
+
+      // Mostrar mensagem de sucesso
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(servico.ehOrcamento
+                ? 'Orçamento ${servico.numero} salvo!'
+                : 'Serviço ${servico.numero} salvo!'),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+
+      if (mounted) {
+        Navigator.of(context).pop(servico);
       }
     } catch (e) {
       debugPrint('>>> Erro ao salvar pedido: $e');
@@ -759,6 +821,8 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
         return Colors.green;
       case 'Cancelado':
         return Colors.red;
+      case 'Orçamento':
+        return Colors.purple;
       default:
         return Colors.grey;
     }
@@ -767,9 +831,9 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
   @override
   Widget build(BuildContext context) {
     final dataService = Provider.of<DataService>(context);
-    final isModuloPet = dataService.empresaAtual?.moduloPet ?? false;
     final clientes = dataService.clientes;
-    final isEdicao = widget.pedidoExistente != null;
+    final isEdicao =
+        widget.pedidoExistente != null || widget.servicoExistente != null;
 
     return AppTheme.appBackground(
       child: Scaffold(
@@ -799,7 +863,18 @@ class _LancarServicoPageState extends State<LancarServicoPage> {
           actions: [
             const SyncStatusWidget(),
             TextButton.icon(
-              onPressed: _servicosSelecionados.isNotEmpty ? _salvarPedido : null,
+              onPressed: _servicosSelecionados.isNotEmpty
+                  ? () => _salvarServico(comoOrcamento: true)
+                  : null,
+              icon: const Icon(Icons.request_quote, color: Colors.white),
+              label: const Text(
+                'Orçamento',
+                style: TextStyle(color: Colors.white),
+              ),
+            ),
+            TextButton.icon(
+              onPressed:
+                  _servicosSelecionados.isNotEmpty ? _salvarServico : null,
               icon: const Icon(Icons.save, color: Colors.white),
               label: Text(
                 isEdicao ? 'Atualizar' : 'Salvar',
