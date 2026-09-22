@@ -26,6 +26,14 @@ class NfceContingenciaService extends ChangeNotifier {
   Timer? _timerRetry;
   bool _transmitindo = false;
 
+  /// Registrado em `main.dart` (o serviço não conhece o DataService).
+  ///
+  /// Rejeições de NFC-e ficam salvas no histórico com status 'pendente' e são
+  /// retransmitidas pelo timer automático — que não recebe callbacks. Sem este
+  /// hook a nota continuaria "pendente" mesmo depois de autorizada, e um
+  /// reenvio manual poderia gerar uma segunda nota para a mesma venda.
+  static Future<void> Function(NFCe nfce, String numero)? onNotaAutorizada;
+
   /// Quantas notas estão aguardando transmissão
   int get totalPendentes => _fila.length;
   bool get temPendentes => _fila.isNotEmpty;
@@ -162,10 +170,21 @@ class NfceContingenciaService extends ChangeNotifier {
           sucessos++;
           debugPrint('[Contingência] ✅ Nota $numero transmitida com sucesso!');
 
-          // Notificar callback
+          final nfceAutorizada = _construirNFCeDoRetorno(result, entry);
+
+          // Notificar callback do chamador
           if (onSucesso != null) {
-            final nfce = _construirNFCeDoRetorno(result, entry);
-            onSucesso(nfce);
+            onSucesso(nfceAutorizada);
+          }
+
+          // Reconciliar o registro local ('pendente'/'contingencia' -> 'autorizada')
+          final reconciliar = onNotaAutorizada;
+          if (reconciliar != null) {
+            try {
+              await reconciliar(nfceAutorizada, numero);
+            } catch (e) {
+              debugPrint('[Contingência] Erro ao reconciliar nota $numero: $e');
+            }
           }
         } else {
           // Incrementar contador de tentativas
@@ -203,6 +222,28 @@ class NfceContingenciaService extends ChangeNotifier {
     _fila.removeWhere((e) => e['id'] == entryId);
     await _salvarFilaNoDisco();
     notifyListeners();
+  }
+
+  /// Remove da fila a entrada de um NÚMERO de nota e devolve quantas saíram.
+  ///
+  /// O `id` do registro no histórico NÃO é o `id` da fila, então remover por id
+  /// não encontrava nada: a nota voltava na próxima rodada do timer (o usuário
+  /// "descartava" e ela reaparecia). Usado ao inutilizar, substituir ou
+  /// descartar uma nota pendente.
+  Future<int> removerDaFilaPorNumero(String numero) async {
+    final alvo = numero.trim();
+    if (alvo.isEmpty) return 0;
+
+    final antes = _fila.length;
+    _fila.removeWhere((e) => (e['numero']?.toString() ?? '').trim() == alvo);
+    final removidos = antes - _fila.length;
+
+    if (removidos > 0) {
+      await _salvarFilaNoDisco();
+      notifyListeners();
+      debugPrint('[Contingência] 🧹 Nota $alvo removida da fila ($removidos entrada(s))');
+    }
+    return removidos;
   }
 
   // ─────────────────────────────────────────────────

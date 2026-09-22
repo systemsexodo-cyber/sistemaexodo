@@ -85,6 +85,17 @@ abstract class NFCeServiceBase {
     required Empresa empresa,
     String? justificativa,
   });
+
+  /// Inutiliza a numeração de uma nota que não será transmitida
+  /// (serviço NFeInutilizacao4 da SEFAZ). Serve para "queimar" o número de uma
+  /// NFC-e pendente/rejeitada, evitando que a numeração fique em sequência.
+  Future<Map<String, dynamic>> inutilizarNFCe({
+    required NFCe nfce,
+    required Empresa empresa,
+    String? justificativa,
+    int? numeroFinal,
+    int? ano,
+  });
 }
 
 /// Serviço de emissão local: chama o Bridge em localhost:8000
@@ -415,6 +426,80 @@ class NFCeBackendService extends NFCeServiceBase {
   }
 
   // ------------------------------------------------------------
+  // NOTA PENDENTE (rejeição SEFAZ / falha do emissor)
+  // ------------------------------------------------------------
+
+  /// Guarda a NFC-e rejeitada na fila de pendentes e devolve o registro local
+  /// com status 'pendente' (em vez de descartar a venda).
+  ///
+  /// Diferente da contingência (bridge offline), aqui a SEFAZ respondeu
+  /// rejeitando a nota: ela fica salva em "pendentes", é retransmitida
+  /// automaticamente a cada 30s (até 100 tentativas) e pode ser reenviada na
+  /// mão pelo histórico de NFC-e.
+  Future<NFCe> _guardarComoPendente({
+    required Map<String, dynamic> payload,
+    required Empresa empresa,
+    required List<NFCeItem> nfceItens,
+    required double valorTotal,
+    required List<NFCePagamento> pagamentos,
+    required String? vendaNumero,
+    required String? vendaId,
+    required int? serie,
+    required String? cpfCnpjConsumidor,
+    required String? nomeConsumidor,
+    required String motivo,
+    int? modelo,
+  }) async {
+    final now = DateTime.now();
+    final numStr = vendaNumero ?? '0';
+    debugPrint('>>> [NFCeLocal] Nota $numStr ficou PENDENTE ($motivo).');
+
+    await NfceContingenciaService.instance.adicionarNaFila(
+      payload: payload,
+      empresaId: empresa.id,
+      empresaCnpj: empresa.cnpj ?? '',
+      numero: numStr,
+      valorTotal: valorTotal,
+      tentativaEm: now,
+    );
+
+    // A nota pendente continua DONA do número (ela será reenviada com ele), então
+    // o número não pode ser reservado para reuso: a próxima venda pega o
+    // seguinte (getProximoNumeroNfce considera notas pendentes como usadas).
+    await NfceContingenciaService.limparNumeroReservado(empresa.id);
+
+    final nfcePendente = NFCe(
+      id: now.millisecondsSinceEpoch.toString(),
+      numero: numStr,
+      serie: serie?.toString() ?? empresa.serieNFCe ?? '1',
+      chaveAcesso: null,
+      protocolo: null,
+      dataEmissao: now,
+      empresaId: empresa.id,
+      itens: nfceItens,
+      valorTotal: valorTotal,
+      cpfCnpjConsumidor: cpfCnpjConsumidor,
+      nomeConsumidor: nomeConsumidor,
+      pagamentos: pagamentos,
+      xmlEnviado: null,
+      // Guarda o motivo da rejeição para o histórico poder exibir o porquê
+      // da nota estar pendente (a nota ainda NÃO existe na SEFAZ).
+      xmlRetorno: motivo,
+      qrCode: null,
+      modelo: modelo ?? 65,
+      status: 'pendente',
+      vendaId: vendaId,
+      vendaNumero: vendaNumero,
+      createdAt: now,
+      updatedAt: now,
+    );
+
+    // O chamador salva o retorno no DataService (adicionarNFCe), como já faz
+    // com a nota em contingência.
+    return nfcePendente;
+  }
+
+  // ------------------------------------------------------------
   // EMIT
   // ------------------------------------------------------------
 
@@ -677,6 +762,25 @@ class NFCeBackendService extends NFCeServiceBase {
         );
       }
 
+      // NFC-e: rejeição não descarta a venda — a nota fica PENDENTE e é
+      // reenviada automaticamente. NF-e (modelo 55) segue propagando o erro.
+      if ((modelo ?? 65) != 55) {
+        return _guardarComoPendente(
+          payload: payload,
+          empresa: empresa,
+          nfceItens: nfceItens,
+          valorTotal: valorTotal,
+          pagamentos: pagamentos,
+          vendaNumero: vendaNumero,
+          vendaId: vendaId,
+          serie: serie,
+          cpfCnpjConsumidor: cpfCnpjConsumidor,
+          nomeConsumidor: nomeConsumidor,
+          motivo: 'Erro do Emissor (${response.statusCode}): $detail',
+          modelo: modelo ?? 65,
+        );
+      }
+
       // Reservar número para reutilizar na próxima tentativa
       final numInt = int.tryParse((vendaNumero ?? '').replaceAll(RegExp(r'[^0-9]'), ''));
       if (numInt != null && numInt > 0) {
@@ -692,6 +796,24 @@ class NFCeBackendService extends NFCeServiceBase {
     final statusResp = data['status']?.toString().toLowerCase() ?? '';
     if (statusResp == 'erro' || statusResp == 'error') {
       final msg = data['error'] ?? data['mensagem'] ?? data['message'] ?? 'Erro desconhecido';
+      // NFC-e rejeitada pela SEFAZ: mantém a nota como PENDENTE (reenvio
+      // automático a cada 30s). NF-e (modelo 55) segue propagando o erro.
+      if ((modelo ?? 65) != 55) {
+        return _guardarComoPendente(
+          payload: payload,
+          empresa: empresa,
+          nfceItens: nfceItens,
+          valorTotal: valorTotal,
+          pagamentos: pagamentos,
+          vendaNumero: vendaNumero,
+          vendaId: vendaId,
+          serie: serie,
+          cpfCnpjConsumidor: cpfCnpjConsumidor,
+          nomeConsumidor: nomeConsumidor,
+          motivo: msg.toString(),
+          modelo: modelo ?? 65,
+        );
+      }
       // Reservar número para reutilizar na próxima tentativa (rejeição SEFAZ)
       final numInt = int.tryParse((vendaNumero ?? '').replaceAll(RegExp(r'[^0-9]'), ''));
       if (numInt != null && numInt > 0) {
@@ -797,6 +919,86 @@ class NFCeBackendService extends NFCeServiceBase {
       return {
         'success': data['success'] ?? false,
         'message': data['message'] ?? data['error'] ?? 'Cancelamento processado',
+        'data': data,
+      };
+    } catch (e) {
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  // ------------------------------------------------------------
+  // INUTILIZAR NUMERAÇÃO
+  // ------------------------------------------------------------
+
+  @override
+  Future<Map<String, dynamic>> inutilizarNFCe({
+    required NFCe nfce,
+    required Empresa empresa,
+    String? justificativa,
+    int? numeroFinal,
+    int? ano,
+  }) async {
+    final numero = int.tryParse(nfce.numero.trim()) ?? 0;
+    if (numero <= 0) {
+      return {
+        'success': false,
+        'message': 'Número da nota inválido para inutilização ("${nfce.numero}").',
+      };
+    }
+
+    final payload = {
+      'numero': numero,
+      'numero_final': numeroFinal ?? numero,
+      'serie': int.tryParse((nfce.serie).trim()) ?? 1,
+      'modelo': nfce.modelo ?? 65,
+      'ano': ano ?? DateTime.now().year % 100,
+      'justificativa': (justificativa == null || justificativa.trim().isEmpty)
+          ? 'Quebra de sequencia de numeracao por falha na emissao'
+          : justificativa.trim(),
+      'empresa': {
+        'cnpj': empresa.cnpj?.replaceAll(RegExp(r'[^0-9]'), '') ?? '',
+        'razao_social': empresa.razaoSocial,
+        'uf': empresa.estado ?? 'SP',
+        'ambiente_homologacao': empresa.configuracoes?['ambienteHomologacao'] ?? true,
+        'certificado_base64':
+            empresa.configuracoes?['certificadoDigitalBytes'] ??
+            empresa.configuracoes?['certificado_base64'] ??
+            empresa.certificadoDigitalUrl ?? '',
+        'senha_certificado':
+            empresa.senhaCertificado ??
+            empresa.configuracoes?['certificadoDigitalSenha'] ??
+            empresa.configuracoes?['senha_certificado'] ?? '',
+      }
+    };
+
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/api/nfce/inutilizar'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 45));
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final sucesso = data['success'] == true;
+
+      if (sucesso) {
+        _atualizarStatusSupabase(nfce.id, 'inutilizada').catchError(
+          (e) => debugPrint('>>> [NFCeLocal] Erro ao inutilizar no Supabase: $e'),
+        );
+        _atualizarStatusPostgres(nfce.id, 'inutilizada').catchError(
+          (e) => debugPrint('>>> [NFCeLocal] Erro ao inutilizar no PostgreSQL: $e'),
+        );
+      }
+
+      return {
+        'success': sucesso,
+        'ja_inutilizada': data['ja_inutilizada'] == true,
+        'protocolo': data['protocolo'],
+        'cStat': data['cStat'],
+        'message': data['mensagem'] ?? data['xMotivo'] ?? data['error'] ??
+            (sucesso ? 'Numeração inutilizada' : 'Falha ao inutilizar numeração'),
         'data': data,
       };
     } catch (e) {

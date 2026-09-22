@@ -402,6 +402,20 @@ async def cancelar_nfce_endpoint(req: Request):
         # Retornar 200 com success=False para tratar graciosamente no front
         return {"success": False, "error": str(e), "traceback": tb}
 
+@app.post("/api/nfce/inutilizar")
+async def inutilizar_nfce_endpoint(req: Request):
+    from nfce_handler import inutilizar_nfce_pynfe
+    try:
+        data = await req.json()
+        log_message(f">>> [DEBUG INUTILIZACAO] Dados recebidos: {json.dumps(data)[:500]}...")
+        resultado = inutilizar_nfce_pynfe(data)
+        return resultado
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        print(f"[HTTP ERRO INUTILIZACAO] {e}\n{tb}")
+        return {"success": False, "error": str(e), "traceback": tb}
+
 @app.post("/api/nfce/consultar")
 async def consultar_nfce_endpoint(req: Request):
     from nfce_handler import consultar_nfce_pynfe

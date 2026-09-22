@@ -9733,6 +9733,30 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
             ),
           );
         }
+      } else if (nfce.status == 'pendente') {
+        // Rejeição da SEFAZ: a nota ficou salva como pendente e será reenviada
+        // automaticamente — a venda não é perdida nem precisa ser reemitida na mão.
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Row(
+                children: [
+                  Icon(Icons.schedule_send, color: Colors.black, size: 20),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      '⚠️ NOTA PENDENTE\nA SEFAZ rejeitou a nota. Ela ficou salva em pendentes e será reenviada automaticamente.',
+                      style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
+              ),
+              backgroundColor: Colors.orange,
+              duration: const Duration(seconds: 8),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
       } else {
         _mostrarErro(
           'NFC-e ${nfce.status}: ${nfce.protocolo ?? "Erro desconhecido"}',

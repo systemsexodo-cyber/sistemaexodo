@@ -3599,7 +3599,26 @@ class _EmissaoManualPageState extends State<_EmissaoManualPage>
       if (idPendente != null && idPendente != nfceFinal.id) {
         await dataService.removerNFCe(idPendente!);
       }
-      debugPrint('>>> [HISTORICO] Nota autorizada gravada no histórico: ${nfceFinal.numero}');
+      debugPrint('>>> [HISTORICO] Nota gravada no histórico: ${nfceFinal.numero} (${nfceFinal.status})');
+
+      // Rejeição da SEFAZ em NFC-e: a nota ficou como 'pendente' (reenvio
+      // automático). Não gera conta a receber nem mostra sucesso.
+      if ((nfceFinal.modeloEfetivo ?? 65) != 55 && nfceFinal.status != 'autorizada') {
+        if (mounted) {
+          Navigator.of(context).pop();
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                '⚠️ Nota Nº ${nfceFinal.numero} ficou ${nfceFinal.status?.toUpperCase()}. '
+                'Ela está salva no histórico e será reenviada automaticamente.',
+              ),
+              backgroundColor: Colors.orange,
+              duration: const Duration(seconds: 8),
+            ),
+          );
+        }
+        return;
+      }
 
       // Gerar a Conta a Receber correspondente no Financeiro se estiver ativado
       try {

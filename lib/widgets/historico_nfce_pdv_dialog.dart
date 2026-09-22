@@ -751,11 +751,19 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                                        style: TextStyle(
                                          color: nfce.status == 'contingencia'
                                              ? Colors.amber
-                                             : (isAutorizada ? Colors.green : (isErro ? Colors.redAccent : Colors.orange)),
+                                             : (nfce.status == 'inutilizada'
+                                                 ? Colors.purpleAccent
+                                                 : (nfce.status == 'substituida'
+                                                     ? Colors.blueGrey
+                                                     : (isAutorizada ? Colors.green : (isErro ? Colors.redAccent : Colors.orange)))),
                                          fontWeight: FontWeight.bold,
                                        ),
                                      ),
-                                     if (nfce.status?.toUpperCase() == 'ERRO' && nfce.xmlRetorno != null)
+                                     if (nfce.xmlRetorno != null &&
+                                         nfce.xmlRetorno!.isNotEmpty &&
+                                         (nfce.status?.toUpperCase() == 'ERRO' ||
+                                             nfce.status == 'pendente' ||
+                                             nfce.status == 'contingencia'))
                                        Text('${nfce.xmlRetorno}', style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
                                      
                                      if (isAutorizada || nfce.status == 'cancelada' || nfce.status == 'sucesso' || isErro || nfce.status == 'contingencia' || nfce.status == 'pendente')
@@ -779,14 +787,21 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                                                ),
                                                const SizedBox(width: 8),
                                                TextButton.icon(
-                                                 onPressed: () async {
-                                                   final dataService = Provider.of<DataService>(context, listen: false);
-                                                   // Remove da contingência
-                                                   await NfceContingenciaService.instance.removerDaFila(nfce.id);
-                                                   // Remove do local
-                                                   dataService.vendasBalcao.removeWhere((v) => v.id == nfce.vendaId);
-                                                   _loadData();
-                                                 },
+                                                 onPressed: () => _reemitirNFCe(context, nfce),
+                                                 icon: const Icon(Icons.edit_note, color: Colors.orange, size: 18),
+                                                 label: const Text('CORRIGIR E REEMITIR', style: TextStyle(color: Colors.orange, fontSize: 11)),
+                                                 style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 0)),
+                                               ),
+                                               const SizedBox(width: 8),
+                                               TextButton.icon(
+                                                 onPressed: () => _confirmarInutilizacao(context, nfce),
+                                                 icon: const Icon(Icons.block, color: Colors.purpleAccent, size: 18),
+                                                 label: const Text('INUTILIZAR Nº', style: TextStyle(color: Colors.purpleAccent, fontSize: 11)),
+                                                 style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 0)),
+                                               ),
+                                               const SizedBox(width: 8),
+                                               TextButton.icon(
+                                                 onPressed: () => _descartarPendente(context, nfce),
                                                  icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 18),
                                                  label: const Text('DESCARTE', style: TextStyle(color: Colors.redAccent, fontSize: 11)),
                                                  style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 0)),
@@ -1004,6 +1019,215 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
     }
   }
 
+  /// Descarta uma nota pendente: sai da fila de reenvio e do histórico de
+  /// pendentes, sem transmitir nada para a SEFAZ.
+  ///
+  /// A VENDA continua no histórico de vendas (registro operacional do caixa).
+  /// Se o número já foi enviado à SEFAZ, o caminho correto é INUTILIZAR Nº.
+  Future<void> _descartarPendente(BuildContext context, NFCe nfce) async {
+    final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+
+    final bool? confirmar = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E1E),
+        title: const Text('Descartar NFC-e pendente?', style: TextStyle(color: Colors.white)),
+        content: Text(
+          'NFC-e Nº ${nfce.numero} (série ${nfce.serie}) — ${formatoMoeda.format(nfce.valorTotal)}\n\n'
+          'A nota sai da fila de reenvio e não será mais transmitida.\n'
+          'Se o número já foi enviado à SEFAZ, use INUTILIZAR Nº para queimá-lo.',
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('CANCELAR', style: TextStyle(color: Colors.white54)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+            child: const Text('DESCARTAR'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmar != true) return;
+
+    setState(() => _isLoading = true);
+    try {
+      final dataService = Provider.of<DataService>(context, listen: false);
+
+      // O `id` do registro NÃO é o `id` da fila: a remoção por número encontra
+      // a entrada do reenvio automático (antes a nota reaparecia).
+      final removidas = await NfceContingenciaService.instance.removerDaFilaPorNumero(nfce.numero);
+
+      // Sai da lista de pendentes (mantém o registro para auditoria).
+      await dataService.atualizarNFCe(nfce.copyWith(
+        status: 'descartada',
+        updatedAt: DateTime.now(),
+      ));
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(removidas > 0
+            ? 'NFC-e ${nfce.numero} descartada (removida da fila de reenvio).'
+            : 'NFC-e ${nfce.numero} descartada (não estava mais na fila de reenvio).'),
+        backgroundColor: Colors.orange,
+      ));
+      _loadData();
+    } catch (e) {
+      _mostrarErro('Erro ao descartar: $e');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  /// Pede a justificativa e confirma a INUTILIZAÇÃO do número da nota.
+  Future<void> _confirmarInutilizacao(BuildContext context, NFCe nfce) async {
+    final numero = int.tryParse(nfce.numero.trim()) ?? 0;
+    if (numero <= 0) {
+      _mostrarErro('Número inválido para inutilização ("${nfce.numero}").');
+      return;
+    }
+
+    final justificativaController = TextEditingController(
+      text: 'Quebra de sequencia de numeracao por falha na emissao da NFC-e ${nfce.numero}',
+    );
+
+    final bool? confirmar = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final justicaTexto = justificativaController.text.trim();
+          final justificativaValida = justicaTexto.length >= 15;
+
+          return AlertDialog(
+            backgroundColor: const Color(0xFF1E1E1E),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: Row(
+              children: [
+                const Icon(Icons.block, color: Colors.purpleAccent, size: 26),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Text('Inutilizar numeração', style: TextStyle(color: Colors.white, fontSize: 18)),
+                ),
+              ],
+            ),
+            content: SizedBox(
+              width: 460,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'NFC-e (modelo ${nfce.modelo ?? 65}) | Série ${nfce.serie} | Nº ${nfce.numero}',
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'O número é enviado ao serviço NFeInutilizacao4 da SEFAZ e fica "queimado": '
+                    'nenhuma nota poderá ser emitida com ele depois.',
+                    style: TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+                  const SizedBox(height: 14),
+                  TextField(
+                    controller: justificativaController,
+                    maxLength: 255,
+                    maxLines: 3,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    onChanged: (_) => setDialogState(() {}),
+                    decoration: InputDecoration(
+                      labelText: 'Justificativa (mínimo 15 caracteres)',
+                      labelStyle: const TextStyle(color: Colors.white54, fontSize: 12),
+                      filled: true,
+                      fillColor: Colors.white.withOpacity(0.05),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                    ),
+                  ),
+                  const Text(
+                    'Use esta opção só quando a nota NÃO existe na SEFAZ. Se ela foi autorizada, use CANCELAR.',
+                    style: TextStyle(color: Colors.amber, fontSize: 11),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('CANCELAR', style: TextStyle(color: Colors.white54)),
+              ),
+              ElevatedButton.icon(
+                onPressed: justificativaValida ? () => Navigator.pop(context, true) : null,
+                icon: const Icon(Icons.block, size: 18),
+                label: Text('INUTILIZAR Nº ${nfce.numero}'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.purpleAccent,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    if (confirmar != true) return;
+    await _inutilizarNFCe(context, nfce, justificativaController.text.trim());
+  }
+
+  /// Envia a inutilização ao bridge (SEFAZ) e, se homologada, tira a nota da
+  /// fila de reenvio e marca o registro como 'inutilizada'.
+  Future<void> _inutilizarNFCe(BuildContext context, NFCe nfce, String justificativa) async {
+    setState(() => _isLoading = true);
+    try {
+      final nfceService = NFCeServiceFactory.criar();
+
+      if (nfceService is! NFCeBackendService) {
+        throw Exception('A inutilização só está disponível no modo Bridge (Python).');
+      }
+
+      final resultado = await nfceService.inutilizarNFCe(
+        nfce: nfce,
+        empresa: widget.empresa,
+        justificativa: justificativa,
+      );
+
+      final dataService = Provider.of<DataService>(context, listen: false);
+
+      if (resultado['success'] == true) {
+        // O número foi queimado na SEFAZ: sai da fila de reenvio automático.
+        await NfceContingenciaService.instance.removerDaFilaPorNumero(nfce.numero);
+
+        final protocolo = resultado['protocolo']?.toString();
+        await dataService.atualizarNFCe(nfce.copyWith(
+          status: 'inutilizada',
+          protocolo: protocolo,
+          xmlRetorno: 'Inutilização homologada (cStat ${resultado['cStat']}): ${resultado['message']}',
+          updatedAt: DateTime.now(),
+        ));
+
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(
+            resultado['ja_inutilizada'] == true
+                ? 'O número ${nfce.numero} já estava inutilizado na SEFAZ.'
+                : 'Número ${nfce.numero} inutilizado na SEFAZ${protocolo != null && protocolo.isNotEmpty ? ' (protocolo $protocolo)' : ''}.',
+          ),
+          backgroundColor: Colors.purple,
+        ));
+        _loadData();
+      } else {
+        _mostrarErro('A SEFAZ recusou a inutilização:\n\n${resultado['message']}');
+      }
+    } catch (e) {
+      _mostrarErro('Erro ao inutilizar numeração: $e');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
   Future<void> _transmitirContingenciaIndividual(BuildContext context, NFCe nfce) async {
     setState(() => _isLoading = true);
     try {
@@ -1115,9 +1339,15 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
             );
             
             final dataService = Provider.of<DataService>(context, listen: false);
-            await dataService.adicionarNFCe(novaNfce);
-            if (novaNfce.status == 'autorizada') sucessos++;
-            else falhas++;
+            if (novaNfce.status == 'autorizada') {
+              await dataService.adicionarNFCe(novaNfce);
+              sucessos++;
+            } else {
+              // Continua pendente (rejeitada de novo): atualiza o registro
+              // existente em vez de criar um duplicado a cada tentativa.
+              await dataService.atualizarNFCe(novaNfce.copyWith(id: nfce.id));
+              falhas++;
+            }
           }
         } catch (e) {
           debugPrint('[Reenviar] Erro ao reenviar nota ${nfce.numero}: $e');
@@ -1787,7 +2017,22 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
           ambienteHomologacao: widget.empresa.configuracoes?['ambiente_nfe'] == 'Produção' ? false : true,
         );
 
+        final eraPendente = nfce.status == 'pendente' || nfce.status == 'contingencia';
+
         await dataService.adicionarNFCe(novaNfce);
+
+        // A nota ANTIGA foi reemitida com outro número: precisa sair da fila de
+        // reenvio automático, senão o timer continuaria transmitindo o número
+        // velho em paralelo com a reemissão (e ela nunca sairia dos pendentes).
+        if (eraPendente) {
+          await NfceContingenciaService.instance.removerDaFilaPorNumero(nfce.numero);
+          if (novaNfce.status == 'autorizada') {
+            await dataService.atualizarNFCe(nfce.copyWith(
+              status: 'substituida',
+              updatedAt: DateTime.now(),
+            ));
+          }
+        }
 
         // Salvar XML automaticamente em C:\ExodoNFCe\
         NfceXmlLocalService.salvarXmlAposEmissao(nfce: novaNfce, empresa: widget.empresa);

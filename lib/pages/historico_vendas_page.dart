@@ -6207,10 +6207,18 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
 
       if (mounted) {
         setState(() {});
+        // Rejeição da SEFAZ devolve a nota como 'pendente' (reenvio automático);
+        // contingência é o bridge offline. Só 'autorizada' é sucesso de verdade.
+        final pendente = nfce.status == 'pendente' || nfce.status == 'contingencia';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('NFC-e Nº ${nfce.numero} emitida com sucesso!'),
-            backgroundColor: Colors.green,
+            content: Text(
+              pendente
+                  ? '⚠️ NFC-e Nº ${nfce.numero} ficou ${nfce.status!.toUpperCase()} '
+                        '(será reenviada automaticamente).'
+                  : 'NFC-e Nº ${nfce.numero} emitida com sucesso!',
+            ),
+            backgroundColor: pendente ? Colors.orange : Colors.green,
           ),
         );
       }

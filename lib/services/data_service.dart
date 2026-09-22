@@ -7366,11 +7366,22 @@ class DataService extends ChangeNotifier {
     final serieNorm = serie.trim().isEmpty ? '1' : serie.trim();
     final Set<int> numerosExistentes = {};
 
-    // 1. Verificar na lista de NFC-es sincronizadas (Supabase) da MESMA série
-    // Considerar as que foram autorizadas, sucesso ou canceladas (o número já foi usado)
+    // 1. Verificar na lista de NFC-es sincronizadas (Supabase) da MESMA série.
+    //    Contam como "número já usado" as autorizadas/sucesso/canceladas E as
+    //    PENDENTES: uma nota rejeitada fica salva como 'pendente' aguardando
+    //    reenvio com o MESMO número, então ela não pode ser reaproveitada por
+    //    uma venda seguinte (senão as duas colidiriam na SEFAZ).
+    //    'inutilizada' (número queimado no NFeInutilizacao4) e 'substituida'
+    //    (nota pendente corrigida e reemitida com outro número) também ficam
+    //    fora da sequência: reutilizar esses números geraria rejeição 539.
     for (final nfce in _nfces) {
       if (nfce.numero != null &&
-          (nfce.status == 'autorizada' || nfce.status == 'sucesso' || nfce.status == 'cancelada')) {
+          (nfce.status == 'autorizada' ||
+              nfce.status == 'sucesso' ||
+              nfce.status == 'cancelada' ||
+              nfce.status == 'pendente' ||
+              nfce.status == 'inutilizada' ||
+              nfce.status == 'substituida')) {
         // Série da nota: NFC-e antigas podem não ter série — trata como '1'
         final serieNfce = (nfce.serie ?? '').trim().isEmpty ? '1' : nfce.serie!.trim();
         if (serieNfce != serieNorm) continue;

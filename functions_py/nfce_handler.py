@@ -138,13 +138,34 @@ def adicionar_produto_com_icms(nota_fiscal, item, emp, descricao=None, cfop_suge
 
 
 # --- FUNÇÃO PRINCIPAL DE EMISSÃO ---
+# CSOSN -> grupo do schema NF-e 4.00 (o nome do grupo NÃO é o CSOSN).
+GRUPO_ICMSSN_POR_CSOSN = {
+    '101': 'ICMSSN101',
+    '102': 'ICMSSN102',
+    '103': 'ICMSSN102',
+    '300': 'ICMSSN102',
+    '400': 'ICMSSN102',
+    '201': 'ICMSSN201',
+    '202': 'ICMSSN202',
+    '203': 'ICMSSN202',
+    '500': 'ICMSSN500',
+    '900': 'ICMSSN900',
+}
+
+
 def corrigir_blocos_icms_simples(xml_element):
     """Corrige o bug do pynfe 0.6.5 na serialização dos blocos do Simples Nacional.
 
-    O pynfe gera o bloco <ICMSSN102> para CSOSN 103/300/400 (e <ICMSSN202> para
-    203), mas o schema da NF-e 4.00 exige que o nome do bloco corresponda ao CSOSN
-    (ex: CSOSN 400 deve estar dentro de <ICMSSN400>). Esta função percorre cada
-    <ICMS> e renomeia o bloco filho conforme o valor real do <CSOSN>.
+    O schema da NF-e 4.00 define apenas seis grupos de ICMS do Simples Nacional:
+    ICMSSN101 (CSOSN 101), ICMSSN102 (CSOSN 102, 103, 300 e 400),
+    ICMSSN201 (201), ICMSSN202 (202 e 203), ICMSSN500 (500) e ICMSSN900 (900).
+    O nome do grupo NÃO é o CSOSN: o CSOSN 400, por exemplo, é informado dentro
+    de <ICMSSN102> — <ICMSSN400> não existe no schema.
+
+    Renomear o bloco para o próprio CSOSN (ex: <ICMSSN400>, <ICMSSN300>,
+    <ICMSSN203>) gera a rejeição 225 "Falha no Schema XML do lote de NFe".
+    Esta função apenas garante que o bloco filho corresponda ao grupo definido
+    pelo schema, sem inventar grupos inexistentes.
     """
     ns = "http://www.portalfiscal.inf.br/nfe"
     for icms_tag in xml_element.iter():
@@ -161,7 +182,9 @@ def corrigir_blocos_icms_simples(xml_element):
             if csosn_el is None or csosn_el.text is None:
                 continue
             csosn_val = str(csosn_el.text).strip()
-            bloco_esperado = f"ICMSSN{csosn_val}"
+            bloco_esperado = GRUPO_ICMSSN_POR_CSOSN.get(csosn_val)
+            if bloco_esperado is None:
+                continue
             if tag_name != bloco_esperado:
                 print(f"[FIX] Bloco ICMS renomeado: {tag_name} -> {bloco_esperado} (CSOSN {csosn_val})")
                 if '}' in bloco.tag:
@@ -223,7 +246,7 @@ def emitir_nfce_pynfe(req):
         serializador = SerializacaoXML(MockFonteDados(nota_fiscal), homologacao=(emp.ambiente == 2))
         xml_string = serializador.exportar(retorna_string=True)
         xml_element = etree.fromstring(xml_string.encode('utf-8'))
-        # Corrigir blocos do Simples Nacional (pynfe gera ICMSSN102 p/ CSOSN 103/300/400)
+        # Garantir o grupo correto do Simples Nacional (CSOSN 400 -> ICMSSN102, etc.)
         corrigir_blocos_icms_simples(xml_element)
         
         # Ordem crítica e QR Code (simplificado para cloud)

@@ -154,6 +154,34 @@ void main() async {
     await _logBoot('ERRO contingência: $e');
   }
 
+  // Rejeição de NFC-e não descarta a venda: a nota fica salva como 'pendente'.
+  // O emissor não tem acesso ao DataService, então registramos aqui o hook que
+  // reconcilia a nota quando a retransmissão automática (a cada 30s) autoriza.
+  NfceContingenciaService.onNotaAutorizada = (nfce, numero) async {
+    final antigas = dataService.nfces
+        .where(
+          (n) =>
+              n.numero == numero &&
+              (n.status == 'pendente' || n.status == 'contingencia'),
+        )
+        .toList();
+    for (final antiga in antigas) {
+      await dataService.atualizarNFCe(
+        antiga.copyWith(
+          status: 'autorizada',
+          chaveAcesso: nfce.chaveAcesso,
+          protocolo: nfce.protocolo,
+          xmlEnviado: nfce.xmlEnviado,
+          qrCode: nfce.qrCode,
+          updatedAt: DateTime.now(),
+        ),
+      );
+      debugPrint(
+        '>>> [SISTEMA] NFC-e ${antiga.numero} reconciliada: pendente -> autorizada',
+      );
+    }
+  };
+
   // Inicia verificação do relógio em background (não bloqueia a inicialização)
   Future.delayed(const Duration(seconds: 5), () {
     ClockCheckService().verificar();

@@ -9,6 +9,7 @@ Cobre as regras aplicadas em `adicionar_produto_com_icms`:
   - CRT 2 (Simples SN - excesso)  -> mesmo comportamento do CRT 1
   - CRT 3 (Regime Normal, CST 00) -> bloco <ICMS00><CST>00</CST><modBC>3</modBC>
                                      <vBC>..</vBC><pICMS>..</pICMS><vICMS>..</vICMS> (completo)
+  - CRT 1 (Simples Nacional, CSOSN 400) -> bloco <ICMSSN102><CSOSN>400</CSOSN> (não tributada)
   - CRT 3 (Regime Normal, CST 40) -> bloco <ICMS40><CST>40</CST> (isenta, sem modBC/vBC)
 
 Uso (na raiz do projeto):
@@ -165,7 +166,7 @@ def montar_xml(mod, crt, icms_cst='00', icms_csosn='102', icms_aliquota=18.0, ic
     ser = SerializacaoXML(mod.MockFonteDados(nf), homologacao=True)
     xml_str = ser.exportar(retorna_string=True)
     # Aplica a correção de blocos do Simples Nacional (mesmo passo do emitir_nfce_pynfe),
-    # que renomeia ICMSSN102 -> ICMSSN400/300/103 e ICMSSN202 -> ICMSSN203 conforme o CSOSN.
+    # que garante que cada CSOSN use o grupo definido no schema (ex: 400 -> ICMSSN102).
     from lxml import etree as _etree
     xml_el = _etree.fromstring(xml_str.encode('utf-8'))
     if hasattr(mod, 'corrigir_blocos_icms_simples'):
@@ -204,8 +205,11 @@ def executar_alvo(alvo):
     xml = montar_xml(mod, crt=1, icms_csosn='400', icms_cst='00')
     icms = extrair_icms(xml)
     print(f'  CRT=1 CSOSN=400 -> {icms}')
-    checar('CRT 1/400: bloco ICMSSN400', '<ICMSSN400>' in icms)
+    # CSOSN 400 vai dentro de <ICMSSN102> — <ICMSSN400> NÃO existe no schema 4.00
+    # (renomear o bloco para o CSOSN causava a rejeição 225).
+    checar('CRT 1/400: bloco ICMSSN102', '<ICMSSN102>' in icms)
     checar('CRT 1/400: CSOSN 400', '<CSOSN>400</CSOSN>' in icms)
+    checar('CRT 1/400: sem ICMSSN400 inexistente', '<ICMSSN400>' not in icms)
     checar('CRT 1/400: sem ICMS00', '<ICMS00>' not in icms)
 
     # ── CRT 1: Simples Nacional / CSOSN 500 (substituído - ST anterior) ────

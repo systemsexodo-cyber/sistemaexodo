@@ -155,13 +155,34 @@ NotaFiscalProduto.imposto_importacao_valor_despesas_aduaneiras = Decimal('0.00')
 NotaFiscalProduto.imposto_importacao_valor = Decimal('0.00')
 NotaFiscalProduto.imposto_importacao_valor_iof = Decimal('0.00')
 
+# CSOSN -> grupo do schema NF-e 4.00 (o nome do grupo NÃO é o CSOSN).
+GRUPO_ICMSSN_POR_CSOSN = {
+    '101': 'ICMSSN101',
+    '102': 'ICMSSN102',
+    '103': 'ICMSSN102',
+    '300': 'ICMSSN102',
+    '400': 'ICMSSN102',
+    '201': 'ICMSSN201',
+    '202': 'ICMSSN202',
+    '203': 'ICMSSN202',
+    '500': 'ICMSSN500',
+    '900': 'ICMSSN900',
+}
+
+
 def corrigir_blocos_icms_simples(xml_element):
     """Corrige o bug do pynfe 0.6.5 na serialização dos blocos do Simples Nacional.
 
-    O pynfe gera o bloco <ICMSSN102> para CSOSN 103/300/400 (e <ICMSSN202> para
-    203), mas o schema da NF-e 4.00 exige que o nome do bloco corresponda ao CSOSN
-    (ex: CSOSN 400 deve estar dentro de <ICMSSN400>). Esta função percorre cada
-    <ICMS> e renomeia o bloco filho conforme o valor real do <CSOSN>.
+    O schema da NF-e 4.00 define apenas seis grupos de ICMS do Simples Nacional:
+    ICMSSN101 (CSOSN 101), ICMSSN102 (CSOSN 102, 103, 300 e 400),
+    ICMSSN201 (201), ICMSSN202 (202 e 203), ICMSSN500 (500) e ICMSSN900 (900).
+    O nome do grupo NÃO é o CSOSN: o CSOSN 400, por exemplo, é informado dentro
+    de <ICMSSN102> — <ICMSSN400> não existe no schema.
+
+    Renomear o bloco para o próprio CSOSN (ex: <ICMSSN400>, <ICMSSN300>,
+    <ICMSSN203>) gera a rejeição 225 "Falha no Schema XML do lote de NFe".
+    Esta função apenas garante que o bloco filho corresponda ao grupo definido
+    pelo schema, sem inventar grupos inexistentes.
     """
     ns = "http://www.portalfiscal.inf.br/nfe"
     for icms_tag in xml_element.iter():
@@ -178,7 +199,9 @@ def corrigir_blocos_icms_simples(xml_element):
             if csosn_el is None or csosn_el.text is None:
                 continue
             csosn_val = str(csosn_el.text).strip()
-            bloco_esperado = f"ICMSSN{csosn_val}"
+            bloco_esperado = GRUPO_ICMSSN_POR_CSOSN.get(csosn_val)
+            if bloco_esperado is None:
+                continue
             if tag_name != bloco_esperado:
                 print(f"[FIX] Bloco ICMS renomeado: {tag_name} -> {bloco_esperado} (CSOSN {csosn_val})")
                 if '}' in bloco.tag:
@@ -1014,7 +1037,7 @@ def emitir_nfce_pynfe(req):
         # Garantir namespace correto em todo o XML (evitar xmlns="")
         ns_nfe = "http://www.portalfiscal.inf.br/nfe"
         fix_xml_namespaces(xml_element, ns_nfe)
-        # Corrigir blocos do Simples Nacional (pynfe gera ICMSSN102 p/ CSOSN 103/300/400)
+        # Garantir o grupo correto do Simples Nacional (CSOSN 400 -> ICMSSN102, etc.)
         corrigir_blocos_icms_simples(xml_element)
 
         # Injetar destaque de ICMS900 para Simples Nacional (NT 2025.002 / CSOSN 900)
@@ -1628,6 +1651,269 @@ def cancelar_nfce_pynfe(req_dict):
         tb = traceback.format_exc()
         print(f"[ERRO CANCELAMENTO] {e}\n{tb}")
         return {"success": False, "error": str(e), "mensagem": f"Erro interno: {str(e)}", "traceback": tb}
+
+
+def inutilizar_nfce_pynfe(req_dict):
+    """
+    Inutiliza uma faixa de numeração de NFC-e (serviço NFeInutilizacao4).
+
+    Usado quando uma nota PENDENTE (rejeitada pela SEFAZ) não será mais
+    transmitida — o número precisa ser "queimado" para não ficar em sequência.
+
+    O XML <inutNFe> é montado manualmente pelo mesmo motivo do cancelamento:
+    o pynfe não respeita a ordem/posição exigida pelo schema da SEFAZ.
+    """
+    from lxml import etree
+    from datetime import datetime
+    import base64, os, re, traceback, uuid
+    import requests as _req
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    # Código IBGE da UF (cUF), usado no atributo Id do infInut
+    CODIGO_UF = {
+        "AC": "12", "AL": "27", "AP": "16", "AM": "13", "BA": "29",
+        "CE": "23", "DF": "53", "ES": "32", "GO": "52", "MA": "21",
+        "MT": "51", "MS": "50", "MG": "31", "PA": "15", "PB": "25",
+        "PR": "41", "PE": "26", "PI": "22", "RJ": "33", "RN": "24",
+        "RS": "43", "RO": "11", "RR": "14", "SC": "42", "SP": "35",
+        "SE": "28", "TO": "17",
+    }
+
+    caminho_cert = None
+    chave_pem = None
+    cert_pem = None
+    cert_obj = None
+
+    try:
+        empresa_data = req_dict.get("empresa", {}) or {}
+        try:
+            serie = int(str(req_dict.get("serie") or 1).strip() or 1)
+            numero_ini = int(str(req_dict.get("numero") or 0).strip() or 0)
+            numero_fim = int(str(req_dict.get("numero_final") or numero_ini).strip() or numero_ini)
+        except (TypeError, ValueError):
+            return {"success": False, "error": "Série/número inválidos.", "mensagem": "Dados inválidos"}
+
+        modelo = str(req_dict.get("modelo") or 65).strip() or "65"
+        justificativa = str(req_dict.get("justificativa") or "")
+        ano = req_dict.get("ano")
+        ano = int(str(ano).strip()) if ano not in (None, "") else (datetime.now().year % 100)
+
+        if not empresa_data.get("certificado_base64"):
+            return {"success": False, "error": "Certificado ausente.", "mensagem": "Certificado não informado"}
+        if numero_ini <= 0:
+            return {"success": False, "error": "Número inválido.", "mensagem": "Número da nota não informado"}
+        if numero_fim < numero_ini:
+            return {"success": False, "error": "Faixa inválida.", "mensagem": "Número final menor que o inicial"}
+
+        cnpj = re.sub(r"[^0-9]", "", empresa_data.get("cnpj", ""))
+        if len(cnpj) != 14:
+            return {"success": False, "error": "CNPJ inválido.", "mensagem": "CNPJ do emitente inválido"}
+
+        uf = str(empresa_data.get("uf", "SP")).upper()
+        c_uf = CODIGO_UF.get(uf)
+        if not c_uf:
+            return {"success": False, "error": f"UF desconhecida: {uf}", "mensagem": "UF do emitente inválida"}
+
+        # Mapeamento robusto do ambiente (padrão de emissão usa ambiente_homologacao)
+        is_homolog = (empresa_data.get("ambiente_homologacao") is True) or \
+                     (str(empresa_data.get("ambiente")) == "2")
+        tp_amb = "2" if is_homolog else "1"
+
+        # xJust: 15–255 caracteres, sem caracteres proibidos pelo XSD
+        just_limpa = re.sub(r'[^\w\s\.\,\-\/]', ' ', justificativa, flags=re.UNICODE).strip()
+        just_limpa = re.sub(r'\s+', ' ', just_limpa)
+        if len(just_limpa) < 15:
+            just_limpa = "Quebra de sequencia de numeracao por falha na emissao"
+        just_limpa = just_limpa[:255]
+
+        # Id do infInut: "ID" + cUF + ano(2) + CNPJ + mod(2) + serie(3) + nNFIni(9) + nNFFin(9)
+        id_inut = "ID{}{}{}{}{}{}{}".format(
+            c_uf,
+            str(ano).zfill(2),
+            cnpj,
+            modelo.zfill(2),
+            str(serie).zfill(3),
+            str(numero_ini).zfill(9),
+            str(numero_fim).zfill(9),
+        )
+
+        NS = "http://www.portalfiscal.inf.br/nfe"
+
+        # ── 1. Montar inutNFe (lxml puro, sem ElementMaker para evitar xmlns="") ──
+        inut = etree.Element(f"{{{NS}}}inutNFe", versao="4.00", nsmap={None: NS})
+        inf_inut = etree.SubElement(inut, f"{{{NS}}}infInut", Id=id_inut)
+        etree.SubElement(inf_inut, f"{{{NS}}}tpAmb").text = tp_amb
+        etree.SubElement(inf_inut, f"{{{NS}}}xServ").text = "INUTILIZAR"
+        etree.SubElement(inf_inut, f"{{{NS}}}cUF").text = c_uf
+        etree.SubElement(inf_inut, f"{{{NS}}}ano").text = str(ano).zfill(2)
+        etree.SubElement(inf_inut, f"{{{NS}}}CNPJ").text = cnpj
+        etree.SubElement(inf_inut, f"{{{NS}}}mod").text = modelo.zfill(2)
+        etree.SubElement(inf_inut, f"{{{NS}}}serie").text = str(serie)
+        etree.SubElement(inf_inut, f"{{{NS}}}nNFIni").text = str(numero_ini)
+        etree.SubElement(inf_inut, f"{{{NS}}}nNFFin").text = str(numero_fim)
+        etree.SubElement(inf_inut, f"{{{NS}}}xJust").text = just_limpa
+
+        # ── 2. Assinar (Signature fica como irmã de <infInut>, dentro de <inutNFe>) ──
+        cert_data = base64.b64decode(empresa_data.get("certificado_base64"))
+        senha_cert = empresa_data.get("senha_certificado", "")
+        temp_dir = os.environ.get('TEMP', 'C:/temp')
+        caminho_cert = os.path.join(temp_dir, f"cert_inut_{uuid.uuid4().hex}.pfx")
+        with open(caminho_cert, 'wb') as f:
+            f.write(cert_data)
+
+        from pynfe.processamento.assinatura import AssinaturaA1
+        from pynfe.entidades.certificado import CertificadoA1 as _CertA1
+
+        assinador = AssinaturaA1(caminho_cert, senha_cert)
+        inut_assinado = assinador.assinar(inut)
+
+        xml_str = etree.tostring(inut_assinado, encoding="unicode")
+        xml_str = xml_str.replace(' xmlns=""', '')
+
+        # DEBUG: salvar XML de inutilização
+        try:
+            dbg = os.path.join(os.environ.get("TEMP", "C:/temp"), "last_inutilizacao.xml")
+            with open(dbg, "w", encoding="utf-8") as _f:
+                _f.write(xml_str)
+            print(f"[DEBUG] XML inutilizacao salvo em {dbg}")
+        except:
+            pass
+
+        # ── 3. URL do serviço de inutilização por UF ──
+        url_inut = ""
+        try:
+            from pynfe.utils.webservices import NFCE
+            urls_uf = NFCE.get(uf) or NFCE.get("SVRS")
+            if urls_uf:
+                base = urls_uf.get("HOMOLOGACAO" if is_homolog else "HTTPS", "") or ""
+                servico = urls_uf.get("INUTILIZACAO", "") or ""
+                if servico:
+                    url_inut = servico if servico.startswith("http") else (base + servico)
+        except Exception as e:
+            print(f"[AVISO] Erro ao obter URL de inutilizacao do pynfe: {e}")
+
+        if url_inut in ("", "https://", "http://"):
+            if is_homolog:
+                url_inut = ("https://homologacao.nfce.fazenda.sp.gov.br/ws/NFeInutilizacao4.asmx"
+                            if modelo.zfill(2) == "65"
+                            else "https://homologacao.nfe.fazenda.sp.gov.br/ws/NFeInutilizacao4.asmx")
+            else:
+                url_inut = ("https://nfce.fazenda.sp.gov.br/ws/NFeInutilizacao4.asmx"
+                            if modelo.zfill(2) == "65"
+                            else "https://nfe.fazenda.sp.gov.br/ws/NFeInutilizacao4.asmx")
+
+        print(f"[DEBUG] URL inutilizacao ({uf}): {url_inut} | Homolog: {is_homolog} | Id: {id_inut}")
+
+        # ── 4. Envelope SOAP 1.2 + certificado ──
+        SOAP_ACTION = "http://www.portalfiscal.inf.br/nfe/wsdl/NFeInutilizacao4/nfeInutilizacaoNF"
+        soap_envelope = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
+            'xmlns:xsd="http://www.w3.org/2001/XMLSchema" '
+            'xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">'
+            '<soap12:Body>'
+            '<nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeInutilizacao4">'
+            + xml_str +
+            '</nfeDadosMsg>'
+            '</soap12:Body>'
+            '</soap12:Envelope>'
+        )
+
+        cert_obj = _CertA1(caminho_cert)
+        chave_pem, cert_pem = cert_obj.separar_arquivo(senha_cert, caminho=True)
+
+        headers = {
+            "Content-Type": f'application/soap+xml; charset=utf-8; action="{SOAP_ACTION}"',
+        }
+
+        resp = _req.post(
+            url_inut,
+            data=soap_envelope.encode("utf-8"),
+            headers=headers,
+            cert=(cert_pem, chave_pem),
+            verify=False,
+            timeout=30
+        )
+        resp.encoding = "utf-8"
+        r_text = resp.text
+
+        try:
+            resp_dbg = os.path.join(os.environ.get("TEMP", "C:/temp"), "last_inutilizacao_resp.xml")
+            with open(resp_dbg, "w", encoding="utf-8") as _f:
+                _f.write(r_text)
+            print(f"[DEBUG] Resposta inutilizacao (HTTP {resp.status_code}) salva em {resp_dbg}")
+        except:
+            pass
+
+        if not r_text:
+            return {"success": False, "error": "Sem resposta da SEFAZ", "mensagem": "Conexao interrompida"}
+
+        # ── 5. Parsear retInutNFe ──
+        cstat = ""
+        xmotivo = "Sem resposta legível da SEFAZ"
+        protocolo = ""
+        try:
+            xml_to_parse = r_text
+            if "<soap:Body" in r_text or "<soap12:Body" in r_text or ":Body" in r_text:
+                match_body = re.search(r'<[^:>]*:?Body[^>]*>(.*?)</[^:>]*:?Body>', r_text, re.DOTALL)
+                if match_body:
+                    xml_to_parse = match_body.group(1)
+
+            resp_xml = etree.fromstring(xml_to_parse.encode('utf-8'))
+            cstat_l = resp_xml.xpath('//*[local-name()="infInut"]/*[local-name()="cStat"]/text()')
+            xmotivo_l = resp_xml.xpath('//*[local-name()="infInut"]/*[local-name()="xMotivo"]/text()')
+            nprot_l = resp_xml.xpath('//*[local-name()="infInut"]/*[local-name()="nProt"]/text()')
+            if not cstat_l:
+                cstat_l = resp_xml.xpath('//*[local-name()="cStat"]/text()')
+                xmotivo_l = resp_xml.xpath('//*[local-name()="xMotivo"]/text()')
+            if cstat_l:
+                cstat = cstat_l[0]
+                xmotivo = xmotivo_l[0] if xmotivo_l else "Status retornado vazio"
+            if nprot_l:
+                protocolo = nprot_l[0]
+        except Exception:
+            cstats = re.findall(r'<cStat>(\d+)</cStat>', r_text)
+            xmotivos = re.findall(r'<xMotivo>([^<]+)</xMotivo>', r_text)
+            nprots = re.findall(r'<nProt>(\d+)</nProt>', r_text)
+            if cstats:
+                cstat = cstats[-1] if len(cstats) > 1 else cstats[0]
+                xmotivo = xmotivos[-1] if xmotivos else "Sem resposta legível da SEFAZ"
+            if nprots:
+                protocolo = nprots[-1]
+
+        print(f"[DEBUG] Inutilizacao cStat={cstat} | xMotivo={xmotivo} | nProt={protocolo}")
+
+        # cStat 102 = Inutilização de número homologado
+        # cStat 218 = NF-e já está inutilizada na Base de Dados da SEFAZ (número já está queimado)
+        success = cstat in ["102", "218"]
+
+        return {
+            "success": success,
+            "cStat": cstat,
+            "xMotivo": xmotivo,
+            "mensagem": xmotivo,
+            "protocolo": protocolo,
+            "ja_inutilizada": cstat == "218",
+            "error": None if success else f"Rejeição SEFAZ [{cstat}]: {xmotivo}",
+            "data": {"cStat": cstat, "xMotivo": xmotivo, "nProt": protocolo},
+        }
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f"[ERRO INUTILIZACAO] {e}\n{tb}")
+        return {"success": False, "error": str(e), "mensagem": f"Erro interno: {str(e)}", "traceback": tb}
+    finally:
+        for f_path in [chave_pem, cert_pem]:
+            if f_path and os.path.exists(f_path):
+                try: os.remove(f_path)
+                except: pass
+        try:
+            if cert_obj is not None:
+                cert_obj.excluir()
+        except: pass
+        if caminho_cert and os.path.exists(caminho_cert):
+            try: os.remove(caminho_cert)
+            except: pass
 
 
 def consultar_nfce_pynfe(req_dict):
