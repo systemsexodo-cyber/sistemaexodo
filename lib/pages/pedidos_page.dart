@@ -26,6 +26,7 @@ import '../widgets/sync_status_widget.dart';
 import 'orcamentos_page.dart';
 import 'criar_romaneio_page.dart';
 import 'romaneios_page.dart';
+import '../utils/numeracao_venda.dart';
 
 
 class PedidosPage extends StatefulWidget {
@@ -294,7 +295,7 @@ class _PedidosPageState extends State<PedidosPage> {
       );
     }
     
-    // Filtrar apenas pedidos tradicionais (PED-), não vendas do PDV (VND-)
+    // Filtrar apenas pedidos tradicionais (PED-), não vendas do PDV (CX1-, VND-)
     // Incluir pedidos do e-commerce mesmo que tenham serviços
     List<Pedido> resultado = pedidos
         .where(
@@ -315,9 +316,8 @@ class _PedidosPageState extends State<PedidosPage> {
               }
             }
             
-            // Incluir apenas pedidos tradicionais (PED-), não vendas do PDV (VND-)
-            final isPedidoValido = p.numero.startsWith('PED-') ||
-                (!p.numero.startsWith('VND-') && !p.numero.startsWith('VND'));
+            // Incluir apenas pedidos tradicionais (PED-), não vendas do PDV (CX1-, VND-)
+            final isPedidoValido = !NumeracaoVenda.ehVendaPdv(p.numero);
             
             // Incluir pedidos do e-commerce (identificados pelo campo origemEcommerce OU linkVendedorId/linkVendedorCodigo)
             final isPedidoEcommerce = p.origemEcommerce ||
@@ -1554,7 +1554,7 @@ class _PedidosPageState extends State<PedidosPage> {
                       ),
                       tooltip: 'Receber Pagamento',
                     ),
-                  if (!isPago && pedido.status.toLowerCase() != 'cancelado' && (pedido.numero.startsWith('VND-') || pedido.numero.startsWith('VND')))
+                  if (!isPago && pedido.status.toLowerCase() != 'cancelado' && NumeracaoVenda.ehVendaPdv(pedido.numero))
                     IconButton(
                       onPressed: () {
                         Navigator.push(

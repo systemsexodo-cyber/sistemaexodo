@@ -9,6 +9,8 @@ import '../theme.dart';
 import 'home_page.dart';
 import '../widgets/sync_status_widget.dart';
 import '../services/caixa_pdf_service.dart';
+import '../services/caixa_fluxo_export_service.dart';
+import '../services/caixa_mov_filtro_service.dart';
 import '../services/auth_service.dart';
 import '../widgets/permission_widget.dart';
 import '../models/venda_balcao.dart';
@@ -38,12 +40,24 @@ class _CaixaPageState extends State<CaixaPage> {
   DateTime? _filtroDataInicio;
   DateTime? _filtroDataFim;
   String _filtroNumeroCaixa = 'Todos';
+  // Só caixas com diferença entre o esperado e o contado — é o que o gestor
+  // mais precisa achar rapidamente no histórico.
+  bool _filtroSomenteDivergentes = false;
+
+  /// Tolerância (R$) para considerar um fechamento como divergente.
+  static const double _toleranciaDivergencia = 0.005;
 
   // Filtros do Fluxo de Caixa (Movimentações do Dia)
   final TextEditingController _buscaFluxoController = TextEditingController();
   String _termoBuscaFluxo = '';
   String _filtroTipoFluxo = 'Todos';
+  TipoPagamento? _filtroFormaFluxo; // null = todas as formas de pagamento
   bool _mostrarTodosCaixas = false;
+  // Janela de horário do Fluxo de Caixa, em minutos desde a meia-noite
+  // (08:30 → 510). Só filtra quando os DOIS extremos foram escolhidos —
+  // mesma regra do modal de movimentações de um caixa encerrado.
+  int? _horaInicioFluxoMin;
+  int? _horaFimFluxoMin;
 
   @override
   Widget build(BuildContext context) {
@@ -53,6 +67,10 @@ class _CaixaPageState extends State<CaixaPage> {
     // Operador/funcionário sem permissão (dashboard.ver_totais) não vê o total
     // de vendas/entradas do caixa — apenas o saldo para operar.
     final podeVerTotais = PermissionHelper.podeVerTotais(usuarioLogado);
+    // Detalhamento por forma de pagamento (Dinheiro, PIX, Cartão...) é controlado
+    // por permissão própria (caixa.ver_totais_formas_pagamento).
+    final podeVerFormasPagamento =
+        PermissionHelper.podeVerTotaisFormasPagamento(usuarioLogado);
     // Operador/funcionário sem permissão (caixa.ver_fluxo_caixa) não vê a tela
     // de Fluxo de Caixa (entradas, saídas e histórico de encerramentos).
     final podeVerFluxoCaixa = PermissionHelper.podeVerFluxoCaixa(usuarioLogado);
@@ -117,6 +135,14 @@ class _CaixaPageState extends State<CaixaPage> {
             final caixaAberto = dataService.caixaAberto;
             final aberturaAtual = dataService.aberturaCaixaAtual;
             final aberturasAbertas = dataService.aberturasCaixaAbertas;
+
+            // Movimentações do fluxo calculadas UMA vez por build. Antes a barra
+            // de filtros e a lista chamavam `_movimentacoesFluxoBase` cada uma,
+            // varrendo vendas, mesas/comandas e sangrias duas vezes por rebuild.
+            final movsFluxoBase = (caixaAberto && aberturaAtual != null)
+                ? _movimentacoesFluxoBase(dataService, aberturaAtual)
+                : <Map<String, dynamic>>[];
+            final movsFluxoFiltradas = _filtrarFluxo(movsFluxoBase);
 
             // Conjunto único de identificadores de operadores (E-mail ou Nome)
             final Set<String> todosOperadores = {};
@@ -222,7 +248,8 @@ class _CaixaPageState extends State<CaixaPage> {
                   SliverToBoxAdapter(
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                      child: _buildResumoSession(dataService, aberturaAtual, podeVerTotais),
+                      child: _buildResumoSession(
+                          dataService, aberturaAtual, podeVerTotais, podeVerFormasPagamento),
                     ),
                   ),
 
@@ -231,7 +258,7 @@ class _CaixaPageState extends State<CaixaPage> {
                   SliverToBoxAdapter(
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(16, 24, 16, 0),
-                      child: _buildFiltrosFluxo(),
+                      child: _buildFiltrosFluxo(movsFluxoBase, aberturaAtual),
                     ),
                   ),
 
@@ -269,7 +296,16 @@ class _CaixaPageState extends State<CaixaPage> {
 
                 // 5. Lista do Fluxo de Caixa Atual
                 if (caixaAberto && aberturaAtual != null)
-                  _buildSliverFluxoLista(dataService, aberturaAtual),
+                  _buildSliverFluxoLista(movsFluxoFiltradas),
+
+                // 5.1 Total do que está sendo exibido (respeita os filtros)
+                if (caixaAberto && aberturaAtual != null)
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                      child: _buildTotalFluxo(movsFluxoFiltradas),
+                    ),
+                  ),
 
                 // 5. Histórico Separador
                 SliverToBoxAdapter(
@@ -445,7 +481,15 @@ class _CaixaPageState extends State<CaixaPage> {
     final totalVendas = vendas.fold<double>(0.0, (sum, v) => sum + v.valorTotal);
     final nomeResp = ab.responsavel ?? '—';
     final titulo = 'Vendas do ' + ab.numero;
-    final subtitulo = nomeResp +
+    // Data e hora de abertura (e de fechamento, quando encerrado): sem isso o
+    // gestor não sabe a qual sessão de caixa as vendas pertencem.
+    final fechado = fechamento;
+    final periodo = fechado == null
+        ? 'Abertura: ${formatoData.format(ab.dataAbertura.toLocal())}'
+        : 'Abertura: ${formatoData.format(ab.dataAbertura.toLocal())} → '
+            '${formatoData.format(fechado.dataFechamento.toLocal())}';
+    final subtitulo = periodo +
+        ' • ' + nomeResp +
         ' • ' + vendas.length.toString() + ' venda(s) • Total: ' +
         formatoMoeda.format(totalVendas);
 
@@ -744,12 +788,21 @@ class _CaixaPageState extends State<CaixaPage> {
         }
       }
 
+      // Recebimentos de pedidos/mesas no período do caixa (mesma regra exibida
+      // no diálogo de fechamento), para o papel não ficar só com as vendas do
+      // PDV.
+      final recebimentosPedidos = dataService.calcularRecebimentosDePedidosDoCaixa(
+        ab,
+        limite: fe.dataFechamento,
+      );
+
       await CaixaPDFService.gerarPDFTermico(
         abertura: ab,
         fechamento: fe,
         empresa: empresa,
         vendas: vendas,
         itensDeletadosExtra: canceladosExtra,
+        recebimentosPedidos: recebimentosPedidos,
       ).then((pdfData) async {
         if (context.mounted) Navigator.pop(context);
         
@@ -862,7 +915,7 @@ class _CaixaPageState extends State<CaixaPage> {
     );
   }
 
-  Widget _buildResumoSession(DataService ds, AberturaCaixa abertura, bool podeVerTotais) {
+  Widget _buildResumoSession(DataService ds, AberturaCaixa abertura, bool podeVerTotais, bool podeVerFormasPagamento) {
     // Pegar totais reais do DS (apenas do caixa em questão)
     final sangrias = ds.getSangriasDoCaixa(abertura);
     final suprimentos = ds.getSuprimentosDoCaixa(abertura);
@@ -876,19 +929,141 @@ class _CaixaPageState extends State<CaixaPage> {
     // Saldo Atual
     final saldo = abertura.valorInicial + totalVendas + totalSuprimentos - totalSangrias;
 
-    return Row(
+    // Separação do que entrou por Dinheiro, PIX, Cartão, etc.
+    final resumoFormas = podeVerFormasPagamento
+        ? ds.calcularResumoFormaPagamentoDoCaixa(abertura)
+        : <ResumoFormaPagamento>[];
+
+    return Column(
       children: [
-        // Total de vendas/entradas: oculto para quem não pode ver totais
-        if (podeVerTotais)
-          _buildStatCard('Entradas', formatoMoeda.format(totalVendas + totalSuprimentos), Icons.trending_up, Colors.greenAccent),
-        if (podeVerTotais) const SizedBox(width: 12),
-        // O saldo inclui o total vendido (valorInicial + vendas + suprimentos - sangrias),
-        // então também fica oculto para quem não pode ver totais.
-        if (podeVerTotais)
-          _buildStatCard('Saldo', formatoMoeda.format(saldo), Icons.account_balance_wallet, Colors.blueAccent),
-        if (podeVerTotais) const SizedBox(width: 12),
-        _buildStatCard('Saídas', formatoMoeda.format(totalSangrias), Icons.trending_down, Colors.redAccent),
+        Row(
+          children: [
+            // Total de vendas/entradas: oculto para quem não pode ver totais
+            if (podeVerTotais)
+              _buildStatCard('Entradas', formatoMoeda.format(totalVendas + totalSuprimentos), Icons.trending_up, Colors.greenAccent),
+            if (podeVerTotais) const SizedBox(width: 12),
+            // O saldo inclui o total vendido (valorInicial + vendas + suprimentos - sangrias),
+            // então também fica oculto para quem não pode ver totais.
+            if (podeVerTotais)
+              _buildStatCard('Saldo', formatoMoeda.format(saldo), Icons.account_balance_wallet, Colors.blueAccent),
+            if (podeVerTotais) const SizedBox(width: 12),
+            _buildStatCard('Saídas', formatoMoeda.format(totalSangrias), Icons.trending_down, Colors.redAccent),
+          ],
+        ),
+        if (resumoFormas.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          _buildCardResumoFormas(
+            resumoFormas,
+            titulo: 'Entradas por Forma de Pagamento',
+          ),
+        ],
       ],
+    );
+  }
+
+  /// Card com a separação das entradas por forma de pagamento
+  /// (Dinheiro, PIX, Cartão de Crédito/Débito, Ticket, etc.).
+  Widget _buildCardResumoFormas(
+    List<ResumoFormaPagamento> resumo, {
+    String titulo = 'Por Forma de Pagamento',
+  }) {
+    if (resumo.isEmpty) return const SizedBox.shrink();
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.04),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.white.withOpacity(0.08)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.pie_chart_outline_rounded, color: Colors.blueAccent, size: 18),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  titulo,
+                  style: const TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w700),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          ...resumo.map((r) => Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: r.tipo.cor.withOpacity(0.12),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(r.tipo.icone, color: r.tipo.cor, size: 14),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        r.rotulo,
+                        style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                    if (r.quantidade > 0)
+                      Padding(
+                        padding: const EdgeInsets.only(right: 10),
+                        child: Text(
+                          '${r.quantidade}x',
+                          style: TextStyle(color: Colors.white.withOpacity(0.35), fontSize: 11),
+                        ),
+                      ),
+                    Text(
+                      formatoMoeda.format(r.valor),
+                      style: const TextStyle(color: Colors.greenAccent, fontSize: 13, fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+              )),
+        ],
+      ),
+    );
+  }
+
+  /// Versão compacta (chips horizontais) do resumo por forma de pagamento,
+  /// usada nos cards de caixas já encerrados.
+  Widget _buildChipsResumoFormas(List<ResumoFormaPagamento> resumo) {
+    if (resumo.isEmpty) return const SizedBox.shrink();
+    return SizedBox(
+      height: 52,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        children: resumo.map((r) {
+          return Container(
+            margin: const EdgeInsets.only(right: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: r.tipo.cor.withOpacity(0.08),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: r.tipo.cor.withOpacity(0.25)),
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  r.rotulo.toUpperCase(),
+                  style: TextStyle(color: r.tipo.cor, fontSize: 9, fontWeight: FontWeight.bold),
+                ),
+                Text(
+                  formatoMoeda.format(r.valor),
+                  style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+          );
+        }).toList(),
+      ),
     );
   }
 
@@ -942,31 +1117,49 @@ class _CaixaPageState extends State<CaixaPage> {
     );
   }
 
-  Widget _buildSliverFluxoLista(DataService ds, AberturaCaixa abertura) {
-    // Se "Apenas Meu Caixa" está DESMARCADO, buscar de TODOS os caixas abertos;
-    // caso contrário, apenas do caixa selecionado.
-    List<Map<String, dynamic>> movs;
-    if (_mostrarTodosCaixas) {
-      // Modo global: juntar movimentações de todos os caixas abertos
-      movs = [];
-      for (final caixa in ds.aberturasCaixaAbertas) {
-        movs.addAll(_getMovimentacoesExt(ds, caixa));
-      }
-      // Remover duplicatas por combinação data+descricao+valor
-      final seen = <String>{};
-      movs = movs.where((m) {
-        final key = '${m['data']}_${m['descricao']}_${m['valor']}';
-        if (seen.contains(key)) return false;
-        seen.add(key);
-        return true;
-      }).toList();
-    } else {
-      movs = _getMovimentacoesExt(ds, abertura);
+  /// Movimentações do dia SEM filtros aplicados.
+  ///
+  /// Se "Ver todos os caixas abertos" está marcado, junta as movimentações de
+  /// TODOS os caixas abertos (removendo duplicatas); caso contrário, apenas do
+  /// caixa selecionado. Usado tanto pela lista quanto pela barra de filtros
+  /// (para descobrir quais formas de pagamento tiveram movimento).
+  List<Map<String, dynamic>> _movimentacoesFluxoBase(
+    DataService ds,
+    AberturaCaixa abertura,
+  ) {
+    if (!_mostrarTodosCaixas) {
+      return _getMovimentacoesExt(ds, abertura);
     }
+    // Modo global: juntar movimentações de todos os caixas abertos
+    final movs = <Map<String, dynamic>>[];
+    for (final caixa in ds.aberturasCaixaAbertas) {
+      movs.addAll(_getMovimentacoesExt(ds, caixa));
+    }
+    // Remover duplicatas por combinação data+descricao+valor
+    final seen = <String>{};
+    return movs.where((m) {
+      final key = '${m['data']}_${m['descricao']}_${m['valor']}';
+      if (seen.contains(key)) return false;
+      seen.add(key);
+      return true;
+    }).toList();
+  }
 
-    // Aplicar filtro por tipo
+  /// Há algum filtro ativo no Fluxo de Caixa?
+  bool get _temFiltroFluxo =>
+      _filtroTipoFluxo != 'Todos' ||
+      _filtroFormaFluxo != null ||
+      _termoBuscaFluxo.isNotEmpty ||
+      _mostrarTodosCaixas ||
+      CaixaMovFiltroService.janelaAtiva(_horaInicioFluxoMin, _horaFimFluxoMin);
+
+  /// Aplica os filtros ativos do Fluxo de Caixa (tipo, forma e busca).
+  List<Map<String, dynamic>> _filtrarFluxo(List<Map<String, dynamic>> movs) {
+    var out = movs;
+
+    // Filtro por tipo
     if (_filtroTipoFluxo != 'Todos') {
-      movs = movs.where((m) {
+      out = out.where((m) {
         final tipo = (m['tipo'] ?? '').toString();
         switch (_filtroTipoFluxo) {
           case 'Vendas': return tipo == 'Venda';
@@ -978,18 +1171,34 @@ class _CaixaPageState extends State<CaixaPage> {
       }).toList();
     }
 
-    // Aplicar busca por texto (número da venda, descrição)
+    // Filtro por forma de pagamento (Dinheiro, PIX, Cartão...)
+    if (_filtroFormaFluxo != null) {
+      out = out.where((m) => m['tipoPagamento'] == _filtroFormaFluxo).toList();
+    }
+
+    // Busca por texto (número da venda, descrição)
     if (_termoBuscaFluxo.isNotEmpty) {
       final t = _termoBuscaFluxo.toLowerCase();
-      movs = movs.where((m) {
+      out = out.where((m) {
         final desc = (m['descricao'] ?? '').toString().toLowerCase();
         final num = (m['numero'] ?? '').toString().toLowerCase();
         return desc.contains(t) || num.contains(t);
       }).toList();
     }
 
+    // Filtro por horário (janela De/Até escolhida pelo usuário)
+    out = CaixaMovFiltroService.porHorario(
+      out,
+      inicioMin: _horaInicioFluxoMin,
+      fimMin: _horaFimFluxoMin,
+    );
+
+    return out;
+  }
+
+  Widget _buildSliverFluxoLista(List<Map<String, dynamic>> movs) {
     if (movs.isEmpty) {
-      final temFiltro = _filtroTipoFluxo != 'Todos' || _termoBuscaFluxo.isNotEmpty || _mostrarTodosCaixas;
+      final temFiltro = _temFiltroFluxo;
       return SliverToBoxAdapter(
         child: Padding(
           padding: const EdgeInsets.all(40.0),
@@ -1013,51 +1222,176 @@ class _CaixaPageState extends State<CaixaPage> {
       padding: const EdgeInsets.symmetric(horizontal: 16),
       sliver: SliverList(
         delegate: SliverChildBuilderDelegate(
-          (context, index) {
-            final m = movs[index];
-            return Container(
-              margin: const EdgeInsets.only(bottom: 8),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.03),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.white.withOpacity(0.05)),
-              ),
-              child: ListTile(
-                leading: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: (m['cor'] as Color).withOpacity(0.1),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(m['icone'] as IconData, color: m['cor'] as Color, size: 20),
-                ),
-                title: Text(
-                  m['descricao'].toString(),
-                  style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
-                ),
-                subtitle: Text(
-                  '${formatoHora.format((m['data'] as DateTime).toLocal())} • ${m['forma']}',
-                  style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 11),
-                ),
-                trailing: Text(
-                  formatoMoeda.format(m['valor']),
-                  style: TextStyle(
-                    color: (m['valor'] as double) >= 0 ? Colors.greenAccent : Colors.redAccent,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 14,
-                  ),
-                ),
-              ),
-            );
-          },
+          (context, index) => _buildMovCard(movs[index]),
           childCount: movs.length,
         ),
       ),
     );
   }
 
-  /// Barra de filtros do Fluxo de Caixa (Movimentações do Dia)
-  Widget _buildFiltrosFluxo() {
+  /// Linha de uma movimentação do fluxo.
+  ///
+  /// Mesas/comandas com valor "a receber" (ainda não pagas) aparecem
+  /// esmaecidas e marcadas — elas NÃO entram nos totais do caixa, então não
+  /// podem parecer uma entrada já realizada.
+  Widget _buildMovCard(Map<String, dynamic> m) {
+    final contabilizado = m['contabilizado'] != false;
+    final valor = (m['valor'] as double?) ?? 0.0;
+    return Opacity(
+      opacity: contabilizado ? 1.0 : 0.65,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.03),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white.withOpacity(0.05)),
+        ),
+        child: ListTile(
+          leading: Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: (m['cor'] as Color).withOpacity(0.1),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(m['icone'] as IconData, color: m['cor'] as Color, size: 20),
+          ),
+          title: Row(
+            children: [
+              Flexible(
+                child: Text(
+                  m['descricao'].toString(),
+                  style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              if (!contabilizado) ...[
+                const SizedBox(width: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.08),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    'A RECEBER',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.6),
+                      fontSize: 8,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 0.4,
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+          subtitle: Text(
+            '${formatoHora.format((m['data'] as DateTime).toLocal())} • ${m['forma']}',
+            style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 11),
+          ),
+          trailing: Text(
+            formatoMoeda.format(valor),
+            style: TextStyle(
+              color: !contabilizado
+                  ? Colors.white.withOpacity(0.55)
+                  : (valor >= 0 ? Colors.greenAccent : Colors.redAccent),
+              fontWeight: FontWeight.bold,
+              fontSize: 14,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Total do que está sendo exibido na lista do fluxo (respeita os filtros).
+  ///
+  /// Só entram movimentações contabilizadas — mesas/comandas "a receber" ficam
+  /// de fora, como no saldo do caixa.
+  Widget _buildTotalFluxo(List<Map<String, dynamic>> movs) {
+    if (movs.isEmpty) return const SizedBox.shrink();
+
+    double entradas = 0.0;
+    double saidas = 0.0;
+    int contabilizadas = 0;
+    int aReceber = 0;
+    for (final m in movs) {
+      if (m['contabilizado'] == false) {
+        aReceber++;
+        continue;
+      }
+      contabilizadas++;
+      final v = (m['valor'] as double?) ?? 0.0;
+      if (v >= 0) {
+        entradas += v;
+      } else {
+        saidas += -v;
+      }
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.04),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white.withOpacity(0.08)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.functions_rounded, color: Colors.cyanAccent, size: 16),
+              const SizedBox(width: 6),
+              Text(
+                'Total do filtro atual',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.6),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                '$contabilizadas movimentação(ões)',
+                style: TextStyle(color: Colors.white.withOpacity(0.35), fontSize: 11),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: _miniInfo('Entradas', formatoMoeda.format(entradas)),
+              ),
+              Expanded(
+                child: _miniInfo('Saídas', formatoMoeda.format(saidas)),
+              ),
+              Expanded(
+                child: _miniInfo('Saldo', formatoMoeda.format(entradas - saidas)),
+              ),
+            ],
+          ),
+          if (aReceber > 0) ...[
+            const SizedBox(height: 8),
+            Text(
+              '$aReceber mesa(s)/comanda(s) a receber — não incluídas nos totais.',
+              style: TextStyle(color: Colors.white.withOpacity(0.35), fontSize: 11),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// Barra de filtros do Fluxo de Caixa (Movimentações do Dia).
+  ///
+  /// Recebe as movimentações já calculadas pelo `build()` — antes esta barra
+  /// recalculava tudo (`_movimentacoesFluxoBase`) a cada rebuild.
+  Widget _buildFiltrosFluxo(
+    List<Map<String, dynamic>> movsBase,
+    AberturaCaixa abertura,
+  ) {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16),
       padding: const EdgeInsets.all(12),
@@ -1076,12 +1410,28 @@ class _CaixaPageState extends State<CaixaPage> {
               const Text('Filtrar Movimentações',
                   style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w600)),
               const Spacer(),
-              if (_filtroTipoFluxo != 'Todos' || _termoBuscaFluxo.isNotEmpty || _mostrarTodosCaixas)
+              IconButton(
+                // No modo "todos os caixas" não existe uma abertura única para
+                // identificar no CSV (só manda o período quando é uma sessão só).
+                onPressed: () => _exportarFluxoCSV(
+                      _filtrarFluxo(movsBase),
+                      caixa: _mostrarTodosCaixas ? null : abertura.numero,
+                      abertura: _mostrarTodosCaixas ? null : abertura,
+                    ),
+                icon: const Icon(Icons.file_download_outlined,
+                    size: 18, color: Colors.greenAccent),
+                tooltip: 'Exportar movimentações (CSV)',
+                visualDensity: VisualDensity.compact,
+              ),
+              if (_temFiltroFluxo)
                 TextButton.icon(
                   onPressed: () => setState(() {
                     _filtroTipoFluxo = 'Todos';
+                    _filtroFormaFluxo = null;
                     _termoBuscaFluxo = '';
                     _mostrarTodosCaixas = false;
+                    _horaInicioFluxoMin = null;
+                    _horaFimFluxoMin = null;
                     _buscaFluxoController.clear();
                   }),
                   icon: const Icon(Icons.close, size: 16, color: Colors.white54),
@@ -1143,6 +1493,28 @@ class _CaixaPageState extends State<CaixaPage> {
               }).toList(),
             ),
           ),
+          // Forma de pagamento (Dinheiro, PIX, Cartão...) e janela de horário.
+          _buildSecaoFormaHorario(
+            movsBase: movsBase,
+            formaSelecionada: _filtroFormaFluxo,
+            horaInicioMin: _horaInicioFluxoMin,
+            horaFimMin: _horaFimFluxoMin,
+            onForma: (tp) => setState(() => _filtroFormaFluxo = tp),
+            // A hora vem de um diálogo assíncrono: a tela pode ter sido
+            // descartada enquanto o seletor estava aberto.
+            onHoraInicio: (m) {
+              if (!mounted) return;
+              setState(() => _horaInicioFluxoMin = m);
+            },
+            onHoraFim: (m) {
+              if (!mounted) return;
+              setState(() => _horaFimFluxoMin = m);
+            },
+            onLimparHorario: () => setState(() {
+              _horaInicioFluxoMin = null;
+              _horaFimFluxoMin = null;
+            }),
+          ),
           const SizedBox(height: 8),
           Row(
             mainAxisAlignment: MainAxisAlignment.end,
@@ -1173,6 +1545,266 @@ class _CaixaPageState extends State<CaixaPage> {
     );
   }
 
+  /// Chip de filtro por forma de pagamento no Fluxo de Caixa.
+  Widget _buildFormaChip({
+    required String label,
+    required bool selected,
+    required Color color,
+    required VoidCallback onTap,
+    IconData? icon,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: selected ? color.withOpacity(0.18) : const Color(0xFF2D2D44),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: selected ? color : Colors.transparent,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (icon != null) ...[
+                Icon(icon, color: selected ? color : Colors.white54, size: 14),
+                const SizedBox(width: 6),
+              ],
+              Text(
+                label,
+                style: TextStyle(
+                  color: selected ? color : Colors.white60,
+                  fontSize: 12,
+                  fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Formas de pagamento que realmente tiveram movimento na lista, para montar
+  /// os chips sem oferecer um filtro que não acharia nada.
+  List<TipoPagamento> _formasComMovimento(List<Map<String, dynamic>> movs) {
+    final presentes = <TipoPagamento>{};
+    for (final m in movs) {
+      final tp = m['tipoPagamento'];
+      if (tp is TipoPagamento) presentes.add(tp);
+    }
+    return TipoPagamento.values.where(presentes.contains).toList();
+  }
+
+  /// Seção "Forma de pagamento" + "Horário" dos filtros de movimentação.
+  ///
+  /// Compartilhada pela barra do Fluxo de Caixa (caixa aberto) e pelo modal de
+  /// movimentações de um caixa encerrado: antes só o fluxo aberto filtrava por
+  /// forma de pagamento, e nenhum dos dois filtrava por horário.
+  Widget _buildSecaoFormaHorario({
+    required List<Map<String, dynamic>> movsBase,
+    required TipoPagamento? formaSelecionada,
+    required int? horaInicioMin,
+    required int? horaFimMin,
+    required ValueChanged<TipoPagamento?> onForma,
+    required ValueChanged<int?> onHoraInicio,
+    required ValueChanged<int?> onHoraFim,
+    required VoidCallback onLimparHorario,
+  }) {
+    final formas = _formasComMovimento(movsBase);
+    final rotuloHorario =
+        CaixaMovFiltroService.rotulo(horaInicioMin, horaFimMin);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Forma de pagamento (Dinheiro, PIX, Cartão de Crédito/Débito, Ticket...).
+        // Só aparece quando há mais de uma forma no período.
+        if (formas.length > 1) ...[
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              const Icon(Icons.payments_outlined, color: Colors.greenAccent, size: 16),
+              const SizedBox(width: 6),
+              const Text('Forma de pagamento:',
+                  style: TextStyle(color: Colors.white54, fontSize: 12)),
+            ],
+          ),
+          const SizedBox(height: 6),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                _buildFormaChip(
+                  label: 'Todas',
+                  selected: formaSelecionada == null,
+                  color: Colors.blueAccent,
+                  onTap: () => onForma(null),
+                ),
+                ...formas.map((tp) => _buildFormaChip(
+                      // Mesmo rótulo usado na lista, para o filtro não divergir
+                      // do que aparece em cada movimentação.
+                      label: _formatForma(tp),
+                      selected: formaSelecionada == tp,
+                      color: tp.cor,
+                      icon: tp.icone,
+                      onTap: () => onForma(tp),
+                    )),
+              ],
+            ),
+          ),
+        ],
+        // Janela de horário da movimentação (De/Até).
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            const Icon(Icons.schedule, color: Colors.orangeAccent, size: 16),
+            const SizedBox(width: 6),
+            const Text('Horário:',
+                style: TextStyle(color: Colors.white54, fontSize: 12)),
+            const Spacer(),
+            if (rotuloHorario != null)
+              TextButton.icon(
+                onPressed: onLimparHorario,
+                icon: const Icon(Icons.close, size: 14, color: Colors.white54),
+                label: const Text('Limpar horário',
+                    style: TextStyle(color: Colors.white54, fontSize: 11)),
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  minimumSize: const Size(0, 28),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              _buildHoraChip(
+                label: 'De',
+                minutos: horaInicioMin,
+                color: Colors.orangeAccent,
+                onTap: () async {
+                  final escolhido = await _escolherHora(
+                    atual: horaInicioMin,
+                    titulo: 'Horário inicial',
+                  );
+                  if (escolhido != null) onHoraInicio(escolhido);
+                },
+              ),
+              _buildHoraChip(
+                label: 'Até',
+                minutos: horaFimMin,
+                color: Colors.orangeAccent,
+                onTap: () async {
+                  final escolhido = await _escolherHora(
+                    atual: horaFimMin,
+                    titulo: 'Horário final',
+                  );
+                  if (escolhido != null) onHoraFim(escolhido);
+                },
+              ),
+              if (rotuloHorario != null)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.orangeAccent.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Colors.orangeAccent.withOpacity(0.5)),
+                    ),
+                    child: Text(
+                      rotuloHorario,
+                      style: const TextStyle(
+                          color: Colors.orangeAccent,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        // Janela que atravessa a meia-noite é fácil de errar: avisa o que está
+        // sendo incluído (ex.: "De 22:00" até "Até 02:00").
+        if (rotuloHorario != null && horaInicioMin! > horaFimMin!)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text(
+              'Intervalo atravessa a meia-noite: inclui de '
+              '${CaixaMovFiltroService.formatarMinutos(horaInicioMin)} até 23:59 e de '
+              '00:00 até ${CaixaMovFiltroService.formatarMinutos(horaFimMin)}.',
+              style: TextStyle(color: Colors.white.withOpacity(0.35), fontSize: 11),
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// Chip "De"/"Até" do filtro de horário; toca para escolher a hora.
+  Widget _buildHoraChip({
+    required String label,
+    required int? minutos,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    final ativo = minutos != null;
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: ativo ? color.withOpacity(0.18) : const Color(0xFF2D2D44),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: ativo ? color : Colors.transparent),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.schedule, color: ativo ? color : Colors.white54, size: 14),
+              const SizedBox(width: 6),
+              Text(
+                ativo
+                    ? '$label ${CaixaMovFiltroService.formatarMinutos(minutos)}'
+                    : label,
+                style: TextStyle(
+                  color: ativo ? color : Colors.white60,
+                  fontSize: 12,
+                  fontWeight: ativo ? FontWeight.bold : FontWeight.normal,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Abre o seletor de hora e devolve os minutos desde a meia-noite escolhidos
+  /// (ou `null` se o usuário cancelar).
+  Future<int?> _escolherHora({required int? atual, required String titulo}) async {
+    if (!mounted) return null;
+    final inicial =
+        atual != null ? TimeOfDay(hour: atual ~/ 60, minute: atual % 60) : TimeOfDay.now();
+    final escolhido = await showTimePicker(
+      context: context,
+      initialTime: inicial,
+      helpText: titulo,
+    );
+    if (escolhido == null) return null;
+    return escolhido.hour * 60 + escolhido.minute;
+  }
+
   /// Barra de filtros do Histórico de Encerramentos (data e número do caixa)
   Widget _buildFiltrosHistorico(DataService ds) {
     final numerosCaixa = ds.aberturasCaixa
@@ -1182,7 +1814,9 @@ class _CaixaPageState extends State<CaixaPage> {
         .toList()
       ..sort();
     final temFiltro = _filtroNumeroCaixa != 'Todos' ||
-        _filtroDataInicio != null || _filtroDataFim != null;
+        _filtroDataInicio != null ||
+        _filtroDataFim != null ||
+        _filtroSomenteDivergentes;
 
     return Container(
       padding: const EdgeInsets.all(12),
@@ -1207,6 +1841,7 @@ class _CaixaPageState extends State<CaixaPage> {
                     _filtroNumeroCaixa = 'Todos';
                     _filtroDataInicio = null;
                     _filtroDataFim = null;
+                    _filtroSomenteDivergentes = false;
                   }),
                   icon: const Icon(Icons.close, size: 16, color: Colors.white54),
                   label: const Text('Limpar',
@@ -1248,6 +1883,38 @@ class _CaixaPageState extends State<CaixaPage> {
               const SizedBox(width: 8),
               Expanded(
                 child: _buildDataChip('Até', _filtroDataFim, inicial: false),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          // Atalho do gestor: mostrar apenas os caixas que fecharam com
+          // diferença entre o esperado e o contado.
+          Row(
+            children: [
+              FilterChip(
+                selected: _filtroSomenteDivergentes,
+                onSelected: (v) => setState(() => _filtroSomenteDivergentes = v),
+                avatar: Icon(
+                  Icons.error_outline,
+                  size: 16,
+                  color: _filtroSomenteDivergentes ? Colors.redAccent : Colors.white54,
+                ),
+                label: Text(
+                  'Só divergentes',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: _filtroSomenteDivergentes ? Colors.redAccent : Colors.white60,
+                    fontWeight: _filtroSomenteDivergentes ? FontWeight.bold : FontWeight.normal,
+                  ),
+                ),
+                backgroundColor: const Color(0xFF2D2D44),
+                selectedColor: Colors.redAccent.withOpacity(0.2),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  side: BorderSide(
+                    color: _filtroSomenteDivergentes ? Colors.redAccent : Colors.transparent,
+                  ),
+                ),
               ),
             ],
           ),
@@ -1323,6 +1990,9 @@ class _CaixaPageState extends State<CaixaPage> {
             usuarioLogadoHist.isMaster ||
             usuarioLogadoHist.isGerente ||
             usuarioLogadoHist.email.toLowerCase() == 'user');
+    // Detalhamento por forma de pagamento no histórico (permissão própria).
+    final podeVerFormasPagamentoHist =
+        PermissionHelper.podeVerTotaisFormasPagamento(usuarioLogadoHist);
 
     var hist = ds.aberturasCaixa.map((ab) {
       final fe = ds.fechamentosCaixa.firstWhereOrNull((f) => f.aberturaCaixaId == ab.id);
@@ -1361,11 +2031,20 @@ class _CaixaPageState extends State<CaixaPage> {
       hist = hist.where((e) => e.key.dataAbertura.isBefore(fim)).toList();
     }
 
+    // Filtro "só divergentes" — o que o gestor mais procura no histórico.
+    if (_filtroSomenteDivergentes) {
+      hist = hist
+          .where((e) => e.value!.diferenca.abs() > _toleranciaDivergencia)
+          .toList();
+    }
+
     hist.sort((a, b) => b.key.dataAbertura.compareTo(a.key.dataAbertura));
 
     if (hist.isEmpty) {
       final temFiltro = _filtroNumeroCaixa != 'Todos' ||
-          _filtroDataInicio != null || _filtroDataFim != null;
+          _filtroDataInicio != null ||
+          _filtroDataFim != null ||
+          _filtroSomenteDivergentes;
       return SliverToBoxAdapter(
         child: Center(
           child: Text(
@@ -1378,21 +2057,108 @@ class _CaixaPageState extends State<CaixaPage> {
       );
     }
 
+    // Resumo do que está sendo exibido (respeita filtros e a visibilidade do
+    // operador): quantos caixas, quantos divergentes e a soma das diferenças.
+    final divergentes =
+        hist.where((e) => e.value!.diferenca.abs() > _toleranciaDivergencia).length;
+    final somaDiferencas =
+        hist.fold<double>(0.0, (s, e) => s + e.value!.diferenca);
+
     return SliverPadding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       sliver: SliverList(
         delegate: SliverChildBuilderDelegate(
           (context, index) {
-            final item = hist[index];
-            return _buildCardCaixaModerno(item.key, item.value!, ds, podeVerTotais);
+            if (index == 0) {
+              return _buildResumoHistorico(
+                total: hist.length,
+                divergentes: divergentes,
+                somaDiferencas: somaDiferencas,
+                podeVerTotais: podeVerTotais,
+              );
+            }
+            final item = hist[index - 1];
+            return _buildCardCaixaModerno(
+              item.key,
+              item.value!,
+              ds,
+              podeVerTotais,
+              podeVerFormasPagamentoHist,
+            );
           },
-          childCount: hist.length,
+          childCount: hist.length + 1,
         ),
       ),
     );
   }
 
-  Widget _buildCardCaixaModerno(AberturaCaixa ab, FechamentoCaixa fe, DataService ds, bool podeVerTotais) {
+  /// Faixa de resumo do Histórico de Encerramentos — quantos caixas estão
+  /// sendo exibidos, quantos fecharam divergentes e a soma das diferenças.
+  Widget _buildResumoHistorico({
+    required int total,
+    required int divergentes,
+    required double somaDiferencas,
+    required bool podeVerTotais,
+  }) {
+    final cor = divergentes > 0 ? Colors.redAccent : Colors.greenAccent;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: cor.withOpacity(0.06),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: cor.withOpacity(0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(divergentes > 0 ? Icons.warning_amber_rounded : Icons.verified_outlined,
+                  color: cor, size: 18),
+              const SizedBox(width: 8),
+              Text(
+                '$total caixa(s) no filtro',
+                style: const TextStyle(
+                    color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: _miniInfo(
+                  'Divergentes',
+                  '$divergentes de $total',
+                ),
+              ),
+              if (podeVerTotais)
+                Expanded(
+                  child: _miniInfo(
+                    'Soma das dif.',
+                    '${somaDiferencas >= 0 ? '+' : ''}${formatoMoeda.format(somaDiferencas)}',
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCardCaixaModerno(
+    AberturaCaixa ab,
+    FechamentoCaixa fe,
+    DataService ds,
+    bool podeVerTotais,
+    bool podeVerFormasPagamento,
+  ) {
+    // Separação do que foi Dinheiro, PIX, Cartão etc. neste caixa.
+    final resumoFormas = podeVerFormasPagamento
+        ? ds.calcularResumoFormaPagamentoDoCaixa(ab)
+        : <ResumoFormaPagamento>[];
+
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
@@ -1410,8 +2176,13 @@ class _CaixaPageState extends State<CaixaPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '${ab.numero}  •  ${DateFormat('dd MMM').format(ab.dataAbertura.toLocal())}',
+                    ab.numero,
                     style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                  ),
+                  Text(
+                    'Abertura: ${DateFormat('dd/MM/yyyy HH:mm').format(ab.dataAbertura.toLocal())}'
+                    '  •  Fechamento: ${DateFormat('dd/MM/yyyy HH:mm').format(fe.dataFechamento.toLocal())}',
+                    style: TextStyle(color: Colors.white.withOpacity(0.45), fontSize: 11),
                   ),
                   if (ab.responsavel != null && ab.responsavel!.isNotEmpty)
                     Text(
@@ -1434,6 +2205,20 @@ class _CaixaPageState extends State<CaixaPage> {
                       style: TextStyle(color: fe.diferenca >= 0 ? Colors.greenAccent : Colors.redAccent, fontSize: 10),
                     ),
                     const SizedBox(width: 4),
+                    if (podeVerTotais)
+                      IconButton(
+                        icon: const Icon(Icons.receipt_long, color: Colors.cyanAccent, size: 16),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                        onPressed: () => _mostrarDetalhesCaixaFechado(
+                          ds,
+                          ab,
+                          fe,
+                          podeVerTotais: podeVerTotais,
+                          podeVerFormasPagamento: podeVerFormasPagamento,
+                        ),
+                        tooltip: 'Detalhes completos do caixa',
+                      ),
                     if (podeVerTotais)
                       IconButton(
                         icon: const Icon(Icons.visibility, color: Colors.blueAccent, size: 16),
@@ -1468,8 +2253,596 @@ class _CaixaPageState extends State<CaixaPage> {
                 Expanded(child: _miniInfo('Dif.', formatoMoeda.format(fe.diferenca))),
             ],
           ),
+          if (resumoFormas.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                const Icon(Icons.pie_chart_outline_rounded, color: Colors.blueAccent, size: 14),
+                const SizedBox(width: 6),
+                Text(
+                  'Entradas por forma de pagamento',
+                  style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 11, fontWeight: FontWeight.w600),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            _buildChipsResumoFormas(resumoFormas),
+          ],
+          if (podeVerTotais) ...[
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () => _mostrarDetalhesCaixaFechado(
+                  ds,
+                  ab,
+                  fe,
+                  podeVerTotais: podeVerTotais,
+                  podeVerFormasPagamento: podeVerFormasPagamento,
+                ),
+                icon: const Icon(Icons.receipt_long, size: 16),
+                label: const Text('VER DETALHES COMPLETOS', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.cyanAccent,
+                  side: BorderSide(color: Colors.cyanAccent.withOpacity(0.4)),
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
+    );
+  }
+
+  /// Modal com TODOS os detalhes de um caixa já encerrado — pensado para o
+  /// gestor conferir o fechamento: período, vendas, separação por forma de
+  /// pagamento, sangrias/suprimentos, conferência e observações.
+  void _mostrarDetalhesCaixaFechado(
+    DataService ds,
+    AberturaCaixa ab,
+    FechamentoCaixa fe, {
+    required bool podeVerTotais,
+    required bool podeVerFormasPagamento,
+  }) {
+    final vendas = ds.getVendasDoCaixa(ab);
+    final totalVendas =
+        vendas.fold<double>(0.0, (sum, v) => sum + v.valorTotal);
+    final totalItens =
+        vendas.fold<double>(0.0, (sum, v) => sum + v.quantidadeItens);
+    final sangrias = ds.getSangriasDoCaixa(ab);
+    final suprimentos = ds.getSuprimentosDoCaixa(ab);
+    final totalSangrias =
+        sangrias.fold<double>(0.0, (sum, s) => sum + s.valor);
+    final totalSuprimentos =
+        suprimentos.fold<double>(0.0, (sum, s) => sum + s.valor);
+    final resumoFormas = podeVerFormasPagamento
+        ? ds.calcularResumoFormaPagamentoDoCaixa(ab)
+        : <ResumoFormaPagamento>[];
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF1A1F26),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) {
+        return SizedBox(
+          height: MediaQuery.of(sheetContext).size.height * 0.9,
+          child: Column(
+            children: [
+              Container(
+                margin: const EdgeInsets.only(top: 12),
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 12, 8),
+                child: Row(
+                  children: [
+                    const Icon(Icons.receipt_long, color: Colors.cyanAccent, size: 26),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Detalhes do ${ab.numero}',
+                            style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                          ),
+                          Text(
+                            '${ab.responsavel?.isNotEmpty == true ? ab.responsavel! : "Sem responsável"}  •  '
+                            '${DateFormat('dd/MM/yyyy HH:mm').format(ab.dataAbertura.toLocal())} → '
+                            '${DateFormat('HH:mm').format(fe.dataFechamento.toLocal())}',
+                            style: const TextStyle(color: Colors.white54, fontSize: 12),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close, color: Colors.white54),
+                      onPressed: () => Navigator.pop(sheetContext),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(color: Colors.white12, height: 1),
+              Expanded(
+                child: ListView(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+                  children: [
+                    // Conferência do fechamento
+                    _buildDetalheSecao('Conferência do Fechamento', Icons.calculate_outlined, [
+                      _buildInfoRow('Fundo de caixa inicial', formatoMoeda.format(ab.valorInicial), Icons.account_balance_wallet, Colors.grey),
+                      if (podeVerTotais)
+                        _buildInfoRow('Total de vendas', formatoMoeda.format(totalVendas), Icons.trending_up, Colors.greenAccent),
+                      _buildInfoRow('Total suprimentos', formatoMoeda.format(totalSuprimentos), Icons.add_circle_outline, Colors.lightBlueAccent),
+                      _buildInfoRow('Total sangrias', formatoMoeda.format(totalSangrias), Icons.remove_circle_outline, Colors.orangeAccent),
+                      _buildInfoRow('Valor esperado', formatoMoeda.format(fe.valorEsperado), Icons.calculate, Colors.blueAccent),
+                      _buildInfoRow('Valor real (contado)', formatoMoeda.format(fe.valorReal), Icons.account_balance_wallet, Colors.white),
+                      _buildInfoRow(
+                        'Diferença',
+                        '${fe.diferenca >= 0 ? '+' : ''}${formatoMoeda.format(fe.diferenca)}',
+                        fe.diferenca >= 0 ? Icons.check_circle_outline : Icons.error_outline,
+                        fe.diferenca >= 0 ? Colors.greenAccent : Colors.redAccent,
+                      ),
+                    ]),
+                    // Separação por forma de pagamento
+                    if (resumoFormas.isNotEmpty) ...[
+                      const SizedBox(height: 16),
+                      _buildDetalheSecao('Entradas por Forma de Pagamento', Icons.payments_outlined, [
+                        ...resumoFormas.map((r) => Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.all(6),
+                                    decoration: BoxDecoration(
+                                      color: r.tipo.cor.withOpacity(0.12),
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: Icon(r.tipo.icone, color: r.tipo.cor, size: 14),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Text(
+                                      r.rotulo,
+                                      style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+                                    ),
+                                  ),
+                                  if (r.quantidade > 0)
+                                    Padding(
+                                      padding: const EdgeInsets.only(right: 10),
+                                      child: Text(
+                                        '${r.quantidade}x',
+                                        style: TextStyle(color: Colors.white.withOpacity(0.35), fontSize: 11),
+                                      ),
+                                    ),
+                                  Text(
+                                    formatoMoeda.format(r.valor),
+                                    style: const TextStyle(color: Colors.greenAccent, fontSize: 13, fontWeight: FontWeight.bold),
+                                  ),
+                                ],
+                              ),
+                            )),
+                      ]),
+                    ],
+                    // Resumo de vendas
+                    if (podeVerTotais) ...[
+                      const SizedBox(height: 16),
+                      _buildDetalheSecao('Vendas do Período', Icons.shopping_basket_outlined, [
+                        _buildInfoRow('Vendas realizadas', '${vendas.length}', Icons.receipt, Colors.white70),
+                        _buildInfoRow('Itens vendidos', totalItens % 1 == 0 ? totalItens.toStringAsFixed(0) : totalItens.toStringAsFixed(1), Icons.inventory_2_outlined, Colors.white70),
+                        _buildInfoRow('Ticket médio', formatoMoeda.format(vendas.isEmpty ? 0 : totalVendas / vendas.length), Icons.insights, Colors.white70),
+                      ]),
+                    ],
+                    // Sangrias e suprimentos detalhados
+                    if (sangrias.isNotEmpty || suprimentos.isNotEmpty) ...[
+                      const SizedBox(height: 16),
+                      _buildDetalheSecao('Sangrias e Suprimentos', Icons.swap_vert, [
+                        ...sangrias.map((s) => _buildMovLinha(s.motivo, -s.valor, s.data, Colors.orangeAccent)),
+                        ...suprimentos.map((s) => _buildMovLinha(s.motivo, s.valor, s.data, Colors.lightBlueAccent)),
+                      ]),
+                    ],
+                    // Observação do fechamento
+                    if (fe.observacao != null && fe.observacao!.trim().isNotEmpty) ...[
+                      const SizedBox(height: 16),
+                      _buildDetalheSecao('Observações do Fechamento', Icons.edit_note, [
+                        Text(
+                          fe.observacao!,
+                          style: const TextStyle(color: Colors.white70, fontSize: 13, height: 1.4),
+                        ),
+                      ]),
+                    ],
+                    if (ab.observacao != null && ab.observacao!.trim().isNotEmpty) ...[
+                      const SizedBox(height: 16),
+                      _buildDetalheSecao('Observações da Abertura', Icons.note_alt_outlined, [
+                        Text(
+                          ab.observacao!,
+                          style: const TextStyle(color: Colors.white70, fontSize: 13, height: 1.4),
+                        ),
+                      ]),
+                    ],
+                    // Movimentações do caixa encerrado, linha a linha (entradas,
+                    // saídas, vendas, mesas e sangrias) — antes só era possível
+                    // ver o fluxo detalhado do caixa ABERTO.
+                    if (podeVerTotais) ...[
+                      const SizedBox(height: 20),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: () {
+                            Navigator.pop(sheetContext);
+                            _mostrarMovimentacoesCaixaFechado(ds, ab, fe);
+                          },
+                          icon: const Icon(Icons.list_alt, size: 16),
+                          label: const Text('VER MOVIMENTAÇÕES DO CAIXA',
+                              style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.greenAccent,
+                            side: BorderSide(color: Colors.greenAccent.withOpacity(0.4)),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          ),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 20),
+                    Row(
+                      children: [
+                        if (podeVerTotais)
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: () {
+                                Navigator.pop(sheetContext);
+                                _mostrarVendasDoCaixa(ds, ab, fechamento: fe);
+                              },
+                              icon: const Icon(Icons.visibility, size: 16),
+                              label: const Text('VER VENDAS', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: Colors.blueAccent,
+                                side: BorderSide(color: Colors.blueAccent.withOpacity(0.4)),
+                                padding: const EdgeInsets.symmetric(vertical: 12),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              ),
+                            ),
+                          ),
+                        if (podeVerTotais) const SizedBox(width: 10),
+                        if (podeVerTotais)
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: () {
+                                Navigator.pop(sheetContext);
+                                _imprimirFechamento(ab, fe);
+                              },
+                              icon: const Icon(Icons.print, size: 16),
+                              label: const Text('IMPRIMIR', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: Colors.cyanAccent,
+                                side: BorderSide(color: Colors.cyanAccent.withOpacity(0.4)),
+                                padding: const EdgeInsets.symmetric(vertical: 12),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  /// Bloco de seção do modal de detalhes do caixa encerrado.
+  Widget _buildDetalheSecao(String titulo, IconData icon, List<Widget> children) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.04),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withOpacity(0.08)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, color: Colors.cyanAccent, size: 16),
+              const SizedBox(width: 8),
+              Text(
+                titulo,
+                style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          ...children,
+        ],
+      ),
+    );
+  }
+
+  /// Linha de sangria/suprimento no modal de detalhes.
+  Widget _buildMovLinha(String motivo, double valor, DateTime data, Color cor) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              motivo.isEmpty ? '—' : motivo,
+              style: const TextStyle(color: Colors.white70, fontSize: 12),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            formatoHora.format(data.toLocal()),
+            style: TextStyle(color: Colors.white.withOpacity(0.35), fontSize: 11),
+          ),
+          const SizedBox(width: 12),
+          Text(
+            formatoMoeda.format(valor),
+            style: TextStyle(color: cor, fontSize: 12, fontWeight: FontWeight.bold),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Exporta as movimentações exibidas no Fluxo de Caixa para CSV, para o
+  /// gestor levar os dados para planilha (a impressão só cobre o fechamento).
+  Future<void> _exportarFluxoCSV(
+    List<Map<String, dynamic>> movs, {
+    String? caixa,
+    AberturaCaixa? abertura,
+  }) async {
+    if (movs.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Nenhuma movimentação para exportar.')),
+      );
+      return;
+    }
+    try {
+      final linhas = movs.map((m) {
+        return LinhaFluxoExport(
+          data: (m['data'] as DateTime?) ?? DateTime.now(),
+          tipo: (m['tipo'] ?? '').toString(),
+          descricao: (m['descricao'] ?? '').toString(),
+          forma: (m['forma'] ?? '').toString(),
+          valor: (m['valor'] as double?) ?? 0.0,
+          contabilizado: m['contabilizado'] != false,
+        );
+      }).toList();
+
+      final destino = await CaixaFluxoExportService.exportar(
+        linhas,
+        caixa: caixa,
+        abertura: abertura?.dataAbertura,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(destino == null
+              ? 'Não foi possível gerar o CSV.'
+              : 'Fluxo exportado: $destino'),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erro ao exportar fluxo: $e'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  /// Modal com as movimentações de um caixa JÁ ENCERRADO, linha a linha.
+  ///
+  /// `getVendasDoCaixa`/`getSangriasDoCaixa`/`getSuprimentosDoCaixa` já limitam
+  /// a janela [abertura, fechamento], então o mesmo cálculo do fluxo da sessão
+  /// aberta vale aqui.
+  void _mostrarMovimentacoesCaixaFechado(
+    DataService ds,
+    AberturaCaixa ab,
+    FechamentoCaixa fe,
+  ) {
+    final movs = _getMovimentacoesExt(ds, ab);
+    // Filtros LOCAIS do modal (não mexem na barra do fluxo do caixa aberto):
+    // aqui o gestor quer responder "o que entrou de PIX entre 18h e 20h?" em um
+    // caixa específico, inclusive já encerrado.
+    TipoPagamento? formaSelecionada;
+    int? horaInicioMin;
+    int? horaFimMin;
+
+    List<Map<String, dynamic>> aplicarFiltros() {
+      var out = movs;
+      if (formaSelecionada != null) {
+        out = out.where((m) => m['tipoPagamento'] == formaSelecionada).toList();
+      }
+      return CaixaMovFiltroService.porHorario(
+        out,
+        inicioMin: horaInicioMin,
+        fimMin: horaFimMin,
+      );
+    }
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF1A1F26),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (sheetContext, setSheetState) {
+            final movsFiltradas = aplicarFiltros();
+            final temFiltro = formaSelecionada != null ||
+                CaixaMovFiltroService.janelaAtiva(horaInicioMin, horaFimMin);
+            return SizedBox(
+              height: MediaQuery.of(sheetContext).size.height * 0.9,
+              child: Column(
+                children: [
+                  Container(
+                    margin: const EdgeInsets.only(top: 12),
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.white24,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 16, 12, 8),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.list_alt, color: Colors.greenAccent, size: 26),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Movimentações do ${ab.numero}',
+                                style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold),
+                              ),
+                              Text(
+                                '${DateFormat('dd/MM/yyyy HH:mm').format(ab.dataAbertura.toLocal())} → '
+                                '${DateFormat('dd/MM/yyyy HH:mm').format(fe.dataFechamento.toLocal())}',
+                                style: const TextStyle(color: Colors.white54, fontSize: 12),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.file_download_outlined,
+                              color: Colors.greenAccent),
+                          // Exporta o que está na tela: o CSV tem que respeitar os
+                          // filtros aplicados aqui, como no fluxo do caixa aberto.
+                          tooltip: temFiltro
+                              ? 'Exportar movimentações filtradas (CSV)'
+                              : 'Exportar movimentações (CSV)',
+                          onPressed: () => _exportarFluxoCSV(
+                                movsFiltradas,
+                                caixa: ab.numero,
+                                abertura: ab,
+                              ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close, color: Colors.white54),
+                          onPressed: () => Navigator.pop(sheetContext),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Divider(color: Colors.white12, height: 1),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.05),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: Colors.white10),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(Icons.filter_alt_rounded,
+                                  color: Colors.blueAccent, size: 20),
+                              const SizedBox(width: 8),
+                              const Text('Filtrar Movimentações',
+                                  style: TextStyle(
+                                      color: Colors.white70,
+                                      fontWeight: FontWeight.w600)),
+                              const Spacer(),
+                              if (temFiltro)
+                                TextButton.icon(
+                                  onPressed: () => setSheetState(() {
+                                    formaSelecionada = null;
+                                    horaInicioMin = null;
+                                    horaFimMin = null;
+                                  }),
+                                  icon: const Icon(Icons.close,
+                                      size: 16, color: Colors.white54),
+                                  label: const Text('Limpar',
+                                      style: TextStyle(
+                                          color: Colors.white54, fontSize: 12)),
+                                ),
+                            ],
+                          ),
+                          _buildSecaoFormaHorario(
+                            movsBase: movs,
+                            formaSelecionada: formaSelecionada,
+                            horaInicioMin: horaInicioMin,
+                            horaFimMin: horaFimMin,
+                            onForma: (tp) => setSheetState(() {
+                              formaSelecionada = tp;
+                            }),
+                            // A hora vem de um diálogo assíncrono: o modal pode
+                            // ter sido fechado enquanto o seletor estava aberto.
+                            onHoraInicio: (m) {
+                              if (!sheetContext.mounted) return;
+                              setSheetState(() {
+                                horaInicioMin = m;
+                              });
+                            },
+                            onHoraFim: (m) {
+                              if (!sheetContext.mounted) return;
+                              setSheetState(() {
+                                horaFimMin = m;
+                              });
+                            },
+                            onLimparHorario: () => setSheetState(() {
+                              horaInicioMin = null;
+                              horaFimMin = null;
+                            }),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: movsFiltradas.isEmpty
+                        ? Center(
+                            child: Text(
+                              movs.isEmpty
+                                  ? 'Nenhuma movimentação registrada neste caixa.'
+                                  : 'Nenhuma movimentação com os filtros aplicados.',
+                              style: TextStyle(color: Colors.white.withOpacity(0.3)),
+                            ),
+                          )
+                        : ListView(
+                            padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+                            children: [
+                              ...movsFiltradas.map(_buildMovCard),
+                              const SizedBox(height: 8),
+                              _buildTotalFluxo(movsFiltradas),
+                            ],
+                          ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
     );
   }
 
@@ -1495,10 +2868,12 @@ class _CaixaPageState extends State<CaixaPage> {
           'descricao': 'Venda PDV ${v.numero}',
           'valor': v.valorTotal,
           'forma': _formatForma(v.tipoPagamento),
+          'tipoPagamento': v.tipoPagamento,
           'icone': Icons.shopping_basket_rounded,
           'cor': Colors.greenAccent,
           'numero': v.numero,
           'tipo': 'Venda',
+          'contabilizado': true,
         });
       }
     }
@@ -1522,11 +2897,15 @@ class _CaixaPageState extends State<CaixaPage> {
           'data': itensValidos.last.dataModificacao ?? mc.dataAbertura,
           'descricao': '$label ${mc.numero}',
           'valor': totalMc,
-          'forma': 'A Receber',
+          // Mesa/comanda ainda em aberto: o valor é "a receber" e NÃO entra nos
+          // totais (só virará entrada quando o pagamento for registrado).
+          'forma': 'A receber · não contabilizado',
+          'tipoPagamento': null,
           'icone': mc.tipo == TipoControle.comanda ? Icons.receipt_long : Icons.table_restaurant,
           'cor': Colors.tealAccent,
           'numero': mc.numero,
           'tipo': label,
+          'contabilizado': false,
         });
       }
     }
@@ -1538,10 +2917,12 @@ class _CaixaPageState extends State<CaixaPage> {
         'descricao': s.motivo,
         'valor': -s.valor,
         'forma': 'Dinheiro',
+        'tipoPagamento': TipoPagamento.dinheiro,
         'icone': Icons.outbox_rounded,
         'cor': Colors.orangeAccent,
         'numero': '',
         'tipo': 'Pagamento',
+        'contabilizado': true,
       });
     }
 
@@ -1552,10 +2933,12 @@ class _CaixaPageState extends State<CaixaPage> {
         'descricao': s.motivo,
         'valor': s.valor,
         'forma': 'Dinheiro',
+        'tipoPagamento': TipoPagamento.dinheiro,
         'icone': Icons.move_to_inbox_rounded,
         'cor': Colors.blueAccent,
         'numero': '',
         'tipo': 'Suprimento',
+        'contabilizado': true,
       });
     }
 
@@ -1981,25 +3364,39 @@ class _CaixaPageState extends State<CaixaPage> {
     final vendasDoCaixa = dataService.getVendasDoCaixa(abertura);
 
     // --- Novos cálculos para detalhamento ---
+    //
+    // Separação por forma de pagamento a partir da MESMA fonte do card do
+    // fluxo e do modal do histórico (`calcularResumoFormaPagamentoDoCaixa`):
+    // vendas com pagamento dividido entram por cada parte e formas
+    // personalizadas (Caju, VR...) mantêm o nome cadastrado. Antes este
+    // diálogo somava só a forma principal de cada venda, então o "Resumo por
+    // Forma" aqui divergia do card de "Entradas por Forma de Pagamento".
+    final resumoVendasFormas = dataService.calcularResumoFormaPagamentoDoCaixa(abertura);
+
+    // Recebimentos de pedidos/mesas no período, em separado, para o gestor ver
+    // quanto veio de venda de balcão e quanto veio de pedido. Mesma fonte usada
+    // na impressão do fechamento (DataService).
+    final totaisPedidosForma =
+        dataService.calcularRecebimentosDePedidosDoCaixa(abertura);
+
+    // Mapa combinado (vendas + pedidos), usado no "Valor Esperado" do caixa
+    // físico (só a parcela em DINHEIRO é considerada mais abaixo).
     final totaisPorForma = <TipoPagamento, double>{};
+    for (final r in resumoVendasFormas) {
+      totaisPorForma[r.tipo] = (totaisPorForma[r.tipo] ?? 0.0) + r.valor;
+    }
+    totaisPedidosForma.forEach((tipo, valor) {
+      totaisPorForma[tipo] = (totaisPorForma[tipo] ?? 0.0) + valor;
+    });
+
     double totalItensVendidos = 0.0;
     double valorTotalProdutos = 0.0;
-    int totalVendasRealizadas = 0;
+    // getVendasDoCaixa já exclui vendas canceladas — mesma base do card.
+    final totalVendasRealizadas = vendasDoCaixa.length;
 
-    // Inicializar mapa de totais
-    for (var tipo in TipoPagamento.values) {
-      if (tipo != TipoPagamento.outro) {
-        totaisPorForma[tipo] = 0.0;
-      }
-    }
-
-    // Processar Vendas Balcão
+    // Processar Vendas Balcão (apenas itens; o valor por forma já veio do
+    // resumo acima).
     for (var v in vendasDoCaixa) {
-      if (v.isCancelada || v.tipoPagamento == TipoPagamento.outro) continue;
-      
-      totalVendasRealizadas++;
-      totaisPorForma[v.tipoPagamento] = (totaisPorForma[v.tipoPagamento] ?? 0.0) + v.valorTotal;
-      
       for (var item in v.itens) {
         totalItensVendidos += item.quantidade;
         valorTotalProdutos += item.subtotal;
@@ -2031,14 +3428,10 @@ class _CaixaPageState extends State<CaixaPage> {
         if (!mesmoOperador(operadorPedido, respCaixa)) continue;
       }
 
-      for (var pag in p.pagamentos) {
-        if (!pag.recebido || pag.dataRecebimento == null) continue;
-        if (pag.dataRecebimento!.isBefore(abertura.dataAbertura)) continue;
-        if (pag.tipo == TipoPagamento.outro) continue;
+      // Os totais por forma dos pedidos vêm de
+      // `calcularRecebimentosDePedidosDoCaixa` (mesma regra da impressão);
+      // aqui só contamos os itens dos pedidos recebidos no período.
 
-        totaisPorForma[pag.tipo] = (totaisPorForma[pag.tipo] ?? 0.0) + pag.valor;
-      }
-      
       // Contabilizar itens dos pedidos recebidos no período
       // (Aproximação: se o pedido teve pagamento no período, contamos seus itens)
       final tevePagamentoNoPeriodo = p.pagamentos.any((pag) => 
@@ -2374,6 +3767,15 @@ class _CaixaPageState extends State<CaixaPage> {
                         children: [
                           Expanded(
                             child: _buildEstatsCard(
+                              'Vendas',
+                              totalVendasRealizadas.toString(),
+                              Icons.receipt_long,
+                              Colors.blueAccent,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: _buildEstatsCard(
                               'Itens Vendidos',
                               totalItensVendidos.toString(),
                               Icons.inventory_2,
@@ -2406,18 +3808,44 @@ class _CaixaPageState extends State<CaixaPage> {
                           ),
                         ),
                         const SizedBox(height: 8),
-                        // Lista de formas de pagamento
-                        ...totaisPorForma.entries.where((e) => e.value > 0).map((e) {
+                        // Vendas do PDV por forma (pagamento dividido detalhado,
+                        // nome da forma personalizada preservado).
+                        ...resumoVendasFormas.where((r) => r.valor > 0).map((r) {
                           return Padding(
                             padding: const EdgeInsets.only(bottom: 6),
                             child: _buildInfoRow(
-                              e.key.nome,
-                              formatoMoeda.format(e.value),
-                              e.key.icone,
-                              e.key.cor,
+                              r.rotulo,
+                              formatoMoeda.format(r.valor),
+                              r.tipo.icone,
+                              r.tipo.cor,
                             ),
                           );
-                        }).toList(),
+                        }),
+                        // Recebimentos de pedidos/mesas (fonte separada, para o
+                        // gestor saber o que veio de balcão e o que veio de pedido).
+                        if (totaisPedidosForma.values.any((v) => v > 0)) ...[
+                          const SizedBox(height: 6),
+                          Text(
+                            'Recebimentos de Pedidos/Mesas',
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.6),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          ...totaisPedidosForma.entries.where((e) => e.value > 0).map((e) {
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 6),
+                              child: _buildInfoRow(
+                                e.key.nome,
+                                formatoMoeda.format(e.value),
+                                e.key.icone,
+                                e.key.cor,
+                              ),
+                            );
+                          }),
+                        ],
                         const SizedBox(height: 12),
                       ],
                       const Divider(color: Colors.white10),

@@ -1,11 +1,11 @@
 @echo off
 chcp 65001 >nul
-title Gerar Instalador Sistema Exodo v1.0.36
+title Gerar Instalador Sistema Exodo v1.0.43
 cls
 echo.
-echo ╔══════════════════════════════════════════════════════════════╗
-echo ║      GERAR INSTALADOR - SISTEMA EXODO v1.0.36              ║
-echo ╚══════════════════════════════════════════════════════════════╝
+echo ????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
+echo ???      GERAR INSTALADOR - SISTEMA EXODO v1.0.43              ???
+echo ????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
 echo.
 
 cd /d "%~dp0"
@@ -13,30 +13,30 @@ cd /d "%~dp0"
 :: ============================================================
 :: PASSO 1: Compilar App Flutter (Windows Release)
 :: ============================================================
-echo [1/5] Compilando App Flutter (Windows Release)...
+echo [1/5] Compilando App Flutter ^(Windows Release^)...
 echo.
 
 where flutter >nul 2>&1
 if %ERRORLEVEL% NEQ 0 (
-    echo ❌ Flutter nao encontrado no PATH!
+    echo ??? Flutter nao encontrado no PATH!
     echo    Instale: https://docs.flutter.dev/get-started/install/windows
     pause
     exit /b 1
 )
 
-flutter build windows --release
+call flutter build windows --release
 if %ERRORLEVEL% NEQ 0 (
     echo.
-    echo ❌ ERRO ao compilar o App Flutter!
+    echo ??? ERRO ao compilar o App Flutter!
     pause
     exit /b 1
 )
-echo ✅ App Flutter compilado com sucesso!
+echo ??? App Flutter compilado com sucesso!
 echo.
 
 :: Verificar se o executavel foi gerado
 if not exist "build\windows\x64\runner\Release\sistema_exodo_novo.exe" (
-    echo ❌ Executavel do app nao encontrado em build\windows\x64\runner\Release\
+    echo ??? Executavel do app nao encontrado em build\windows\x64\runner\Release\
     pause
     exit /b 1
 )
@@ -46,46 +46,69 @@ echo [1b] Copiando DLLs do Visual C++ Runtime...
 copy /Y "C:\Windows\System32\vcruntime140.dll" "build\windows\x64\runner\Release\" >nul 2>&1
 copy /Y "C:\Windows\System32\vcruntime140_1.dll" "build\windows\x64\runner\Release\" >nul 2>&1
 copy /Y "C:\Windows\System32\msvcp140.dll" "build\windows\x64\runner\Release\" >nul 2>&1
-echo ✅ DLLs do VC Runtime copiadas!
+echo ??? DLLs do VC Runtime copiadas!
 echo.
 
 :: ============================================================
 :: PASSO 2: Compilar Sincronizador Nuvem (PyInstaller onedir)
 :: ============================================================
-echo [2/5] Compilando Sincronizador Nuvem (PyInstaller onedir)...
+echo [2/5] Compilando Sincronizador Nuvem ^(PyInstaller onedir^)...
 echo.
 
 :: Verificar Python
 python --version >nul 2>&1
-if %ERRORLEVEL% NEQ 1 (
-    echo ❌ Python nao encontrado!
+if %ERRORLEVEL% NEQ 0 (
+    echo ??? Python nao encontrado!
     pause
     exit /b 1
 )
 
 :: Instalar dependencias do Sincronizador
-pip install -q pyinstaller pystray psycopg2-binary python-dotenv pillow 2>nul
+:: ATENCAO: `requests` e OBRIGATORIO aqui. O sincronizador importa
+:: `sincronizar_local_supabase`, que usa requests para falar com o Supabase. Sem
+:: ele o executavel abre e morre com "No module named 'requests'" no PC do cliente.
+pip install -q pyinstaller pystray psycopg2-binary python-dotenv pillow requests 2>nul
 
 :: Limpar builds anteriores do Sincronizador
 if exist "dist\SincronizadorNuvem" rmdir /s /q "dist\SincronizadorNuvem"
 if exist "build\SincronizadorNuvem" rmdir /s /q "build\SincronizadorNuvem"
 
 :: Compilar em modo ONEDIR (gera pasta com exe + _internal)
-pyinstaller --name "SincronizadorNuvem" --noconsole --onedir sincronizador_tray.py --clean --noconfirm
+:: USA O .spec: ele declara hiddenimports=['requests'], que e o que faz o
+:: PyInstaller embutir o pacote. A linha de comando pura nao tem isso.
+if exist "SincronizadorNuvem.spec" (
+    pyinstaller "SincronizadorNuvem.spec" --clean --noconfirm
+) else (
+    pyinstaller --name "SincronizadorNuvem" --noconsole --onedir sincronizador_tray.py --clean --noconfirm --hidden-import requests
+)
+
+:: Guarda contra o bug que chegou no cliente: um executavel sem `requests` sobe
+:: e fecha com "No module named 'requests'" no PC da loja. Se faltar aqui, nao
+:: vale nem gerar o instalador. Confere os modulos embutidos no PYZ do proprio
+:: .exe - em _internal nao da para ver, o PyInstaller 6 guarda os pacotes
+:: Python dentro do executavel.
+python verificar_sincronizador.py
+if %ERRORLEVEL% NEQ 0 (
+    echo !!!  ERRO: o SincronizadorNuvem nao levou todos os modulos - veja a lista acima!
+    echo     Isso reprovaria o instalador no PC da loja.
+    pause
+    exit /b 1
+)
+
 
 if not exist "dist\SincronizadorNuvem\SincronizadorNuvem.exe" (
-    echo ❌ ERRO ao compilar Sincronizador Nuvem!
+    echo ??? ERRO ao compilar Sincronizador Nuvem!
     pause
     exit /b 1
 )
 
 :: Verificar se a pasta _internal foi criada
 if not exist "dist\SincronizadorNuvem\_internal" (
-    echo ⚠️  AVISO: pasta _internal nao encontrada no Sincronizador.
-    echo    Verifique se o PyInstaller esta na versao correta (6.x+).
+    echo ??????  AVISO: pasta _internal nao encontrada no Sincronizador.
+    echo    Verifique se o PyInstaller esta na versao correta ^(6.x+^).
 )
 
-echo ✅ Sincronizador Nuvem compilado com sucesso!
+echo ??? Sincronizador Nuvem compilado com sucesso!
 echo.
 
 :: ============================================================
@@ -98,7 +121,7 @@ cd /d "%~dp0backend_nfce"
 
 :: Verificar/criar venv
 if not exist "venv" (
-    echo 📦 Criando ambiente virtual...
+    echo ???? Criando ambiente virtual...
     python -m venv venv
 )
 
@@ -117,23 +140,32 @@ if exist "dist\ExodoNfceBridgeWatchdog.exe" del /f /q "dist\ExodoNfceBridgeWatch
 if exist "ExodoNfceBridge.spec" (
     pyinstaller ExodoNfceBridge.spec --clean --noconfirm
 ) else (
-    echo ❌ Arquivo ExodoNfceBridge.spec nao encontrado!
+    echo ??? Arquivo ExodoNfceBridge.spec nao encontrado!
     call venv\Scripts\deactivate.bat
     cd /d "%~dp0"
     pause
     exit /b 1
 )
 
-:: Verificar se compilou
+:: Verificar se compilado
+:: O ExodoNfceBridge.spec versiona os nomes (ExodoNfceBridge_v356.exe), mas o
+:: instalador e este proprio script esperam ExodoNfceBridge.exe. Sem espelhar a
+:: versao nova aqui, o instalador sai SEM o bridge (o .iss pula arquivo ausente).
 if not exist "dist\ExodoNfceBridge.exe" (
-    echo ❌ ERRO ao compilar Bridge NFC-e!
+    for %%F in ("dist\ExodoNfceBridge_v*.exe") do if exist "%%F" copy /Y "%%F" "dist\ExodoNfceBridge.exe" >nul
+)
+if not exist "dist\ExodoNfceBridgeWatchdog.exe" (
+    for %%F in ("dist\ExodoNfceBridgeWatchdog_v*.exe") do if exist "%%F" copy /Y "%%F" "dist\ExodoNfceBridgeWatchdog.exe" >nul
+)
+if not exist "dist\ExodoNfceBridge.exe" (
+    echo ??? ERRO ao compilar Bridge NFC-e!
     call venv\Scripts\deactivate.bat
     cd /d "%~dp0"
     pause
     exit /b 1
 )
 
-echo ✅ Bridge NFC-e compilado com sucesso!
+echo ??? Bridge NFC-e compilado com sucesso!
 
 :: Desativar venv
 call venv\Scripts\deactivate.bat
@@ -168,7 +200,7 @@ if exist "C:\Program Files\Inno Setup 7\ISCC.exe" (
 )
 
 if "%ISCC_PATH%"=="" (
-    echo ❌ Inno Setup NAO encontrado!
+    echo ??? Inno Setup NAO encontrado!
     echo.
     echo    Para gerar o instalador, instale o Inno Setup:
     echo    https://jrsoftware.org/isdl.php
@@ -178,13 +210,13 @@ if "%ISCC_PATH%"=="" (
     exit /b 1
 )
 
-echo ✅ Inno Setup encontrado: %ISCC_PATH%
+echo ??? Inno Setup encontrado: %ISCC_PATH%
 echo.
 
 :: ============================================================
 :: PASSO 5: Compilar o Instalador (Inno Setup)
 :: ============================================================
-echo [5/5] Compilando instalador Inno Setup v1.0.36...
+echo [5/5] Compilando instalador Inno Setup v1.0.43...
 echo.
 
 :: Criar pasta de saida
@@ -195,7 +227,7 @@ if not exist "dist\instalador" mkdir "dist\instalador"
 
 if %ERRORLEVEL% NEQ 0 (
     echo.
-    echo ❌ ERRO ao compilar o instalador!
+    echo ??? ERRO ao compilar o instalador!
     echo    Verifique os erros acima.
     pause
     exit /b 1
@@ -205,18 +237,18 @@ if %ERRORLEVEL% NEQ 0 (
 :: RESULTADO
 :: ============================================================
 echo.
-echo ╔══════════════════════════════════════════════════════════════╗
-echo ║           INSTALADOR GERADO COM SUCESSO!                    ║
-echo ╚══════════════════════════════════════════════════════════════╝
+echo ????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
+echo ???           INSTALADOR GERADO COM SUCESSO!                    ???
+echo ????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
 echo.
-echo 📁 Arquivo gerado:
-echo    dist\instalador\Setup_Sistema_Exodo_v1.0.36.exe
+echo ???? Arquivo gerado:
+echo    dist\instalador\Setup_Sistema_Exodo_v1.0.43.exe
 echo.
-echo 📋 Versao: 1.0.36
-echo 📋 Componentes incluidos:
-echo    - Sistema Exodo (PDV + Gestao)
-echo    - PostgreSQL 16 (banco de dados)
-echo    - Bridge NFC-e (nota fiscal)
+echo ???? Versao: 1.0.43
+echo ???? Componentes incluidos:
+echo    - Sistema Exodo ^(PDV + Gestao^)
+echo    - PostgreSQL 16 ^(banco de dados^)
+echo    - Bridge NFC-e ^(nota fiscal^)
 echo    - Sincronizador Nuvem
 echo    - Scripts de manutencao
 echo.

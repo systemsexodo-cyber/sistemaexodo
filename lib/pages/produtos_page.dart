@@ -13,6 +13,7 @@ import '../custom_app_bar.dart';
 import '../theme.dart';
 import '../widgets/permission_widget.dart';
 import '../models/permissao.dart';
+import 'ajuste_estoque_massa_page.dart';
 import 'entrada_rapida_produtos_page.dart';
 import 'estoque_relatorio_geral_page.dart';
 import 'estoque_reposicao_page.dart';
@@ -903,6 +904,22 @@ class _ProdutosPageState extends State<ProdutosPage> {
                       ),
                     );
                   }
+                },
+              ),
+            ),
+            // Botão Ajuste Geral (estoque e preço de um lote montado por filtros)
+            PermissionWidget(
+              permissao: TipoPermissao.estoqueEntrada,
+              child: IconButton(
+                icon: const Icon(Icons.tune_rounded, color: Colors.orangeAccent),
+                tooltip: 'Ajuste Geral • Estoque e Preço (em massa)',
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const AjusteEstoqueMassaPage(),
+                    ),
+                  );
                 },
               ),
             ),
@@ -2295,8 +2312,23 @@ class _ProdutosPageState extends State<ProdutosPage> {
                 label: const Text('RECARREGAR DADOS LOCAIS'),
                 style: ElevatedButton.styleFrom(backgroundColor: Colors.white.withOpacity(0.05), foregroundColor: Colors.white),
                 onPressed: () async {
+                  // O messenger é pego ANTES do pop: depois de fechar o diálogo
+                  // este contexto sai da árvore.
+                  final messenger = ScaffoldMessenger.of(context);
                   Navigator.pop(context);
-                  await service.definirEmpresaAtual(service.currentEmpresaId);
+                  // `definirEmpresaAtual` com a MESMA empresa saía na hora e não
+                  // relia nada (o botão parecia morto). Agora a releitura do
+                  // banco local acontece de verdade e o resultado é informado.
+                  final (produtos, aviso) =
+                      await service.recarregarDoBancoLocal();
+                  messenger.showSnackBar(SnackBar(
+                    content: Text(aviso == null
+                        ? '✅ Banco local relido: $produtos produtos.'
+                        : '⚠️ $aviso'),
+                    backgroundColor:
+                        aviso == null ? Colors.green : Colors.orange,
+                    duration: const Duration(seconds: 8),
+                  ));
                 },
               ),
             ),

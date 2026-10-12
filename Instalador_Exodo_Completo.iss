@@ -1,6 +1,6 @@
 ; ============================================================================
 ; 🚀 Instalador do Sistema Êxodo Completo
-; Inno Setup Script - v1.0.37
+; Inno Setup Script - v1.0.53
 ; Design Profissional
 ; ============================================================================
 ; INSTRUÇÕES:
@@ -17,7 +17,7 @@
 ; ============================================================================
 
 #define MyAppName "Sistema Êxodo"
-#define MyAppVersion "1.0.37"
+#define MyAppVersion "1.0.53"
 #define MyAppPublisher "Sistema Êxodo Tecnologia"
 #define MyAppURL "https://febffvlpvxtiihvnfuts.supabase.co"
 #define MyAppExeName "sistema_exodo_novo.exe"
@@ -161,8 +161,20 @@ Source: "scripts\abrir_pgadmin.bat"; DestDir: "{app}\scripts"; Flags: ignorevers
 Source: "scripts\iniciar_postgres.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "scripts\reparar_banco.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "scripts\reparar_banco.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
-Source: "scripts\migrar_schema.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
-Source: "scripts\migrar_schema.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
+; MIGRACOES DE SCHEMA VERSIONADAS: o app aplica no boot (nenhuma acao extra no
+; instalador). Basta entregar os arquivos novos a cada versao publicada - e por
+; isso que uma instalacao existente recebe as tabelas/colunas novas.
+Source: "scripts\migrations\*"; DestDir: "{app}\scripts\migrations"; Flags: ignoreversion recursesubdirs createallsubdirs
+; migrar_schema.* foi o antecessor manual das migracoes (ver
+; scripts/migrations/README.md). Nao vai mais no instalador.
+; Libera ESTE PC na rede local (listen_addresses, pg_hba, Firewall). Sem este
+; arquivo, o botao "Liberar este PC na rede" da tela Rede LAN nao funciona na
+; instalacao nova: o app responde "nao achei o script na pasta do sistema".
+Source: "scripts\configurar_lan_postgres.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
+; Atalho de 1 clique para liberar ESTE PC na rede (o PC da loja cujo servico
+; PostgreSQL ficou parado era o que impedia a sincronizacao entre os caixas).
+; Ele roda o PS1 acima, sobe o servico e confere a porta 5432 no final.
+Source: "PREPARAR_REDE_LOCAL.bat"; DestDir: "{app}"; Flags: ignoreversion
 ; --- Backup automatico ---
 Source: "backup_postgresql.ps1"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "AGENDAR_BACKUP_AUTOMATICO.ps1"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
@@ -170,7 +182,10 @@ Source: "BACKUP_EMERGENCIA.bat"; DestDir: "{app}"; Flags: ignoreversion skipifso
 Source: "RESTAURAR_BACKUP.ps1"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
 ; --- Config ---
-Source: ".env.example"; DestDir: "{app}"; DestName: ".env"; Flags: ignoreversion
+; O .env NAO pode ser sobrescrito numa atualizacao: ele leva a senha do banco
+; e as chaves do Supabase do cliente. Sem `onlyifdoesntexist`, reinstalar
+; apagaria a configuracao da loja e o sistema voltaria sem sincronizar.
+Source: ".env.example"; DestDir: "{app}"; DestName: ".env"; Flags: ignoreversion onlyifdoesntexist
 
 ; ============================================================================
 ; ATALHOS
@@ -189,6 +204,7 @@ Name: "{group}\Desinstalar {#MyAppName}"; Filename: "{uninstallexe}"
 ; Área de Trabalho (criado SEMPRE)
 Name: "{commondesktop}\⚡ Sistema Êxodo"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Comment: "Sistema de Gestão e PDV"
 Name: "{group}\🛠 Iniciar PostgreSQL"; Filename: "{app}\scripts\iniciar_postgres.bat"; WorkingDir: "{app}\scripts"; Comment: "Iniciar banco de dados manualmente"; Flags: runminimized
+Name: "{group}\🌐 Preparar este PC na rede"; Filename: "{app}\PREPARAR_REDE_LOCAL.bat"; WorkingDir: "{app}"; Comment: "Libera o banco para os outros PCs da loja ( rode em cada computador )"
 
 ; ============================================================================
 ; AÇÕES PÓS-INSTALAÇÃO

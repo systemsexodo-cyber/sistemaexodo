@@ -20,6 +20,9 @@ class CaixaPDFService {
     required Empresa empresa,
     required List<VendaBalcao> vendas,
     List<String>? itensDeletadosExtra,
+    // Recebimentos de pedidos/mesas por forma de pagamento (DataService),
+    // para o papel mostrar o mesmo que o diálogo de fechamento.
+    Map<TipoPagamento, double> recebimentosPedidos = const {},
   }) async {
     final pdf = pw.Document();
 
@@ -37,7 +40,6 @@ class CaixaPDFService {
     final double pageWidth = (larguraBobina - 2) * 2.83465;
 
     // Calcular resumo por forma de pagamento e detalhe de itens
-    final resumoPagamentos = <TipoPagamento, double>{};
     double totalItensVendidos = 0.0;
     double valorTotalItens = 0.0;
 
@@ -67,11 +69,12 @@ class CaixaPDFService {
         itemQuantities[item.nome] = (itemQuantities[item.nome] ?? 0.0) + item.quantidade;
         itemTotals[item.nome] = (itemTotals[item.nome] ?? 0.0) + (item.precoUnitario * item.quantidade);
       }
-
-      // Somar pagamentos (VendaBalcao possui apenas um tipo principal)
-      final tipo = venda.tipoPagamento;
-      resumoPagamentos[tipo] = (resumoPagamentos[tipo] ?? 0.0) + venda.valorTotal;
     }
+
+    // Resumo por forma de pagamento com a MESMA regra do card do caixa:
+    // vendas com pagamento dividido entram por cada parte (venda.pagamentos).
+    final resumoPagamentos = resumoPorForma(vendas);
+    final totalPagamentos = resumoPagamentos.fold<double>(0.0, (a, b) => a + b.valor);
 
     pdf.addPage(
       pw.Page(
@@ -132,12 +135,29 @@ class CaixaPDFService {
                 style: pw.TextStyle(fontSize: fontSizeCorpo, fontWeight: pw.FontWeight.bold),
               ),
               pw.SizedBox(height: 5),
-              ...resumoPagamentos.entries.map((e) {
-                return _buildValorLinha(_getNomeTipoPagamento(e.key), e.value, fontSizeCorpo);
+              ...resumoPagamentos.map((r) {
+                return _buildValorLinha(r.rotulo, r.valor, fontSizeCorpo);
               }),
               pw.Divider(thickness: 0.5, indent: 20, endIndent: 20),
-              _buildValorLinha('TOTAL VENDAS:', resumoPagamentos.values.fold(0.0, (a, b) => a + b), fontSizeCorpo, bold: true),
+              _buildValorLinha('TOTAL VENDAS:', totalPagamentos, fontSizeCorpo, bold: true),
               pw.SizedBox(height: 10),
+
+              // Recebimentos de pedidos/mesas (mesma fonte do fechamento na tela)
+              if (recebimentosPedidos.values.any((v) => v > 0)) ...[
+                pw.Text(
+                  'RECEBIMENTOS DE PEDIDOS/MESAS',
+                  style: pw.TextStyle(fontSize: fontSizeCorpo, fontWeight: pw.FontWeight.bold),
+                ),
+                pw.SizedBox(height: 5),
+                ...recebimentosPedidos.entries
+                    .where((e) => e.value > 0)
+                    .map((e) => _buildValorLinha(
+                          _getNomeTipoPagamento(e.key),
+                          e.value,
+                          fontSizeCorpo,
+                        )),
+                pw.SizedBox(height: 10),
+              ],
 
               // Resumo de Itens Vendidos Detalhado
               pw.Divider(thickness: 0.5),
@@ -234,6 +254,18 @@ class CaixaPDFService {
               _buildValorLinha('Fundo Inicial:', abertura.valorInicial, fontSizeCorpo),
               _buildValorLinha('Total Suprimentos:', fechamento.totalSuprimentos, fontSizeCorpo),
               _buildValorLinha('Total Sangrias:', -fechamento.totalSangrias, fontSizeCorpo),
+              // Detalhamento (motivo + valor) de cada sangria/suprimento — sem
+              // isso o gestor só via o total impresso.
+              ...fechamento.suprimentos.map((s) => _buildInfoLinha(
+                    '  + ${s.motivo.isEmpty ? "Suprimento" : s.motivo}',
+                    _formatoMoeda.format(s.valor),
+                    fontSizeCorpo - 1,
+                  )),
+              ...fechamento.sangrias.map((s) => _buildInfoLinha(
+                    '  - ${s.motivo.isEmpty ? "Sangria" : s.motivo}',
+                    _formatoMoeda.format(s.valor),
+                    fontSizeCorpo - 1,
+                  )),
               pw.SizedBox(height: 10),
 
               // Reconciliação Final
@@ -319,6 +351,44 @@ class CaixaPDFService {
         ],
       ),
     );
+  }
+
+  /// Resumo do valor vendido por forma de pagamento para a impressão.
+  ///
+  /// Usa a MESMA regra de `DataService.calcularResumoFormaPagamentoDoCaixa`:
+  /// vendas com pagamento dividido somam cada parte ([VendaBalcao.pagamentos]);
+  /// as demais entram pela forma principal. Assim o papel não diverge do card
+  /// "Entradas por Forma de Pagamento" da tela.
+  static List<ResumoFormaPagamento> resumoPorForma(List<VendaBalcao> vendas) {
+    final acumulado = <String, ResumoFormaPagamento>{};
+
+    void acumular(TipoPagamento tipo, String? nomeForma, double valor) {
+      if (valor <= 0) return;
+      final nome = nomeForma?.trim();
+      final rotulo = (nome != null && nome.isNotEmpty) ? nome : _getNomeTipoPagamento(tipo);
+      final chave = '${tipo.name}|${rotulo.toLowerCase()}';
+      final atual = acumulado[chave];
+      acumulado[chave] = ResumoFormaPagamento(
+        rotulo: rotulo,
+        tipo: tipo,
+        valor: (atual?.valor ?? 0.0) + valor,
+        quantidade: (atual?.quantidade ?? 0) + 1,
+      );
+    }
+
+    for (final venda in vendas) {
+      if (venda.cancelado) continue;
+      if (venda.pagamentos.isNotEmpty) {
+        for (final pag in venda.pagamentos) {
+          acumular(pag.tipo, pag.nomeForma, pag.valor);
+        }
+      } else {
+        acumular(venda.tipoPagamento, null, venda.valorTotal);
+      }
+    }
+
+    return acumulado.values.toList()
+      ..sort((a, b) => b.valor.compareTo(a.valor));
   }
 
   static String _getNomeTipoPagamento(TipoPagamento tipo) {

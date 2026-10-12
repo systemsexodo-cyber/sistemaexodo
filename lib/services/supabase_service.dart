@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -12,6 +12,7 @@ import '../models/entrega.dart';
 import '../models/venda_balcao.dart';
 import '../models/troca_devolucao.dart';
 import '../models/estoque_historico.dart';
+import '../models/ajuste_estoque_lote.dart';
 import '../models/lote_produto.dart';
 import '../models/caixa.dart';
 import 'package:sistema_exodo_novo/models/motorista.dart';
@@ -34,7 +35,7 @@ import 'env_config.dart';
 /// Serviço para sincronizar todos os dados com Supabase (PostgreSQL)
 class SupabaseService {
   SupabaseService._(); // Construtor privado para singleton
-  
+
   static final SupabaseService instance = SupabaseService._();
   // late final: so acessa Supabase.instance.client QUANDO FOR USADO, nao no
   // construtor. Se o Supabase ainda nao inicializou (ex: maquina nova sem
@@ -61,6 +62,114 @@ class SupabaseService {
   /// Alias de instância para isAvailable
   bool get connected => isAvailable;
 
+  // ---- Circuit breaker de indisponibilidade do servidor -------------------
+  // PGRST002 ("Could not query the database for the schema cache"), 503
+  // (Service Unavailable) e 504 (Gateway Timeout) vêm do PostgREST quando ele
+  // não consegue falar com o Postgres — o problema é do Supabase, não do app.
+  // Insistir a cada tabela/heartbeat só agrava a sobrecarga e enche o log.
+  // Durante o cooldown, cargas e telemetria repetitiva são abortadas.
+  static const Duration _cooldownInfraestrutura = Duration(minutes: 2);
+  DateTime? _servidorIndisponivelAte;
+
+  /// Verdadeiro enquanto o Supabase estiver marcado como indisponível.
+  bool get servidorIndisponivel =>
+      _servidorIndisponivelAte?.isAfter(DateTime.now()) ?? false;
+
+  void _marcarServidorIndisponivel(Object e) {
+    final jaEstava = servidorIndisponivel;
+    _servidorIndisponivelAte = DateTime.now().add(_cooldownInfraestrutura);
+    if (jaEstava) return; // já logado — só renova o cooldown
+    debugPrint('>>> [Supabase] 🛑 Servidor indisponível detectado: $e');
+    debugPrint(
+      '>>> [Supabase]    Pausando consultas/telemetria/OpenAPI por '
+      '${_cooldownInfraestrutura.inMinutes} min para o servidor se recuperar.',
+    );
+  }
+
+  /// Público: permite que outras camadas (o ping do DataService, por exemplo)
+  /// acionem o circuit breaker ao detectar que a nuvem está fora/cota estourada.
+  void registrarFalhaInfra(Object? erro, {int? statusCode}) {
+    _marcarIndisponivelSeInfra(erro, statusCode: statusCode);
+  }
+
+  /// Marca o servidor como indisponível quando o erro é de infraestrutura
+  /// (PGRST002/503/504/402-timeout). Usado pela detecção de colunas via OpenAPI,
+  /// que também sofre na queda e não pode esperar 10-12s por chamada.
+  void _marcarIndisponivelSeInfra(Object? erro, {int? statusCode}) {
+    if (statusCode != null && statusCode >= 500) {
+      _marcarServidorIndisponivel('HTTP $statusCode');
+    } else if (isErroInfraestrutura(erro)) {
+      _marcarServidorIndisponivel(erro as Object);
+    }
+  }
+
+  // Fallbacks conservadores usados quando o schema real não pôde ser detectado
+  // (offline/indisponível). Não são cacheados — a detecção tenta de novo quando
+  // o cooldown de indisponibilidade termina.
+  static const Set<String> _colunasUsuariosFallback = {
+    'id',
+    'email',
+    'nome',
+    'empresa_id',
+    'perfil',
+    'ativo',
+    'created_at',
+    'updated_at',
+  };
+  static const Set<String> _colunasEmpresasFallback = {
+    'id',
+    'empresa_id',
+    'razao_social',
+    'nome_fantasia',
+    'cnpj',
+    'slug',
+    'ativo',
+    'created_at',
+    'updated_at',
+    'configuracoes',
+    'perfis_de_preco',
+    'perfisDePreco',
+  };
+  static const Set<String> _colunasEstoqueHistoricoFallback = {
+    'id',
+    'empresa_id',
+    'produto_id',
+    'produto_nome',
+    'tipo',
+    'quantidade',
+    'motivo',
+    'operador',
+    'data_operacao',
+    'created_at',
+    'data',
+    'updated_at',
+    'fornecedor_nome',
+    'fornecedor_id',
+    'observacao',
+    'usuario',
+  };
+
+  /// Erros que indicam indisponibilidade da INFRAESTRUTURA do Supabase
+  /// (PostgREST/Postgres fora do ar), e não um problema pontual de dados.
+  ///
+  /// Inclui a COTA estourada (402 `exceed_egress_quota`): do ponto de vista do
+  /// app a nuvem está fora — insistir a cada tabela/heartbeat só enche o log.
+  static bool isErroInfraestrutura(Object? e) {
+    final s = e?.toString().toLowerCase() ?? '';
+    if (s.isEmpty) return false;
+    return s.contains('pgrst002') ||
+        s.contains('schema cache') ||
+        s.contains('service unavailable') ||
+        s.contains('gateway timeout') ||
+        s.contains('upstream request timeout') ||
+        s.contains('exceed_egress_quota') ||
+        s.contains('restricted due to') ||
+        s.contains('payment required') ||
+        s.contains('code: 402') ||
+        s.contains('code: 503') ||
+        s.contains('code: 504');
+  }
+
   /// Inicializa o Supabase
   static Future<void> initialize() async {
     try {
@@ -68,7 +177,7 @@ class SupabaseService {
         debugPrint('>>> [Supabase] ⚠️ Supabase URL não configurada.');
         return;
       }
-      
+
       await Supabase.initialize(
         url: SupabaseConfig.url,
         anonKey: SupabaseConfig.anonKey,
@@ -81,18 +190,26 @@ class SupabaseService {
             .select('id')
             .limit(1)
             .timeout(const Duration(seconds: 5));
-        debugPrint('>>> [Supabase] ✅ Conectividade verificada: ${response.length} empresas acessíveis');
+        debugPrint(
+          '>>> [Supabase] ✅ Conectividade verificada: ${response.length} empresas acessíveis',
+        );
       } catch (e) {
-        debugPrint('>>> [Supabase] ⚠️ Erro na verificação de conectividade: $e');
-        debugPrint('>>> [Supabase] ℹ️ Isso pode ser normal se não houver empresas ou problema de CORS');
+        debugPrint(
+          '>>> [Supabase] ⚠️ Erro na verificação de conectividade: $e',
+        );
+        // Se a nuvem está fora ou com a cota estourada (402), aciona o
+        // circuit breaker: evita a tempestade de tentativas a cada tabela no
+        // boot. O login passa a usar só o banco local nesse período.
+        SupabaseService.instance._marcarIndisponivelSeInfra(e);
+        debugPrint(
+          '>>> [Supabase] ℹ️ Isso pode ser normal se não houver empresas ou problema de CORS',
+        );
       }
     } catch (e) {
       debugPrint('>>> [Supabase] ❌ Erro ao inicializar: $e');
     }
   }
-  
 
-  
   // Nomes das tabelas (PostgreSQL)
   static const String tableEmpresas = 'empresas';
   static const String tableUsuarios = 'usuarios';
@@ -107,6 +224,7 @@ class SupabaseService {
   static const String tableVendasBalcao = 'vendas_balcao';
   static const String tableTrocasDevolucoes = 'trocas_devolucoes';
   static const String tableEstoqueHistorico = 'estoque_historico';
+  static const String tableAjustesEstoqueLote = 'ajustes_estoque_lote';
   static const String tableLotesProdutos = 'lotes_produto';
   static const String tableAberturasCaixa = 'aberturas_caixa';
   static const String tableFechamentosCaixa = 'fechamentos_caixa';
@@ -125,7 +243,7 @@ class SupabaseService {
   static const String tableMesasComandas = 'mesas_comandas';
   static const String tableLinksVendedores = 'links_vendedores';
   static const String tableComissoesVendedores = 'comissoes_vendedores';
-  
+
   /// Obtém dados filtrados por empresa_id
   SupabaseQueryBuilder _from(String table) {
     return _client.from(table);
@@ -134,21 +252,35 @@ class SupabaseService {
   // ============ MÉTODOS DE SINCRONIZAÇÃO COMPLETA ============
 
   /// Carrega todos os dados do Supabase para uma empresa específica
-  Future<Map<String, dynamic>> carregarTudoDoSupabase(String empresaId, {
+  Future<Map<String, dynamic>> carregarTudoDoSupabase(
+    String empresaId, {
     DateTime? lastSync,
     int mesesRetroativos = 3,
   }) async {
     try {
       if (!isAvailable) {
-        debugPrint('>>> [Supabase] ⚠️ Abortando carga total: Supabase não disponível.');
-        return {};
+        debugPrint(
+          '>>> [Supabase] ⚠️ Abortando carga total: Supabase não disponível.',
+        );
+        return {
+          'data': <String, dynamic>{},
+          'falhas': 0,
+          'totalTabelas': 0,
+          'servidorIndisponivel': false,
+          'tabelasFalhadas': <String>[],
+        };
       }
-      if (empresaId.isEmpty) throw ArgumentError('empresaId não pode ser vazio');
-      
-      debugPrint('>>> [Supabase] 🚀 CARREGANDO DADOS DO SUPABASE (Delta: ${lastSync != null})');
-      
+      if (empresaId.isEmpty)
+        throw ArgumentError('empresaId não pode ser vazio');
+
+      debugPrint(
+        '>>> [Supabase] 🚀 CARREGANDO DADOS DO SUPABASE (Delta: ${lastSync != null})',
+      );
+
       final dados = <String, dynamic>{};
-      final dataLimite = DateTime.now().subtract(Duration(days: 30 * mesesRetroativos));
+      final dataLimite = DateTime.now().subtract(
+        Duration(days: 30 * mesesRetroativos),
+      );
       final dataLimiteIso = dataLimite.toIso8601String();
 
       // Mapeamento de tabelas para chaves de dados
@@ -164,6 +296,7 @@ class SupabaseService {
         tableVendasBalcao: 'vendas_balcao',
         tableTrocasDevolucoes: 'trocas_devolucoes',
         tableEstoqueHistorico: 'estoque_historico',
+        tableAjustesEstoqueLote: 'ajustes_estoque_lote',
         tableLotesProdutos: 'lotes_produto',
         tableAberturasCaixa: 'aberturas_caixa',
         tableFechamentosCaixa: 'fechamentos_caixa',
@@ -195,12 +328,30 @@ class SupabaseService {
         tableMotoristas,
         tableTaxasEntrega,
         tableLotesProdutos,
+        tableAjustesEstoqueLote,
       };
+
+      // Contadores de falha: quando o Supabase está fora do ar (PGRST002/503/
+      // 504) TODAS as tabelas falham e voltam vazias. Sem contabilizar, o
+      // chamador trataria "tudo vazio" como "nenhum dado novo" e marcaria a
+      // sincronização como sucesso (avançando o watermark do delta sync).
+      int falhas = 0;
+      final List<String> tabelasFalhadas = <String>[];
+      bool servidorFora = servidorIndisponivel;
 
       for (var tableEntry in tabelasMap.entries) {
         final tableName = tableEntry.key;
         final dataKey = tableEntry.value;
-        
+
+        // Circuit breaker: se o servidor já se mostrou indisponível, não insiste
+        // nas demais tabelas — só pioraria a sobrecarga e o log.
+        if (servidorFora) {
+          dados[dataKey] = [];
+          falhas++;
+          tabelasFalhadas.add(tableName);
+          continue;
+        }
+
         try {
           // Busca paginada para garantir que trazemos TUDO (especialmente produtos e clientes)
           final List<dynamic> allRows = [];
@@ -210,10 +361,16 @@ class SupabaseService {
 
           while (hasMore) {
             var query = _from(tableName).select().eq('empresa_id', empresaId);
-            
-            if (lastSync != null && !tabelasSempreCompletas.contains(tableName)) {
-              query = query.gte('updated_at', lastSync.toUtc().toIso8601String());
-            } else if (tableName == tablePedidos || tableName == tableVendasBalcao || tableName == tableMesasComandas) {
+
+            if (lastSync != null &&
+                !tabelasSempreCompletas.contains(tableName)) {
+              query = query.gte(
+                'updated_at',
+                lastSync.toUtc().toIso8601String(),
+              );
+            } else if (tableName == tablePedidos ||
+                tableName == tableVendasBalcao ||
+                tableName == tableMesasComandas) {
               query = query.gte('created_at', dataLimiteIso);
             }
 
@@ -222,30 +379,51 @@ class SupabaseService {
                 .order('id', ascending: true);
 
             allRows.addAll(result);
-            
+
             if (result.length < batchSize) {
               hasMore = false;
             } else {
               offset += batchSize;
             }
           }
-          
+
           dados[dataKey] = allRows;
+          _servidorIndisponivelAte =
+              null; // servidor respondeu: cooldown liberado
           if (allRows.isNotEmpty) {
-            debugPrint('>>> [Supabase] ⬇️ Baixado ${allRows.length} itens da tabela $tableName');
+            debugPrint(
+              '>>> [Supabase] ⬇️ Baixado ${allRows.length} itens da tabela $tableName',
+            );
           }
         } catch (e) {
           final errorStr = e.toString().toLowerCase();
-          if (tableName == tableNFCes && (errorStr.contains('empresaid') || errorStr.contains('empresa_id'))) {
-            debugPrint('>>> [Supabase] ⚠️ Aviso: A tabela nfces está com erro de coluna/RLS no Supabase. Ignorando temporariamente: $e');
+          falhas++;
+          tabelasFalhadas.add(tableName);
+          dados[dataKey] = [];
+          if (isErroInfraestrutura(e)) {
+            // Indisponibilidade do SERVIDOR: marca o cooldown e para de
+            // consultar as tabelas seguintes.
+            servidorFora = true;
+            _marcarServidorIndisponivel(e);
+          } else if (tableName == tableNFCes &&
+              (errorStr.contains('empresaid') ||
+                  errorStr.contains('empresa_id'))) {
+            debugPrint(
+              '>>> [Supabase] ⚠️ Aviso: A tabela nfces está com erro de coluna/RLS no Supabase. Ignorando temporariamente: $e',
+            );
           } else {
             debugPrint('>>> [Supabase] ❌ Erro ao carregar $tableName: $e');
           }
-          dados[dataKey] = [];
         }
       }
 
-      return {'data': dados};
+      return {
+        'data': dados,
+        'falhas': falhas,
+        'totalTabelas': tabelasMap.length,
+        'servidorIndisponivel': servidorFora,
+        'tabelasFalhadas': tabelasFalhadas,
+      };
     } catch (e) {
       debugPrint('>>> [Supabase] ERRO CRÍTICO ao carregar: $e');
       rethrow;
@@ -264,6 +442,7 @@ class SupabaseService {
     required List<VendaBalcao> vendasBalcao,
     required List<TrocaDevolucao> trocasDevolucoes,
     required List<EstoqueHistorico> estoqueHistorico,
+    List<AjusteEstoqueLote>? ajustesEstoqueLote,
     List<LoteProduto>? lotesProdutos,
     required List<AberturaCaixa> aberturasCaixa,
     required List<FechamentoCaixa> fechamentosCaixa,
@@ -285,17 +464,21 @@ class SupabaseService {
   }) async {
     try {
       debugPrint('>>> [Supabase] 🚀 INICIANDO SALVAMENTO EM LOTES...');
-      
+
       // 1. PRIMEIRO PASSO: Garantir que a empresa existe (Evita Erro 23503 / Foreing Key)
       if (empresa != null) {
         try {
-          debugPrint('>>> [Supabase] 🏢 Sincronizando dados da empresa: ${empresa.razaoSocial}');
+          debugPrint(
+            '>>> [Supabase] 🏢 Sincronizando dados da empresa: ${empresa.razaoSocial}',
+          );
           await upsertLote(tableEmpresas, [empresa.toMap()]);
         } catch (e) {
-          debugPrint('>>> [Supabase] ⚠️ Aviso: Nao foi possivel atualizar os dados da empresa no Supabase (RLS/Permissao). Continuando sincronizacao: $e');
+          debugPrint(
+            '>>> [Supabase] ⚠️ Aviso: Nao foi possivel atualizar os dados da empresa no Supabase (RLS/Permissao). Continuando sincronizacao: $e',
+          );
         }
       }
-      
+
       final Map<String, List<dynamic>> colecoes = {
         tableClientes: clientes,
         tableProdutos: produtos,
@@ -306,6 +489,7 @@ class SupabaseService {
         tableVendasBalcao: vendasBalcao,
         tableTrocasDevolucoes: trocasDevolucoes,
         tableEstoqueHistorico: estoqueHistorico,
+        tableAjustesEstoqueLote: ajustesEstoqueLote ?? [],
         tableLotesProdutos: lotesProdutos ?? [],
         tableAberturasCaixa: aberturasCaixa,
         tableFechamentosCaixa: fechamentosCaixa,
@@ -333,13 +517,15 @@ class SupabaseService {
           debugPrint('>>> [Supabase] ⏭️ $table: vazio, pulando...');
           continue;
         }
-        
-        debugPrint('>>> [Supabase] 📤 Enviando ${lista.length} itens para $table...');
-        
+
+        debugPrint(
+          '>>> [Supabase] 📤 Enviando ${lista.length} itens para $table...',
+        );
+
         final List<Map<String, dynamic>> maps = lista.map((item) {
           final map = (item as dynamic).toMap() as Map<String, dynamic>;
           map['empresa_id'] = empresaId; // Garantir empresa_id
-          
+
           // Tratar problema PGRST204 - Coluna não existe no Supabase
           if (table == tableProdutos) {
             map.remove('composicao');
@@ -350,35 +536,45 @@ class SupabaseService {
           } else if (table == tableFechamentosCaixa) {
             // Campos agora são mapeados para camelCase no DataService
           }
-          
+
           return map;
         }).toList();
 
         // Log do primeiro item para debug
         if (maps.isNotEmpty) {
-          debugPrint('>>> [Supabase] 📝 Primeiro item de $table: ${maps.first.keys.take(5).toList()}...');
+          debugPrint(
+            '>>> [Supabase] 📝 Primeiro item de $table: ${maps.first.keys.take(5).toList()}...',
+          );
         }
 
         try {
           // OTIMIZAÇÃO: Enviar em sub-lotes de 500 para evitar timeout/limite de payload
           const int batchSize = 500;
           for (int i = 0; i < maps.length; i += batchSize) {
-            final end = (i + batchSize < maps.length) ? i + batchSize : maps.length;
+            final end = (i + batchSize < maps.length)
+                ? i + batchSize
+                : maps.length;
             final chunk = maps.sublist(i, end);
-            
-            debugPrint('>>> [Supabase]    -> Enviando lote ${ (i ~/ batchSize) + 1 } (${chunk.length} itens)...');
+
+            debugPrint(
+              '>>> [Supabase]    -> Enviando lote ${(i ~/ batchSize) + 1} (${chunk.length} itens)...',
+            );
             final typedChunk = chunk.map((m) => _toSafeMap(m)).toList();
             await _client.from(table).upsert(typedChunk);
           }
-          
-          debugPrint('>>> [Supabase] ✅ $table: ${lista.length} itens sincronizados.');
+
+          debugPrint(
+            '>>> [Supabase] ✅ $table: ${lista.length} itens sincronizados.',
+          );
         } catch (tableError) {
           debugPrint('>>> [Supabase] ❌ ERRO em $table: $tableError');
           // Continua com as outras tabelas mesmo se uma falhar
         }
       }
-      
-      debugPrint('>>> [Supabase] 🎉 Sincronização de TODAS as tabelas concluída!');
+
+      debugPrint(
+        '>>> [Supabase] 🎉 Sincronização de TODAS as tabelas concluída!',
+      );
     } catch (e) {
       debugPrint('>>> [Supabase] ❌ FALHA GERAL na sincronização: $e');
       rethrow;
@@ -389,7 +585,10 @@ class SupabaseService {
   /// Deriva numero_venda do 'numero' textual ('VND-0405' -> 405); se não
   /// houver dígitos, usa um hash estável do id.
   static Map<String, dynamic> _prepararVendaBalcao(Map<String, dynamic> m) {
-    if (m.containsKey('numero_venda') && m['numero_venda'] != null && m['numero_venda'] != 0) return m;
+    if (m.containsKey('numero_venda') &&
+        m['numero_venda'] != null &&
+        m['numero_venda'] != 0)
+      return m;
     final numero = m['numero'];
     if (numero != null) {
       final match = RegExp(r'(\d+)').firstMatch(numero.toString());
@@ -410,8 +609,11 @@ class SupabaseService {
   /// [onConflict] permite escolher a(s) coluna(s) do conflito (ex:
   /// 'empresa_id,numero_venda' quando a tabela tem uma unique constraint além
   /// da PK). Para vendas_balcao o numero_venda é derivado automaticamente.
-  Future<void> upsertBatch(String table, List<Map<String, dynamic>> data,
-      {String? onConflict}) async {
+  Future<void> upsertBatch(
+    String table,
+    List<Map<String, dynamic>> data, {
+    String? onConflict,
+  }) async {
     if (!isAvailable || data.isEmpty) return;
     try {
       final colunas = await _detectarColunasTabela(table);
@@ -422,15 +624,25 @@ class SupabaseService {
       if (colunas != null && colunas.isNotEmpty) {
         final descartadas = <String>{};
         lista = lista
-            .map((m) => _filtrarParaColunasReais(m, colunas, colunasDescartadas: descartadas))
+            .map(
+              (m) => _filtrarParaColunasReais(
+                m,
+                colunas,
+                colunasDescartadas: descartadas,
+              ),
+            )
             .toList();
         if (descartadas.isNotEmpty) {
-          debugPrint('>>> [Supabase] 🔧 Colunas descartadas em $table: ${descartadas.join(', ')}');
+          debugPrint(
+            '>>> [Supabase] 🔧 Colunas descartadas em $table: ${descartadas.join(', ')}',
+          );
         }
       }
       final query = _client.from(table).upsert(lista, onConflict: onConflict);
       await query.timeout(const Duration(seconds: 60));
-      debugPrint('>>> [Supabase] ✅ upsertBatch: ${data.length} itens em $table');
+      debugPrint(
+        '>>> [Supabase] ✅ upsertBatch: ${data.length} itens em $table',
+      );
     } catch (e) {
       debugPrint('>>> [Supabase] ❌ Erro no upsertBatch em $table: $e');
       rethrow;
@@ -459,7 +671,7 @@ class SupabaseService {
   Future<Map<String, dynamic>> testarInsercao(String empresaId) async {
     try {
       debugPrint('>>> [Supabase] 🧪 TESTANDO inserção na tabela produtos...');
-      
+
       final testData = <String, Object?>{
         'id': 'test-${DateTime.now().millisecondsSinceEpoch}',
         'empresa_id': empresaId,
@@ -472,11 +684,13 @@ class SupabaseService {
         'created_at': DateTime.now().toIso8601String(),
         'updated_at': DateTime.now().toIso8601String(),
       };
-      
+
       debugPrint('>>> [Supabase] 📤 Enviando dados de teste: $testData');
-      
-      final response = await _client.from(tableProdutos).upsert([_toSafeMap(testData)]).select();
-      
+
+      final response = await _client.from(tableProdutos).upsert([
+        _toSafeMap(testData),
+      ]).select();
+
       debugPrint('>>> [Supabase] ✅ Teste de inserção OK! Resposta: $response');
       return {'sucesso': true, 'resposta': response};
     } catch (e) {
@@ -488,7 +702,30 @@ class SupabaseService {
   // ============ MÉTODOS DE AUTH ============
 
   Future<AuthResponse> login(String email, String password) async {
-    return await _client.auth.signInWithPassword(email: email, password: password);
+    return await _client.auth.signInWithPassword(
+      email: email,
+      password: password,
+    );
+  }
+
+  Future<bool> reivindicarSessaoDeUsuario({
+    required String machineId,
+    required String machineName,
+  }) async {
+    if (!isAvailable || _client.auth.currentUser == null) return false;
+    final result = await _client.rpc(
+      'claim_user_device_session',
+      params: {'p_machine_id': machineId, 'p_machine_name': machineName},
+    );
+    return result == true;
+  }
+
+  Future<void> liberarSessaoDeUsuario(String machineId) async {
+    if (!isAvailable || _client.auth.currentUser == null) return;
+    await _client.rpc(
+      'release_user_device_session',
+      params: {'p_machine_id': machineId},
+    );
   }
 
   Future<AuthResponse> signUp(String email, String password) async {
@@ -502,7 +739,10 @@ class SupabaseService {
   /// Carrega todas as empresas cadastradas no Supabase
   Future<List<Empresa>> carregarEmpresas() async {
     try {
-      final List<dynamic> result = await _client.from(tableEmpresas).select().order('razao_social');
+      final List<dynamic> result = await _client
+          .from(tableEmpresas)
+          .select()
+          .order('razao_social');
       return result.map((map) => Empresa.fromMap(map)).toList();
     } catch (e) {
       debugPrint('>>> [Supabase] ❌ Erro ao carregar empresas: $e');
@@ -514,7 +754,10 @@ class SupabaseService {
   Future<List<Usuario>> carregarUsuarios() async {
     try {
       if (!isAvailable) return [];
-      final List<dynamic> result = await _client.from(tableUsuarios).select().order('nome');
+      final List<dynamic> result = await _client
+          .from(tableUsuarios)
+          .select()
+          .order('nome');
       return result.map((map) => Usuario.fromMap(map)).toList();
     } catch (e) {
       debugPrint('>>> [Supabase] ❌ Erro ao carregar usuários: $e');
@@ -531,11 +774,13 @@ class SupabaseService {
           .select()
           .eq('slug', slug)
           .limit(1);
-      
+
       if (result.isEmpty) return null;
       return Empresa.fromMap(result.first);
     } catch (e) {
-      debugPrint('>>> [Supabase] ❌ Erro ao buscar empresa por slug ($slug): $e');
+      debugPrint(
+        '>>> [Supabase] ❌ Erro ao buscar empresa por slug ($slug): $e',
+      );
       return null;
     }
   }
@@ -546,11 +791,18 @@ class SupabaseService {
   ///
   /// `filtrosDiferentes` aplica `<>` (útil para "tudo menos vazio", como os
   /// eventos com erro em `sync_logs`), sem precisar baixar a tabela inteira.
-  Future<List<Map<String, dynamic>>> select(String table, {Map<String, dynamic>? filters, Map<String, dynamic>? filtrosDiferentes, String? orderBy, bool descending = true, int? limit}) async {
+  Future<List<Map<String, dynamic>>> select(
+    String table, {
+    Map<String, dynamic>? filters,
+    Map<String, dynamic>? filtrosDiferentes,
+    String? orderBy,
+    bool descending = true,
+    int? limit,
+  }) async {
     try {
       if (!isAvailable) return [];
       dynamic builder = _client.from(table).select();
-      
+
       if (filters != null) {
         filters.forEach((key, value) {
           builder = builder.eq(key, value);
@@ -562,18 +814,18 @@ class SupabaseService {
           builder = builder.neq(key, value);
         });
       }
-      
+
       // Builder final para ordenação e limite
       dynamic finalQuery = builder;
-      
+
       if (orderBy != null) {
         finalQuery = finalQuery.order(orderBy, ascending: !descending);
       }
-      
+
       if (limit != null) {
         finalQuery = finalQuery.limit(limit);
       }
-      
+
       final response = await finalQuery;
       return List<Map<String, dynamic>>.from(response);
     } catch (e) {
@@ -583,13 +835,21 @@ class SupabaseService {
   }
 
   /// Insere um novo registro em uma tabela e retorna o dado inserido
-  Future<Map<String, dynamic>> insert(String table, Map<String, dynamic> data) async {
+  Future<Map<String, dynamic>> insert(
+    String table,
+    Map<String, dynamic> data,
+  ) async {
     try {
       if (!isAvailable) return {};
-      
+
       Map<String, dynamic> dataToInsert = data;
       final safeInsert = _toSafeMap(dataToInsert);
-      final response = await _client.from(table).insert(safeInsert).select().single().timeout(const Duration(seconds: 8));
+      final response = await _client
+          .from(table)
+          .insert(safeInsert)
+          .select()
+          .single()
+          .timeout(const Duration(seconds: 8));
       return response as Map<String, dynamic>;
     } catch (e) {
       debugPrint('>>> [Supabase] ❌ Erro ao inserir em $table: $e');
@@ -603,7 +863,9 @@ class SupabaseService {
     try {
       if (!isAvailable) return 0;
       if (empresaId.isEmpty) {
-        debugPrint('>>> [Supabase] ❌ ERRO: empresaId vazio, abortando delete em $table');
+        debugPrint(
+          '>>> [Supabase] ❌ ERRO: empresaId vazio, abortando delete em $table',
+        );
         return 0;
       }
       // Contar ANTES de apagar: só apaga o que realmente pertence à empresa
@@ -615,10 +877,18 @@ class SupabaseService {
           .timeout(const Duration(seconds: 15));
       final count = countResp.count;
       if (count > 0) {
-        await _client.from(table).delete().eq('empresa_id', empresaId).timeout(const Duration(seconds: 15));
-        debugPrint('>>> [Supabase] 🗑️ $table: $count registro(s) removidos da empresa $empresaId');
+        await _client
+            .from(table)
+            .delete()
+            .eq('empresa_id', empresaId)
+            .timeout(const Duration(seconds: 15));
+        debugPrint(
+          '>>> [Supabase] 🗑️ $table: $count registro(s) removidos da empresa $empresaId',
+        );
       } else {
-        debugPrint('>>> [Supabase] ⏭️ $table: 0 registros da empresa, pulando...');
+        debugPrint(
+          '>>> [Supabase] ⏭️ $table: 0 registros da empresa, pulando...',
+        );
       }
       return count;
     } catch (e) {
@@ -627,9 +897,12 @@ class SupabaseService {
     }
   }
 
-  Map<String, dynamic> _filtrarCamposLocais(String table, Map<String, dynamic> map) {
+  Map<String, dynamic> _filtrarCamposLocais(
+    String table,
+    Map<String, dynamic> map,
+  ) {
     final m = <String, dynamic>{};
-    
+
     // Normalizar datas locais para UTC com indicador 'Z'
     final isoPattern = RegExp(r'^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}');
     for (final entry in map.entries) {
@@ -688,10 +961,18 @@ class SupabaseService {
       // nunca chegar à nuvem (usuários 'sumiam'). Aqui filtramos e mapeamos
       // 'tipo' -> 'perfil' para a gravação funcionar de verdade.
       final perfil = m['tipo']?.toString() ?? 'operador';
-      m.removeWhere((k, _) => !const {
-        'id', 'email', 'nome', 'empresa_id', 'perfil', 'ativo',
-        'created_at', 'updated_at',
-      }.contains(k));
+      m.removeWhere(
+        (k, _) => !const {
+          'id',
+          'email',
+          'nome',
+          'empresa_id',
+          'perfil',
+          'ativo',
+          'created_at',
+          'updated_at',
+        }.contains(k),
+      );
       m['perfil'] = perfil;
     }
     return m;
@@ -701,13 +982,15 @@ class SupabaseService {
   Future<void> upsert(String table, Map<String, dynamic> data) async {
     try {
       if (!isAvailable) {
-        debugPrint('>>> [Supabase] ⏭️ upsert ignorado: Supabase não disponível');
+        debugPrint(
+          '>>> [Supabase] ⏭️ upsert ignorado: Supabase não disponível',
+        );
         return;
       }
       debugPrint('>>> [Supabase] 📤 Executando upsert em $table...');
       debugPrint('>>> [Supabase]    ID: ${data['id']}');
       debugPrint('>>> [Supabase]    Empresa: ${data['empresa_id']}');
-      
+
       Map<String, dynamic> dataToUpsert = _filtrarCamposLocais(table, data);
 
       // vendas_balcao: derivar numero_venda para consistência.
@@ -723,9 +1006,15 @@ class SupabaseService {
       final colunas = await _detectarColunasTabela(table);
       if (colunas != null && colunas.isNotEmpty) {
         final descartadas = <String>{};
-        dataToUpsert = _filtrarParaColunasReais(dataToUpsert, colunas, colunasDescartadas: descartadas);
+        dataToUpsert = _filtrarParaColunasReais(
+          dataToUpsert,
+          colunas,
+          colunasDescartadas: descartadas,
+        );
         if (descartadas.isNotEmpty) {
-          debugPrint('>>> [Supabase] 🔧 Colunas descartadas em $table: ${descartadas.join(', ')}');
+          debugPrint(
+            '>>> [Supabase] 🔧 Colunas descartadas em $table: ${descartadas.join(', ')}',
+          );
         }
       }
 
@@ -757,6 +1046,8 @@ class SupabaseService {
   Future<Set<String>> _detectarColunasUsuarios() async {
     final cached = _colunasUsuariosCache;
     if (cached != null) return cached;
+    // Servidor fora do ar: devolve o fallback na hora, sem gastar 10s de timeout.
+    if (servidorIndisponivel) return _colunasUsuariosFallback;
     final emAndamento = _detectandoColunasUsuarios;
     if (emAndamento != null) return emAndamento;
 
@@ -773,14 +1064,16 @@ class SupabaseService {
 
   Future<Set<String>> _detectarColunasUsuariosInterno() async {
     try {
-      final resp = await http.get(
-        Uri.parse('${SupabaseConfig.url}/rest/v1/'),
-        headers: {
-          'apikey': SupabaseConfig.anonKey,
-          'Authorization': 'Bearer ${SupabaseConfig.anonKey}',
-          'Accept': 'application/json',
-        },
-      ).timeout(const Duration(seconds: 10));
+      final resp = await http
+          .get(
+            Uri.parse('${SupabaseConfig.url}/rest/v1/'),
+            headers: {
+              'apikey': SupabaseConfig.anonKey,
+              'Authorization': 'Bearer ${SupabaseConfig.anonKey}',
+              'Accept': 'application/json',
+            },
+          )
+          .timeout(const Duration(seconds: 10));
 
       if (resp.statusCode == 200) {
         final decoded = jsonDecode(resp.body);
@@ -792,22 +1085,25 @@ class SupabaseService {
               final properties = usuarios['properties'];
               if (properties is Map<String, dynamic>) {
                 final colunas = properties.keys.toSet();
-                debugPrint('>>> [Supabase] ℹ️ Colunas reais de usuarios detectadas (${colunas.length}): ${colunas.join(', ')}');
+                debugPrint(
+                  '>>> [Supabase] ℹ️ Colunas reais de usuarios detectadas (${colunas.length}): ${colunas.join(', ')}',
+                );
                 return colunas;
               }
             }
           }
         }
       } else {
-        debugPrint('>>> [Supabase] ⚠️ Falha ao detectar colunas de usuarios (HTTP ${resp.statusCode})');
+        debugPrint(
+          '>>> [Supabase] ⚠️ Falha ao detectar colunas de usuarios (HTTP ${resp.statusCode})',
+        );
+        _marcarIndisponivelSeInfra(null, statusCode: resp.statusCode);
       }
     } catch (e) {
       debugPrint('>>> [Supabase] ⚠️ Falha ao detectar colunas de usuarios: $e');
+      _marcarIndisponivelSeInfra(e);
     }
-    return const {
-      'id', 'email', 'nome', 'empresa_id', 'perfil', 'ativo',
-      'created_at', 'updated_at',
-    };
+    return _colunasUsuariosFallback;
   }
 
   /// ============================================================
@@ -825,6 +1121,8 @@ class SupabaseService {
   Future<Map<String, Set<String>>> _detectarColunasTodasTabelas() async {
     final cached = _colunasTodasTabelasCache;
     if (cached != null) return cached;
+    // Servidor fora do ar: sem tabela — o chamador não filtra (comportamento antigo).
+    if (servidorIndisponivel) return const <String, Set<String>>{};
     final emAndamento = _detectandoColunasTodasTabelas;
     if (emAndamento != null) return emAndamento;
 
@@ -842,14 +1140,16 @@ class SupabaseService {
   Future<Map<String, Set<String>>> _detectarColunasTodasTabelasInterno() async {
     final resultado = <String, Set<String>>{};
     try {
-      final resp = await http.get(
-        Uri.parse('${SupabaseConfig.url}/rest/v1/'),
-        headers: {
-          'apikey': SupabaseConfig.anonKey,
-          'Authorization': 'Bearer ${SupabaseConfig.anonKey}',
-          'Accept': 'application/json',
-        },
-      ).timeout(const Duration(seconds: 12));
+      final resp = await http
+          .get(
+            Uri.parse('${SupabaseConfig.url}/rest/v1/'),
+            headers: {
+              'apikey': SupabaseConfig.anonKey,
+              'Authorization': 'Bearer ${SupabaseConfig.anonKey}',
+              'Accept': 'application/json',
+            },
+          )
+          .timeout(const Duration(seconds: 12));
 
       if (resp.statusCode == 200) {
         final decoded = jsonDecode(resp.body);
@@ -864,14 +1164,20 @@ class SupabaseService {
                 }
               }
             });
-            debugPrint('>>> [Supabase] ℹ️ Colunas reais detectadas via OpenAPI (${resultado.length} tabelas)');
+            debugPrint(
+              '>>> [Supabase] ℹ️ Colunas reais detectadas via OpenAPI (${resultado.length} tabelas)',
+            );
           }
         }
       } else {
-        debugPrint('>>> [Supabase] ⚠️ Falha ao detectar colunas via OpenAPI (HTTP ${resp.statusCode})');
+        debugPrint(
+          '>>> [Supabase] ⚠️ Falha ao detectar colunas via OpenAPI (HTTP ${resp.statusCode})',
+        );
+        _marcarIndisponivelSeInfra(null, statusCode: resp.statusCode);
       }
     } catch (e) {
       debugPrint('>>> [Supabase] ⚠️ Falha ao detectar colunas via OpenAPI: $e');
+      _marcarIndisponivelSeInfra(e);
     }
     return resultado;
   }
@@ -884,7 +1190,9 @@ class SupabaseService {
     final colunas = todas[table];
     if (colunas == null) {
       // Tabela não existe no Supabase
-      debugPrint('>>> [Supabase] ℹ️ Tabela "$table" não encontrada no schema (OpenAPI)');
+      debugPrint(
+        '>>> [Supabase] ℹ️ Tabela "$table" não encontrada no schema (OpenAPI)',
+      );
       return const {};
     }
     return colunas;
@@ -895,7 +1203,10 @@ class SupabaseService {
     final partes = chave.split('_');
     if (partes.length <= 1) return chave;
     return partes.first +
-        partes.skip(1).map((p) => p.isEmpty ? p : p[0].toUpperCase() + p.substring(1)).join();
+        partes
+            .skip(1)
+            .map((p) => p.isEmpty ? p : p[0].toUpperCase() + p.substring(1))
+            .join();
   }
 
   /// Filtra um mapa para conter SOMENTE colunas que existem na tabela real do
@@ -907,8 +1218,10 @@ class SupabaseService {
   /// colunas descartadas apenas uma vez, evitando spam no console (5683 produtos
   /// × 3 colunas = 17.000 linhas de log inúteis).
   Map<String, dynamic> _filtrarParaColunasReais(
-      Map<String, dynamic> map, Set<String> colunas,
-      {Set<String>? colunasDescartadas}) {
+    Map<String, dynamic> map,
+    Set<String> colunas, {
+    Set<String>? colunasDescartadas,
+  }) {
     final resultado = <String, dynamic>{};
     map.forEach((chave, valor) {
       if (colunas.contains(chave)) {
@@ -932,7 +1245,9 @@ class SupabaseService {
       }
       // Não existe de nenhuma forma -> descartar (log apenas na 1ª ocorrência)
       if (colunasDescartadas != null && colunasDescartadas.add(chave)) {
-        debugPrint('>>> [Supabase] 🔧 Coluna "$chave" descartada (não existe na tabela)');
+        debugPrint(
+          '>>> [Supabase] 🔧 Coluna "$chave" descartada (não existe na tabela)',
+        );
       }
     });
     return resultado;
@@ -950,6 +1265,7 @@ class SupabaseService {
   Future<Set<String>> _detectarColunasEmpresas() async {
     final cached = _colunasEmpresasCache;
     if (cached != null) return cached;
+    if (servidorIndisponivel) return _colunasEmpresasFallback;
     final emAndamento = _detectandoColunasEmpresas;
     if (emAndamento != null) return emAndamento;
     final futuro = _detectarColunasEmpresasInterno();
@@ -965,14 +1281,16 @@ class SupabaseService {
 
   Future<Set<String>> _detectarColunasEmpresasInterno() async {
     try {
-      final resp = await http.get(
-        Uri.parse('${SupabaseConfig.url}/rest/v1/'),
-        headers: {
-          'apikey': SupabaseConfig.anonKey,
-          'Authorization': 'Bearer ${SupabaseConfig.anonKey}',
-          'Accept': 'application/json',
-        },
-      ).timeout(const Duration(seconds: 10));
+      final resp = await http
+          .get(
+            Uri.parse('${SupabaseConfig.url}/rest/v1/'),
+            headers: {
+              'apikey': SupabaseConfig.anonKey,
+              'Authorization': 'Bearer ${SupabaseConfig.anonKey}',
+              'Accept': 'application/json',
+            },
+          )
+          .timeout(const Duration(seconds: 10));
 
       if (resp.statusCode == 200) {
         final decoded = jsonDecode(resp.body);
@@ -984,25 +1302,27 @@ class SupabaseService {
               final properties = empresas['properties'];
               if (properties is Map<String, dynamic>) {
                 final colunas = properties.keys.toSet();
-                debugPrint('>>> [Supabase] ℹ️ Colunas reais de empresas detectadas (${colunas.length}): ${colunas.join(', ')}');
+                debugPrint(
+                  '>>> [Supabase] ℹ️ Colunas reais de empresas detectadas (${colunas.length}): ${colunas.join(', ')}',
+                );
                 return colunas;
               }
             }
           }
         }
       } else {
-        debugPrint('>>> [Supabase] ⚠️ Falha ao detectar colunas de empresas (HTTP ${resp.statusCode})');
+        debugPrint(
+          '>>> [Supabase] ⚠️ Falha ao detectar colunas de empresas (HTTP ${resp.statusCode})',
+        );
+        _marcarIndisponivelSeInfra(null, statusCode: resp.statusCode);
       }
     } catch (e) {
       debugPrint('>>> [Supabase] ⚠️ Falha ao detectar colunas de empresas: $e');
+      _marcarIndisponivelSeInfra(e);
     }
     // Fallback conservador: colunas conhecidas do schema
     // (ADICIONAR_CONFIGURACOES_EMPRESA.sql / SUPABASE_FIX_ALL.sql).
-    return const {
-      'id', 'empresa_id', 'razao_social', 'nome_fantasia', 'cnpj', 'slug',
-      'ativo', 'created_at', 'updated_at', 'configuracoes', 'perfis_de_preco',
-      'perfisDePreco',
-    };
+    return _colunasEmpresasFallback;
   }
 
   /// Upsert resiliente de um usuário no Supabase.
@@ -1017,7 +1337,9 @@ class SupabaseService {
   /// mais "sumir" um usuário silenciosamente.
   Future<void> upsertUsuario(Map<String, dynamic> dados) async {
     if (!isAvailable) {
-      debugPrint('>>> [Supabase] ⏭️ upsertUsuario ignorado: Supabase não disponível');
+      debugPrint(
+        '>>> [Supabase] ⏭️ upsertUsuario ignorado: Supabase não disponível',
+      );
       throw Exception('Supabase não disponível');
     }
     if (dados['empresa_id'] == null || dados['empresa_id'].toString().isEmpty) {
@@ -1039,10 +1361,14 @@ class SupabaseService {
           .from(SupabaseService.tableUsuarios)
           .upsert(dadosFiltrados)
           .timeout(const Duration(seconds: 8));
-      debugPrint('>>> [Supabase] ✅ Usuário ${dados['id']} sincronizado (${dadosFiltrados.length} colunas existentes).');
+      debugPrint(
+        '>>> [Supabase] ✅ Usuário ${dados['id']} sincronizado (${dadosFiltrados.length} colunas existentes).',
+      );
       return;
     } catch (e) {
-      debugPrint('>>> [Supabase] ❌ ERRO GRAVE: usuário ${dados['id']} NÃO sincronizou: $e');
+      debugPrint(
+        '>>> [Supabase] ❌ ERRO GRAVE: usuário ${dados['id']} NÃO sincronizou: $e',
+      );
       rethrow;
     }
   }
@@ -1058,6 +1384,7 @@ class SupabaseService {
   Future<Set<String>> _detectarColunasEstoqueHistorico() async {
     final cached = _colunasEstoqueHistoricoCache;
     if (cached != null) return cached;
+    if (servidorIndisponivel) return _colunasEstoqueHistoricoFallback;
     final emAndamento = _detectandoColunasEstoqueHistorico;
     if (emAndamento != null) return emAndamento;
 
@@ -1074,14 +1401,16 @@ class SupabaseService {
 
   Future<Set<String>> _detectarColunasEstoqueHistoricoInterno() async {
     try {
-      final resp = await http.get(
-        Uri.parse('${SupabaseConfig.url}/rest/v1/'),
-        headers: {
-          'apikey': SupabaseConfig.anonKey,
-          'Authorization': 'Bearer ${SupabaseConfig.anonKey}',
-          'Accept': 'application/json',
-        },
-      ).timeout(const Duration(seconds: 10));
+      final resp = await http
+          .get(
+            Uri.parse('${SupabaseConfig.url}/rest/v1/'),
+            headers: {
+              'apikey': SupabaseConfig.anonKey,
+              'Authorization': 'Bearer ${SupabaseConfig.anonKey}',
+              'Accept': 'application/json',
+            },
+          )
+          .timeout(const Duration(seconds: 10));
 
       if (resp.statusCode == 200) {
         final decoded = jsonDecode(resp.body);
@@ -1093,36 +1422,42 @@ class SupabaseService {
               final properties = tabela['properties'];
               if (properties is Map<String, dynamic>) {
                 final colunas = properties.keys.toSet();
-                debugPrint('>>> [Supabase] ℹ️ Colunas reais de estoque_historico detectadas (${colunas.length}): ${colunas.join(', ')}');
+                debugPrint(
+                  '>>> [Supabase] ℹ️ Colunas reais de estoque_historico detectadas (${colunas.length}): ${colunas.join(', ')}',
+                );
                 return colunas;
               }
             }
           }
         }
       } else {
-        debugPrint('>>> [Supabase] ⚠️ Falha ao detectar colunas de estoque_historico (HTTP ${resp.statusCode})');
+        debugPrint(
+          '>>> [Supabase] ⚠️ Falha ao detectar colunas de estoque_historico (HTTP ${resp.statusCode})',
+        );
+        _marcarIndisponivelSeInfra(null, statusCode: resp.statusCode);
       }
     } catch (e) {
-      debugPrint('>>> [Supabase] ⚠️ Falha ao detectar colunas de estoque_historico: $e');
+      debugPrint(
+        '>>> [Supabase] ⚠️ Falha ao detectar colunas de estoque_historico: $e',
+      );
+      _marcarIndisponivelSeInfra(e);
     }
     // Fallback conservador: colunas conhecidas do schema (sem custo_unitario/
     // valor_custo — que ainda não existem até rodar o SUPABASE_FIX_ALL.sql).
-    return const {
-      'id', 'empresa_id', 'produto_id', 'produto_nome', 'tipo', 'quantidade',
-      'motivo', 'operador', 'data_operacao', 'created_at', 'data',
-      'updated_at', 'fornecedor_nome', 'fornecedor_id', 'observacao', 'usuario',
-    };
+    return _colunasEstoqueHistoricoFallback;
   }
 
   /// Realiza upsert de múltiplos itens em uma tabela (Batch)
   Future<void> upsertLote(String table, List<Map<String, dynamic>> data) async {
     try {
       if (!isAvailable || data.isEmpty) return;
-      
+
       // OTIMIZAÇÃO: Batching para grandes volumes
       const int batchSize = 500;
-      
-      List<Map<String, dynamic>> enrichedData = data.map((map) => _filtrarCamposLocais(table, map)).toList();
+
+      List<Map<String, dynamic>> enrichedData = data
+          .map((map) => _filtrarCamposLocais(table, map))
+          .toList();
 
       // estoque_historico: envia apenas colunas que existem no schema real
       if (table == SupabaseService.tableEstoqueHistorico) {
@@ -1141,28 +1476,38 @@ class SupabaseService {
       }
 
       final typedData = enrichedData.map((m) => _toSafeMap(m)).toList();
-      
+
       // Retry com backoff para erros de quota/rate limit
       const int maxRetries = 3;
-      
+
       if (typedData.length > batchSize) {
-        debugPrint('>>> [Supabase] 📦 Fracionando upsert de ${typedData.length} itens em lotes de $batchSize...');
+        debugPrint(
+          '>>> [Supabase] 📦 Fracionando upsert de ${typedData.length} itens em lotes de $batchSize...',
+        );
         for (int i = 0; i < typedData.length; i += batchSize) {
-          final end = (i + batchSize < typedData.length) ? i + batchSize : typedData.length;
+          final end = (i + batchSize < typedData.length)
+              ? i + batchSize
+              : typedData.length;
           final chunk = typedData.sublist(i, end);
-          
+
           for (int retry = 0; retry < maxRetries; retry++) {
             try {
-              await _client.from(table).upsert(chunk).timeout(const Duration(seconds: 30));
+              await _client
+                  .from(table)
+                  .upsert(chunk)
+                  .timeout(const Duration(seconds: 30));
               break; // Sucesso, sair do retry
             } catch (e) {
-              final isQuotaError = e.toString().contains('quota') || 
+              final isQuotaError =
+                  e.toString().contains('quota') ||
                   e.toString().contains('rate limit') ||
                   e.toString().contains('429') ||
                   e.toString().contains('503');
               if (isQuotaError && retry < maxRetries - 1) {
                 final delay = Duration(seconds: (retry + 1) * 5);
-                debugPrint('>>> [Supabase] ⏳ Quota/rate limit atingido, aguardando ${delay.inSeconds}s antes de retry...');
+                debugPrint(
+                  '>>> [Supabase] ⏳ Quota/rate limit atingido, aguardando ${delay.inSeconds}s antes de retry...',
+                );
                 await Future.delayed(delay);
               } else {
                 rethrow;
@@ -1173,16 +1518,22 @@ class SupabaseService {
       } else {
         for (int retry = 0; retry < maxRetries; retry++) {
           try {
-            await _client.from(table).upsert(typedData).timeout(const Duration(seconds: 30));
+            await _client
+                .from(table)
+                .upsert(typedData)
+                .timeout(const Duration(seconds: 30));
             break;
           } catch (e) {
-            final isQuotaError = e.toString().contains('quota') || 
+            final isQuotaError =
+                e.toString().contains('quota') ||
                 e.toString().contains('rate limit') ||
                 e.toString().contains('429') ||
                 e.toString().contains('503');
             if (isQuotaError && retry < maxRetries - 1) {
               final delay = Duration(seconds: (retry + 1) * 5);
-              debugPrint('>>> [Supabase] ⏳ Quota/rate limit atingido, aguardando ${delay.inSeconds}s antes de retry...');
+              debugPrint(
+                '>>> [Supabase] ⏳ Quota/rate limit atingido, aguardando ${delay.inSeconds}s antes de retry...',
+              );
               await Future.delayed(delay);
             } else {
               rethrow;
@@ -1234,7 +1585,7 @@ class SupabaseService {
     try {
       if (!isAvailable) return;
       var query = _client.from(table).delete();
-      
+
       if (idOrFilters is Map<String, dynamic>) {
         idOrFilters.forEach((key, value) {
           query = query.eq(key, value);
@@ -1242,7 +1593,7 @@ class SupabaseService {
       } else {
         query = query.eq('id', idOrFilters.toString());
       }
-      
+
       await query.timeout(const Duration(seconds: 8));
     } catch (e) {
       debugPrint('>>> [Supabase] ❌ Erro ao deletar de $table: $e');
@@ -1251,7 +1602,10 @@ class SupabaseService {
   }
 
   /// Remove itens de uma tabela filtrando por campos
-  Future<void> deleteFiltered(String table, Map<String, dynamic> filters) async {
+  Future<void> deleteFiltered(
+    String table,
+    Map<String, dynamic> filters,
+  ) async {
     try {
       if (!isAvailable) return;
       var query = _client.from(table).delete();
@@ -1276,20 +1630,22 @@ class SupabaseService {
   }) async {
     try {
       if (!isAvailable) return [];
-      
+
       final from = page * pageSize;
       final to = from + pageSize - 1;
-      
+
       final List<dynamic> result = await _client
           .from(table)
           .select()
           .eq('empresa_id', empresaId)
           .order(orderBy, ascending: !descending)
           .range(from, to);
-          
+
       return List<Map<String, dynamic>>.from(result);
     } catch (e) {
-      debugPrint('>>> [Supabase] ❌ Erro ao carregar coleção paginada ($table): $e');
+      debugPrint(
+        '>>> [Supabase] ❌ Erro ao carregar coleção paginada ($table): $e',
+      );
       return [];
     }
   }
@@ -1300,12 +1656,12 @@ class SupabaseService {
   Future<List<Map<String, dynamic>>> getBridgeStatus() async {
     try {
       if (!isAvailable) return [];
-      
+
       final response = await _client
           .from('bridge_status')
           .select()
           .order('pc_name', ascending: true);
-          
+
       return List<Map<String, dynamic>>.from(response);
     } catch (e) {
       debugPrint('>>> [Supabase Bridge] ❌ Erro ao buscar status: $e');
@@ -1333,7 +1689,10 @@ class SupabaseService {
   }
 
   /// Busca os últimos logs de sincronização de uma empresa (tabela sync_logs)
-  Future<List<Map<String, dynamic>>> getSyncLogs(String empresaId, {int limit = 50}) async {
+  Future<List<Map<String, dynamic>>> getSyncLogs(
+    String empresaId, {
+    int limit = 50,
+  }) async {
     try {
       if (!isAvailable) return [];
       final response = await _client
@@ -1352,13 +1711,18 @@ class SupabaseService {
   // ============ MÉTODOS DE STORAGE ============
 
   /// Faz upload de um arquivo para o Supabase Storage
-  Future<String?> uploadFile(String bucket, String path, dynamic file, {String? contentType}) async {
+  Future<String?> uploadFile(
+    String bucket,
+    String path,
+    dynamic file, {
+    String? contentType,
+  }) async {
     try {
       if (!isAvailable) return null;
 
       final extension = path.split('.').last.toLowerCase();
       String finalContentType = contentType ?? 'application/octet-stream';
-      
+
       if (contentType == null) {
         if (['jpg', 'jpeg', 'png', 'webp', 'gif'].contains(extension)) {
           finalContentType = 'image/$extension';
@@ -1369,18 +1733,28 @@ class SupabaseService {
 
       if (kIsWeb) {
         // No Web, o 'file' deve ser Uint8List ou File do package:web
-        await _client.storage.from(bucket).uploadBinary(
-          path,
-          file,
-          fileOptions: FileOptions(contentType: finalContentType, upsert: true),
-        );
+        await _client.storage
+            .from(bucket)
+            .uploadBinary(
+              path,
+              file,
+              fileOptions: FileOptions(
+                contentType: finalContentType,
+                upsert: true,
+              ),
+            );
       } else {
         // No Nativo, o 'file' é o objeto File de dart:io
-        await _client.storage.from(bucket).upload(
-          path,
-          file,
-          fileOptions: FileOptions(contentType: finalContentType, upsert: true),
-        );
+        await _client.storage
+            .from(bucket)
+            .upload(
+              path,
+              file,
+              fileOptions: FileOptions(
+                contentType: finalContentType,
+                upsert: true,
+              ),
+            );
       }
 
       final String publicUrl = _client.storage.from(bucket).getPublicUrl(path);
@@ -1404,8 +1778,12 @@ class SupabaseService {
   }
 
   /// Alias para manter compatibilidade
-  Future<String?> uploadImage(String bucket, String path, dynamic file, {String? contentType}) =>
-      uploadFile(bucket, path, file, contentType: contentType);
+  Future<String?> uploadImage(
+    String bucket,
+    String path,
+    dynamic file, {
+    String? contentType,
+  }) => uploadFile(bucket, path, file, contentType: contentType);
 
   /// Faz upload de uma imagem usando bytes diretamente
   Future<String?> uploadImageFromBytes({
@@ -1417,16 +1795,16 @@ class SupabaseService {
   }) async {
     // Para simplificar, usamos o bucket 'imagens' por padrão
     const bucket = 'imagens';
-    
+
     if (onProgress != null) onProgress(0.1);
-    
+
     final url = await uploadFile(
-      bucket, 
-      storagePath, 
-      imageBytes, 
-      contentType: contentType
+      bucket,
+      storagePath,
+      imageBytes,
+      contentType: contentType,
     );
-    
+
     if (onProgress != null) onProgress(1.0);
     return url;
   }
@@ -1440,9 +1818,9 @@ class SupabaseService {
       debugPrint('>>> [Supabase] ❌ ERRO: empresaId vazio, abortando limpeza!');
       return 0;
     }
-    
+
     debugPrint('>>> [Supabase] 🧹 Limpando dados da empresa $empresaId...');
-    
+
     // Tabelas com empresa_id (ordem: filhas primeiro, depois pais)
     final tabelas = [
       tableComissoesVendedores,
@@ -1458,6 +1836,7 @@ class SupabaseService {
       tableAgendamentosServico,
       tableLotesProdutos,
       tableEstoqueHistorico,
+      tableAjustesEstoqueLote,
       tableTrocasDevolucoes,
       tableVendasBalcao,
       tableOrdensServico,
@@ -1474,7 +1853,7 @@ class SupabaseService {
       tableProdutos,
       tableClientes,
     ];
-    
+
     int totalRemovidos = 0;
     int totalRegistros = 0;
     for (final tabela in tabelas) {
@@ -1487,20 +1866,26 @@ class SupabaseService {
             .count();
         final count = countResp.count;
         totalRegistros += count;
-        
+
         if (count > 0) {
           await _client.from(tabela).delete().eq('empresa_id', empresaId);
-          debugPrint('>>> [Supabase] 🗑️ $tabela: $count registros removidos da empresa $empresaId');
+          debugPrint(
+            '>>> [Supabase] 🗑️ $tabela: $count registros removidos da empresa $empresaId',
+          );
           totalRemovidos++;
         } else {
-          debugPrint('>>> [Supabase] ⏭️ $tabela: 0 registros da empresa, pulando...');
+          debugPrint(
+            '>>> [Supabase] ⏭️ $tabela: 0 registros da empresa, pulando...',
+          );
         }
       } catch (e) {
         debugPrint('>>> [Supabase] ⚠️ Erro ao limpar $tabela: $e');
       }
     }
-    
-    debugPrint('>>> [Supabase] ✅ Limpeza concluida: $totalRemovidos tabelas afetadas, $totalRegistros registros removidos da empresa $empresaId');
+
+    debugPrint(
+      '>>> [Supabase] ✅ Limpeza concluida: $totalRemovidos tabelas afetadas, $totalRegistros registros removidos da empresa $empresaId',
+    );
     return totalRegistros;
   }
 
@@ -1531,14 +1916,16 @@ class SupabaseService {
     for (final entry in sqlStatements.entries) {
       final nomeTabela = entry.key;
       try {
-        final response = await http.get(
-          Uri.parse('$supabaseUrl/rest/v1/$nomeTabela?select=id&limit=1'),
-          headers: {
-            'apikey': apiKey,
-            'Authorization': 'Bearer $apiKey',
-            'Content-Type': 'application/json',
-          },
-        ).timeout(const Duration(seconds: 5));
+        final response = await http
+            .get(
+              Uri.parse('$supabaseUrl/rest/v1/$nomeTabela?select=id&limit=1'),
+              headers: {
+                'apikey': apiKey,
+                'Authorization': 'Bearer $apiKey',
+                'Content-Type': 'application/json',
+              },
+            )
+            .timeout(const Duration(seconds: 5));
 
         if (response.statusCode == 200) {
           tabelasExistentes++;
@@ -1553,7 +1940,9 @@ class SupabaseService {
     }
 
     logs.add('');
-    logs.add('📊 $tabelasExistentes tabelas já existem, ${tabelasFaltando.length} precisam ser criadas');
+    logs.add(
+      '📊 $tabelasExistentes tabelas já existem, ${tabelasFaltando.length} precisam ser criadas',
+    );
 
     if (tabelasFaltando.isEmpty) {
       logs.add('✅ Todas as tabelas já existem no Supabase!');
@@ -1561,21 +1950,25 @@ class SupabaseService {
     }
 
     logs.add('');
-    logs.add('🔨 Tentando criar ${tabelasFaltando.length} tabela(s) faltante(s) via RPC...');
+    logs.add(
+      '🔨 Tentando criar ${tabelasFaltando.length} tabela(s) faltante(s) via RPC...',
+    );
 
     // Tentar criar tabelas faltantes via RPC (executar_sql)
     // Primeiro verificar se a função RPC existe
     bool rpcDisponivel = false;
     try {
-      final testResponse = await http.post(
-        Uri.parse('$supabaseUrl/rest/v1/rpc/executar_sql'),
-        headers: {
-          'apikey': apiKey,
-          'Authorization': 'Bearer $apiKey',
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode({'sql_query': 'SELECT 1'}),
-      ).timeout(const Duration(seconds: 5));
+      final testResponse = await http
+          .post(
+            Uri.parse('$supabaseUrl/rest/v1/rpc/executar_sql'),
+            headers: {
+              'apikey': apiKey,
+              'Authorization': 'Bearer $apiKey',
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode({'sql_query': 'SELECT 1'}),
+          )
+          .timeout(const Duration(seconds: 5));
       rpcDisponivel = testResponse.statusCode == 200;
     } catch (e) {
       rpcDisponivel = false;
@@ -1586,12 +1979,18 @@ class SupabaseService {
       logs.add('');
       logs.add('📋 Para criar tabelas automaticamente, execute UMA ÚNICA VEZ:');
       logs.add('   1. Abra Supabase Dashboard → SQL Editor');
-      logs.add('   2. Cole o conteúdo do arquivo CRIAR_FUNCAO_EXECUTAR_SQL.sql');
+      logs.add(
+        '   2. Cole o conteúdo do arquivo CRIAR_FUNCAO_EXECUTAR_SQL.sql',
+      );
       logs.add('   3. Clique em Run');
       logs.add('   4. Depois volte aqui e clique novamente neste botão');
       logs.add('');
-      logs.add('💡 Enquanto isso, as tabelas faltantes podem ser criadas manualmente:');
-      logs.add('   Abra o script CRIAR_TODAS_TABELAS_SUPABASE.sql no SQL Editor');
+      logs.add(
+        '💡 Enquanto isso, as tabelas faltantes podem ser criadas manualmente:',
+      );
+      logs.add(
+        '   Abra o script CRIAR_TODAS_TABELAS_SUPABASE.sql no SQL Editor',
+      );
       return (false, logs);
     }
 
@@ -1603,7 +2002,10 @@ class SupabaseService {
 
       try {
         // Dividir SQL em comandos individuais
-        final comandos = sql.split(';').where((c) => c.trim().isNotEmpty).toList();
+        final comandos = sql
+            .split(';')
+            .where((c) => c.trim().isNotEmpty)
+            .toList();
         int ok = 0;
         int erros = 0;
 
@@ -1611,15 +2013,17 @@ class SupabaseService {
           final sqlLimpo = cmd.trim();
           if (sqlLimpo.isEmpty) continue;
 
-          final response = await http.post(
-            Uri.parse('$supabaseUrl/rest/v1/rpc/executar_sql'),
-            headers: {
-              'apikey': apiKey,
-              'Authorization': 'Bearer $apiKey',
-              'Content-Type': 'application/json',
-            },
-            body: jsonEncode({'sql_query': sqlLimpo}),
-          ).timeout(const Duration(seconds: 15));
+          final response = await http
+              .post(
+                Uri.parse('$supabaseUrl/rest/v1/rpc/executar_sql'),
+                headers: {
+                  'apikey': apiKey,
+                  'Authorization': 'Bearer $apiKey',
+                  'Content-Type': 'application/json',
+                },
+                body: jsonEncode({'sql_query': sqlLimpo}),
+              )
+              .timeout(const Duration(seconds: 15));
 
           if (response.statusCode == 200) {
             final body = response.body;
@@ -1636,8 +2040,11 @@ class SupabaseService {
 
         if (ok > 0) {
           tabelasCriadas++;
-          logs.add('✅ $nomeTabela: criada ($ok comandos OK' +
-              (erros > 0 ? ', $erros ignorados' : '') + ')');
+          logs.add(
+            '✅ $nomeTabela: criada ($ok comandos OK' +
+                (erros > 0 ? ', $erros ignorados' : '') +
+                ')',
+          );
         } else {
           tabelasComErro++;
           logs.add('❌ $nomeTabela: falhou');
@@ -1650,12 +2057,16 @@ class SupabaseService {
     }
 
     logs.add('');
-    logs.add('📊 Resultado: $tabelasExistentes existiam + $tabelasCriadas criadas, $tabelasComErro com erro');
+    logs.add(
+      '📊 Resultado: $tabelasExistentes existiam + $tabelasCriadas criadas, $tabelasComErro com erro',
+    );
 
     if (tabelasComErro > 0) {
       logs.add('');
       logs.add('💡 Se alguma tabela falhou, execute o script');
-      logs.add('   CRIAR_TODAS_TABELAS_SUPABASE.sql no SQL Editor do Supabase.');
+      logs.add(
+        '   CRIAR_TODAS_TABELAS_SUPABASE.sql no SQL Editor do Supabase.',
+      );
     }
 
     return (tabelasComErro == 0, logs);
@@ -1667,7 +2078,11 @@ class SupabaseService {
     final tabelasExistentes = <String>{};
 
     if (!EnvConfig.supabaseDbAvailable) {
-      return (false, tabelasExistentes, ['❌ Variáveis SUPABASE_DB_* não configuradas no .env']);
+      return (
+        false,
+        tabelasExistentes,
+        ['❌ Variáveis SUPABASE_DB_* não configuradas no .env'],
+      );
     }
 
     Connection? conn;
@@ -1692,19 +2107,27 @@ class SupabaseService {
       }
 
       final tabelasNecessarias = _getSqlCriarTabelas().keys;
-      final faltando = tabelasNecessarias.where((t) => !tabelasExistentes.contains(t)).toList();
+      final faltando = tabelasNecessarias
+          .where((t) => !tabelasExistentes.contains(t))
+          .toList();
 
       if (faltando.isEmpty) {
-        logs.add('✅ Todas as ${tabelasNecessarias.length} tabelas necessárias existem no Supabase');
+        logs.add(
+          '✅ Todas as ${tabelasNecessarias.length} tabelas necessárias existem no Supabase',
+        );
       } else {
-        logs.add('⚠️ ${faltando.length} tabela(s) faltando no Supabase: ${faltando.join(', ')}');
+        logs.add(
+          '⚠️ ${faltando.length} tabela(s) faltando no Supabase: ${faltando.join(', ')}',
+        );
       }
 
       return (true, tabelasExistentes, logs);
     } catch (e) {
       return (false, tabelasExistentes, ['❌ Erro ao verificar tabelas: $e']);
     } finally {
-      try { conn?.close(); } catch (_) {}
+      try {
+        conn?.close();
+      } catch (_) {}
     }
   }
 
@@ -1729,6 +2152,7 @@ class SupabaseService {
           perfil_tributario_id TEXT DEFAULT '',
           precos_por_perfil JSONB DEFAULT '[]'::jsonb, regras_quantidade JSONB DEFAULT '[]'::jsonb,
           departamentos_adicionais JSONB DEFAULT '[]'::jsonb,
+          estoque_por_estoque JSONB DEFAULT '{}'::jsonb, estoque_padrao_id TEXT DEFAULT '',
           foto_url TEXT DEFAULT '', observacao TEXT DEFAULT '',
           created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
         );
@@ -1757,6 +2181,9 @@ class SupabaseService {
         ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS precos_por_perfil JSONB DEFAULT '[]'::jsonb;
         ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS regras_quantidade JSONB DEFAULT '[]'::jsonb;
         ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS departamentos_adicionais JSONB DEFAULT '[]'::jsonb;
+        -- Estoques (Loja, Depósito…): saldo por estoque e estoque padrão do produto.
+        ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS estoque_por_estoque JSONB DEFAULT '{}'::jsonb;
+        ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS estoque_padrao_id TEXT DEFAULT '';
         ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS foto_url TEXT DEFAULT '';
         ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS observacao TEXT DEFAULT '';
         ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
@@ -2261,9 +2688,12 @@ class SupabaseService {
           numero_lote TEXT DEFAULT '', quantidade NUMERIC(15,3) DEFAULT 0,
           data_fabricacao TIMESTAMPTZ, data_validade TIMESTAMPTZ,
           fornecedor_id TEXT DEFAULT '', fornecedor_nome TEXT DEFAULT '',
+          estoque_id TEXT DEFAULT '', estoque_nome TEXT DEFAULT '',
           custo_unitario NUMERIC(15,2) DEFAULT 0, status TEXT DEFAULT 'ativo',
           created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
         );
+        ALTER TABLE public.lotes_produto ADD COLUMN IF NOT EXISTS estoque_id TEXT DEFAULT '';
+        ALTER TABLE public.lotes_produto ADD COLUMN IF NOT EXISTS estoque_nome TEXT DEFAULT '';
         CREATE INDEX IF NOT EXISTS idx_lotes_empresa ON public.lotes_produto(empresa_id);
         CREATE INDEX IF NOT EXISTS idx_lotes_produto ON public.lotes_produto(produto_id);
         ALTER TABLE public.lotes_produto ENABLE ROW LEVEL SECURITY;
@@ -2321,4 +2751,3 @@ class SupabaseService {
     };
   }
 }
-

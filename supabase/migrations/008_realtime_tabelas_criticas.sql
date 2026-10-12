@@ -1,0 +1,6 @@
+-- MOVIDA para a fonte única: scripts/migrations/008_realtime_tabelas_criticas.sql
+--
+-- Para aplicar na nuvem, abra e cole o arquivo:
+--     scripts/migrations/008_realtime_tabelas_criticas.sql
+--
+-- Ver scripts/migrations/README.md.

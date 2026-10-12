@@ -4,9 +4,11 @@ import '../services/data_service.dart';
 import '../models/pedido.dart';
 import '../models/motorista.dart';
 import '../models/delivery_info.dart';
+import '../models/entrega.dart';
 import '../services/pedido_pdf_service.dart';
 import '../theme.dart';
 import 'package:intl/intl.dart';
+import 'package:uuid/uuid.dart';
 
 class PainelMotoboysPage extends StatefulWidget {
   const PainelMotoboysPage({super.key});
@@ -534,6 +536,15 @@ class _PainelMotoboysPageState extends State<PainelMotoboysPage> {
     
     dataService.updatePedido(pedidoAtualizado);
 
+    // A ENTREGA (tabela `entregas`) é quem alimenta a comissão do motoboy na
+    // tela de Comissões. Delegar aqui só mexia no PEDIDO: a entrega continuava
+    // sem motorista (ou nem existia) e a taxa cadastrada nunca contava.
+    _sincronizarEntregaDoPedido(
+      pedido: pedido,
+      deliveryInfo: novoDeliveryInfo,
+      dataService: dataService,
+    );
+
     if (mostrarSnackBar) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -543,20 +554,94 @@ class _PainelMotoboysPageState extends State<PainelMotoboysPage> {
       );
     }
   }
-  
+
+  /// Cria/atualiza a ENTREGA correspondente ao pedido.
+  ///
+  /// É a `entregas` que a tela de Comissões lê para pagar o motoboy (status
+  /// 'Entregue' + motorista). Antes, delegar e marcar como entregue pelo painel
+  /// só alterava o pedido — a comissão da taxa cadastrada não contabilizava.
+  void _sincronizarEntregaDoPedido({
+    required Pedido pedido,
+    required DeliveryInfo deliveryInfo,
+    required DataService dataService,
+    bool entregue = false,
+    DateTime? quando,
+  }) {
+    final agora = quando ?? DateTime.now();
+    final novoStatus =
+        entregue ? StatusEntrega.entregue : StatusEntrega.emEntrega;
+
+    final index = dataService.entregas.indexWhere(
+      (e) => e.pedidoId.isNotEmpty && e.pedidoId == pedido.id,
+    );
+
+    if (index >= 0) {
+      final existente = dataService.entregas[index];
+      dataService.updateEntrega(
+        existente.copyWith(
+          pedidoNumero: pedido.numero,
+          clienteNome: pedido.clienteNome ?? existente.clienteNome,
+          clienteTelefone: pedido.clienteTelefone ?? existente.clienteTelefone,
+          motoristaId: deliveryInfo.motoristaId,
+          motoristaNome: deliveryInfo.motoristaNome,
+          taxaEntrega: deliveryInfo.taxaEntrega ?? existente.taxaEntrega,
+          status: novoStatus,
+          dataEntrega: entregue ? agora : existente.dataEntrega,
+        ),
+      );
+      return;
+    }
+
+    // Sem entrega registrada ainda: cria uma com o estado atual da delegação.
+    final dInfo = deliveryInfo;
+    dataService.addEntrega(
+      Entrega(
+        id: const Uuid().v4(),
+        pedidoId: pedido.id,
+        pedidoNumero: pedido.numero,
+        clienteNome: pedido.clienteNome ?? 'Cliente',
+        clienteTelefone: pedido.clienteTelefone,
+        enderecoEntrega:
+            '${dInfo.logradouro}, ${dInfo.numero}'.trim(),
+        bairro: dInfo.bairro,
+        cidade: dInfo.cidade,
+        cep: dInfo.cep,
+        status: novoStatus,
+        dataCriacao: agora,
+        dataEntrega: entregue ? agora : null,
+        motoristaId: dInfo.motoristaId,
+        motoristaNome: dInfo.motoristaNome,
+        taxaEntrega: dInfo.taxaEntrega,
+        observacoes: pedido.observacoes,
+      ),
+    );
+  }
+
   void _marcarComoEntregue(Pedido pedido, DataService dataService) {
     if (pedido.deliveryInfo != null) {
+      final agora = DateTime.now();
       final novoDeliveryInfo = pedido.deliveryInfo!.copyWith(
         status: 'Entregue',
-        dataEntrega: DateTime.now(),
+        dataEntrega: agora,
       );
       
       final pedidoAtualizado = pedido.copyWith(
         deliveryInfo: novoDeliveryInfo,
-        updatedAt: DateTime.now(),
+        updatedAt: agora,
       );
       
       dataService.updatePedido(pedidoAtualizado);
+
+      // Conclui a ENTREGA também: é ela que entra no cálculo da comissão do
+      // motoboy. Antes só o pedido ficava "Entregue" e a entrega continuava
+      // "Aguardando", então a taxa cadastrada no motoboy não contabilizava.
+      _sincronizarEntregaDoPedido(
+        pedido: pedido,
+        deliveryInfo: novoDeliveryInfo,
+        dataService: dataService,
+        entregue: true,
+        quando: agora,
+      );
       
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(

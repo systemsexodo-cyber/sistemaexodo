@@ -52,6 +52,59 @@ class PerfilTributario {
     this.isDefault = false,
   });
 
+  PerfilTributario copyWith({
+    String? id,
+    String? nome,
+    String? cfop,
+    String? icmsCst,
+    String? csosn,
+    double? aliquotaIcms,
+    String? pisCst,
+    double? aliquotaPis,
+    String? cofinsCst,
+    double? aliquotaCofins,
+    String? cstIbs,
+    double? aliquotaIbs,
+    String? cstCbs,
+    double? aliquotaCbs,
+    String? ipiCst,
+    double? aliquotaIpi,
+    double? mva,
+    double? reducaoBaseIcms,
+    double? aliquotaFcp,
+    double? aliquotaIcmsInterestadual,
+    String? ncm,
+    bool? isDefault,
+    bool limparIcmsCst = false,
+    bool limparCsosn = false,
+  }) {
+    return PerfilTributario(
+      id: id ?? this.id,
+      nome: nome ?? this.nome,
+      cfop: cfop ?? this.cfop,
+      icmsCst: limparIcmsCst ? null : (icmsCst ?? this.icmsCst),
+      csosn: limparCsosn ? null : (csosn ?? this.csosn),
+      aliquotaIcms: aliquotaIcms ?? this.aliquotaIcms,
+      pisCst: pisCst ?? this.pisCst,
+      aliquotaPis: aliquotaPis ?? this.aliquotaPis,
+      cofinsCst: cofinsCst ?? this.cofinsCst,
+      aliquotaCofins: aliquotaCofins ?? this.aliquotaCofins,
+      cstIbs: cstIbs ?? this.cstIbs,
+      aliquotaIbs: aliquotaIbs ?? this.aliquotaIbs,
+      cstCbs: cstCbs ?? this.cstCbs,
+      aliquotaCbs: aliquotaCbs ?? this.aliquotaCbs,
+      ipiCst: ipiCst ?? this.ipiCst,
+      aliquotaIpi: aliquotaIpi ?? this.aliquotaIpi,
+      mva: mva ?? this.mva,
+      reducaoBaseIcms: reducaoBaseIcms ?? this.reducaoBaseIcms,
+      aliquotaFcp: aliquotaFcp ?? this.aliquotaFcp,
+      aliquotaIcmsInterestadual:
+          aliquotaIcmsInterestadual ?? this.aliquotaIcmsInterestadual,
+      ncm: ncm ?? this.ncm,
+      isDefault: isDefault ?? this.isDefault,
+    );
+  }
+
   factory PerfilTributario.fromMap(Map<String, dynamic> map) {
     double? parseDouble(dynamic val) {
       if (val == null) return null;

@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
 """
 Publicador de Atualização
-Uso: python publicar_para_empresa.py ID_DA_EMPRESA [versao] [--force]
-     python publicar_para_empresa.py global [versao] [--force]
+Uso: python publicar_para_empresa.py ID_DA_EMPRESA [versao] [--force] [--notas "texto"]
+     python publicar_para_empresa.py global [versao] [--force] [--notas "texto"]
+
+--notas: os detalhes da atualização ("o que mudou"). Vão para a nuvem ao lado
+do pacote e aparecem para o cliente na tela de atualização.
 
 - Passando um ID de empresa: cria/atualiza app_update_{ID} na bridge_config
 - Passando 'global': atualiza app_latest na bridge_config (TODOS os clientes)
 - Usando --force: prefixa a versão com '!' para forçar downgrade
 
-Faz o upload do executável compilado para o Supabase Storage
-e cria/atualiza o registro correspondente na bridge_config.
+Faz o upload do PACOTE compilado (.zip com data/app.so, telas e executável)
+para o Supabase Storage e cria/atualiza o registro na bridge_config.
+O arquivo na nuvem leva a versão no nome (sistema_exodo_novo_<versao>.zip),
+então publicar para uma empresa não troca o arquivo de outra versão.
 """
 
 import os
@@ -20,22 +25,27 @@ import requests
 def main():
     # 1. Ler argumentos
     if len(sys.argv) < 2:
-        print("❌ Uso: python publicar_para_empresa.py ID_DA_EMPRESA [versao] [--force]")
+        print("❌ Uso: python publicar_para_empresa.py ID_DA_EMPRESA [versao] [--force] [--notas \"texto\"]")
         print("   Ex: python publicar_para_empresa.py emp_abc123 1.0.17")
         print("       python publicar_para_empresa.py emp_abc123 1.0.16 --force   (downgrade forçado)")
         print("       python publicar_para_empresa.py global 1.0.17   (para TODOS)")
+        print("       python publicar_para_empresa.py global 1.0.17 --notas \"corrige o caixa\"")
         sys.exit(1)
 
     empresa_id = sys.argv[1]
     is_global = (empresa_id.lower() == 'global')
     
-    # Extrair versão e flag --force
+    # Extrair versão, --force e --notas
     new_version = "1.0.17"
     is_force = False
-    for arg in sys.argv[2:]:
+    notas = ""
+    args = sys.argv[2:]
+    for indice, arg in enumerate(args):
         if arg == '--force':
             is_force = True
-        elif not arg.startswith('--'):
+        elif arg == '--notas':
+            notas = args[indice + 1] if indice + 1 < len(args) else ""
+        elif not arg.startswith('--') and (indice == 0 or args[indice - 1] != '--notas'):
             new_version = arg
     
     # Se for downgrade forçado, prefixar com '!'
@@ -75,20 +85,22 @@ def main():
         sys.exit(1)
 
     bucket_name = "atualizacoes"
-    file_name = "sistema_exodo_novo.exe"
-    
-    # 3. Localizar executável compilado
-    local_exe = os.path.join(base_dir, "build", "windows", "x64", "runner", "Release", file_name)
-    if not os.path.exists(local_exe):
-        # Tentar local alternativo
-        local_exe = os.path.join(base_dir, file_name)
-        if not os.path.exists(local_exe):
-            print(f"❌ Executável não encontrado em:")
-            print(f"   {os.path.join(base_dir, 'build', 'windows', 'x64', 'runner', 'Release', file_name)}")
-            print(f"   Compile com: flutter build windows --release")
-            sys.exit(1)
 
-    print(f"📦 Executável: {local_exe}")
+    # 3. Montar o PACOTE (.zip)
+    #    Só o .exe NÃO atualiza o programa: ele é o runner do Flutter (~85 KB) e
+    #    é igual em todas as versões — o código fica no data/app.so.
+    from publicar_pacote_comum import empacotar_programa, nome_pacote
+
+    file_name = nome_pacote(new_version)
+    local_exe = os.path.join(base_dir, file_name)
+    try:
+        empacotar_programa(base_dir, local_exe)
+    except FileNotFoundError as erro:
+        print(f"❌ Erro: {erro}")
+        print(f"   Compile com: flutter build windows --release")
+        sys.exit(1)
+
+    print(f"📦 Pacote: {local_exe}")
     print(f"📏 Tamanho: {os.path.getsize(local_exe) / 1024 / 1024:.1f} MB")
     print()
 
@@ -128,6 +140,12 @@ def main():
     download_url = f"{supabase_url}/storage/v1/object/public/{bucket_name}/{file_name}"
     print(f"✅ Upload concluído!")
     print(f"🔗 URL: {download_url}")
+
+    from publicar_pacote_comum import enviar_notas
+    if enviar_notas(supabase_url, headers_upload, bucket_name, new_version, notas):
+        print("📝 Detalhes da versão enviados (o cliente lê na atualização).")
+    elif notas.strip():
+        print("⚠️ Não consegui enviar os detalhes (a atualização segue normalmente).")
     print()
 
     # 5. Atualizar bridge_config

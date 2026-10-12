@@ -23,6 +23,7 @@ if sys.stderr is None:
 # Importar as lógicas já desenvolvidas
 import setup_sync_local
 import sincronizar_local_supabase
+import sincronizador_lan
 
 # Diretorio base: quando congelado (exe), a pasta do executavel; senao, a pasta do script.
 # IMPORTANTE: no PyInstaller onefile, load_dotenv() sem caminho procura a partir da pasta
@@ -40,6 +41,7 @@ class SyncTrayApp:
         self.icon = None
         self.running = True
         self.sync_thread = None
+        self.lan_thread = None
         self.status = "Iniciando..."
         self.last_sync = "Nunca"
         self.total_synced = 0
@@ -76,6 +78,27 @@ class SyncTrayApp:
                 f"Banco local: {self.db_user}@{self.db_host}:{self.db_port}/{self.db_name}",
                 sincronizar_local_supabase.Colors.GREEN)
 
+        # Intervalo do loop dedicado da LAN (segundos). Curto de propósito:
+        # é o que faz a mudança feita no outro PC aparecer aqui em poucos
+        # segundos, sem depender da nuvem. Ajustável por LAN_INTERVALO no .env.
+        try:
+            self.lan_intervalo = max(1.0, float(os.getenv('LAN_INTERVALO') or '2'))
+        except Exception:
+            self.lan_intervalo = 2.0
+
+        # Sincronização pela REDE LOCAL (par). None = desligada.
+        self.par_cfg = sincronizador_lan.config_do_par()
+        if self.par_cfg:
+            sincronizar_local_supabase.print_log(
+                f"[INIT] LAN ativa para o par {self.par_cfg['nome']} "
+                f"({self.par_cfg['host']}:{self.par_cfg['port']}/{self.par_cfg['dbname']}).",
+                sincronizar_local_supabase.Colors.GREEN)
+        else:
+            sincronizar_local_supabase.print_log(
+                "[INIT] LAN desligada (no sistema: tela inicial > botao "
+                "'Rede LAN' para sincronizar direto com o outro PC).",
+                sincronizar_local_supabase.Colors.CYAN)
+
     def create_image(self, color=(52, 152, 219)):
         # Cria um ícone de nuvem simples para a bandeja com a cor fornecida
         width = 64
@@ -97,7 +120,8 @@ class SyncTrayApp:
             'online': (46, 204, 113),    # Verde
             'syncing': (230, 126, 34),   # Laranja
             'offline': (231, 76, 60),    # Vermelho
-            'conflict': (241, 196, 15)   # Amarelo
+            'conflict': (241, 196, 15),  # Amarelo
+            'paused': (149, 165, 166),   # Cinza
         }
         
         color = colors.get(state_type, (52, 152, 219)) # Azul fallback
@@ -111,6 +135,8 @@ class SyncTrayApp:
             self.status = "Sincronizando..."
         elif state_type == 'conflict':
             self.status = f"Conflitos pendentes | Ultima: {self.last_sync}"
+        elif state_type == 'paused':
+            self.status = 'Nuvem pausada para esta empresa'
         self.update_icon_tooltip()
 
     def run_setup_transparently(self):
@@ -129,10 +155,20 @@ class SyncTrayApp:
         Usado quando o banco local esta fora do ar - o tray se auto-recupera."""
         import subprocess
         pg_ctl = os.path.join(self.base_dir, 'postgresql', 'bin', 'pg_ctl.exe')
-        data_dir = os.path.join(self.base_dir, 'data')
-        if not os.path.exists(pg_ctl) or not os.path.exists(data_dir):
+        # O banco real fica em pgdata (mesmo data dir do servico). a pasta "data"
+        # era o path antigo e hoje costuma ter so assets do Flutter; usar ela
+        # fazia o tray subir/setar o banco no cluster vazio.
+        data_dir = None
+        for candidato in ('pgdata', 'data'):
+            tentativa = os.path.join(self.base_dir, candidato)
+            if os.path.isfile(os.path.join(tentativa, 'postgresql.conf')):
+                data_dir = tentativa
+                break
+        if not os.path.exists(pg_ctl) or data_dir is None:
             sincronizar_local_supabase.print_log(
-                f"[PG] pg_ctl nao encontrado ({pg_ctl}) ou data dir ausente ({data_dir})",
+                f"[PG] pg_ctl nao encontrado ({pg_ctl}) ou data dir valido nao encontrado "
+                f"({os.path.join(self.base_dir, 'pgdata')} ou "
+                f"{os.path.join(self.base_dir, 'data')})",
                 sincronizar_local_supabase.Colors.YELLOW)
             return False
         log_path = os.path.join(self.base_dir, 'logs', 'postgresql.log')
@@ -231,6 +267,14 @@ class SyncTrayApp:
             # Garantir tabela de controle
             sincronizar_local_supabase.garantir_tabela_controle(conn)
 
+            # ── REDE LOCAL (par) ──
+            # A LAN saiu daqui: agora tem um loop PRÓPRIO e mais rápido
+            # (`lan_loop`, a cada LAN_INTERVALO segundos). Antes ela rodava só
+            # dentro deste ciclo de ~10s, então uma mudança no outro PC podia
+            # demorar até 10s para aparecer — e dependia da nuvem para acelerar.
+            # O ciclo da nuvem segue cuidando só da nuvem.
+            lan = None
+
             # Executa o ciclo otimizado de sincronização com o callback de mudança de estado
             enviados, recebidos = sincronizar_local_supabase.executar_ciclo_sincronizacao(
                 conn, self.supabase_url, self.api_key, on_state_change=self.update_status_icon
@@ -238,14 +282,15 @@ class SyncTrayApp:
 
             self.total_synced += enviados
             self.last_sync = time.strftime("%H:%M:%S")
+            sufixo_lan = ''
             if enviados > 0 or recebidos > 0:
-                self.status = f"Sync {self.last_sync} | +{enviados} ↑ {recebidos} ↓"
+                self.status = f"Sync {self.last_sync} | +{enviados} ↑ {recebidos} ↓{sufixo_lan}"
             else:
                 qtd_conflitos = sincronizar_local_supabase.obter_qtd_conflitos_pendentes(conn)
                 if qtd_conflitos > 0:
-                    self.status = f"Online ({qtd_conflitos} Conflitos) | Ultima: {self.last_sync}"
+                    self.status = f"Online ({qtd_conflitos} Conflitos) | Ultima: {self.last_sync}{sufixo_lan}"
                 else:
-                    self.status = f"Online | Ultima: {self.last_sync}"
+                    self.status = f"Online | Ultima: {self.last_sync}{sufixo_lan}"
             self.update_icon_tooltip()
 
         except Exception as e:
@@ -258,6 +303,61 @@ class SyncTrayApp:
                     conn.close()
                 except:
                     pass
+
+    def _resumo_lan(self, lan):
+        """Sufixo do status com o resultado do passo na rede local."""
+        if not self.par_cfg or not lan:
+            return ''
+        if lan.get('erro'):
+            return ' | LAN off'
+        partes = []
+        if lan.get('recebidos'):
+            partes.append(f"+{lan['recebidos']}")
+        if lan.get('apagados'):
+            partes.append(f"-{lan['apagados']}")
+        detalhe = f" {' '.join(partes)}" if partes else ''
+        return f" | LAN {self.par_cfg['nome']}{detalhe}"
+
+    def lan_loop(self):
+        """Loop DEDICADO da rede local, separado do ciclo da nuvem.
+
+        Roda a cada `LAN_INTERVALO` segundos (padrão 2s) para que uma mudança
+        feita no outro PC apareça aqui em poucos segundos, mesmo com a internet
+        fora. Cada volta abre a sua própria conexão no banco local; o
+        `sincronizar_com_par` cuida de conectar no par e nunca levanta exceção.
+        """
+        INTERVALO = self.lan_intervalo
+        while self.running:
+            conn = None
+            try:
+                conn = psycopg2.connect(
+                    host=self.db_host, port=self.db_port, dbname=self.db_name,
+                    user=self.db_user, password=self.db_password, connect_timeout=5
+                )
+                resumo = sincronizador_lan.sincronizar_com_par(conn, self.par_cfg)
+                if resumo and not resumo.get('erro'):
+                    recebidos = int(resumo.get('recebidos') or 0)
+                    apagados = int(resumo.get('apagados') or 0)
+                    if recebidos or apagados:
+                        self.total_synced += recebidos
+                        self.update_status_icon(
+                            'syncing',
+                            f"LAN {self.par_cfg['nome']}: +{recebidos} ↑ "
+                            f"{apagados} ↓")
+            except Exception as e:
+                sincronizar_local_supabase.print_log(
+                    f"[LAN] loop: {e}", sincronizar_local_supabase.Colors.YELLOW)
+            finally:
+                if conn is not None:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+            # Pausa em fatias para respeitar a parada do tray rapidamente
+            dormiu = 0.0
+            while self.running and dormiu < INTERVALO:
+                time.sleep(0.25)
+                dormiu += 0.25
 
     def background_loop(self):
         # Executa o setup local primeiro
@@ -336,6 +436,23 @@ class SyncTrayApp:
 
     def run_download_inicial(self):
         try:
+            conn = sincronizar_local_supabase.obter_conexao_local()
+            try:
+                empresa_ativa = sincronizar_local_supabase.obter_empresa_ativa(conn)
+                nuvem_ativa = sincronizar_local_supabase.empresa_permite_sincronizacao_nuvem(
+                    conn, empresa_ativa
+                )
+            finally:
+                conn.close()
+            if empresa_ativa and not nuvem_ativa:
+                self.status = "Nuvem desativada para esta empresa"
+                self.update_icon_tooltip()
+                sincronizar_local_supabase.print_log(
+                    f"Download inicial bloqueado: nuvem desativada para {empresa_ativa}.",
+                    sincronizar_local_supabase.Colors.YELLOW,
+                )
+                return
+
             self.status = "Baixando da Nuvem..."
             self.update_icon_tooltip()
             sincronizar_local_supabase.print_log("Iniciando Carga Inicial do Supabase...", sincronizar_local_supabase.Colors.BLUE)
@@ -409,6 +526,11 @@ class SyncTrayApp:
         
         self.sync_thread = threading.Thread(target=self.background_loop, daemon=True)
         self.sync_thread.start()
+
+        # Loop próprio da LAN: é o que mantém os dois PCs em dia sem nuvem.
+        if self.par_cfg:
+            self.lan_thread = threading.Thread(target=self.lan_loop, daemon=True)
+            self.lan_thread.start()
         
         self.icon.run()
 

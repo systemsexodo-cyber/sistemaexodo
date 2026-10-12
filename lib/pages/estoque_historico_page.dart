@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/data_service.dart';
 import '../models/produto.dart';
+import '../utils/numeracao_venda.dart';
 
 class EstoqueHistoricoPage extends StatelessWidget {
   final Produto produto;
@@ -21,7 +22,7 @@ class EstoqueHistoricoPage extends StatelessWidget {
           (h) =>
               h.tipo == 'saida' &&
               h.observacao != null &&
-              RegExp(r'VND-\d+').hasMatch(h.observacao!),
+              NumeracaoVenda.numeroNaObservacao(h.observacao) != null,
         )
         .fold<int>(0, (sum, h) => sum + h.quantidade);
     // ...continuação do método...
@@ -245,12 +246,8 @@ class EstoqueHistoricoPage extends StatelessWidget {
                               final h = historico[i];
                               String? numeroVenda;
                               if (h.tipo == 'saida' && h.observacao != null) {
-                                final match = RegExp(
-                                  r'VND-\d+',
-                                ).firstMatch(h.observacao!);
-                                if (match != null) {
-                                  numeroVenda = match.group(0);
-                                }
+                                numeroVenda =
+                                    NumeracaoVenda.numeroNaObservacao(h.observacao);
                               }
                               return Container(
                                 margin: const EdgeInsets.symmetric(vertical: 8),

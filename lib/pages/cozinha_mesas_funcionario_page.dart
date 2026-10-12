@@ -28,7 +28,14 @@ const uuid = Uuid();
 /// Página simplificada de cozinha/bar e mesas para funcionários
 class CozinhaMesasFuncionarioPage extends StatefulWidget {
   final int abaInicial; // 0 para Mesas, 1 para Comandas
-  const CozinhaMesasFuncionarioPage({super.key, this.abaInicial = 0});
+  /// Mesa/comanda a abrir JÁ no detalhe ao entrar. Usado pelo atalho do PDV
+  /// "Abrir por número": digita o número e cai direto na tela dela.
+  final MesaComanda? mesaInicial;
+  const CozinhaMesasFuncionarioPage({
+    super.key,
+    this.abaInicial = 0,
+    this.mesaInicial,
+  });
 
   @override
   State<CozinhaMesasFuncionarioPage> createState() => _CozinhaMesasFuncionarioPageState();
@@ -52,6 +59,12 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
   void initState() {
     super.initState();
     _tipoSelecionado = widget.abaInicial == 1 ? TipoControle.comanda : TipoControle.mesa;
+    // Atalho do PDV: entra já no detalhe de uma mesa/comanda específica.
+    final inicial = widget.mesaInicial;
+    if (inicial != null) {
+      _mesaSelecionada = inicial;
+      _tipoSelecionado = inicial.tipo;
+    }
     _carregarConfigAtrelar();
     _carregarConfigModoToque();
   }
@@ -9818,6 +9831,41 @@ class _TelaLancarItensToqueState extends State<_TelaLancarItensToque> {
   }
 
   void _adicionarProduto(Produto produto) {
+    // Fora da janela de disponibilidade temporária: continua visível, mas não
+    // pode entrar na comanda agora.
+    if (!produto.disponivelAgora) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Produto "${produto.nome}" indisponível: '
+              '${produto.indisponibilidadeTemporariaLabel ?? 'fora da janela de disponibilidade'}.',
+            ),
+            backgroundColor: Colors.orange,
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+      return;
+    }
+
+    // Reserva de estoque: com a configuração ligada, o disponível é o estoque
+    // menos o que outros pedidos em aberto já seguram.
+    final faltaEstoque = widget.dataService.validarEstoqueDisponivel(produto);
+    if (faltaEstoque != null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(faltaEstoque),
+            backgroundColor: Colors.orange,
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+      return;
+    }
     if (produto.temAdicionais) {
       widget.selecionarAdicionais(produto, (selecionados) {
         if (!mounted) return;

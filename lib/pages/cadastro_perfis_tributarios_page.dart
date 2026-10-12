@@ -11,6 +11,127 @@ class CadastroPerfisTributariosPage extends StatefulWidget {
 }
 
 class _CadastroPerfisTributariosPageState extends State<CadastroPerfisTributariosPage> {
+  bool _corrigindo = false;
+
+  /// Aplica o PERFIL PADRÃO aos produtos da empresa AGORA, sem trocar o regime.
+  ///
+  /// A migração automática só roda no momento em que o regime MUDA — quem já
+  /// trocou o regime antes desta regra continua com o catálogo antigo (produto
+  /// sem perfil e sem imposto). Esta ação roda a mesma regra no regime atual:
+  ///   - produto sem perfil passa a usar o perfil PADRÃO pelo código que tem;
+  ///   - produto sem imposto nenhum recebe o perfil padrão do regime;
+  ///   - produto com imposto cadastrado é preservado (só o padrão do regime
+  ///     antigo troca pelo equivalente do regime atual).
+  Future<void> _aplicarPerfilPadraoAosProdutos() async {
+    final ds = Provider.of<DataService>(context, listen: false);
+    final empresaId = ds.currentEmpresaId;
+    if (empresaId == null || empresaId.isEmpty) {
+      _avisar('Abra uma empresa antes de aplicar o perfil padrão.',
+          cor: Colors.red.shade800);
+      return;
+    }
+
+    final paraSimples = ds.empresaRegimeSimples;
+    final plano = ds.planejarTrocaDeRegime(
+      paraSimples: paraSimples,
+      empresaId: empresaId,
+    );
+    final padrao = plano.perfilPadraoDoRegimeNovo;
+    final codigoPadrao = paraSimples
+        ? 'CSOSN ${(padrao.csosn ?? '').trim()}'
+        : 'CST ${(padrao.icmsCst ?? '').trim()}';
+
+    final confirmou = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        title: const Text('Aplicar o perfil padrão aos produtos',
+            style: TextStyle(color: Colors.white)),
+        content: SizedBox(
+          width: 520,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Isso ajusta o imposto dos produtos DESTA empresa para o regime '
+                'atual (${paraSimples ? 'Simples Nacional' : 'Regime Normal'}). '
+                'O imposto cadastrado em cada produto é respeitado:',
+                style: const TextStyle(color: Colors.white70, fontSize: 13),
+              ),
+              const SizedBox(height: 12),
+              Text('• ${plano.convertidos} produto(s) com imposto próprio — o '
+                  'cadastro é mantido (só o perfil padrão do regime antigo '
+                  'troca pelo equivalente).',
+                  style: const TextStyle(color: Colors.white70, fontSize: 12)),
+              const SizedBox(height: 6),
+              Text('• ${plano.vinculadosAoPadrao} produto(s) SEM perfil '
+                  'cadastrado passam a usar o perfil padrão do mesmo imposto '
+                  'deles (o código não muda).',
+                  style: const TextStyle(color: Colors.white70, fontSize: 12)),
+              const SizedBox(height: 6),
+              Text('• ${plano.preenchidos} produto(s) SEM imposto nenhum '
+                  'recebem o perfil padrão ($codigoPadrao, CFOP ${padrao.cfop} '
+                  '— ${padrao.nome}).',
+                  style: const TextStyle(color: Colors.white70, fontSize: 12)),
+              const SizedBox(height: 6),
+              Text('• ${plano.semMudanca} já estão corretos.',
+                  style: const TextStyle(color: Colors.white60, fontSize: 12)),
+              if (plano.deOutraEmpresa.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Text('• ${plano.deOutraEmpresa.length} item(ns) de OUTRA '
+                    'empresa ficam intactos.',
+                    style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
+              ],
+              const SizedBox(height: 12),
+              Text('Serão gravados ${plano.paraGravar.length} produto(s).',
+                  style: const TextStyle(color: Colors.white60, fontSize: 12)),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () => Navigator.pop(context, true),
+            icon: const Icon(Icons.check, size: 18),
+            label: const Text('Aplicar'),
+            style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blueAccent,
+                foregroundColor: Colors.white),
+          ),
+        ],
+      ),
+    );
+    if (confirmou != true || !mounted) return;
+
+    setState(() => _corrigindo = true);
+    try {
+      final r = await ds.corrigirImpostosDosProdutos(empresaId: empresaId);
+      _avisar(
+        'Imposto aplicado em ${r.gravados} produto(s): ${r.vinculadosAoPadrao} '
+        'sem perfil passaram a usar o perfil padrão, ${r.preenchidos} sem '
+        'imposto nenhum receberam o perfil padrão, ${r.convertidos} com '
+        'imposto próprio foram preservados.',
+      );
+    } catch (e) {
+      _avisar('Erro ao aplicar o imposto: $e', cor: Colors.red.shade800);
+    } finally {
+      if (mounted) setState(() => _corrigindo = false);
+    }
+  }
+
+  void _avisar(String mensagem, {Color cor = Colors.green}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(mensagem),
+      backgroundColor: cor,
+      duration: const Duration(seconds: 8),
+    ));
+  }
+
   @override
   Widget build(BuildContext context) {
     final ds = Provider.of<DataService>(context);
@@ -24,6 +145,26 @@ class _CadastroPerfisTributariosPageState extends State<CadastroPerfisTributario
         title: const Text('Perfis Tributários (Impostos)', style: TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: const Color(0xFF1E1E2E),
         elevation: 0,
+        actions: [
+          if (_corrigindo)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16),
+              child: Center(
+                child: SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
+            )
+          else
+            TextButton.icon(
+              onPressed: _aplicarPerfilPadraoAosProdutos,
+              icon: const Icon(Icons.auto_fix_high, size: 18),
+              label: const Text('Aplicar aos produtos'),
+              style: TextButton.styleFrom(foregroundColor: Colors.blueAccent),
+            ),
+        ],
       ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),

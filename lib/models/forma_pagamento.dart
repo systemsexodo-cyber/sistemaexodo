@@ -114,6 +114,10 @@ class PagamentoPedido {
   final TipoPagamento tipo;
   final TipoPagamento?
   tipoOriginal; // Forma de pagamento original (antes de alteração)
+  /// Nome da forma personalizada da empresa (ex: "Caju", "VR"). Quando
+  /// preenchido, [tipo] costuma ser [TipoPagamento.outro] e este nome é o que
+  /// aparece nos relatórios e permite localizar a taxa da maquininha.
+  final String? nomeForma;
   final double valor;
   final int? parcelas; // Número total de parcelas
   final int? numeroParcela; // Número desta parcela (1, 2, 3...)
@@ -131,6 +135,7 @@ class PagamentoPedido {
     required this.id,
     required this.tipo,
     this.tipoOriginal,
+    this.nomeForma,
     required this.valor,
     this.parcelas,
     this.numeroParcela,
@@ -158,6 +163,7 @@ class PagamentoPedido {
               orElse: () => TipoPagamento.outro,
             )
           : null,
+      nomeForma: map['nomeForma']?.toString(),
       valor: (map['valor'] ?? 0).toDouble(),
       parcelas: map['parcelas'],
       numeroParcela: map['numeroParcela'],
@@ -182,6 +188,7 @@ class PagamentoPedido {
       'id': id,
       'tipo': tipo.name,
       'tipoOriginal': tipoOriginal?.name,
+      'nomeForma': nomeForma,
       'valor': valor,
       'parcelas': parcelas,
       'numeroParcela': numeroParcela,
@@ -201,6 +208,7 @@ class PagamentoPedido {
     String? id,
     TipoPagamento? tipo,
     TipoPagamento? tipoOriginal,
+    String? nomeForma,
     double? valor,
     int? parcelas,
     int? numeroParcela,
@@ -218,6 +226,7 @@ class PagamentoPedido {
       id: id ?? this.id,
       tipo: tipo ?? this.tipo,
       tipoOriginal: tipoOriginal ?? this.tipoOriginal,
+      nomeForma: nomeForma ?? this.nomeForma,
       valor: valor ?? this.valor,
       parcelas: parcelas ?? this.parcelas,
       numeroParcela: numeroParcela ?? this.numeroParcela,
@@ -235,6 +244,13 @@ class PagamentoPedido {
 
   /// Retorna a forma de pagamento original (ou a atual se não houver)
   TipoPagamento get tipoOriginalOuAtual => tipoOriginal ?? tipo;
+
+  /// Nome para exibição: a forma personalizada quando houver, senão o nome
+  /// padrão do tipo.
+  String get nomeExibicao =>
+      (nomeForma != null && nomeForma!.trim().isNotEmpty)
+          ? nomeForma!
+          : tipo.nome;
   double get valorParcela =>
       parcelas != null && parcelas! > 0 ? valor / parcelas! : valor;
 

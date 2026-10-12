@@ -1,4 +1,5 @@
 import 'package:sistema_exodo_novo/utils/date_parser.dart';
+import 'package:sistema_exodo_novo/models/forma_pagamento.dart';
 
 /// Modelo para representar uma abertura de caixa
 class AberturaCaixa {
@@ -276,6 +277,26 @@ class FechamentoCaixa {
       'updated_at': iso(updatedAt),
     };
   }
+}
+
+/// Linha do resumo de um caixa por forma de pagamento (Dinheiro, PIX,
+/// Cartão de Crédito/Débito, Ticket, etc.).
+///
+/// [rotulo] é o nome exibível: a forma personalizada da empresa (ex.: "Caju",
+/// "VR") quando cadastrada, senão o nome padrão do [tipo]. [tipo] continua
+/// guardado para o ícone/cor e para não misturar formas com o mesmo nome.
+class ResumoFormaPagamento {
+  final String rotulo;
+  final TipoPagamento tipo;
+  final double valor;
+  final int quantidade;
+
+  const ResumoFormaPagamento({
+    required this.rotulo,
+    required this.tipo,
+    required this.valor,
+    this.quantidade = 0,
+  });
 }
 
 /// Modelo para representar um caixa completo (abertura + fechamento)

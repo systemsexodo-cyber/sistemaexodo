@@ -3949,7 +3949,7 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                     ),
                     Text(
                       isAberto
-                          ? 'CAIXA ATUAL: ${aberturaCaixa.numero} (Aberto em ${DateFormat('HH:mm').format(aberturaCaixa.dataAbertura)})'
+                          ? 'CAIXA ATUAL: ${aberturaCaixa.numero} (Aberto em ${DateFormat('dd/MM/yyyy HH:mm').format(aberturaCaixa.dataAbertura)})'
                           : 'RESUMO DO PERÍODO SELECIONADO',
                       style: TextStyle(
                         color: isAberto ? Colors.greenAccent : Colors.white38,

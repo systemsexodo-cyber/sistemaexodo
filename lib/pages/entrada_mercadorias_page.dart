@@ -148,6 +148,11 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
   String? _chaveNFe;
   String? _fornecedorNome;
   String? _fornecedorCNPJ;
+
+  /// ESTOQUE DE DESTINO da entrada: para onde vai a mercadoria desta nota
+  /// (Loja, Depósito…). A pergunta é feita aqui, no lançamento, e vale para
+  /// todos os itens — é o que o modo "perguntar no lançamento" pede.
+  String? _estoqueDestinoId;
   DateTime? _dataEmissao;
   double? _valorTotal;
   String? _serie;
@@ -1327,6 +1332,8 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
               observacao: 'Entrada por ${_modo == 'xml' ? 'XML' : 'Manual'}',
               fornecedorId: _fornecedorCNPJ,
               fornecedorNome: fornecedorFinal,
+              estoqueId: _estoqueDestinoId,
+              custoUnitario: item.precoCusto,
             );
           } else {
             await service.registrarEntradaEstoque(
@@ -1335,6 +1342,7 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
               observacao: 'Entrada por ${_modo == 'xml' ? 'XML' : 'Manual'}',
               fornecedorId: _fornecedorCNPJ,
               fornecedorNome: fornecedorFinal,
+              estoqueId: _estoqueDestinoId,
             );
           }
 
@@ -1427,6 +1435,8 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
               observacao: 'Entrada por ${_modo == 'xml' ? 'XML' : 'Manual'} - Produto novo',
               fornecedorId: _fornecedorCNPJ,
               fornecedorNome: fornecedorFinal,
+              estoqueId: _estoqueDestinoId,
+              custoUnitario: item.precoCusto,
             );
           } else {
             await service.registrarEntradaEstoque(
@@ -1435,6 +1445,7 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
               observacao: 'Entrada por ${_modo == 'xml' ? 'XML' : 'Manual'} - Produto novo',
               fornecedorId: _fornecedorCNPJ,
               fornecedorNome: fornecedorFinal,
+              estoqueId: _estoqueDestinoId,
             );
           }
 
@@ -1617,6 +1628,65 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
     });
   }
 
+  /// Seletor do ESTOQUE DE DESTINO da entrada: para onde vai a mercadoria desta
+  /// nota (Loja, Depósito…). Fica no cabeçalho porque vale para todos os itens
+  /// do lançamento — é a pergunta do lançamento.
+  Widget _buildSeletorEstoqueDestino() {
+    final ds = Provider.of<DataService>(context, listen: false);
+    final estoques = ds.estoques;
+    _estoqueDestinoId ??= ds.estoquePrincipalAtual?.id;
+    if (estoques.isEmpty) return const SizedBox.shrink();
+
+    final valor = estoques.any((e) => e.id == _estoqueDestinoId)
+        ? _estoqueDestinoId
+        : ds.estoquePrincipalAtual?.id;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.tealAccent.withOpacity(0.06),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.tealAccent.withOpacity(0.25)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.warehouse_outlined, color: Colors.tealAccent, size: 18),
+          const SizedBox(width: 10),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Estoque de destino',
+                    style: TextStyle(
+                        color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+                Text('Para onde entra a mercadoria desta nota — vale para todos os itens',
+                    style: TextStyle(color: Colors.white38, fontSize: 10.5)),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          SizedBox(
+            width: 220,
+            child: DropdownButtonFormField<String>(
+              value: valor,
+              dropdownColor: const Color(0xFF1E1E2E),
+              style: const TextStyle(color: Colors.white, fontSize: 12.5),
+              decoration: const InputDecoration(isDense: true),
+              items: [
+                for (final e in estoques)
+                  DropdownMenuItem(
+                    value: e.id,
+                    child: Text(e.principal ? '${e.nome} (principal)' : e.nome),
+                  ),
+              ],
+              onChanged: (v) => setState(() => _estoqueDestinoId = v),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     // Atualizar índice do TabController se necessário
@@ -1792,6 +1862,8 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
                     ),
                 ],
               ),
+              const SizedBox(height: 12),
+              _buildSeletorEstoqueDestino(),
               const SizedBox(height: 12),
               Row(
                 children: [

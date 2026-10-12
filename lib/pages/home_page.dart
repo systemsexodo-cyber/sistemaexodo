@@ -8,6 +8,7 @@ import 'package:sistema_exodo_novo/theme.dart';
 import 'package:sistema_exodo_novo/clientes_page.dart';
 import 'package:sistema_exodo_novo/services/auth_service.dart';
 import 'package:sistema_exodo_novo/pages/login_page.dart';
+import 'package:sistema_exodo_novo/pages/configuracao_lan_page.dart';
 import 'package:sistema_exodo_novo/widgets/permission_widget.dart';
 import 'package:sistema_exodo_novo/models/permissao.dart';
 import 'package:sistema_exodo_novo/widgets/tela_access_widget.dart';
@@ -16,6 +17,7 @@ import 'produtos_page.dart';
 import 'servicos_page.dart';
 import 'cadastro_perfis_tributarios_page.dart';
 import 'cadastro_departamentos_page.dart';
+import 'estoques_page.dart';
 
 import 'pedidos_page.dart';
 import 'venda_direta_page.dart';
@@ -26,10 +28,12 @@ import 'agenda_contas_page.dart';
 import 'dashboard_page.dart';
 import 'gerenciar_permissoes_page.dart';
 import 'cozinha_bar_page.dart';
+import 'monitor_producao_page.dart';
 import 'cozinha_mesas_funcionario_page.dart';
 import 'gerenciar_links_vendedores_page.dart';
 import 'vendedor_dashboard_page.dart';
 import 'package:sistema_exodo_novo/services/app_update_service.dart';
+import 'package:sistema_exodo_novo/widgets/novidades_versao_dialog.dart';
 import 'funcionarios_page.dart';
 import 'personalizar_loja_page.dart';
 import 'gerenciar_imagens_page.dart';
@@ -51,6 +55,8 @@ import '../services/data_service.dart';
 import '../services/theme_service.dart';
 import '../widgets/sync_status_widget.dart';
 import '../widgets/exodo_loading.dart';
+import '../widgets/caixa_identidade_dialog.dart';
+import '../utils/identidade_caixa.dart';
 import 'adicionar_empresa_page.dart';
 import '../services/fiscal_automation_service.dart';
 import '../services/bridge_manager_service.dart';
@@ -119,6 +125,15 @@ class _HomePageState extends State<HomePage> {
         'tela': TelaSistema.produtos,
         'permissao': TipoPermissao.produtosVisualizar,
         'page': (BuildContext context) => ProdutosPage(),
+      },
+      {
+        'id': 'estoques',
+        'title': 'Estoques',
+        'subtitle': 'Loja, Depósito e transferências',
+        'icon': Icons.warehouse_outlined,
+        'color': Colors.tealAccent,
+        'tela': TelaSistema.produtos, // reutiliza permissão de produtos por simplicidade
+        'page': (BuildContext context) => const EstoquesPage(),
       },
       {
         'id': 'impostos',
@@ -226,6 +241,16 @@ class _HomePageState extends State<HomePage> {
         'tela': TelaSistema.cozinhaBar,
         'permissao': TipoPermissao.cozinhaVisualizar,
         'page': (BuildContext context) => const CozinhaBarPage(),
+      },
+      {
+        'id': 'monitor_producao',
+        'title': 'Monitor de Produção',
+        'subtitle': 'Vias que não saíram',
+        'icon': Icons.print_outlined,
+        'color': const Color(0xFFB71C1C),
+        'tela': TelaSistema.cozinhaBar,
+        'permissao': TipoPermissao.cozinhaVisualizar,
+        'page': (BuildContext context) => const MonitorProducaoPage(),
       },
       {
         'id': 'mesas',
@@ -450,6 +475,83 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  /// Chip do NOME DESTE CAIXA no topo da Home.
+  ///
+  /// Três estados, numa cor cada:
+  ///   * verde    — nome definido e nenhuma outra máquina o usa;
+  ///   * âmbar    — sem nome: as vendas caem na sequência VND- compartilhada;
+  ///   * vermelho — OUTRA máquina publicou o mesmo nome (pode repetir número).
+  /// Em todos eles o toque abre a identificação do caixa.
+  Widget _buildChipDoCaixa(DataService dataService) {
+    final nome = dataService.nomeDoCaixa;
+    final outras = dataService.caixasComMesmoNome;
+
+    final Color cor;
+    final IconData icone;
+    final String rotulo;
+    final String dica;
+
+    if (nome.isEmpty) {
+      cor = Colors.amber;
+      icone = Icons.priority_high;
+      rotulo = 'SEM CAIXA';
+      dica = 'Este computador ainda não tem nome de caixa: sem nome, dois PCs '
+          'podem emitir o mesmo número de venda. Clique para nomear.';
+    } else if (outras.isNotEmpty) {
+      cor = Colors.redAccent;
+      icone = Icons.error_outline;
+      rotulo = 'CAIXA $nome (repetido)';
+      dica = 'O nome "$nome" também está em uso em '
+          '${IdentidadeCaixa.listarMaquinas(outras)}. Dois caixas com o mesmo '
+          'nome podem gerar número de venda repetido. Clique para trocar o nome '
+          'deste computador.';
+    } else {
+      cor = Colors.greenAccent;
+      icone = Icons.point_of_sale;
+      rotulo = 'CAIXA $nome';
+      dica = 'Este computador é o caixa "$nome": as vendas saem numeradas como '
+          '$nome-0001. Clique para alterar.';
+    }
+
+    return Flexible(
+      child: Tooltip(
+        message: dica,
+        child: InkWell(
+          onTap: () => mostrarDialogoIdentidadeDoCaixa(context, dataService),
+          borderRadius: BorderRadius.circular(8),
+          child: Container(
+            margin: const EdgeInsets.only(left: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(
+              color: cor.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: cor.withValues(alpha: 0.35)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icone, size: 12, color: cor),
+                const SizedBox(width: 4),
+                Flexible(
+                  child: Text(
+                    rotulo,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: cor,
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 0.4,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final dataService = Provider.of<DataService>(context);
@@ -474,14 +576,12 @@ class _HomePageState extends State<HomePage> {
       }
     }
 
-    // Carga inicial da NUVEM: segura o usuário na tela de carregando até os
-    // dados chegarem. Sem isso a Home abre com as listas vazias enquanto a
-    // nuvem ainda está baixando (parecia que o sistema não tinha carregado).
-    // A tela sai sozinha quando a carga termina (ou no limite de segurança) e o
-    // botão "Continuar sem esperar" libera quando a rede está lenta.
+    // Carga inicial: segura o usuário só enquanto o BANCO LOCAL está sendo
+    // lido. A nuvem não segura mais esta tela (espelho em segundo plano).
     if (dataService.sincronizandoInicial) {
       return ExodoLoading(
         mensagem: dataService.mensagemLoading,
+        progresso: dataService.progressoLoading,
         segundosParaMostrarPular: 5,
         onPular: dataService.pularEsperaSincronizacaoInicial,
       );
@@ -500,71 +600,90 @@ class _HomePageState extends State<HomePage> {
             children: [
               const ExodoLogoCompact(fontSize: 28),
               const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.08),
+              // O chip da versão é um BOTÃO: abre o que mudou nesta versão.
+              Tooltip(
+                message: 'Clique para ver as atualizações desta versão',
+                child: InkWell(
+                  onTap: _mostrarNovidadesDaVersao,
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.white.withOpacity(0.12)),
-                ),
-                child: Text(
-                  'V${AppUpdateService.currentAppVersion}',
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.5),
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 0.5,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.08),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.white.withOpacity(0.12)),
+                    ),
+                    child: Text(
+                      'V${AppUpdateService.currentAppVersion}',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.5),
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
                   ),
                 ),
               ),
               if (empresaAtual != null) ...[
                 const SizedBox(width: 8),
-                Tooltip(
-                  message: 'Clique para copiar o ID completo da empresa',
-                  child: GestureDetector(
-                    onTap: () async {
-                      await Clipboard.setData(ClipboardData(text: empresaAtual.id));
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('✅ ID copiado: ${empresaAtual.id}'),
-                            duration: const Duration(seconds: 2),
-                          ),
-                        );
-                      }
-                    },
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 280),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Colors.orangeAccent.withOpacity(0.12),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.orangeAccent.withOpacity(0.25)),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Flexible(
-                              child: Text(
-                                '${empresaAtual.nomeExibicao} (…${empresaAtual.idFinal})',
-                                style: TextStyle(
-                                  color: Colors.orangeAccent.withOpacity(0.9),
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                                overflow: TextOverflow.ellipsis,
-                              ),
+                // FLEXIBLE: sem isto o chip da empresa (que tem largura própria,
+                // até 280 px) não encolhe, e em janela estreita o Row do título
+                // estoura — era o listrado amarelo/preto do topo, reportado no
+                // log como "overflowed by 7.8 / 18 / 94 pixels on the right".
+                Flexible(
+                  child: Tooltip(
+                    message: 'Clique para copiar o ID completo da empresa',
+                    child: GestureDetector(
+                      onTap: () async {
+                        await Clipboard.setData(ClipboardData(text: empresaAtual.id));
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('✅ ID copiado: ${empresaAtual.id}'),
+                              duration: const Duration(seconds: 2),
                             ),
-                            const SizedBox(width: 4),
-                            Icon(Icons.copy_rounded, size: 12, color: Colors.orangeAccent.withOpacity(0.8)),
-                          ],
+                          );
+                        }
+                      },
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 280),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.orangeAccent.withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: Colors.orangeAccent.withOpacity(0.25)),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  '${empresaAtual.nomeExibicao} (…${empresaAtual.idFinal})',
+                                  style: TextStyle(
+                                    color: Colors.orangeAccent.withOpacity(0.9),
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              Icon(Icons.copy_rounded, size: 12, color: Colors.orangeAccent.withOpacity(0.8)),
+                            ],
+                          ),
                         ),
                       ),
                     ),
                   ),
                 ),
               ],
+              // Nome DESTE caixa, fixo aqui no topo: é o que o operador olha
+              // para saber em qual máquina está (e o aviso quando o nome está
+              // repetido em outra). Fica no topo, e não em cada tela, porque é
+              // configuração por computador.
+              _buildChipDoCaixa(dataService),
             ],
           ), // Restaurado 'ê' conforme pedido
           centerTitle: true,
@@ -711,6 +830,22 @@ class _HomePageState extends State<HomePage> {
                                 empresaAbertaId: empresa?.id,
                               );
                             },
+                          ),
+                        );
+                      },
+                    ),
+                    _buildCapsuleActionButton(
+                      icon: Icons.lan_outlined,
+                      label: 'Rede LAN',
+                      color: Colors.tealAccent,
+                      tooltip:
+                          'Ligar os dois PCs da loja direto pela rede local '
+                          '(funciona até sem internet). Configuração toda aqui.',
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const ConfiguracaoLanPage(),
                           ),
                         );
                       },
@@ -960,6 +1095,26 @@ class _HomePageState extends State<HomePage> {
                 tooltip: 'Hard Refresh (Limpar Cache)',
                 onPressed: () => _fazerHardRefresh(context),
               ),
+            // Identificação DESTE caixa (numeração das vendas: CX1-0001).
+            // Fica no topo do app porque é config por computador, não por empresa.
+            Builder(
+              builder: (context) {
+                final dataService = Provider.of<DataService>(context);
+                final nomeCaixa = dataService.nomeDoCaixa;
+                return IconButton(
+                  icon: Badge(
+                    isLabelVisible: nomeCaixa.isEmpty,
+                    backgroundColor: Colors.amber,
+                    label: const Icon(Icons.priority_high, size: 12),
+                    child: const Icon(Icons.point_of_sale, color: Colors.greenAccent),
+                  ),
+                  tooltip: nomeCaixa.isEmpty
+                      ? 'Identificação deste caixa (sem nome: risco de número repetido entre PCs)'
+                      : 'Identificação deste caixa (vendas numeradas como $nomeCaixa-0001)',
+                  onPressed: () => mostrarDialogoIdentidadeDoCaixa(context, dataService),
+                );
+              },
+            ),
             // Botão Configuração da Empresa (Atalho Rápido)
             Builder(
               builder: (context) {
@@ -1163,7 +1318,9 @@ class _HomePageState extends State<HomePage> {
       case 'contas-pagar': page = const ContasPagarPage(); urlPath = '/contas-pagar'; break;
       case 'agenda-contas': page = const AgendaContasPage(); urlPath = '/agenda-contas'; break;
       case 'cozinha-bar': page = const CozinhaBarPage(); urlPath = '/cozinha-bar'; break;
+      case 'monitor-producao': page = const MonitorProducaoPage(); urlPath = '/monitor-producao'; break;
       case 'departamentos': page = const CadastroDepartamentosPage(); urlPath = '/departamentos'; break;
+      case 'estoques': page = const EstoquesPage(); urlPath = '/estoques'; break;
       case 'mesas': page = CozinhaMesasFuncionarioPage(); urlPath = '/mesas'; break;
       case 'links-vendedores': page = const GerenciarLinksVendedoresPage(); urlPath = '/links-vendedores'; break;
       case 'vendedor-dashboard': page = const VendedorDashboardPage(); urlPath = '/vendedor-dashboard'; break;
@@ -1329,8 +1486,13 @@ class _HomePageState extends State<HomePage> {
         }
       }
 
-      // Alerta se o ícone da nuvenzinha der erro (transição de null/diferente para um novo erro)
-      if (erroSync != null && erroSync != _ultimoErroSync) {
+      // Alerta se o ícone da nuvenzinha der erro (transição de null/diferente
+      // para um novo erro). Quando a nuvem está PAUSADA (offline/cota), o
+      // estado offline já explica tudo — não abre o popup VERMELHO técnico por
+      // cima do aviso calmo (evita assustar o usuário com stack/payload).
+      if (isOffline) {
+        _ultimoErroSync = erroSync;
+      } else if (erroSync != null && erroSync != _ultimoErroSync) {
         _ultimoErroSync = erroSync;
         _mostrarAlertaErroSync(erroSync);
       } else if (erroSync == null) {
@@ -1339,11 +1501,56 @@ class _HomePageState extends State<HomePage> {
     } catch (_) {}
   }
 
+  /// Abre as novidades da versão (clique no chip `V1.0.xx` do topo).
+  void _mostrarNovidadesDaVersao() {
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final empresa = dataService.empresaAtual ?? authService.empresaAtual;
+    NovidadesVersaoDialog.mostrar(
+      context,
+      empresaId: empresa?.id,
+      configuracoesDaEmpresa: empresa?.configuracoes,
+    );
+  }
+
+  /// True enquanto um alerta (offline / erro de sync) está na tela.
+  bool _alertaAberto = false;
+
+  /// Abre um alerta de forma segura.
+  ///
+  /// O `NotificationListener` pode disparar várias vezes em sequência (ex.:
+  /// durante o salvamento automático) e antes disso o `showDialog` era chamado
+  /// direto de dentro do listener: se o usuário fechasse o diálogo de ajuste de
+  /// estoque no mesmo instante, dois `Navigator.pop` disputavam a mesma rota e
+  /// o Flutter derrubava a tela com
+  /// `'_dependents.isEmpty': is not true`. Agora o alerta só abre no próximo
+  /// frame e nunca empilha sobre outro alerta já aberto.
+  void _mostrarAlertaSeguro(
+    WidgetBuilder builder, {
+    bool barrierDismissible = true,
+  }) {
+    if (!mounted || _alertaAberto) return;
+    _alertaAberto = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) {
+        _alertaAberto = false;
+        return;
+      }
+      try {
+        await showDialog(
+          context: context,
+          barrierDismissible: barrierDismissible,
+          builder: builder,
+        );
+      } finally {
+        _alertaAberto = false;
+      }
+    });
+  }
+
   void _mostrarAlertaErroSync(String erro) {
     if (!mounted) return;
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
+    _mostrarAlertaSeguro((ctx) => AlertDialog(
         backgroundColor: const Color(0xFF1E1E2E),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
@@ -1421,29 +1628,29 @@ class _HomePageState extends State<HomePage> {
 
   void _mostrarAlertaOffline() {
     if (!mounted) return;
-    showDialog(
-      context: context,
+    _mostrarAlertaSeguro(
       barrierDismissible: false, // Força o clique no Ok
-      builder: (ctx) => AlertDialog(
+      (ctx) => AlertDialog(
         backgroundColor: const Color(0xFF1E1E2E),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
-          side: const BorderSide(color: Colors.redAccent, width: 1),
+          side: const BorderSide(color: Colors.orangeAccent, width: 1),
         ),
         title: const Row(
           children: [
-            Icon(Icons.cloud_off, color: Colors.redAccent, size: 28),
+            Icon(Icons.cloud_done, color: Colors.orangeAccent, size: 28),
             SizedBox(width: 12),
             Text(
-              'Você está sem internet',
+              'Nuvem pausada',
               style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
             ),
           ],
         ),
         content: const Text(
-          'Os seus dados não serão salvos na nuvem temporariamente.\n\n'
-          'Fique tranquilo! Você pode continuar trabalhando offline normalmente. '
-          'Assim que a conexão for restabelecida, os seus dados locais serão sincronizados com a nuvem de forma segura.',
+          'A sincronização com a nuvem está pausada no momento, mas está tudo certo.\n\n'
+          'Pode continuar trabalhando normalmente: tudo o que você fizer é salvo neste '
+          'computador na hora. Assim que a nuvem voltar, o sistema sincroniza tudo sozinho, '
+          'sem você precisar fazer nada.',
           style: TextStyle(color: Colors.white70, height: 1.4, fontSize: 15),
         ),
         actions: [
@@ -1451,7 +1658,7 @@ class _HomePageState extends State<HomePage> {
             onPressed: () => Navigator.pop(ctx),
             style: TextButton.styleFrom(
               foregroundColor: Colors.white,
-              backgroundColor: Colors.redAccent.withOpacity(0.2),
+              backgroundColor: Colors.orangeAccent.withOpacity(0.2),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(8),
               ),
@@ -1675,11 +1882,11 @@ class _HomePageState extends State<HomePage> {
       SnackBar(
         content: const Row(
           children: [
-            Icon(Icons.wifi, color: Colors.white),
+            Icon(Icons.cloud_done, color: Colors.white),
             SizedBox(width: 12),
             Expanded(
               child: Text(
-                'Sua internet voltou! Sincronizando dados locais com a nuvem...',
+                'Nuvem voltou! Sincronizando automaticamente o que ficou pendente...',
                 style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
               ),
             ),
@@ -1932,6 +2139,7 @@ class _HomePageState extends State<HomePage> {
                   else if (page is ContasPagarPage) urlPath = '/contas-pagar';
                   else if (page is AgendaContasPage) urlPath = '/agenda-contas';
                   else if (page is CozinhaBarPage) urlPath = '/cozinha-bar';
+                  else if (page is MonitorProducaoPage) urlPath = '/monitor-producao';
                   else if (page is CozinhaMesasFuncionarioPage) urlPath = '/mesas';
                   else if (page is GerenciarLinksVendedoresPage) urlPath = '/links-vendedores';
                   else if (page is VendedorDashboardPage) urlPath = '/vendedor-dashboard';

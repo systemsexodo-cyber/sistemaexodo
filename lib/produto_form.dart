@@ -9,6 +9,7 @@ import 'package:sistema_exodo_novo/models/produto.dart';
 import 'package:sistema_exodo_novo/models/forma_venda.dart';
 import 'package:sistema_exodo_novo/models/regra_promocao.dart';
 import 'package:sistema_exodo_novo/models/perfil_tributario.dart';
+import 'package:sistema_exodo_novo/models/estoque.dart';
 import 'package:sistema_exodo_novo/models/estoque_historico.dart';
 import 'package:sistema_exodo_novo/models/lote_produto.dart';
 import 'package:sistema_exodo_novo/models/produto_historico.dart';
@@ -59,6 +60,22 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
   List<RegraQuantidade> _regrasQuantidade = [];
 
   final _fornecedorNomeController = TextEditingController();
+
+  // Controles do diálogo "Ajuste de Estoque".
+  //
+  // São campos do State (reaproveitados a cada abertura) e não objetos criados
+  // dentro do método: o `showDialog` devolve o controle assim que a rota leva
+  // `pop`, ou seja, ANTES de a animação de saída terminar — o diálogo continua
+  // montado nesse intervalo. Descartar os controllers ali deixava os TRÊS
+  // campos apontando para um `TextEditingController` já descartado; o próximo
+  // rebuild estourava em cada um, o Flutter trocava cada campo por um
+  // ErrorWidget de 100000 px, a coluna do diálogo estourava ~300000 px
+  // (erro_flutter.log: "overflowed by 299391 pixels") e o app caía na tela
+  // vermelha "'_dependents.isEmpty': is not true".
+  final _ajusteQtdController = TextEditingController();
+  final _ajusteFornecedorController = TextEditingController();
+  final _ajusteObsController = TextEditingController();
+  final _ajusteFornecedorFocus = FocusNode();
   final _estoqueMinimoController = TextEditingController();
   final _observacaoPadraoController = TextEditingController();
 
@@ -117,6 +134,15 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
   late double? _precoCusto;
   late double _estoque;
   Map<String, double> _estoquePorFornecedor = {};
+  /// ESTOQUE PADRÃO do produto: onde ele mora (é para lá que as entradas vão e
+  /// é lá que a venda procura o saldo antes de buscar em outro estoque).
+  String? _estoquePadraoId;
+
+  /// Saldo do produto em cada estoque, como está AGORA no app. Fica aqui no
+  /// formulário (e não só no `widget.item`, que é uma foto do momento em que a
+  /// tela abriu) para que uma entrada/saída feita no diálogo apareça na hora e
+  /// não seja desfeita ao salvar o produto.
+  Map<String, double> _estoquePorEstoque = {};
   String? _fornecedorId;
   bool _codigoEditavel = false; // Controlar se código é editável
 
@@ -125,6 +151,12 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
   double? _precoPromocional;
   DateTime? _promocaoInicio;
   DateTime? _promocaoFim;
+
+  // Disponibilidade temporária: janela (dia/hora) em que o produto pode ser
+  // vendido. Fora dela o produto continua visível, mas bloqueado.
+  bool _temDisponibilidade = false;
+  DateTime? _disponivelDe;
+  DateTime? _disponivelAte;
   // Regras avançadas de promoção (empilháveis): por data, dia da semana,
   // quantidade mínima ou valor mínimo no carrinho.
   List<RegraPromocao> _promocoes = [];
@@ -184,6 +216,12 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
   List<AdicionalProduto> _adicionais = [];
   bool _temAdicionais = false;
   final _uuid = const Uuid();
+  late final String _produtoIdParaLotes;
+  final List<LoteProduto> _lotesRascunho = [];
+
+  bool get _produtoAindaNaoSalvo =>
+      widget.item == null ||
+      (widget.item is Produto && (widget.item.id ?? '').toString().isEmpty);
   
   // Campos para Composição
   bool _ehComposto = false;
@@ -203,6 +241,8 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
   @override
   void initState() {
     super.initState();
+    final idExistente = widget.item?.id?.toString() ?? '';
+    _produtoIdParaLotes = idExistente.isNotEmpty ? idExistente : _uuid.v4();
     _estoqueDataInicial = DateTime.now().subtract(const Duration(days: 30));
     _estoqueDataFinal = DateTime.now();
     _tabController = TabController(length: 7, vsync: this);
@@ -269,6 +309,9 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
       _estoqueController.text = _estoque.toString();
       _fornecedorId = widget.item?.fornecedorId;
       _estoquePorFornecedor = Map<String, double>.from(widget.item?.estoquePorFornecedor ?? {});
+      _estoquePadraoId = widget.item?.estoquePadraoId;
+      _estoquePorEstoque =
+          Map<String, double>.from(widget.item?.estoquePorEstoque ?? {});
       _fornecedorNomeController.text = widget.item?.fornecedorNome ?? '';
       _estoqueMinimoController.text = (widget.item?.estoqueMinimo ?? 0).toString();
 
@@ -276,6 +319,9 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
       _precoPromocional = widget.item?.precoPromocional;
       _promocaoInicio = widget.item?.promocaoInicio;
       _promocaoFim = widget.item?.promocaoFim;
+      _disponivelDe = widget.item?.disponivelDe;
+      _disponivelAte = widget.item?.disponivelAte;
+      _temDisponibilidade = _disponivelDe != null || _disponivelAte != null;
       _temPromocao = _precoPromocional != null;
       if (_precoPromocional != null) {
         _precoPromocionalController.text = _precoPromocional.toString();
@@ -363,6 +409,9 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
       _precoPromocional = null;
       _promocaoInicio = null;
       _promocaoFim = null;
+      _temDisponibilidade = false;
+      _disponivelDe = null;
+      _disponivelAte = null;
       
       // Inicializar campos de impostos
       // PADRÃO CORRETO: Tributado (CFOP 5102, CSOSN 102 no Simples / CST 00 no
@@ -533,6 +582,10 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
     _estoqueController.dispose();
     _precoPromocionalController.dispose();
     _fornecedorNomeController.dispose();
+    _ajusteQtdController.dispose();
+    _ajusteFornecedorController.dispose();
+    _ajusteObsController.dispose();
+    _ajusteFornecedorFocus.dispose();
     _ncmController.dispose();
     _icmsAliquotaController.dispose();
     _icmsCstController.dispose();
@@ -902,6 +955,23 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
       return;
     }
 
+    // Janela de disponibilidade temporária: o fim não pode ser antes do início
+    // (senão o produto nasceria sempre indisponível).
+    if (_temDisponibilidade &&
+        _disponivelDe != null &&
+        _disponivelAte != null &&
+        !_disponivelAte!.isAfter(_disponivelDe!)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('⚠️ O "Disponível até" precisa ser depois do "Disponível de".'),
+          backgroundColor: Colors.orange,
+          behavior: SnackBarBehavior.floating,
+          duration: Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
+
     // Processar tags (separar por vírgula e limpar espaços)
     final tagsProcessadas = _tagsController.text
         .split(',')
@@ -962,9 +1032,7 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
     }
 
     final produto = Produto(
-      id: (widget.item?.id != null && widget.item!.id.isNotEmpty)
-          ? widget.item!.id
-          : _uuid.v4(),
+      id: _produtoIdParaLotes,
       codigo: _codigo,
       codigoBarras: _codigoBarras.isNotEmpty
           ? _codigoBarras
@@ -981,6 +1049,15 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
       preco: _preco,
       precoCusto: _precoCusto,
       estoque: _estoque,
+      // ESTOQUES: produto que já existe PRESERVA os saldos por estoque (eles são
+      // mexidos pelas entradas, transferências e vendas). Produto novo começa
+      // com todo o estoque no estoque padrão escolhido aqui.
+      estoquePadraoId: _estoquePadraoId,
+      estoquePorEstoque: _estoquePorEstoque.isNotEmpty
+          ? _estoquePorEstoque
+          : (_estoque != 0
+              ? {_estoquePadraoId ?? 'estoque_loja': _estoque}
+              : <String, double>{}),
       estoqueMinimo: double.tryParse(_estoqueMinimoController.text.replaceAll(',', '.')) ?? 0.0,
       createdAt: widget.item?.createdAt ?? DateTime.now(),
       updatedAt: DateTime.now(),
@@ -989,6 +1066,8 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
           : null,
       promocaoInicio: _temPromocao ? _promocaoInicio : null,
       promocaoFim: _temPromocao ? _promocaoFim : null,
+      disponivelDe: _temDisponibilidade ? _disponivelDe : null,
+      disponivelAte: _temDisponibilidade ? _disponivelAte : null,
       promocoes: _promocoes.isNotEmpty ? _promocoes : null,
       perfilTributarioId: _perfilTributarioId,
       ncm: _ncm?.isNotEmpty == true ? _ncm : null,
@@ -1109,8 +1188,16 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
     }
   }
 
-  void _confirmarSalvamento(Produto produto) {
-    widget.onSave(produto);
+  Future<void> _confirmarSalvamento(Produto produto) async {
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final lotesNovos = List<LoteProduto>.of(_lotesRascunho);
+    await widget.onSave(produto);
+
+    for (final lote in lotesNovos) {
+      await dataService.salvarLoteProduto(lote);
+    }
+
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('✓ Produto cadastrado com sucesso!'),
@@ -1131,13 +1218,24 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
 
     final dataService = Provider.of<DataService>(context, listen: false);
     final authService = Provider.of<AuthService>(context, listen: false);
-    final qtdController = TextEditingController();
-    final fornecedorController = TextEditingController(text: _fornecedorNomeController.text);
-    final obsController = TextEditingController();
+    // Controles do diálogo: são do State (ver `_ajuste*`) e só são LIMPOS aqui.
+    final qtdController = _ajusteQtdController..clear();
+    final fornecedorController = _ajusteFornecedorController
+      ..text = _fornecedorNomeController.text;
+    final obsController = _ajusteObsController..clear();
     // RawAutocomplete exige focusNode + textEditingController SEMPRE juntos
     // (assert: (focusNode == null) == (textEditingController == null))
-    final fornecedorFocusNode = FocusNode();
+    final fornecedorFocusNode = _ajusteFornecedorFocus..unfocus();
     String tipo = 'entrada';
+    // O diálogo pode ser fechado (CANCELAR, clique fora, ESC) ENQUANTO o
+    // ajuste ainda está sendo gravado — e aí não pode sair um segundo `pop`.
+    var dialogoAberto = true;
+    // Estoque da movimentação: na ENTRADA ele é o DESTINO (onde a mercadoria
+    // entra) e na SAÍDA é a ORIGEM (de onde ela sai). Começa no estoque PADRÃO
+    // do produto — é onde ele mora — e a tela deixa trocar.
+    String? estoqueSelecionado = dataService.estoques.isEmpty
+        ? null
+        : dataService.estoquePadraoDe(widget.item!);
 
     showDialog(
       context: context,
@@ -1145,6 +1243,10 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
         bool isLoading = false;
         return StatefulBuilder(
           builder: (context, setDialogState) => AlertDialog(
+            // Rolável de propósito: se algo aqui dentro falhar ao construir, o
+            // Flutter troca o campo por um ErrorWidget de 100000 px — sem rolagem
+            // isso estoura a coluna do diálogo em ~300000 px e derruba o app.
+            scrollable: true,
             backgroundColor: const Color(0xFF1E1E2E),
             title: const Text('Ajuste de Estoque', style: TextStyle(color: Colors.white)),
             content: Column(
@@ -1173,6 +1275,47 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
                     ),
                   ],
                 ),
+                if (dataService.estoques.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    value: estoqueSelecionado,
+                    isExpanded: true,
+                    dropdownColor: const Color(0xFF1E1E2E),
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    decoration: InputDecoration(
+                      labelText: tipo == 'entrada'
+                          ? 'Estoque de destino (onde entra)'
+                          : 'Estoque de saída (de onde sai)',
+                      labelStyle: const TextStyle(color: Colors.white54, fontSize: 12),
+                      helperText: estoqueSelecionado == null
+                          ? null
+                          : 'Em ${nomeDoEstoque(dataService.estoques, estoqueSelecionado)}: '
+                              '${_saldoDoEstoqueSelecionado(dataService, estoqueSelecionado).toStringAsFixed(2)} disponível',
+                      helperStyle: const TextStyle(color: Colors.white38, fontSize: 10.5),
+                    ),
+                    items: [
+                      for (final e in dataService.estoques)
+                        DropdownMenuItem(
+                          value: e.id,
+                          child: Text(e.principal ? '${e.nome} (principal)' : e.nome),
+                        ),
+                      // O estoque escolhido pode ter sido apagado/trocado pela
+                      // sincronização com o diálogo aberto. Mostrar ele mesmo
+                      // evita o estouro "There should be exactly one item with
+                      // [DropdownButton]'s value" — erro de BUILD, que troca o
+                      // campo inteiro por um ErrorWidget e derrubava o app.
+                      if (estoqueSelecionado != null &&
+                          !dataService.estoques.any((e) => e.id == estoqueSelecionado))
+                        DropdownMenuItem(
+                          value: estoqueSelecionado,
+                          child: Text(
+                            '${nomeDoEstoque(dataService.estoques, estoqueSelecionado)} (removido)',
+                          ),
+                        ),
+                    ],
+                    onChanged: (v) => setDialogState(() => estoqueSelecionado = v),
+                  ),
+                ],
                 const SizedBox(height: 16),
                 TextField(
                   controller: qtdController,
@@ -1263,7 +1406,10 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
             ),
             actions: [
               TextButton(
-                onPressed: () => Navigator.pop(context),
+                onPressed: () {
+                  dialogoAberto = false;
+                  Navigator.pop(context);
+                },
                 child: const Text('CANCELAR', style: TextStyle(color: Colors.grey)),
               ),
               ElevatedButton(
@@ -1280,46 +1426,79 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
                   setDialogState(() => isLoading = true);
 
                   try {
-                    if (tipo == 'entrada') {
-                      await dataService.registrarEntradaEstoque(
-                        produtoId: widget.item.id,
-                        quantidade: qtd,
-                        fornecedorNome: fornecedorController.text.isEmpty ? 'Geral' : fornecedorController.text,
-                        observacao: obsController.text,
-                        usuario: authService.usuarioAtual?.nome,
-                      );
-                    } else {
-                      await dataService.registrarSaidaEstoque(
-                        produtoId: widget.item.id,
-                        quantidade: qtd,
-                        fornecedorNome: fornecedorController.text.isEmpty ? 'Geral' : fornecedorController.text,
-                        motivo: 'ajuste',
-                        observacao: obsController.text,
-                        usuario: authService.usuarioAtual?.nome,
-                      );
-                    }
-                    
-                    // Fechar o diálogo IMEDIATAMENTE após o processamento local (DataService)
-                    if (context.mounted) Navigator.pop(context);
+                    // Ajuste pontual com registro em lote: dá para DESFAZER no aviso.
+                    final lote = await dataService.ajustarEstoquePontual(
+                      produtoId: widget.item.id,
+                      quantidade: qtd,
+                      entrada: tipo == 'entrada',
+                      fornecedorNome: fornecedorController.text.isEmpty ? 'Geral' : fornecedorController.text,
+                      observacao: obsController.text,
+                      usuario: authService.usuarioAtual?.nome,
+                      estoqueId: estoqueSelecionado,
+                    );
 
-                    setState(() {
-                      final prod = dataService.produtos.firstWhere((p) => p.id == widget.item.id);
-                      _estoque = prod.estoque;
-                      _estoquePorFornecedor = Map<String, double>.from(prod.estoquePorFornecedor);
-                      _estoqueController.text = _estoque.toString();
-                    });
+                    // Messenger capturado antes de fechar o diálogo (context dele morre no pop).
+                    final messenger = ScaffoldMessenger.of(context);
 
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('✓ Estoque ajustado: $qtd unidades ($tipo)'), backgroundColor: Colors.green),
-                      );
-                    }
+                    // Fechar o diálogo IMEDIATAMENTE após o processamento local
+                    // (DataService) — mas só se ele ainda estiver aberto e só UMA
+                    // vez: o usuário pode ter fechado no meio do ajuste, e um
+                    // segundo `pop` levaria a tela do cadastro junto (era o
+                    // "Tried to build dirty widget in the wrong build scope").
+                    final fecharAgora = dialogoAberto && context.mounted;
+                    dialogoAberto = false;
+                    if (fecharAgora) Navigator.pop(context);
+
+                    _recarregarEstoqueDoItem(dataService);
+
+                    messenger.showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          '✓ Estoque ajustado: $qtd unidades ($tipo)'
+                          '${estoqueSelecionado != null ? ' em ${nomeDoEstoque(dataService.estoques, estoqueSelecionado)}' : ''}'
+                          '${lote != null ? ' • lote ${lote.id} (vê em Ajuste Geral → Histórico)' : ''}',
+                        ),
+                        backgroundColor: Colors.green,
+                        duration: const Duration(seconds: 8),
+                        action: lote == null
+                            ? null
+                            : SnackBarAction(
+                                label: 'DESFAZER',
+                                textColor: Colors.white,
+                                onPressed: () async {
+                                  try {
+                                    await dataService.desfazerAjusteEstoqueLote(
+                                      lote.id,
+                                      usuario: authService.usuarioAtual?.nome,
+                                    );
+                                    if (!mounted) return;
+                                    _recarregarEstoqueDoItem(dataService);
+                                    messenger.showSnackBar(
+                                      SnackBar(
+                                        content: Text('↩️ Ajuste desfeito: estoque de volta para ${lote.itens.first.estoqueAnterior ?? 0}'),
+                                        backgroundColor: Colors.greenAccent,
+                                      ),
+                                    );
+                                  } catch (e) {
+                                    debugPrint('>>> Erro ao desfazer ajuste: $e');
+                                    messenger.showSnackBar(
+                                      SnackBar(content: Text('Erro ao desfazer ajuste: $e'), backgroundColor: Colors.red),
+                                    );
+                                  }
+                                },
+                              ),
+                      ),
+                    );
                   } catch (e) {
                     debugPrint('>>> Erro no ajuste: $e');
-                    if (context.mounted) {
+                    if (context.mounted && dialogoAberto) {
                       setDialogState(() => isLoading = false);
                       ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Erro ao ajustar estoque: $e'), backgroundColor: Colors.red),
+                        SnackBar(
+                          content: Text('Erro ao ajustar estoque: ${_textoDoErro(e)}'),
+                          backgroundColor: Colors.red,
+                          duration: const Duration(seconds: 8),
+                        ),
                       );
                     }
                   }
@@ -1334,12 +1513,44 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
         );
       },
     ).then((_) {
-      // Liberar recursos ao fechar o diálogo
-      qtdController.dispose();
-      fornecedorController.dispose();
-      obsController.dispose();
-      fornecedorFocusNode.dispose();
+      // O ajuste em andamento (se houver) não pode mais dar `pop`, e o diálogo
+      // sai de cena com os controllers ainda vivos (são do State) — era isso
+      // que evitava os campos virarem ErrorWidget depois do fechamento.
+      dialogoAberto = false;
     });
+  }
+
+  /// Sincroniza os campos de estoque do formulário com o estado atual do produto
+  /// (usado depois de ajustar o estoque ou de desfazer o ajuste).
+  void _recarregarEstoqueDoItem(DataService dataService) {
+    // O cadastro pode ter sido fechado enquanto o ajuste era gravado.
+    if (!mounted) return;
+    final index = dataService.produtos.indexWhere((p) => p.id == widget.item?.id);
+    if (index == -1) return;
+    final prod = dataService.produtos[index];
+    setState(() {
+      _estoque = prod.estoque;
+      _estoquePorFornecedor = Map<String, double>.from(prod.estoquePorFornecedor);
+      // Sem isto, salvar o produto depois de uma entrada gravaria os saldos
+      // ANTIGOS por estoque e a entrada sumiria do lugar certo.
+      _estoquePorEstoque = Map<String, double>.from(prod.estoquePorEstoque);
+      _estoqueController.text = _estoque.toString();
+    });
+  }
+
+  /// Saldo do produto no estoque escolhido, lendo o produto VIVO do app (o
+  /// `widget.item` é uma foto do momento em que a tela abriu).
+  double _saldoDoEstoqueSelecionado(DataService ds, String? estoqueId) {
+    final item = widget.item;
+    if (item == null || estoqueId == null) return 0;
+    final vivo = ds.produtos.where((p) => p.id == item.id).firstOrNull ?? item;
+    return ds.saldoNoEstoque(vivo, estoqueId);
+  }
+
+  /// Mensagem de erro legível na tela (tira o "Exception: " do Dart).
+  static String _textoDoErro(Object erro) {
+    final texto = erro.toString();
+    return texto.startsWith('Exception: ') ? texto.substring(11) : texto;
   }
 
   Widget _buildSection(String title, List<Widget> children) {
@@ -1375,11 +1586,12 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
   /// Seção de Validade e Lote: lista os lotes do produto (controle de
   /// vencimento para ração, medicamentos etc.) e permite adicionar/remover.
   Widget _buildLotesSection() {
-    final produtoId = widget.item!.id;
+    final produtoId = _produtoIdParaLotes;
     final dataService = Provider.of<DataService>(context);
-    final lotes = dataService.lotesProdutos
-        .where((l) => l.produtoId == produtoId)
-        .toList()
+    final lotes = <LoteProduto>[
+      ...dataService.lotesProdutos.where((l) => l.produtoId == produtoId),
+      ..._lotesRascunho,
+    ]
       ..sort((a, b) {
         // Ordenar por validade (vencidos primeiro)
         final da = a.dataValidade ?? DateTime(9999);
@@ -1515,7 +1727,19 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
                       ),
                     );
                     if (confirmar == true) {
-                      await dataService.removerLoteProduto(lote.id);
+                      final rascunhoIndex =
+                          _lotesRascunho.indexWhere((item) => item.id == lote.id);
+                      if (rascunhoIndex >= 0) {
+                        setState(() {
+                          _lotesRascunho.removeAt(rascunhoIndex);
+                          _estoque = (_estoque - lote.quantidade)
+                              .clamp(0.0, double.infinity)
+                              .toDouble();
+                          _estoqueController.text = _estoque.toString();
+                        });
+                      } else {
+                        await dataService.removerLoteProduto(lote.id);
+                      }
                     }
                   },
                 ),
@@ -1644,21 +1868,9 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
                     );
                     return;
                   }
-                  // Produto ainda não salvo (ID vazio): não dá para atrelar o lote
-                  // nem dar entrada no estoque. Bloquear com mensagem clara em vez
-                  // de criar um lote "órfão" que nunca soma no estoque.
-                  if (produtoId.isEmpty) {
-                    ScaffoldMessenger.of(ctx).showSnackBar(
-                      const SnackBar(
-                        content: Text('Salve o produto primeiro para adicionar o lote ao estoque.'),
-                        backgroundColor: Colors.orange,
-                      ),
-                    );
-                    return;
-                  }
                   Navigator.pop(ctx);
                   final id = '${DateTime.now().microsecondsSinceEpoch}_lote_$produtoId';
-                  await dataService.salvarLoteProduto(LoteProduto(
+                  final lote = LoteProduto(
                     id: id,
                     produtoId: produtoId,
                     numeroLote: numero.isEmpty ? 'LOTE ${DateTime.now().year}' : numero,
@@ -1666,7 +1878,20 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
                     quantidade: qtd,
                     fornecedorId: fornecedor.isEmpty ? null : _fornecedorId,
                     fornecedorNome: fornecedor.isEmpty ? null : fornecedor,
-                  ));
+                  );
+
+                  if (_produtoAindaNaoSalvo) {
+                    setState(() {
+                      _lotesRascunho.add(lote);
+                      if (qtd > 0) {
+                        _estoque += qtd;
+                        _estoqueController.text = _estoque.toString();
+                      }
+                    });
+                    return;
+                  }
+
+                  await dataService.salvarLoteProduto(lote);
                   bool estoqueAtualizado = false;
                   if (qtd > 0) {
                     // Somar ao estoque geral do produto (e ao histórico)
@@ -2110,38 +2335,19 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
     );
   }
 
-  /// Resolve as impressoras de produção deste produto a partir dos
-  /// DEPARTAMENTOS selecionados (principal + adicionais), com fallback para os
-  /// campos legados de impressora direta.
-  List<String> _impressorasProducaoDoProduto() {
+  /// Resolve os DESTINOS de impressão de produção deste produto: um por SETOR
+  /// (departamento principal + departamentos extras marcados), cada um com a
+  /// impressora configurada no departamento — com fallback para os campos
+  /// legados de impressora direta.
+  List<DestinoProducao> _destinosProducaoDoProduto() {
     final ds = Provider.of<DataService>(context, listen: false);
-    final deps = ds.departamentos;
-    final setores = <String>{};
-    void addDep(String? id) {
-      if (id == null || id.isEmpty) return;
-      final dep = deps.where((d) => d.id == id).firstOrNull;
-      if (dep == null) return;
-      if (dep.impressoraProducao != null && dep.impressoraProducao!.trim().isNotEmpty) {
-        setores.add(dep.impressoraProducao!.trim());
-      }
-      for (final e in dep.impressoraProducaoExtra) {
-        if (e.trim().isNotEmpty) setores.add(e.trim());
-      }
-    }
-    addDep(_departamentoId);
-    for (final id in _departamentosAdicionais) {
-      addDep(id);
-    }
-    // Legado: impressora configurada direto no produto
-    if (setores.isEmpty || _departamentoId == null) {
-      if (_impressoraProducao != null && _impressoraProducao!.trim().isNotEmpty) {
-        setores.add(_impressoraProducao!.trim());
-      }
-      for (final e in _impressoraProducaoExtra) {
-        if (e.trim().isNotEmpty) setores.add(e.trim());
-      }
-    }
-    return setores.toList();
+    return ProducaoPdfService.resolverDestinos(
+      departamentos: ds.departamentos,
+      departamentoId: _departamentoId,
+      departamentosAdicionais: _departamentosAdicionais,
+      impressoraProducao: _impressoraProducao,
+      impressorasProducaoExtra: _impressoraProducaoExtra,
+    );
   }
 
   /// Imprime um ticket de PRODUÇÃO de exemplo nas impressoras configuradas,
@@ -2157,12 +2363,16 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
       return;
     }
 
-    final impressoras = _impressorasProducaoDoProduto();
+    final destinos = _destinosProducaoDoProduto();
 
     // Confirmação antes de imprimir (informa onde vai imprimir)
-    final destino = impressoras.isEmpty
+    final destinoLista = destinos.isEmpty
         ? 'IMPRESSORA PADRÃO DO TERMINAL'
-        : impressoras.join(' • ');
+        : destinos.map((d) => d.descricao).join(' • ');
+    // Uma via por setor (o mesmo setor pode ter mais de uma impressora)
+    final destinoVias = destinos.isEmpty
+        ? 'IMPRESSORA PADRÃO DO TERMINAL'
+        : destinos.map((d) => '• ${d.descricao}').join('\n');
     final confirmou = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -2170,9 +2380,9 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
         title: const Text('Testar Impressão de Produção',
             style: TextStyle(color: Colors.white, fontSize: 16)),
         content: Text(
-          impressoras.isEmpty
-              ? 'Nenhuma impressora de produção configurada para este produto.\n\nO ticket de teste será enviado para a impressora padrão do terminal para você conferir o layout.'
-              : 'O ticket de teste será impresso em:\n\n$destino\n\nConfira se é a impressora do setor de produção (Cozinha, Bar, etc.).',
+          destinos.isEmpty
+              ? 'Nenhum setor de produção com impressora configurada para este produto.\n\nO ticket de teste será enviado para a impressora padrão do terminal para você conferir o layout.'
+              : 'Será impressa 1 via para cada setor de produção — ${destinos.length} via(s) no total:\n\n$destinoVias\n\nConfira se a impressora de cada setor (Cozinha, Bar, etc.) está certa.',
           style: const TextStyle(color: Colors.white70, fontSize: 13),
         ),
         actions: [
@@ -2193,7 +2403,7 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
 
     final impressos = await ProducaoPdfService.imprimirTicketTeste(
       empresa: empresa,
-      impressoras: impressoras,
+      destinos: destinos,
       dataService: dataService,
     );
 
@@ -2202,7 +2412,7 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
       SnackBar(
         content: Text(
           impressos > 0
-              ? '✅ Ticket de teste enviado para: $destino'
+              ? '✅ ${impressos} via(s) de teste enviada(s) para: $destinoLista'
               : 'Não foi possível imprimir. Verifique se há uma impressora instalada/ativa no Windows.',
         ),
         backgroundColor: impressos > 0 ? Colors.green : Colors.redAccent,
@@ -2239,6 +2449,10 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
   }
 
   List<String> _obterFornecedoresUnicos() {
+    // Sem tela montada (o `optionsBuilder` do autocomplete pode rodar durante a
+    // saída do diálogo) não há Provider para consultar: devolver vazio é melhor
+    // do que estourar um erro de build em cima do fechamento.
+    if (!mounted) return const <String>[];
     final service = Provider.of<DataService>(context, listen: false);
     final fornecedores = service.produtos
         .map((p) => p.fornecedorNome)
@@ -2505,6 +2719,141 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
 
 
 
+  /// Resumo curto dos saldos por estoque, mostrado embaixo do campo de estoque:
+  /// "Total = Loja 32,00 + Depósito 1,00".
+  ///
+  /// O campo de estoque mostra o TOTAL do produto (é ele que a venda baixa), não
+  /// o saldo de um estoque só — sem essa linha, o valor 33 ao lado do seletor
+  /// "Loja (principal)" parecia ser o estoque da loja, quando o da loja era 32.
+  /// Usa o produto VIVO do app (um ajuste feito agora há pouco já aparece aqui).
+  List<Widget> _resumoDosSaldosPorEstoque() {
+    final ds = Provider.of<DataService>(context, listen: false);
+    final item = widget.item;
+    final vivo = item == null
+        ? null
+        : ds.produtos.where((p) => p.id == item.id).firstOrNull;
+    final mapa = vivo?.estoquePorEstoque ?? _estoquePorEstoque;
+    if (mapa.isEmpty) return const [];
+    final partes = mapa.entries
+        .map((e) =>
+            '${nomeDoEstoque(ds.estoques, e.key)} ${e.value.toStringAsFixed(2)}')
+        .join(' + ');
+    return [
+      Padding(
+        padding: const EdgeInsets.only(top: 4),
+        child: Text(
+          'Total = $partes',
+          style: const TextStyle(
+              color: Colors.tealAccent,
+              fontSize: 10.5,
+              fontWeight: FontWeight.w600),
+        ),
+      ),
+    ];
+  }
+
+  /// Bloco de ESTOQUES no cadastro do produto: escolhe o estoque PADRÃO (onde
+  /// ele mora, para onde as entradas vão e onde a venda procura primeiro) e
+  /// mostra o saldo em cada estoque.
+  ///
+  /// O saldo não é editado aqui de propósito: quem mexe é a entrada (que
+  /// pergunta o destino no lançamento), a venda (que transfere o que falta para
+  /// o estoque principal) e a transferência, na tela de Estoques.
+  List<Widget> _blocoEstoquesDoProduto() {
+    final ds = Provider.of<DataService>(context, listen: false);
+    final estoques = ds.estoques;
+    if (estoques.isEmpty) return const [];
+
+    final principal = ds.estoquePrincipalAtual?.id;
+    final selecionado = estoques.any((e) => e.id == _estoquePadraoId)
+        ? _estoquePadraoId!
+        : (principal ?? estoques.first.id);
+
+    // O saldo mostrado vem do produto VIVO do app: uma entrada feita agora há
+    // pouco já aparece aqui (o `widget.item` é uma foto do momento da abertura).
+    final vivo = widget.item == null
+        ? null
+        : ds.produtos.where((p) => p.id == widget.item!.id).firstOrNull;
+    final saldos = vivo != null
+        ? ds.saldosDoProduto(vivo)
+        : [
+            (
+              estoque: estoques.firstWhere((e) => e.id == selecionado),
+              saldo: _estoque,
+            )
+          ];
+
+    return [
+      Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: DropdownButtonFormField<String>(
+          value: selecionado,
+          dropdownColor: const Color(0xFF1E1E2E),
+          // `isExpanded` porque o rótulo do item ('Loja (principal)') não cabe no
+          // campo em largura estreita e o Row do DropdownButton estourava 5 px.
+          isExpanded: true,
+          style: const TextStyle(color: Colors.white, fontSize: 12.5),
+          decoration: _minimalInput('').copyWith(
+            labelText: 'Estoque padrão (onde este produto mora)',
+            labelStyle: const TextStyle(color: Colors.white54, fontSize: 11),
+            prefixIcon:
+                const Icon(Icons.warehouse_outlined, size: 16, color: Colors.tealAccent),
+          ),
+          items: [
+            for (final e in estoques)
+              DropdownMenuItem(
+                value: e.id,
+                child: Text(e.principal ? '${e.nome} (principal)' : e.nome),
+              ),
+          ],
+          onChanged: (v) => setState(() => _estoquePadraoId = v),
+        ),
+      ),
+      Padding(
+        padding: const EdgeInsets.only(top: 6),
+        child: Wrap(
+          spacing: 8,
+          runSpacing: 4,
+          children: [
+            SizedBox(
+              width: double.infinity,
+              child: Text(
+                'Saldo em cada estoque (a venda baixa o total):',
+                style: TextStyle(color: Colors.white54, fontSize: 10.5),
+              ),
+            ),
+            for (final s in saldos)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.tealAccent.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.tealAccent.withOpacity(0.2)),
+                ),
+                child: Text(
+                  '${s.estoque.nome}: ${s.saldo.toStringAsFixed(2)}'
+                  '${s.estoque.id == selecionado ? ' (padrão)' : ''}',
+                  style: TextStyle(
+                    color: s.saldo != 0 ? Colors.tealAccent : Colors.white38,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+      const Padding(
+        padding: EdgeInsets.only(top: 4),
+        child: Text(
+          'O total do produto é a soma dos estoques. A venda baixa o total — se não tiver no '
+          'estoque principal, o app traz o que falta do outro estoque e registra a transferência '
+          'no histórico. As transferências ficam na tela Estoques.',
+          style: TextStyle(color: Colors.white38, fontSize: 10, height: 1.3),
+        ),
+      ),
+    ];
+  }
+
   Widget _buildAbaInformacoes() {
     return Column(
       children: [
@@ -2701,7 +3050,7 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
             child: Builder(builder: (context) {
               final ds = Provider.of<DataService>(context, listen: false);
               final deps = ds.departamentos;
-              final destinoResolvido = _impressorasProducaoDoProduto();
+              final destinoResolvido = _destinosProducaoDoProduto();
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -2717,7 +3066,7 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'O ticket imprime na impressora configurada no departamento acima e em cada departamento extra marcado abaixo (a impressora de cada um é definida no cadastro de Departamentos).',
+                    'Sai uma via para CADA setor: a impressora do departamento acima e a de cada departamento extra marcado abaixo — mesmo que dois setores usem a mesma impressora. A impressora de cada setor é definida no cadastro de Departamentos.',
                     style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 11),
                   ),
                   const SizedBox(height: 10),
@@ -2733,10 +3082,29 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
                       children: deps.map((dep) {
                         final ehPrincipal = dep.id == _departamentoId;
                         final selecionado = _departamentosAdicionais.contains(dep.id);
+                        // Impressora de produção deste setor (a que recebe a via)
+                        final impressoraDoSetor =
+                            ProducaoPdfService.descricaoImpressorasDoDepartamento(dep);
                         return FilterChip(
-                          label: Text(
-                            dep.nome + (ehPrincipal ? ' ★' : ''),
-                            style: const TextStyle(fontSize: 12),
+                          tooltip: 'Impressora: $impressoraDoSetor',
+                          label: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                dep.nome + (ehPrincipal ? ' ★' : ''),
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                              Text(
+                                impressoraDoSetor,
+                                style: TextStyle(
+                                  fontSize: 9,
+                                  color: (ehPrincipal || selecionado)
+                                      ? Colors.tealAccent
+                                      : Colors.white54,
+                                ),
+                              ),
+                            ],
                           ),
                           selected: ehPrincipal || selecionado,
                           // O principal já imprime — chip desabilitado como extra
@@ -2771,21 +3139,40 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
                         );
                       }).toList(),
                     ),
-                  if (destinoResolvido.isNotEmpty) ...[
-                    const SizedBox(height: 10),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: Colors.tealAccent.withOpacity(0.08),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: Colors.tealAccent.withOpacity(0.3)),
-                      ),
-                      child: Text(
-                        'Vai imprimir em: ${destinoResolvido.join(' • ')}',
-                        style: const TextStyle(color: Colors.tealAccent, fontSize: 11, fontWeight: FontWeight.w600),
-                      ),
+                  const SizedBox(height: 10),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.tealAccent.withOpacity(0.08),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.tealAccent.withOpacity(0.3)),
                     ),
-                  ],
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Vai imprimir em:',
+                          style: TextStyle(color: Colors.tealAccent, fontSize: 11, fontWeight: FontWeight.w600),
+                        ),
+                        const SizedBox(height: 4),
+                        if (destinoResolvido.isEmpty)
+                          Text(
+                            'Nenhum setor com impressora — a via sai na impressora padrão do terminal.',
+                            style: TextStyle(color: Colors.tealAccent.withOpacity(0.8), fontSize: 11),
+                          )
+                        else
+                          ...destinoResolvido.map(
+                            (destino) => Padding(
+                              padding: const EdgeInsets.only(top: 2),
+                              child: Text(
+                                '• ${destino.descricao}',
+                                style: const TextStyle(color: Colors.tealAccent, fontSize: 11, fontWeight: FontWeight.w600),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
 
                   const SizedBox(height: 14),
                   const Divider(color: Colors.white12, height: 1),
@@ -2810,7 +3197,7 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    'Imprime um ticket de exemplo na(s) impressora(s) acima para conferir se o layout e a impressora estão certos.',
+                    'Imprime uma via de exemplo em CADA setor acima (uma por impressora) para conferir se o layout e a impressora estão certos.',
                     style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 10),
                   ),
                 ],
@@ -2872,7 +3259,9 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
             children: [
               Expanded(
                 child: _buildField(
-                  label: 'Estoque Atual',
+                  label: _estoquePorEstoque.isEmpty
+                      ? 'Estoque Atual'
+                      : 'Estoque Total (soma dos estoques)',
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -2962,6 +3351,8 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
                           ],
                         ],
                       ),
+                      ..._resumoDosSaldosPorEstoque(),
+                      ..._blocoEstoquesDoProduto(),
                       if (_estoquePorFornecedor.isNotEmpty)
                         Padding(
                           padding: const EdgeInsets.only(top: 8),
@@ -3085,9 +3476,7 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
           ),
         ]),
 
-        // Só exibir a seção de lotes para produto JÁ SALVO (ID preenchido) —
-        // nunca para Serviços nem para clones/novos produtos ainda não salvos.
-        if (widget.item is Produto && (widget.item!.id ?? '').toString().isNotEmpty) _buildLotesSection(),
+        if (widget.item == null || widget.item is Produto) _buildLotesSection(),
 
         _buildSection('Tabelas de Preço', [
           _buildPrecosInteligentes(),
@@ -3191,6 +3580,57 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
             ),
             last: true,
           ),
+        ]),
+
+        _buildSection('Disponibilidade', [
+          Row(
+            children: [
+              const Icon(Icons.schedule_outlined, size: 16, color: Colors.tealAccent),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text('Disponível só em um período', style: TextStyle(color: Colors.white70, fontSize: 13)),
+              ),
+              Switch(
+                value: _temDisponibilidade,
+                activeColor: Colors.tealAccent,
+                onChanged: (v) => setState(() => _temDisponibilidade = v),
+              ),
+            ],
+          ),
+          if (_temDisponibilidade) ...[
+            const SizedBox(height: 8),
+            const Text(
+              'O produto continua aparecendo no catálogo, mas só pode ser vendido entre as datas e horas abaixo. Fora dessa janela ele fica marcado como INDISPONÍVEL e a venda é bloqueada.',
+              style: TextStyle(color: Colors.white54, fontSize: 11, height: 1.4),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildDataHoraField(
+                    label: 'Disponível de',
+                    data: _disponivelDe,
+                    onTap: () => _selecionarDataHora(inicio: true),
+                    onClear: () => setState(() => _disponivelDe = null),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildDataHoraField(
+                    label: 'Disponível até',
+                    data: _disponivelAte,
+                    onTap: () => _selecionarDataHora(inicio: false),
+                    onClear: () => setState(() => _disponivelAte = null),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Deixe um dos lados vazio para não ter limite nele (só início ou só fim).',
+              style: TextStyle(color: Colors.white38, fontSize: 10),
+            ),
+          ],
         ]),
 
         _buildSection('Promoção', [
@@ -3383,6 +3823,84 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
         _promocaoInicio = selecionada;
       } else {
         _promocaoFim = selecionada;
+      }
+    });
+  }
+
+  /// Campo compacto de data+hora para a janela de disponibilidade.
+  Widget _buildDataHoraField({
+    required String label,
+    required DateTime? data,
+    required VoidCallback onTap,
+    VoidCallback? onClear,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.05),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.white12),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.event_available,
+                size: 14, color: data == null ? Colors.white38 : Colors.tealAccent),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(label, style: const TextStyle(color: Colors.white38, fontSize: 10)),
+                  const SizedBox(height: 2),
+                  Text(
+                    data == null ? '—' : DateFormat('dd/MM/yyyy HH:mm').format(data),
+                    style: TextStyle(
+                      color: data == null ? Colors.white54 : Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (data != null)
+              InkWell(
+                onTap: onClear,
+                child: const Icon(Icons.close, size: 14, color: Colors.white38),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Seleciona data e depois hora para a janela de disponibilidade.
+  Future<void> _selecionarDataHora({required bool inicio}) async {
+    final agora = DateTime.now();
+    final base = inicio ? (_disponivelDe ?? agora) : (_disponivelAte ?? agora);
+    final data = await showDatePicker(
+      context: context,
+      initialDate: base,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+      helpText: inicio ? 'Disponível a partir de (data)' : 'Disponível até (data)',
+    );
+    if (data == null || !mounted) return;
+    final hora = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(base),
+      helpText: inicio ? 'Disponível a partir de (hora)' : 'Disponível até (hora)',
+    );
+    final escolhida = DateTime(data.year, data.month, data.day,
+        hora?.hour ?? base.hour, hora?.minute ?? base.minute);
+    setState(() {
+      if (inicio) {
+        _disponivelDe = escolhida;
+      } else {
+        _disponivelAte = escolhida;
       }
     });
   }

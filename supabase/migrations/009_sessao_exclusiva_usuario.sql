@@ -1,0 +1,6 @@
+-- MOVIDA para a fonte única: scripts/migrations/009_sessao_exclusiva_usuario.sql
+--
+-- Para aplicar na nuvem, abra e cole o arquivo:
+--     scripts/migrations/009_sessao_exclusiva_usuario.sql
+--
+-- Ver scripts/migrations/README.md.

@@ -88,7 +88,10 @@ void main() {
         reason: 'sem pendência o método não deveria criar nenhuma');
 
     // Agora simula o caso real: o dump foi gerado mas não subiu.
-    final arquivo = File('${tmp.path}${Platform.pathSeparator}dump_pendente_teste.dump');
+    // O nome leva um carimbo para esta execução não trombar com uma sobra de
+    // outra (agora o arquivo sobe com o MESMO nome que tem aqui, sem renomear).
+    final nomeLocal = 'dump_pendente_teste_${DateTime.now().millisecondsSinceEpoch}.dump';
+    final arquivo = File('${tmp.path}${Platform.pathSeparator}$nomeLocal');
     await arquivo.writeAsString('PGDMP-teste-de-reenvio\n${'x' * 300}\n', flush: true);
     await db.salvarConfig(chavePendente, arquivo.path);
     print('pendência marcada: ${await db.carregarConfig(chavePendente)}');
@@ -102,8 +105,9 @@ void main() {
     final novos = depois.difference(antes);
     print('novos arquivos na nuvem: $novos');
     expect(novos, hasLength(1), reason: 'era para subir exatamente o dump pendente');
-    expect(novos.first, contains('_dump_'),
-        reason: 'o reenvio precisa continuar identificando o dump como dump');
+    expect(novos.first, nomeLocal,
+        reason: 'o backup sobe com o mesmo nome do arquivo local — é assim que a '
+            'tela sabe o que já está na nuvem e o que falta subir');
     expect(novos.first, endsWith('.dump'));
 
     // 2. A pendência foi limpa

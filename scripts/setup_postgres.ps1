@@ -336,17 +336,20 @@ if (Test-Path $sqlFile) {
     }
 }
 
-# 7a. Migracao de schema (uuid -> text): garante que instalacoes antigas
-#     (com ids UUID e tabelas fantasma) sincronizem com a nuvem (ids TEXT).
-#     Idempotente: nao faz nada em instalacoes ja no schema correto.
-Write-Log "Executando migracao de schema (uuid->text)..."
-$migrarScript = Join-Path $ScriptDir "migrar_schema.ps1"
-if (-not (Test-Path $migrarScript)) { $migrarScript = Join-Path $AppDir "scripts\migrar_schema.ps1" }
-if (Test-Path $migrarScript) {
-    $migOut = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $migrarScript -DbHost localhost -DbPort $DbPort -DbUser $DbUser -DbPassword $DbPassword -DbName $DbName 2>&1
-    $migOut | ForEach-Object { Write-Log $_ }
+# 7a. Migracoes de schema versionadas (scripts/migrations/*.sql).
+#     Garantem que instalacoes antigas recebam tabelas/colunas novas. Cada
+#     arquivo e idempotente; o app tambem as aplica no boot. Mesma rotina do
+#     reparar_banco.ps1 e do runner em lib/services/database_service.dart.
+Write-Log "Aplicando migracoes de schema (scripts/migrations)..."
+$migDir = Join-Path $ScriptDir "migrations"
+if (-not (Test-Path $migDir)) { $migDir = Join-Path $AppDir "scripts\migrations" }
+if (Test-Path $migDir) {
+    Get-ChildItem -Path $migDir -Filter *.sql | Sort-Object Name | ForEach-Object {
+        Write-Log ("  -> " + $_.Name)
+        & $psql -U $DbUser -d $DbName -h localhost -p $DbPort -v ON_ERROR_STOP=1 --single-transaction -f $_.FullName 2>&1 | ForEach-Object { Write-Log $_ }
+    }
 } else {
-    Write-Log "AVISO: migrar_schema.ps1 nao encontrado - schema nao migrado (apenas instalacoes novas serao criadas corretas)"
+    Write-Log "AVISO: pasta scripts\migrations nao encontrada - schema nao migrado (instalacoes novas ja nascem corretas)"
 }
 
 # 7b. Verificar que as tabelas foram criadas (prova de que o banco esta OK)

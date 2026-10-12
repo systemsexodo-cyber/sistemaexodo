@@ -65,7 +65,7 @@ class _MotoristasPageState extends State<MotoristasPage> {
                         ),
                         title: Text(m.nome, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
                         subtitle: Text(
-                          '${m.veiculoModelo ?? "Moto"} - ${m.veiculoPlaca ?? "S/ Placa"}\nComissão: ${m.tipoComissao} (R\$ ${m.valorComissao.toStringAsFixed(2)})',
+                          '${m.veiculoModelo ?? "Moto"} - ${m.veiculoPlaca ?? "S/ Placa"}\n${_resumoComissao(m)}',
                           style: const TextStyle(color: Colors.white70, fontSize: 12),
                         ),
                         trailing: Row(
@@ -130,6 +130,13 @@ class _MotoristasPageState extends State<MotoristasPage> {
     final placaC = TextEditingController(text: motorista?.veiculoPlaca);
     final modeloC = TextEditingController(text: motorista?.veiculoModelo);
     final valorComissaoC = TextEditingController(text: motorista?.valorComissao.toString() ?? '5.00');
+    // Diária separada do valor por entrega: o entregador pode receber as DUAS
+    // coisas somadas (diária do dia + valor de cada entrega).
+    final valorDiariaC = TextEditingController(
+      text: (motorista?.valorDiaria ?? 0) > 0
+          ? motorista!.valorDiaria.toString()
+          : '0.00',
+    );
     String tipoComissao = motorista?.tipoComissao ?? 'Fixo por Entrega';
 
     showDialog(
@@ -147,20 +154,54 @@ class _MotoristasPageState extends State<MotoristasPage> {
                 TextField(controller: modeloC, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Modelo Veículo')),
                 TextField(controller: placaC, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Placa')),
                 const SizedBox(height: 16),
+                TextField(
+                  controller: valorDiariaC,
+                  style: const TextStyle(color: Colors.white),
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Diária (R\$ por dia)',
+                    helperText: 'Fixo por dia trabalhado. Use 0 se não paga diária.',
+                    helperStyle: TextStyle(color: Colors.white38, fontSize: 11),
+                  ),
+                ),
+                const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
                   value: tipoComissao,
                   dropdownColor: const Color(0xFF2C3E50),
                   style: const TextStyle(color: Colors.white),
-                  decoration: const InputDecoration(labelText: 'Tipo de Comissão'),
-                  items: ['Fixo por Entrega', 'Diária', 'Porcentagem'].map((t) => DropdownMenuItem(value: t, child: Text(t))).toList(),
+                  decoration: const InputDecoration(
+                    labelText: 'Comissão por entrega',
+                    helperText: 'Somada à diária no cálculo.',
+                    helperStyle: TextStyle(color: Colors.white38, fontSize: 11),
+                  ),
+                  items: const [
+                    DropdownMenuItem(
+                      value: 'Fixo por Entrega',
+                      child: Text('Fixo por Entrega (R\$ por entrega)'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'Porcentagem',
+                      child: Text('Porcentagem (% da taxa da entrega)'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'Diária',
+                      child: Text('Só diária (não paga por entrega)'),
+                    ),
+                  ],
                   onChanged: (v) => setDialogState(() => tipoComissao = v!),
                 ),
-                TextField(
-                  controller: valorComissaoC,
-                  style: const TextStyle(color: Colors.white),
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: 'Valor (R\$ ou %)'),
-                ),
+                // O campo do valor por entrega não serve para "Só diária".
+                if (tipoComissao != 'Diária')
+                  TextField(
+                    controller: valorComissaoC,
+                    style: const TextStyle(color: Colors.white),
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(
+                      labelText: tipoComissao == 'Porcentagem'
+                          ? 'Percentual (%)'
+                          : 'Valor por entrega (R\$)',
+                    ),
+                  ),
               ],
             ),
           ),
@@ -169,6 +210,10 @@ class _MotoristasPageState extends State<MotoristasPage> {
             ElevatedButton(
               onPressed: () {
                 if (nomeC.text.isEmpty) return;
+                // Aceita vírgula como separador decimal (digitado no balcão).
+                double numero(TextEditingController c) =>
+                    double.tryParse(c.text.replaceAll(',', '.')) ?? 0.0;
+
                 final m = Motorista(
                   id: motorista?.id,
                   nome: nomeC.text,
@@ -176,8 +221,14 @@ class _MotoristasPageState extends State<MotoristasPage> {
                   veiculoPlaca: placaC.text,
                   veiculoModelo: modeloC.text,
                   tipoComissao: tipoComissao,
-                  valorComissao: double.tryParse(valorComissaoC.text) ?? 0.0,
-                  taxaPadrao: double.tryParse(valorComissaoC.text) ?? 0.0,
+                  // 'Só diária': não há valor por entrega para guardar.
+                  valorComissao:
+                      tipoComissao == 'Diária' ? 0.0 : numero(valorComissaoC),
+                  valorDiaria: numero(valorDiariaC),
+                  // Compatibilidade com a coluna legada: continua espelhando o
+                  // valor POR ENTREGA (nunca a diária).
+                  taxaPadrao:
+                      tipoComissao == 'Diária' ? 0.0 : numero(valorComissaoC),
                   dataCadastro: motorista?.dataCadastro,
                 );
                 if (motorista == null) {
@@ -193,6 +244,25 @@ class _MotoristasPageState extends State<MotoristasPage> {
         ),
       ),
     );
+  }
+
+  /// Texto do cartão: mostra diária e valor por entrega separados.
+  String _resumoComissao(Motorista m) {
+    final partes = <String>[];
+    if (m.valorDiariaEfetiva > 0) {
+      partes.add('Diária R\$ ${m.valorDiariaEfetiva.toStringAsFixed(2)}/dia');
+    }
+    switch (m.tipoComissao) {
+      case 'Porcentagem':
+        partes.add('${m.valorComissao.toStringAsFixed(2)}% por entrega');
+        break;
+      case 'Diária':
+        break;
+      default:
+        partes.add('R\$ ${m.valorComissao.toStringAsFixed(2)} por entrega');
+    }
+    if (partes.isEmpty) return 'Sem comissão cadastrada';
+    return 'Comissão: ${partes.join(' + ')}';
   }
 
   void _confirmarExclusao(BuildContext context, DataService dataService, Motorista m) {

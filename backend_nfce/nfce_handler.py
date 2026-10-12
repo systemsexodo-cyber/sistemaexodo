@@ -300,7 +300,8 @@ def _new_serializar_emitente(self, emitente, tag_raiz="emit", retorna_string=Tru
     etree.SubElement(endereco, "xPais").text = serializacao_mod.obter_pais_por_codigo(emitente.endereco_pais)
     if emitente.endereco_telefone:
         etree.SubElement(endereco, "fone").text = emitente.endereco_telefone
-    etree.SubElement(raiz, "IE").text = emitente.inscricao_estadual
+    _ie_emit = (emitente.inscricao_estadual or '').strip()
+    etree.SubElement(raiz, "IE").text = _ie_emit if _ie_emit else "ISENTO"
     if emitente.codigo_de_regime_tributario:
         etree.SubElement(raiz, "CRT").text = str(emitente.codigo_de_regime_tributario)
     
@@ -479,20 +480,20 @@ def _fixed_post(self, url, xml, timeout=None):
         
         # FIX DE ORDEM CRÍTICO (infNFe -> infNFeSupl -> Signature)
         # Separar infNFeSupl e Signature com regex ainda mais flexível
-        # Nota: infNFeSupl deve vir ANTES da Signature na NFC-e 4.00
         match_supl = re.search(r'(<infNFeSupl[^>]*>.*?</infNFeSupl>)', xml_str, re.DOTALL)
         match_sig = re.search(r'(<Signature[^>]*>.*?</Signature>)', xml_str, re.DOTALL)
-        
+
         if match_supl and match_sig:
             # Remover de onde estiver para remontar no final
             xml_str = xml_str.replace(match_supl.group(1), '')
             xml_str = xml_str.replace(match_sig.group(1), '')
-            
+
             # Limpar lixo de tag de fechamento infNFe se existir duplicata ou erro de concatenação
             xml_str = xml_str.replace('</infNFe></NFe>', '</infNFe>')
-            
-            # Reconstruir na ordem perfeita do Schema 4.00 
-            # A ordem EXATA: ...</infNFe><infNFeSupl>...</infNFeSupl><Signature>...</Signature></NFe>
+
+            # Reconstruir na ordem do Schema 4.00:
+            # ...</infNFe><infNFeSupl>...</infNFeSupl><Signature>...</Signature></NFe>
+            # ATENÇÃO: o schema exige infNFeSupl ANTES de Signature!
             rearranjado = f'{match_supl.group(1)}{match_sig.group(1)}</NFe>'
             
             # Garantir que inserimos logo após o fechamento do infNFe
@@ -610,9 +611,7 @@ def adicionar_ibscbs_xml(xml_element, ns_nfe):
         g_ibs_mun = etree.SubElement(g_ibscbs, f"{{{ns_nfe}}}gIBSMun")
         etree.SubElement(g_ibs_mun, f"{{{ns_nfe}}}pIBSMun").text = "0.0000"
         etree.SubElement(g_ibs_mun, f"{{{ns_nfe}}}vIBSMun").text = f"{v_ibs_mun:.2f}"
-        
-        etree.SubElement(g_ibscbs, f"{{{ns_nfe}}}vIBS").text = f"{v_ibs:.2f}"
-        
+
         g_cbs = etree.SubElement(g_ibscbs, f"{{{ns_nfe}}}gCBS")
         etree.SubElement(g_cbs, f"{{{ns_nfe}}}pCBS").text = "0.9000"
         etree.SubElement(g_cbs, f"{{{ns_nfe}}}vCBS").text = f"{v_cbs:.2f}"
@@ -1093,7 +1092,10 @@ def emitir_nfce_pynfe(req):
             print(f">>> [FISCAL] ⚠️ Falha ao injetar bloco ICMS900: {e_icms}")
         
         # Adicionar o bloco IBS/CBS para a Reforma Tributária NT 2025.002
-        adicionar_ibscbs_xml(xml_element, ns_nfe)
+        # DESABILITADO: o ambiente SP (verAplic SP_NFCE_PL_009_V400) ainda valida
+        # contra o leiaute PL_009, que NÃO possui os grupos IBSCBS/vNFTot —
+        # enviá-los causa "Rejeição: Falha no Schema XML do lote de NFe" (225).
+        # adicionar_ibscbs_xml(xml_element, ns_nfe)
 
         # GARANTIR vTroco e REMOVER indPag de detPag (OBRIGATÓRIO para NFC-e 4.00)
         # ATENÇÃO: lxml elements avaliam como False em contexto bool quando sem filhos!
@@ -1172,6 +1174,32 @@ def emitir_nfce_pynfe(req):
                 msg_erro = f"Faltando dados de CSC (Token) no cadastro da empresa. Verifique se preencheu o CSC e o Identificador CSC (IdToken)."
                 print(f"[ALERTA] {msg_erro}")
                 return {"status": "erro", "mensagem": msg_erro}
+
+        # CORRECAO CRITICA DE ORDEM DO SCHEMA PO_NFE v4.00:
+        # Dentro de <NFe> a ordem deve ser infNFe, infNFeSupl, Signature.
+        # O gerar_qrcode() do pynfe insere <infNFeSupl> no final (DEPOIS do
+        # Signature), o que viola o schema 4.00 e gera
+        # "Rejeicao: Falha no Schema XML do lote de NFe" (cStat 225).
+        # Reposicionamos o infNFeSupl para logo apos o infNFe.
+        try:
+            _nfe_root = xml_assinado
+            _inf_supl = _nfe_root.find(f"{{{ns_nfe}}}infNFeSupl")
+            if _inf_supl is None:
+                _inf_supl = _nfe_root.find("infNFeSupl")
+            _sig = _nfe_root.find("{http://www.w3.org/2000/09/xmldsig#}Signature")
+            _inf_nfe = _nfe_root.find(f"{{{ns_nfe}}}infNFe")
+            if _inf_nfe is None:
+                _inf_nfe = _nfe_root.find("infNFe")
+            if _inf_supl is not None and _sig is not None:
+                _nfe_root.remove(_inf_supl)
+                if _inf_nfe is not None:
+                    _idx = list(_nfe_root).index(_inf_nfe) + 1
+                else:
+                    _idx = list(_nfe_root).index(_sig)
+                _nfe_root.insert(_idx, _inf_supl)
+                print("[FIX] infNFeSupl reposicionado entre infNFe e Signature no schema XML")
+        except Exception as _e_ord:
+            print(f"[AVISO] Nao foi possivel reposicionar infNFeSupl: {_e_ord}")
 
         # DEBUG: Salvar XML final para inspeção
         try:

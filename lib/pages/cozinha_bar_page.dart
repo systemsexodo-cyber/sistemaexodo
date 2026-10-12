@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/data_service.dart';
+import '../services/fila_producao_service.dart';
 import '../models/mesa_comanda.dart';
 import '../models/departamento.dart';
 import '../widgets/cozinha_bar_lista_itens.dart';
 import 'cadastro_departamentos_page.dart';
+import 'monitor_producao_page.dart';
 
 /// Página para acompanhamento de pedidos da cozinha e bar.
 ///
@@ -106,6 +108,57 @@ class _CozinhaBarPageState extends State<CozinhaBarPage>
         ),
         backgroundColor: const Color(0xFF1E1E2E),
         actions: [
+          // Vias que não saíram na impressora do setor: atalho com contador
+          // para o Monitor de Produção (quem prepara é quem percebe a falta).
+          ListenableBuilder(
+            listenable: FilaProducaoService.instancia,
+            builder: (context, _) {
+              final pendentes = FilaProducaoService.instancia.total;
+              return Stack(
+                alignment: Alignment.center,
+                children: [
+                  IconButton(
+                    tooltip: pendentes > 0
+                        ? 'Monitor de Produção — $pendentes via(s) pendente(s)'
+                        : 'Monitor de Produção (tudo impresso)',
+                    icon: Icon(
+                      pendentes > 0 ? Icons.print : Icons.print_outlined,
+                      color: pendentes > 0 ? Colors.redAccent : Colors.white70,
+                    ),
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const MonitorProducaoPage(),
+                        ),
+                      );
+                    },
+                  ),
+                  if (pendentes > 0)
+                    Positioned(
+                      top: 4,
+                      right: 2,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 5, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: Colors.redAccent,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Text(
+                          '$pendentes',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
           IconButton(
             tooltip: 'Gerenciar Departamentos',
             icon: const Icon(Icons.food_bank_outlined, color: Colors.orangeAccent),

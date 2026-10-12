@@ -12,6 +12,7 @@ import '../services/sincronizador_manager_service.dart';
 import '../theme.dart';
 import 'bloqueio_mensalidade_page.dart';
 import 'conferencia_local_nuvem_page.dart';
+import 'conferencia_bancos_locais_page.dart';
 
 /// Backup e Restauração — 4 ações claras:
 /// 1. Backup Local (dump)
@@ -87,10 +88,20 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
   bool _isCriandoBancoLocal = false;
   /// Passo atual da criação do banco local (exodo_db).
   String _progressoCriarBancoLocal = '';
+  bool _isAplicandoMigracoes = false;
+  /// Passo atual da aplicação das migrações de schema.
+  String _progressoMigracoes = '';
   bool _isEnviandoBackupNuvem = false;
   bool _isRestaurandoBackupNuvem = false;
   bool _isBaixandoBackupNuvem = false;
   bool _isEnviandoBackupCompletoNuvem = false;
+  /// Envio dos backups LOCAIS para a nuvem (a lista inteira ou um arquivo só).
+  bool _isEnviandoBackupLocal = false;
+  /// Caminho do arquivo que está subindo agora (mostra o giro na linha dele).
+  String? _enviandoBackupLocal;
+  String _mensagemEnvioBackupLocal = '';
+  /// A lista de dumps começa com os 5 últimos; "ver todos" abre o resto.
+  bool _mostrarTodosDumpsLocais = false;
   bool _isBaixandoBackupCompletoNuvem = false;
   bool _isRestaurandoCompletoNaNuvem = false;
   String _mensagemProgressoBackupCompleto = '';
@@ -536,6 +547,89 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
       if (mounted) _mostrarSnackBar('❌ Erro: $e', Colors.red);
     } finally {
       if (mounted) setState(() => _isEnviandoNuvem = false);
+    }
+  }
+
+  /// Nomes (já no formato aceito pelo Storage, sem acento) dos backups que JÁ
+  /// estão na nuvem.
+  ///
+  /// O upload conserva o nome do arquivo local, então o nome é a identidade do
+  /// backup: dá para dizer, sem baixar nada, o que já subiu e o que falta.
+  Set<String> get _backupsNaNuvem => {
+        for (final d in _dumpsNuvem)
+          if ((d['name']?.toString() ?? '').isNotEmpty)
+            BackupRestoreService.nomeSeguroParaStorage(d['name'].toString())
+      };
+
+  /// Sobe os backups LOCAIS desta empresa para a nuvem e aplica a regra dos
+  /// "5 últimos" dos dois lados: na pasta da empresa na nuvem e aqui no
+  /// computador. Só o que ainda não está lá é enviado.
+  Future<void> _enviarBackupsLocaisParaNuvem() async {
+    const maximo = BackupRestoreService.maxBackupsPorEmpresa;
+    final empresa = _nomeEmpresaComId();
+    final confirmar = await _confirmar(
+      'Subir os backups locais para a nuvem',
+      'Enviar para a nuvem os backups que estão NESTE computador — $empresa?\n\n'
+      '• Sobe os $maximo mais recentes de cada tipo: os .dump do banco e os .sql desta empresa.\n'
+      '• O que já está na nuvem não é enviado de novo.\n'
+      '• No fim, ficam só os $maximo últimos aqui e na nuvem — os mais antigos saem sozinhos.',
+    );
+    if (!confirmar) return;
+
+    setState(() {
+      _isEnviandoBackupLocal = true;
+      _mensagemEnvioBackupLocal = 'Conferindo o que já está na nuvem...';
+    });
+    try {
+      final (ok, msg) = await _backupService!.enviarBackupsLocaisParaNuvem(
+        onProgress: (mensagem) {
+          if (mounted) setState(() => _mensagemEnvioBackupLocal = mensagem);
+        },
+      );
+      if (!mounted) return;
+      _mostrarSnackBar(ok ? '✅ $msg' : '⚠️ $msg', ok ? Colors.green : Colors.orange);
+      await _carregarDados();
+    } catch (e) {
+      if (mounted) _mostrarSnackBar('❌ Erro: $e', Colors.red);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isEnviandoBackupLocal = false;
+          _mensagemEnvioBackupLocal = '';
+        });
+      }
+    }
+  }
+
+  /// Sobe UM backup local (o desta linha) para a nuvem e mantém os 5 últimos
+  /// aqui também, para o computador e a nuvem andarem juntos.
+  Future<void> _enviarUmBackupLocalParaNuvem(String caminho, String nome) async {
+    setState(() {
+      _isEnviandoBackupLocal = true;
+      _enviandoBackupLocal = caminho;
+    });
+    try {
+      final (ok, msg) = await _backupService!.uploadDumpNaNuvem(File(caminho));
+      if (!mounted) return;
+      _mostrarSnackBar(ok ? '✅ $msg' : '❌ $msg', ok ? Colors.green : Colors.red);
+      if (ok) {
+        final empresaId =
+            Provider.of<DataService>(context, listen: false).currentEmpresaId;
+        if (empresaId != null) {
+          await _backupService!.manterUltimosBackupsLocais(empresaId);
+        }
+        if (!mounted) return;
+        await _carregarDados();
+      }
+    } catch (e) {
+      if (mounted) _mostrarSnackBar('❌ Erro: $e', Colors.red);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isEnviandoBackupLocal = false;
+          _enviandoBackupLocal = null;
+        });
+      }
     }
   }
 
@@ -2398,6 +2492,96 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
     }
   }
 
+  /// Aplica, no banco LOCAL, as migrações de schema versionadas
+  /// (`scripts/migrations/*.sql`) que ainda não rodaram neste computador.
+  ///
+  /// É o mesmo mecanismo que o app roda sozinho ao conectar, mas aqui o usuário
+  /// pode disparar na hora (e ver o passo a passo) quando aplicou uma
+  /// atualização e quer garantir que o schema foi atualizado sem reiniciar.
+  Future<void> _aplicarMigracoes() async {
+    final confirmar = await _confirmar(
+      'Aplicar migrações de schema',
+      'Vai aplicar no banco local as migrações de schema que ainda não rodaram '
+          'neste computador (scripts/migrations). Nada é apagado e cada migração '
+          'roda uma única vez. Continuar?',
+    );
+    if (!confirmar) return;
+
+    setState(() {
+      _isAplicandoMigracoes = true;
+      _progressoMigracoes = 'Conferindo migrações de schema...';
+    });
+    try {
+      final (ok, logs) = await DatabaseService().aplicarMigracoes(
+        forcar: true,
+        onProgress: (mensagem) {
+          if (mounted) setState(() => _progressoMigracoes = mensagem);
+        },
+      );
+      if (!mounted) return;
+
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: const Color(0xFF1E1E2E),
+          title: Text(
+            ok ? '✅ Migrações aplicadas' : '⚠️ Migrações: atenção',
+            style: const TextStyle(color: Colors.white, fontSize: 16),
+          ),
+          content: SizedBox(
+            width: 640,
+            height: 400,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Migrações de schema do banco local. Cada arquivo de '
+                  'scripts/migrations roda uma única vez; o que já rodou fica '
+                  'registrado em schema_migrations.',
+                  style: TextStyle(color: Colors.white70, fontSize: 11),
+                ),
+                const SizedBox(height: 10),
+                Expanded(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.black26,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    padding: const EdgeInsets.all(10),
+                    child: SingleChildScrollView(
+                      child: SelectableText(
+                        logs.join('\n'),
+                        style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 12,
+                            fontFamily: 'monospace'),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('OK', style: TextStyle(color: Colors.cyanAccent)),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      if (mounted) _mostrarSnackBar('❌ Erro: $e', Colors.red);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isAplicandoMigracoes = false;
+          _progressoMigracoes = '';
+        });
+      }
+    }
+  }
+
   // ==================== HELPERS ====================
 
   /// Depois de uma restauração que mexe SÓ no banco local.
@@ -3254,6 +3438,22 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
             loading: false,
             onTap: _abrirConferenciaDeDados,
           ),
+          const SizedBox(height: 8),
+          _botao(
+            icon: Icons.compare_arrows,
+            label: 'Conferir os DADOS (Local × Local)',
+            desc: 'Compara as linhas de cada tabela entre o banco DESTE computador e o do caixa par na LAN (só leitura)',
+            cor: Colors.cyanAccent,
+            loading: false,
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const ConferenciaBancosLocaisPage(),
+                ),
+              );
+            },
+          ),
           const SizedBox(height: 12),
           _buildLegendaSaudeBancos(
               sensiveisNoLocal, decisaoNoLocal, tiposDiferentes),
@@ -3614,7 +3814,8 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
       icon: Icons.save_alt,
       cor: Colors.greenAccent,
       titulo: 'Backup Local',
-      subtitulo: 'Dump do banco local (.dump) e backups por empresa (.sql)',
+      subtitulo: 'Dump do banco local (.dump) e backups por empresa (.sql) — '
+          'sempre os ${BackupRestoreService.maxBackupsPorEmpresa} últimos, aqui e na nuvem',
       children: [
         _botao(
           icon: Icons.backup,
@@ -3624,12 +3825,52 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
           loading: _isGerandoDump,
           onTap: _isGerandoDump ? null : _gerarDumpLocal,
         ),
+        const SizedBox(height: 12),
+        _botao(
+          icon: Icons.cloud_upload,
+          label: _isEnviandoBackupLocal
+              ? 'Enviando...'
+              : 'Subir os ${BackupRestoreService.maxBackupsPorEmpresa} últimos para a nuvem',
+          desc: _mensagemEnvioBackupLocal.isNotEmpty
+              ? _mensagemEnvioBackupLocal
+              : 'Envia os backups deste computador (os .dump e os .sql desta empresa) e '
+                  'deixa só os ${BackupRestoreService.maxBackupsPorEmpresa} últimos dos dois lados',
+          cor: Colors.cyanAccent,
+          loading: _isEnviandoBackupLocal,
+          onTap: _isEnviandoBackupLocal ? null : _enviarBackupsLocaisParaNuvem,
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'O app guarda sempre os 5 backups mais recentes de cada tipo: quando entra um novo, '
+          'o mais antigo sai daqui e da nuvem. ☁ sobe um backup ainda não enviado; '
+          '☁✔ marca o que já está na nuvem.',
+          style: TextStyle(color: Colors.white38, fontSize: 10, height: 1.3),
+        ),
         if (_dumpsLocais.isNotEmpty) ...[
           const SizedBox(height: 12),
-          Text('Últimos backups locais (${_nomeEmpresaComId()}):',
-              style: TextStyle(color: Colors.white54, fontSize: 12)),
+          Text(
+              'Últimos backups locais (${_nomeEmpresaComId()})'
+              '${_dumpsLocais.length > BackupRestoreService.maxBackupsPorEmpresa ? ' — ${_dumpsLocais.length} no total' : ''}:',
+              style: const TextStyle(color: Colors.white54, fontSize: 12)),
           const SizedBox(height: 8),
-          ..._dumpsLocais.take(3).map((d) => _buildDumpLocalItem(d)),
+          ...(_mostrarTodosDumpsLocais
+                  ? _dumpsLocais
+                  : _dumpsLocais.take(BackupRestoreService.maxBackupsPorEmpresa))
+              .map((d) => _buildDumpLocalItem(d)),
+          if (_dumpsLocais.length > BackupRestoreService.maxBackupsPorEmpresa)
+            TextButton.icon(
+              onPressed: () => setState(
+                  () => _mostrarTodosDumpsLocais = !_mostrarTodosDumpsLocais),
+              icon: Icon(_mostrarTodosDumpsLocais ? Icons.expand_less : Icons.expand_more,
+                  size: 16),
+              label: Text(
+                _mostrarTodosDumpsLocais
+                    ? 'Mostrar só os ${BackupRestoreService.maxBackupsPorEmpresa} mais recentes'
+                    : 'Ver todos os ${_dumpsLocais.length} dumps locais',
+                style: const TextStyle(fontSize: 11),
+              ),
+              style: TextButton.styleFrom(foregroundColor: Colors.greenAccent),
+            ),
         ],
         if (_backupsSqlLocais.isNotEmpty || _sqlLocaisDeOutrasEmpresas > 0)
           ..._buildListaBackupsSqlLocais(),
@@ -3745,8 +3986,11 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
   /// Diferente do dump `.dump`, esses arquivos já nascem filtrados pela empresa:
   /// a restauração é direta (sem base temporária) e leva segundos.
   List<Widget> _buildListaBackupsSqlLocais() {
-    final visiveis =
-        _mostrarTodosSqlLocais ? _backupsSqlLocais : _backupsSqlLocais.take(3).toList();
+    final visiveis = _mostrarTodosSqlLocais
+        ? _backupsSqlLocais
+        : _backupsSqlLocais
+            .take(BackupRestoreService.maxBackupsPorEmpresa)
+            .toList();
 
     return [
       const SizedBox(height: 16),
@@ -3770,13 +4014,13 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
       ),
       const SizedBox(height: 8),
       ...visiveis.map((b) => _buildBackupSqlLocalItem(b)),
-      if (_backupsSqlLocais.length > 3)
+      if (_backupsSqlLocais.length > BackupRestoreService.maxBackupsPorEmpresa)
         TextButton.icon(
           onPressed: () => setState(() => _mostrarTodosSqlLocais = !_mostrarTodosSqlLocais),
           icon: Icon(_mostrarTodosSqlLocais ? Icons.expand_less : Icons.expand_more, size: 16),
           label: Text(
             _mostrarTodosSqlLocais
-                ? 'Mostrar só os 3 mais recentes'
+                ? 'Mostrar só os ${BackupRestoreService.maxBackupsPorEmpresa} mais recentes'
                 : 'Ver todos os ${_backupsSqlLocais.length} backups',
             style: const TextStyle(fontSize: 11),
           ),
@@ -3794,6 +4038,7 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
   }
 
   Widget _buildBackupSqlLocalItem(Map<String, dynamic> backup) {
+    final nome = backup['name']?.toString() ?? '';
     final registros = backup['registros'];
     final tabelas = backup['tabelas'];
     final detalhe = [
@@ -3831,6 +4076,7 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
               ],
             ),
           ),
+          _buildBotaoNuvemDoBackupLocal(backup['path']?.toString() ?? '', nome),
           IconButton(
             icon: const Icon(Icons.insights, color: Colors.tealAccent, size: 18),
             tooltip: 'Simular a restauração — compara os registros com o banco local e NÃO altera nada',
@@ -3857,7 +4103,39 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
     );
   }
 
+  /// ☁ da linha: manda ESTE backup para a nuvem. Quando ele já está lá, a linha
+  /// mostra ☁✔ em vez do botão — assim não se envia o mesmo arquivo duas vezes.
+  Widget _buildBotaoNuvemDoBackupLocal(String caminho, String nome) {
+    if (_enviandoBackupLocal == caminho) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 12),
+        child: SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.cyanAccent)),
+      );
+    }
+    final nomeSeguro = BackupRestoreService.nomeSeguroParaStorage(nome);
+    if (nomeSeguro.isNotEmpty && _backupsNaNuvem.contains(nomeSeguro)) {
+      return const Tooltip(
+        message: 'Este backup já está na nuvem',
+        child: Padding(
+          padding: EdgeInsets.symmetric(horizontal: 12),
+          child: Icon(Icons.cloud_done, color: Colors.cyanAccent, size: 18),
+        ),
+      );
+    }
+    return IconButton(
+      icon: const Icon(Icons.cloud_upload_outlined, color: Colors.cyanAccent, size: 18),
+      tooltip: 'Enviar este backup para a nuvem',
+      onPressed: (_ocupado || _isEnviandoBackupLocal)
+          ? null
+          : () => _enviarUmBackupLocalParaNuvem(caminho, nome),
+    );
+  }
+
   Widget _buildDumpLocalItem(Map<String, dynamic> dump) {
+    final nome = dump['name']?.toString() ?? '';
     return Container(
       margin: const EdgeInsets.only(bottom: 6),
       padding: const EdgeInsets.all(10),
@@ -3884,6 +4162,7 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
               ],
             ),
           ),
+          _buildBotaoNuvemDoBackupLocal(dump['path']?.toString() ?? '', nome),
           IconButton(
             icon: const Icon(Icons.insights, color: Colors.tealAccent, size: 18),
             tooltip: 'Simular a restauração — compara os registros e NÃO altera nada',
@@ -3972,13 +4251,15 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
           Text('Backups na nuvem (${_nomeEmpresaComId()}):',
               style: TextStyle(color: Colors.white54, fontSize: 12)),
           const SizedBox(height: 4),
-          const Text(
+          Text(
+            'O app mantém os ${BackupRestoreService.maxBackupsPorEmpresa} últimos de cada tipo (dump e .sql): '
+            'os anteriores saem sozinhos, daqui e da nuvem.\n'
             'MESMAS ações da lista local: 🔎 simular  ·  ↺ restaurar  ·  (⬇ baixar sem restaurar)  ·  🗑 remover.\n'
             'O ↺ daqui é o MESMO da pasta local: baixa o arquivo e segue o mesmo caminho — conferência '
             'de integridade, estado atual guardado (desfazer de um clique), aplicação SÓ no banco local '
             'e a pergunta final sobre enviar para a nuvem. Quando o arquivo é do banco inteiro (.dump), '
             'abre a mesma escolha da lista local: simular / só esta empresa / banco inteiro.',
-            style: TextStyle(color: Colors.white38, fontSize: 10, height: 1.3),
+            style: const TextStyle(color: Colors.white38, fontSize: 10, height: 1.3),
           ),
           const SizedBox(height: 8),
           ..._dumpsNuvem.map((d) => _buildDumpNuvemItem(d)),
@@ -4230,6 +4511,42 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
                     _progressoCriarBancoLocal.isEmpty
                         ? 'Criando o banco local...'
                         : _progressoCriarBancoLocal,
+                    style: const TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        const SizedBox(height: 12),
+        _botao(
+          icon: Icons.schema,
+          label: _isAplicandoMigracoes
+              ? 'Aplicando migrações...'
+              : 'Aplicar migrações de schema',
+          desc: 'Roda no banco local as migrações de scripts/migrations que ainda '
+              'não rodaram aqui (novas tabelas/colunas de uma atualização) — '
+              'cada uma só uma vez, não apaga nada',
+          cor: Colors.purpleAccent,
+          loading: _isAplicandoMigracoes,
+          onTap: (_isAplicandoMigracoes || _isCriandoBancoLocal || _isCriandoTabelas || _isEnviandoLocalNuvem || _isSincronizandoCompleto)
+              ? null
+              : _aplicarMigracoes,
+        ),
+        if (_isAplicandoMigracoes)
+          Padding(
+            padding: const EdgeInsets.only(top: 10),
+            child: Row(
+              children: [
+                const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.purpleAccent)),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    _progressoMigracoes.isEmpty
+                        ? 'Aplicando migrações...'
+                        : _progressoMigracoes,
                     style: const TextStyle(color: Colors.white70, fontSize: 12),
                   ),
                 ),

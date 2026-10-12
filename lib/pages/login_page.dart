@@ -39,18 +39,40 @@ class _LoginPageState extends State<LoginPage> {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _isLoading = true);
     final authService = Provider.of<AuthService>(context, listen: false);
-    final sucesso = await authService.login(_emailController.text.trim(), _senhaController.text.trim());
+    final sucesso = await authService.login(
+      _emailController.text.trim(),
+      _senhaController.text.trim(),
+    );
     setState(() => _isLoading = false);
     if (!mounted) return;
 
     if (sucesso) {
+      // Entrou com os dados locais porque a nuvem estava fora/cota: avisa uma
+      // vez (não bloqueia nada).
+      final aviso = authService.avisoNuvemLogin;
+      if (aviso != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(aviso),
+            backgroundColor: Colors.orange,
+            duration: const Duration(seconds: 6),
+          ),
+        );
+      }
       final usuario = authService.usuarioAtual;
       final email = usuario?.email.toLowerCase() ?? '';
-      final isMaster = usuario != null && (email == 'user' || email == 'admin' || email == 'suporte');
+      final isMaster =
+          usuario != null &&
+          (email == 'user' || email == 'admin' || email == 'suporte');
 
       // Se for o usuário Master / Suporte, entra DIRETO na tela do Portal Êxodo (SelecionarEmpresaPage)
       if (isMaster) {
-        Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const SelecionarEmpresaPage()));
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => const SelecionarEmpresaPage(),
+          ),
+        );
         return;
       }
 
@@ -73,7 +95,8 @@ class _LoginPageState extends State<LoginPage> {
           ultimaDataExecucao: dataService.ultimaDataExecucao,
           limiteDiasOffline: 5,
         );
-        if (motivo != MotivoBloqueioEmpresa.nenhum && !dataService.liberacaoProvisoriaAtiva) {
+        if (motivo != MotivoBloqueioEmpresa.nenhum &&
+            !dataService.liberacaoProvisoriaAtiva) {
           Navigator.pushReplacement(
             context,
             MaterialPageRoute(
@@ -89,7 +112,12 @@ class _LoginPageState extends State<LoginPage> {
 
       final empresasDoUsuario = authService.getEmpresasDoUsuario();
       if (empresasDoUsuario.length > 1) {
-        Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const SelecionarEmpresaPage()));
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => const SelecionarEmpresaPage(),
+          ),
+        );
       } else {
         // FIX: usuários não-master com uma única empresa (ex: carlos) iam direto
         // para a HomePage sem que o DataService carregasse os dados da empresa.
@@ -98,22 +126,37 @@ class _LoginPageState extends State<LoginPage> {
         // então a lógica dele nunca rodava e as listas abriam vazias na primeira
         // entrada. Aqui garantimos o carregamento ANTES de navegar.
         final empresaSelecionada = authService.empresaAtual;
-        if (empresaSelecionada != null && dataService.currentEmpresaId != empresaSelecionada.id) {
+        if (empresaSelecionada != null &&
+            dataService.currentEmpresaId != empresaSelecionada.id) {
           dataService.setEmpresaAtual(empresaSelecionada);
           if (mounted) setState(() => _isLoading = true);
           try {
-            await dataService.definirEmpresaAtual(empresaSelecionada.id).timeout(
-              const Duration(seconds: 30),
-            );
+            await dataService
+                .definirEmpresaAtual(empresaSelecionada.id)
+                .timeout(const Duration(seconds: 30));
           } catch (e) {
             debugPrint('>>> [Login] ⚠️ Erro ao carregar dados da empresa: $e');
           }
           if (mounted) setState(() => _isLoading = false);
         }
-        Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const HomePage()));
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const HomePage()),
+        );
       }
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Usuário ou senha inválidos'), backgroundColor: Colors.red));
+      // Login NÃO aconteceu (senha errada ou falha real de infraestrutura).
+      // Se o serviço deixou um aviso de "nuvem indisponível", ele é
+      // informativo; a mensagem de erro de login tem prioridade.
+      final erro = authService.mensagemErroLogin;
+      final aviso = authService.avisoNuvemLogin;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(erro ?? aviso ?? 'Usuário ou senha inválidos'),
+          backgroundColor: erro != null ? Colors.red : Colors.orange,
+          duration: Duration(seconds: erro != null ? 4 : 6),
+        ),
+      );
     }
   }
 
@@ -129,14 +172,28 @@ class _LoginPageState extends State<LoginPage> {
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: [Color(0xFF0F172A), Color(0xFF1E293B), Color(0xFF0F172A)],
+                colors: [
+                  Color(0xFF0F172A),
+                  Color(0xFF1E293B),
+                  Color(0xFF0F172A),
+                ],
               ),
             ),
           ),
-          
+
           // 2. Orbes de Luz Aurora
-          _buildOrb(top: -100, left: -50, color: Colors.blueAccent.withOpacity(0.2), size: 400),
-          _buildOrb(bottom: -150, right: -100, color: Colors.orangeAccent.withOpacity(0.15), size: 500),
+          _buildOrb(
+            top: -100,
+            left: -50,
+            color: Colors.blueAccent.withOpacity(0.2),
+            size: 400,
+          ),
+          _buildOrb(
+            bottom: -150,
+            right: -100,
+            color: Colors.orangeAccent.withOpacity(0.15),
+            size: 500,
+          ),
 
           // 3. Conteúdo
           SafeArea(
@@ -148,9 +205,9 @@ class _LoginPageState extends State<LoginPage> {
                     _buildLogoPremium(),
                     // CARD DE LOGIN GLASSMORPHISM
                     _buildGlassCard(),
-                    
+
                     const SizedBox(height: 40),
-                    
+
                     // VERSÃO E RODAPÉ DISCRETO
                     Text(
                       'SISTEMA ÊXODO V${AppUpdateService.currentAppVersion}',
@@ -158,7 +215,7 @@ class _LoginPageState extends State<LoginPage> {
                         color: Colors.white.withOpacity(0.2),
                         fontSize: 10,
                         letterSpacing: 2,
-                        fontWeight: FontWeight.bold
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
                   ],
@@ -190,24 +247,47 @@ class _LoginPageState extends State<LoginPage> {
   Widget _buildFloatingOrbs() {
     return Stack(
       children: [
-        _buildOrb(top: -100, left: -50, color: Colors.blueAccent.withOpacity(0.2), size: 400),
-        _buildOrb(bottom: -150, right: -100, color: Colors.orangeAccent.withOpacity(0.15), size: 500),
-        _buildOrb(top: 200, right: -50, color: Colors.indigo.withOpacity(0.1), size: 300),
+        _buildOrb(
+          top: -100,
+          left: -50,
+          color: Colors.blueAccent.withOpacity(0.2),
+          size: 400,
+        ),
+        _buildOrb(
+          bottom: -150,
+          right: -100,
+          color: Colors.orangeAccent.withOpacity(0.15),
+          size: 500,
+        ),
+        _buildOrb(
+          top: 200,
+          right: -50,
+          color: Colors.indigo.withOpacity(0.1),
+          size: 300,
+        ),
       ],
     );
   }
 
-  Widget _buildOrb({double? top, double? left, double? right, double? bottom, required Color color, required double size}) {
+  Widget _buildOrb({
+    double? top,
+    double? left,
+    double? right,
+    double? bottom,
+    required Color color,
+    required double size,
+  }) {
     return Positioned(
-      top: top, left: left, right: right, bottom: bottom,
+      top: top,
+      left: left,
+      right: right,
+      bottom: bottom,
       child: Container(
         width: size,
         height: size,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          gradient: RadialGradient(
-            colors: [color, Colors.transparent],
-          ),
+          gradient: RadialGradient(colors: [color, Colors.transparent]),
         ),
       ),
     );
@@ -227,7 +307,11 @@ class _LoginPageState extends State<LoginPage> {
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   boxShadow: [
-                    BoxShadow(color: Colors.orange.withOpacity(0.3), blurRadius: 60, spreadRadius: 10),
+                    BoxShadow(
+                      color: Colors.orange.withOpacity(0.3),
+                      blurRadius: 60,
+                      spreadRadius: 10,
+                    ),
                   ],
                 ),
               ),
@@ -241,7 +325,7 @@ class _LoginPageState extends State<LoginPage> {
               color: Colors.orange.shade300,
               fontSize: 12,
               fontWeight: FontWeight.w800,
-              letterSpacing: 4
+              letterSpacing: 4,
             ),
           ),
         ],
@@ -260,7 +344,10 @@ class _LoginPageState extends State<LoginPage> {
           decoration: BoxDecoration(
             color: Colors.white.withOpacity(0.05),
             borderRadius: BorderRadius.circular(32),
-            border: Border.all(color: Colors.white.withOpacity(0.1), width: 1.5),
+            border: Border.all(
+              color: Colors.white.withOpacity(0.1),
+              width: 1.5,
+            ),
             gradient: LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
@@ -277,11 +364,15 @@ class _LoginPageState extends State<LoginPage> {
               children: [
                 Text(
                   'Acesso Administrativo',
-                  style: TextStyle(color: Colors.white.withOpacity(0.9), fontSize: 18, fontWeight: FontWeight.bold),
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.9),
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 32),
-                
+
                 // INPUT USUÁRIO
                 _buildModernInput(
                   controller: _emailController,
@@ -292,30 +383,47 @@ class _LoginPageState extends State<LoginPage> {
                 // HISTÓRICO DE LOGINS
                 Consumer<AuthService>(
                   builder: (context, auth, _) {
-                    if (auth.historicoLogins.isEmpty) return const SizedBox.shrink();
+                    if (auth.historicoLogins.isEmpty)
+                      return const SizedBox.shrink();
                     return Padding(
                       padding: const EdgeInsets.only(top: 12),
                       child: Wrap(
                         spacing: 8,
                         runSpacing: 4,
-                        children: auth.historicoLogins.map((login) => ActionChip(
-                          label: Text(login, style: const TextStyle(fontSize: 11, color: Colors.white70)),
-                          backgroundColor: Colors.white.withOpacity(0.05),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                          side: BorderSide(color: Colors.white.withOpacity(0.1)),
-                          visualDensity: VisualDensity.compact,
-                          onPressed: () {
-                            _emailController.text = login;
-                            FocusScope.of(context).nextFocus(); // Pula para senha
-                          },
-                        )).toList(),
+                        children: auth.historicoLogins
+                            .map(
+                              (login) => ActionChip(
+                                label: Text(
+                                  login,
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    color: Colors.white70,
+                                  ),
+                                ),
+                                backgroundColor: Colors.white.withOpacity(0.05),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                side: BorderSide(
+                                  color: Colors.white.withOpacity(0.1),
+                                ),
+                                visualDensity: VisualDensity.compact,
+                                onPressed: () {
+                                  _emailController.text = login;
+                                  FocusScope.of(
+                                    context,
+                                  ).nextFocus(); // Pula para senha
+                                },
+                              ),
+                            )
+                            .toList(),
                       ),
                     );
-                  }
+                  },
                 ),
-                
+
                 const SizedBox(height: 20),
-                
+
                 // INPUT SENHA
                 _buildModernInput(
                   controller: _senhaController,
@@ -325,9 +433,9 @@ class _LoginPageState extends State<LoginPage> {
                   textInputAction: TextInputAction.done,
                   onSubmitted: (_) => _fazerLogin(),
                 ),
-                
+
                 const SizedBox(height: 40),
-                
+
                 // BOTÃO ENTRAR
                 _buildLoginButton(),
               ],
@@ -353,7 +461,12 @@ class _LoginPageState extends State<LoginPage> {
           padding: const EdgeInsets.only(left: 4, bottom: 8),
           child: Text(
             label.toUpperCase(),
-            style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1),
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.5),
+              fontSize: 10,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 1,
+            ),
           ),
         ),
         TextFormField(
@@ -364,13 +477,25 @@ class _LoginPageState extends State<LoginPage> {
           style: const TextStyle(color: Colors.white, fontSize: 16),
           decoration: InputDecoration(
             prefixIcon: Icon(icon, color: Colors.blueAccent, size: 20),
-            suffixIcon: isPassword ? IconButton(
-              icon: Icon(_obscurePassword ? Icons.visibility_off_rounded : Icons.visibility_rounded, color: Colors.white24, size: 20),
-              onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
-            ) : null,
+            suffixIcon: isPassword
+                ? IconButton(
+                    icon: Icon(
+                      _obscurePassword
+                          ? Icons.visibility_off_rounded
+                          : Icons.visibility_rounded,
+                      color: Colors.white24,
+                      size: 20,
+                    ),
+                    onPressed: () =>
+                        setState(() => _obscurePassword = !_obscurePassword),
+                  )
+                : null,
             filled: true,
             fillColor: Colors.white.withOpacity(0.05),
-            contentPadding: const EdgeInsets.symmetric(vertical: 20, horizontal: 20),
+            contentPadding: const EdgeInsets.symmetric(
+              vertical: 20,
+              horizontal: 20,
+            ),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(16),
               borderSide: BorderSide(color: Colors.white.withOpacity(0.1)),
@@ -396,7 +521,11 @@ class _LoginPageState extends State<LoginPage> {
           colors: [Color(0xFF3B82F6), Color(0xFF2563EB)],
         ),
         boxShadow: [
-          BoxShadow(color: Colors.blue.withOpacity(0.3), blurRadius: 20, offset: const Offset(0, 8)),
+          BoxShadow(
+            color: Colors.blue.withOpacity(0.3),
+            blurRadius: 20,
+            offset: const Offset(0, 8),
+          ),
         ],
       ),
       child: Material(
@@ -405,9 +534,23 @@ class _LoginPageState extends State<LoginPage> {
           onTap: _isLoading ? null : _fazerLogin,
           borderRadius: BorderRadius.circular(16),
           child: Center(
-            child: _isLoading 
-              ? const SizedBox(height: 24, width: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-              : const Text('ACESSAR SISTEMA', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
+            child: _isLoading
+                ? const SizedBox(
+                    height: 24,
+                    width: 24,
+                    child: CircularProgressIndicator(
+                      color: Colors.white,
+                      strokeWidth: 2,
+                    ),
+                  )
+                : const Text(
+                    'ACESSAR SISTEMA',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 1.5,
+                    ),
+                  ),
           ),
         ),
       ),

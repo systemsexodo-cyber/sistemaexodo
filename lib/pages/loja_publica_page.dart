@@ -335,6 +335,36 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
   
   // Adiciona produto ao carrinho, verificando se tem variações
   void _adicionarProdutoAoCarrinho(Produto produto) {
+    // Fora da janela de disponibilidade temporária: some do e-commerce.
+    if (!produto.disponivelAgora) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Produto "${produto.nome}" indisponível: '
+            '${produto.indisponibilidadeTemporariaLabel ?? 'fora da janela de disponibilidade'}.',
+          ),
+          backgroundColor: Colors.orange,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
+    // Reserva de estoque: com a configuração ligada, o disponível é o estoque
+    // menos o que outros pedidos em aberto já seguram.
+    final faltaEstoque = Provider.of<DataService>(context, listen: false)
+        .validarEstoqueDisponivel(produto);
+    if (faltaEstoque != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(faltaEstoque),
+          backgroundColor: Colors.orange,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
     final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
     final carrinhoService = Provider.of<CarrinhoService>(context, listen: false);
     
@@ -638,8 +668,10 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
       debugPrint('>>> [Loja]   exibirNaLoja == true? ${exibirNaLoja == true}');
       debugPrint('>>> [Loja]   estoqueTotal = $estoqueTotal');
       
-      // Verificar se deve exibir
-      final deveExibir = exibirNaLoja == true; // Verificação explícita
+      // Verificar se deve exibir. Além de estar marcado para a loja, o produto
+      // precisa estar DENTRO da janela de disponibilidade temporária — fora
+      // dela (ainda não começou ou já expirou) some do e-commerce.
+      final deveExibir = exibirNaLoja == true && p.disponivelAgora;
       
       if (deveExibir) {
         if (estoqueTotal > 0) {

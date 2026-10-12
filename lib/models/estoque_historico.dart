@@ -85,9 +85,17 @@ class EstoqueHistorico {
   Map<String, dynamic> toMap() {
     return {
       'id': id,
+      // SEM isto a linha nascia ÓRFÃ: a tabela tem `produto_id` e a tela de
+      // histórico do produto filtra por ele (`h.produtoId == produto.id`), mas o
+      // mapa nunca o continha — o histórico de cada produto aparecia VAZIO e as
+      // quebras não achavam o produto.
+      'produto_id': produtoId,
       // Gravar em UTC (convenção do projeto, igual à VendaBalcao) para a data
       // não "andar" ao salvar/recarregar do banco (timestamptz) ou do Supabase.
       'data': data.toUtc().toIso8601String(),
+      // A tabela não tem DEFAULT: sem enviar aqui nascia NULL (300 linhas do
+      // banco local estavam assim). O instante do movimento é o do registro.
+      'created_at': data.toUtc().toIso8601String(),
       'quantidade': quantidade,
       'tipo': tipo,
       'usuario': usuario,

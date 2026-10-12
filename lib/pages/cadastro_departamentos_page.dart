@@ -261,8 +261,9 @@ class _CadastroDepartamentosPageState extends State<CadastroDepartamentosPage> {
   Future<void> _testarImpressaoDepartamento(
     BuildContext ctx,
     String? impressora,
-    DataService ds,
-  ) async {
+    DataService ds, {
+    String? nomeSetor,
+  }) async {
     final empresa = ds.empresaAtual;
     if (empresa == null) {
       ScaffoldMessenger.of(ctx).showSnackBar(
@@ -271,13 +272,15 @@ class _CadastroDepartamentosPageState extends State<CadastroDepartamentosPage> {
       return;
     }
 
-    final impressoras = (impressora != null && impressora.isNotEmpty)
-        ? [impressora]
-        : <String>[];
+    // Uma via deste SETOR na impressora configurada ('' = padrão do terminal)
+    final destino = DestinoProducao(
+      setor: (nomeSetor ?? '').trim(),
+      impressora: impressora?.trim() ?? '',
+    );
 
     final impressos = await ProducaoPdfService.imprimirTicketTeste(
       empresa: empresa,
-      impressoras: impressoras,
+      destinos: [destino],
       dataService: ds,
     );
 
@@ -286,7 +289,7 @@ class _CadastroDepartamentosPageState extends State<CadastroDepartamentosPage> {
       SnackBar(
         content: Text(
           impressos > 0
-              ? '✅ Ticket de teste enviado para: ${impressoras.isEmpty ? 'IMPRESSORA PADRÃO DO TERMINAL' : impressoras.join(' • ')}'
+              ? '✅ Ticket de teste enviado para: ${destino.descricao}'
               : 'Não foi possível imprimir. Verifique se há uma impressora instalada/ativa no Windows.',
         ),
         backgroundColor: impressos > 0 ? Colors.green : Colors.redAccent,
@@ -433,7 +436,12 @@ class _CadastroDepartamentosPageState extends State<CadastroDepartamentosPage> {
                   SizedBox(
                     width: double.infinity,
                     child: OutlinedButton.icon(
-                      onPressed: () => _testarImpressaoDepartamento(ctx, impressora, ds),
+                      onPressed: () => _testarImpressaoDepartamento(
+                        ctx,
+                        impressora,
+                        ds,
+                        nomeSetor: nomeController.text.trim(),
+                      ),
                       icon: const Icon(Icons.print_outlined, color: Colors.amberAccent, size: 18),
                       label: const Text(
                         'TESTAR IMPRESSÃO DE PRODUÇÃO',

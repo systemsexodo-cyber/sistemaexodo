@@ -1,0 +1,6 @@
+-- MOVIDA para a fonte única: scripts/migrations/007_politica_publicacao_bridge_config.sql
+--
+-- Para aplicar na nuvem, abra e cole o arquivo:
+--     scripts/migrations/007_politica_publicacao_bridge_config.sql
+--
+-- Ver scripts/migrations/README.md.

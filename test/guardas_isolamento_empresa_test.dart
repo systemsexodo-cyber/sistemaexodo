@@ -214,4 +214,48 @@ void main() {
     expect(bmjDepois, bmjAntes,
         reason: 'NENHUMA linha de outra empresa pode ser afetada');
   });
+
+  test('id compartilhado entre empresas NUNCA troca o dono da linha', () async {
+    final db = DatabaseService();
+
+    // Este é o cruzamento REAL que já aconteceu: um `id` igual em empresas
+    // diferentes (produto "Diversos" `produto-diversos-9999`, ids '1'..'15' de
+    // demonstração, ou `Date.now()` que colide). O upsert casa pela chave
+    // primária `id`, que NÃO inclui a empresa — sem trava, a gravação da
+    // empresa B ATUALIZAVA a linha da A (inclusive o empresa_id) e o registro
+    // mudava de dono.
+    const idCompartilhado = 'IDS-COMPARTILHADO-TESTE-1';
+
+    // 1. Empresa A cria o registro.
+    db.setEmpresaId(empresaTestes);
+    await db.salvarLista('exodo_clientes', [
+      {'id': idCompartilhado, 'nome': 'REGISTRO DA EMPRESA A'}
+    ], isSync: true);
+
+    var dono = (await db.carregarListaCompleta('exodo_clientes'))
+        .firstWhere((c) => c['id'] == idCompartilhado, orElse: () => {});
+    expect(empresaDe(dono), empresaTestes,
+        reason: 'a linha precisa nascer na empresa A');
+
+    // 2. Empresa B tenta gravar com o MESMO id.
+    db.setEmpresaId(bmj);
+    await db.salvarLista('exodo_clientes', [
+      {'id': idCompartilhado, 'nome': 'REGISTRO DA EMPRESA B'}
+    ], isSync: true);
+
+    // 3. A linha CONTINUA da empresa A (não trocou de dono).
+    dono = (await db.carregarListaCompleta('exodo_clientes'))
+        .firstWhere((c) => c['id'] == idCompartilhado, orElse: () => {});
+    print('dono apos a tentativa da B: ${empresaDe(dono)} | ${dono['nome']}');
+    expect(empresaDe(dono), empresaTestes,
+        reason: 'o id compartilhado NAO pode migrar a linha para a empresa B');
+
+    // 4. Limpeza.
+    db.setEmpresaId(empresaTestes);
+    await db.removerItemPostgres('exodo_clientes', idCompartilhado, empresaTestes,
+        isSync: true);
+
+    // Restaura a empresa "aberta" do app.
+    db.setEmpresaId(bmj);
+  });
 }

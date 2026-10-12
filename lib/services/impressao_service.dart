@@ -1,11 +1,61 @@
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/empresa.dart';
+
+/// Como terminou uma impressão direta.
+///
+/// O ticket de produção precisa saber se a via saiu NA IMPRESSORA DO SETOR: se
+/// a impressora não foi encontrada, `imprimirPdfNaImpressora` cai na padrão do
+/// terminal (para não travar a venda) — e isso precisa ser registrado, senão a
+/// cozinha fica sem a via sem ninguém perceber.
+class ResultadoImpressao {
+  /// Se o documento saiu em alguma impressora.
+  final bool impresso;
+
+  /// Se saiu na impressora PEDIDA (quando `false`, saiu num fallback).
+  final bool naImpressoraPedida;
+
+  /// Nome da impressora em que realmente saiu (quando saiu).
+  final String? impressoraUsada;
+
+  /// Motivo do fallback/falha, para mostrar ao operador.
+  final String? aviso;
+
+  const ResultadoImpressao({
+    required this.impresso,
+    required this.naImpressoraPedida,
+    this.impressoraUsada,
+    this.aviso,
+  });
+
+  const ResultadoImpressao.ok({String? impressora})
+      : impresso = true,
+        naImpressoraPedida = true,
+        impressoraUsada = impressora,
+        aviso = null;
+
+  const ResultadoImpressao.falhou(String this.aviso)
+      : impresso = false,
+        naImpressoraPedida = false,
+        impressoraUsada = null;
+
+  /// Se a via saiu ONDE DEVIA: na impressora pedida — ou na padrão do terminal,
+  /// quando era isso que o setor pedia (`pediuPadraoDoTerminal`).
+  bool saiuOndeFoiPedido(bool pediuPadraoDoTerminal) =>
+      impresso && (pediuPadraoDoTerminal || naImpressoraPedida);
+
+  @override
+  String toString() => impresso
+      ? 'ResultadoImpressao(saiu em ${impressoraUsada ?? '—'}'
+          '${naImpressoraPedida ? '' : ' (fallback)'})'
+      : 'ResultadoImpressao(falhou: $aviso)';
+}
 
 /// Serviço central de impressão.
 ///
@@ -128,12 +178,18 @@ class ImpressaoService {
   /// impressora, então o documento vai direto para a impressora indicada.
   /// Se a impressora não for encontrada, tenta a padrão do sistema e, em último
   /// caso, cai no diálogo nativo de impressão (sem bloquear a venda).
-  static Future<void> imprimirPdfNaImpressora({
+  ///
+  /// Devolve COMO terminou (ver [ResultadoImpressao]) para quem precisa saber se
+  /// a via realmente saiu na impressora do setor — é o que a fila de produção do
+  /// Monitor de Produção usa para listar o que ficou faltando.
+  static Future<ResultadoImpressao> imprimirPdfNaImpressora({
     required Uint8List bytes,
     required String nomeImpressora,
     String name = 'Documento',
     bool termico = true,
   }) async {
+    final pediuPadrao = nomeImpressora.trim().isEmpty;
+
     if (kIsWeb) {
       await Printing.layoutPdf(
         onLayout: (_) async => bytes,
@@ -141,7 +197,7 @@ class ImpressaoService {
         usePrinterSettings: true,
         dynamicLayout: false,
       );
-      return;
+      return const ResultadoImpressao.ok();
     }
 
     final PdfPageFormat format = termico
@@ -152,11 +208,12 @@ class ImpressaoService {
           )
         : PdfPageFormat.a4;
 
+    var aviso = 'A via não foi confirmada pela impressora';
     try {
       // 1. Tenta a impressora indicada pelo nome (ex.: "Cozinha")
-      Printer? printer = await _resolverImpressora(nomeImpressora);
+      final pedida = await _resolverImpressora(nomeImpressora);
       // 2. Se não achou, usa a padrão do sistema
-      printer ??= await _resolverImpressora(null);
+      final printer = pedida ?? await _resolverImpressora(null);
       if (printer != null) {
         debugPrint('[Impressao] Ticket de produção → ${printer.name}');
         final ok = await Printing.directPrintPdf(
@@ -167,10 +224,32 @@ class ImpressaoService {
           usePrinterSettings: true,
           dynamicLayout: false,
         );
-        if (ok) return;
+        if (ok) {
+          // `pediuPadrao`: a impressora pedida ERA a padrão do terminal.
+          //
+          // O resto do caminho não pode ser "a impressora resolvida é a mesma
+          // que eu pedi": `_resolverImpressora` devolve a padrão quando o nome
+          // não casa, então isso daria sempre verdadeiro. O que vale é o nome
+          // pedido casar com o nome da impressora que realmente recebeu a via.
+          final naPedida =
+              pediuPadrao || _correspondeAoNome(printer, nomeImpressora);
+          return ResultadoImpressao(
+            impresso: true,
+            naImpressoraPedida: naPedida,
+            impressoraUsada: printer.name,
+            aviso: naPedida
+                ? null
+                : 'Impressora "$nomeImpressora" não encontrada — a via saiu em '
+                    '"${printer.name}"',
+          );
+        }
+        aviso = 'A impressora "${printer.name}" não confirmou a impressão';
+      } else {
+        aviso = 'Nenhuma impressora instalada/disponível neste terminal';
       }
     } catch (e) {
       debugPrint('[Impressao] Falha na impressão em "$nomeImpressora": $e — fallback');
+      aviso = 'Falha ao imprimir em "$nomeImpressora": $e';
     }
 
     // 3. Fallback: diálogo nativo de impressão
@@ -181,6 +260,17 @@ class ImpressaoService {
       usePrinterSettings: true,
       dynamicLayout: false,
     );
+    return ResultadoImpressao.falhou(aviso);
+  }
+
+  /// Se [printer] é a impressora pedida pelo [nome] (mesma regra de
+  /// `_resolverImpressora`: nome exato, nome parcial ou URL).
+  static bool _correspondeAoNome(Printer printer, String nome) {
+    final needle = nome.trim().toLowerCase();
+    if (needle.isEmpty) return true;
+    return printer.name.toLowerCase() == needle ||
+        printer.name.toLowerCase().contains(needle) ||
+        printer.url.toLowerCase().contains(needle);
   }
 
   /// Lista impressoras do sistema (vazio na web).
@@ -612,6 +702,10 @@ class _DialogoSelecaoImpressoraWidgetState extends State<_DialogoSelecaoImpresso
   late List<Printer> _listaImpressoras;
   bool _carregando = false;
 
+  // Foco no botão "Imprimir": ao abrir o diálogo, o Enter já confirma a
+  // impressão (mesmo comportamento do botão padrão do Windows).
+  final FocusNode _imprimirNode = FocusNode();
+
   @override
   void initState() {
     super.initState();
@@ -620,6 +714,51 @@ class _DialogoSelecaoImpressoraWidgetState extends State<_DialogoSelecaoImpresso
         (_listaImpressoras.isNotEmpty ? _listaImpressoras.first : null);
     _salvarComoPadrao = widget.salvarComoPadraoInicial;
     _semprePerguntar = widget.semprePerguntarInicial;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _imprimirNode.requestFocus();
+    });
+  }
+
+  @override
+  void dispose() {
+    _imprimirNode.dispose();
+    super.dispose();
+  }
+
+  /// Salva as escolhas e devolve o nome da impressora ao chamador.
+  Future<void> _confirmarImpressao() async {
+    final nome = _impressoraSelecionada!.name;
+    if (_salvarComoPadrao) {
+      await ImpressaoService.salvarUltimaImpressora(
+        nome,
+        empresaId: widget.empresa?.id,
+      );
+      // Config compartilhada da empresa (banco): só é alterada quando
+      // o diálogo vem do Portal. Pelo PDV (somenteLocal) a escolha fica
+      // apenas na máquina local — cada terminal tem a sua impressora.
+      if (!widget.somenteLocal && widget.empresa?.configuracoes != null) {
+        widget.empresa!.configuracoes!['impressoraSelecionada'] = nome;
+      }
+    }
+    // 'Sempre perguntar' também é individualizado por terminal.
+    await ImpressaoService.salvarSemprePerguntar(_semprePerguntar);
+    if (!widget.somenteLocal && widget.empresa?.configuracoes != null) {
+      widget.empresa!.configuracoes!['mostrarDialogoImpressora'] = _semprePerguntar;
+    }
+    if (mounted) {
+      Navigator.pop(context, nome);
+    }
+  }
+
+  /// Escape cancela o diálogo; Enter segue para o controle em foco
+  /// (botão Imprimir por padrão, ou a própria seleção de impressora/checkbox).
+  KeyEventResult _aoTeclar(FocusNode node, KeyEvent event) {
+    if (event is KeyDownEvent &&
+        event.logicalKey == LogicalKeyboardKey.escape) {
+      Navigator.pop(context, null);
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
   }
 
   Future<void> _recarregarImpressoras() async {
@@ -645,7 +784,9 @@ class _DialogoSelecaoImpressoraWidgetState extends State<_DialogoSelecaoImpresso
 
   @override
   Widget build(BuildContext context) {
-    return Dialog(
+    return Focus(
+      onKeyEvent: _aoTeclar,
+      child: Dialog(
       backgroundColor: const Color(0xFF1E1E2E),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Container(
@@ -876,31 +1017,11 @@ class _DialogoSelecaoImpressoraWidgetState extends State<_DialogoSelecaoImpresso
                 ),
                 const SizedBox(width: 12),
                 ElevatedButton.icon(
+                  focusNode: _imprimirNode,
+                  autofocus: true,
                   onPressed: _impressoraSelecionada == null
                       ? null
-                      : () async {
-                          final nome = _impressoraSelecionada!.name;
-                          if (_salvarComoPadrao) {
-                            await ImpressaoService.salvarUltimaImpressora(
-                              nome,
-                              empresaId: widget.empresa?.id,
-                            );
-                            // Config compartilhada da empresa (banco): só é alterada quando
-                            // o diálogo vem do Portal. Pelo PDV (somenteLocal) a escolha fica
-                            // apenas na máquina local — cada terminal tem a sua impressora.
-                            if (!widget.somenteLocal && widget.empresa?.configuracoes != null) {
-                              widget.empresa!.configuracoes!['impressoraSelecionada'] = nome;
-                            }
-                          }
-                          // 'Sempre perguntar' também é individualizado por terminal.
-                          await ImpressaoService.salvarSemprePerguntar(_semprePerguntar);
-                          if (!widget.somenteLocal && widget.empresa?.configuracoes != null) {
-                            widget.empresa!.configuracoes!['mostrarDialogoImpressora'] = _semprePerguntar;
-                          }
-                          if (mounted) {
-                            Navigator.pop(context, nome);
-                          }
-                        },
+                      : _confirmarImpressao,
                   icon: const Icon(Icons.print, size: 18),
                   label: const Text('Imprimir'),
                   style: ElevatedButton.styleFrom(
@@ -914,6 +1035,7 @@ class _DialogoSelecaoImpressoraWidgetState extends State<_DialogoSelecaoImpresso
             ),
           ],
         ),
+      ),
       ),
     );
   }

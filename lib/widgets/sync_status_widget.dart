@@ -3,6 +3,9 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../services/data_service.dart';
 import '../services/clock_check_service.dart';
+import '../services/database_service.dart';
+import '../services/postgres_local_starter.dart';
+import 'conflitos_sync_dialog.dart';
 
 class SyncStatusWidget extends StatelessWidget {
   const SyncStatusWidget({super.key});
@@ -182,22 +185,32 @@ class SyncStatusWidget extends StatelessWidget {
                           foregroundColor: Colors.white,
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                         ),
-                        onPressed: () async {
-                          await service.resolverTodosConflitos();
-                          if (!context.mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('✓ Todos os conflitos foram marcados como resolvidos!'),
-                              backgroundColor: Colors.green,
-                              behavior: SnackBarBehavior.floating,
-                            ),
-                          );
-                        },
+                        // Abre a decisão item a item: quais versões ficaram
+                        // diferentes e qual delas vale (meu x nuvem). Antes o
+                        // botão só marcava tudo como resolvido, sem aplicar nada.
+                        onPressed: () => ConflitosSyncDialog.mostrar(context, service),
                         icon: const Icon(Icons.gavel, size: 16),
                         label: const Text('Corrigir Conflitos'),
                       ),
                       const SizedBox(width: 8),
                     ],
+                    // Banco local parado ("BANCO LOCAL DESLIGADO"): o sistema
+                    // já tenta ligar sozinho, mas aqui o usuário pode mandar
+                    // tentar de novo na hora (sem esperar o intervalo).
+                    if (DatabaseService().bancoLocalFalhou)
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.teal,
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                          onPressed: () => _ligarBancoLocal(context, service),
+                          icon: const Icon(Icons.power_settings_new, size: 16),
+                          label: const Text('Ligar banco local'),
+                        ),
+                      ),
                     ElevatedButton.icon(
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.blue,
@@ -218,6 +231,40 @@ class SyncStatusWidget extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+
+  /// Tenta ligar o PostgreSQL local a pedido do usuário e recarrega o banco.
+  ///
+  /// `respeitarIntervalo: false` porque é ação MANUAL: o intervalo existe só
+  /// para as tentativas automáticas não virarem enxurrada de processos.
+  Future<void> _ligarBancoLocal(BuildContext context, DataService service) async {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(
+      const SnackBar(
+        content: Text('Tentando ligar o PostgreSQL local...'),
+        duration: Duration(seconds: 2),
+      ),
+    );
+
+    final (iniciado, mensagem) =
+        await PostgresLocalStarter.tentarIniciar(respeitarIntervalo: false);
+    service.addSyncLog(mensagem);
+
+    if (!iniciado) {
+      messenger.showSnackBar(
+        SnackBar(content: Text(mensagem), backgroundColor: Colors.red),
+      );
+      return;
+    }
+
+    final (quantidade, aviso) = await service.recarregarDoBancoLocal();
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(aviso ?? 'Banco local ligado: $quantidade item(ns) recarregado(s).'),
+        backgroundColor: aviso == null ? Colors.green : Colors.orange,
+        duration: const Duration(seconds: 4),
+      ),
     );
   }
 
@@ -408,6 +455,18 @@ class SyncStatusWidget extends StatelessWidget {
           builder: (context, _) {
             final isOffline = service.isOffline;
             final temErro = service.ultimoErroSync != null;
+            // Banco local (PostgreSQL) falhando na LEITURA ou na GRAVAÇÃO.
+            // A falha é anotada pelo DatabaseService no último acesso — sem
+            // este chip o erro só ia para o debugPrint e a tela seguia mostrando
+            // "tudo certo" enquanto a cópia local ficava velha.
+            final falhaBancoLocal = DatabaseService().bancoLocalFalhou;
+            final atendeuBancoLocal = DatabaseService().bancoLocalAtendeu;
+            final erroBancoLocal = DatabaseService().ultimoErroDoBancoLocal;
+            final dicaBancoLocal =
+                DatabaseService.dicaDoErroLocal(erroBancoLocal);
+            final rotuloBancoLocal =
+                DatabaseService.rotuloCurtoDoErroLocal(erroBancoLocal);
+            final localVazio = atendeuBancoLocal && !service.cacheLocalTemDados;
             // Ocultado temporariamente a pedido do usuário, para não causar confusão
             final temConflitos = false;
             final relogioErrado = clockService.relogioErrado;
@@ -457,10 +516,79 @@ class SyncStatusWidget extends StatelessWidget {
 
                 if (relogioErrado) const SizedBox(width: 4),
 
-                // ── Indicador de Sincronização ─────────────────────────────────
+                // ── BANCO LOCAL (sempre visível: é o sistema) ──────────────
+                Tooltip(
+                  message: falhaBancoLocal
+                      ? '$dicaBancoLocal — clique para ver os logs.'
+                      : (localVazio
+                          ? 'PostgreSQL local conectado. Esta empresa ainda não tem dados neste computador. Clique para logs.'
+                          : (atendeuBancoLocal
+                              ? 'PostgreSQL local em uso. A nuvem é só espelho. Clique para logs.'
+                              : 'Ainda não leu o PostgreSQL local. Clique para logs.')),
+                  child: InkWell(
+                    onTap: () => _mostrarDialogoLogs(context, service),
+                    borderRadius: BorderRadius.circular(20),
+                    child: Container(
+                      margin: const EdgeInsets.symmetric(vertical: 8),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: (falhaBancoLocal
+                                ? Colors.red
+                                : (localVazio ? Colors.blueGrey : Colors.teal))
+                            .withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                          color: (falhaBancoLocal
+                                  ? Colors.red
+                                  : (localVazio ? Colors.blueGrey : Colors.teal))
+                              .withValues(alpha: 0.35),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            falhaBancoLocal
+                                ? Icons.storage_rounded
+                                : Icons.dns_outlined,
+                            color: falhaBancoLocal
+                                ? Colors.redAccent
+                                : (localVazio
+                                    ? Colors.blueGrey.shade200
+                                    : Colors.tealAccent),
+                            size: 14,
+                          ),
+                          const SizedBox(width: 5),
+                          Text(
+                            falhaBancoLocal
+                                ? rotuloBancoLocal
+                                : (localVazio
+                                    ? 'LOCAL VAZIO'
+                                    : (atendeuBancoLocal
+                                        ? 'BANCO LOCAL'
+                                        : 'LOCAL...')),
+                            style: TextStyle(
+                              color: falhaBancoLocal
+                                  ? Colors.redAccent
+                                  : (localVazio
+                                      ? Colors.blueGrey.shade100
+                                      : Colors.tealAccent),
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+
+                const SizedBox(width: 4),
+
+                // ── Indicador de Sincronização (espelho da nuvem) ───────────
                 Tooltip(
                   message: isOffline 
-                      ? 'Internet desconectada. Modo Offline. Clique para ver logs.' 
+                      ? 'Operando no banco local. Espelho da nuvem pausado. Clique para ver logs.' 
                       : (temErro 
                           ? 'Erro na sincronização. Clique para ver logs.' 
                           : (temConflitos 
@@ -519,7 +647,7 @@ class SyncStatusWidget extends StatelessWidget {
                           const SizedBox(width: 8),
                           Text(
                             isOffline 
-                                ? 'MODO OFFLINE' 
+                                ? 'NUVEM PAUSADA' 
                                 : (temErro 
                                     ? 'Erro na sincronização' 
                                     : (temConflitos 

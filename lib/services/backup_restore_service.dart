@@ -186,6 +186,9 @@ class BackupRestoreService {
   /// Retorna (sucesso, mensagem, caminho_do_arquivo)
   Future<(bool, String, String?)> uploadBackupNaNuvem() async {
     try {
+      if (!_dataService.nuvemHabilitada) {
+        return (false, 'Nuvem desativada para esta empresa.', null);
+      }
       final empresaId = _dataService.currentEmpresaId;
       if (empresaId == null) return (false, 'Empresa não selecionada', null);
 
@@ -299,6 +302,7 @@ class BackupRestoreService {
   /// Lista backups salvos na nuvem para a empresa atual
   Future<List<Map<String, dynamic>>> listarBackupsNuvem() async {
     try {
+      if (!_dataService.nuvemHabilitada) return [];
       final empresaId = _dataService.currentEmpresaId;
       if (empresaId == null) return [];
 
@@ -324,6 +328,9 @@ class BackupRestoreService {
   /// Baixa um backup da nuvem e restaura os dados
   Future<(bool, String)> restaurarBackupDaNuvem(String storagePath) async {
     try {
+      if (!_dataService.nuvemHabilitada) {
+        return (false, 'Nuvem desativada para esta empresa.');
+      }
       const bucketName = 'backups';
 
       debugPrint('>>> [BackupRestore] ☁️ Baixando backup da nuvem: $storagePath');
@@ -355,6 +362,7 @@ class BackupRestoreService {
   /// Remove um backup da nuvem
   Future<bool> removerBackupNuvem(String storagePath) async {
     try {
+      if (!_dataService.nuvemHabilitada) return false;
       await _storageAdminClient.storage
           .from('backups')
           .remove([storagePath]);
@@ -1539,6 +1547,9 @@ ORDER BY c.relname;
     String? empresaId,
     void Function(String)? onProgress,
   }) async {
+    if (!_dataService.nuvemHabilitada) {
+      return (false, 'Nuvem desativada para esta empresa.', null);
+    }
     if (kIsWeb) {
       return (false, 'Backup da nuvem não está disponível na versão Web.', null);
     }
@@ -1659,6 +1670,9 @@ ORDER BY c.relname;
     String? empresaId,
     void Function(String)? onProgress,
   }) async {
+    if (!_dataService.nuvemHabilitada) {
+      return (false, 'Nuvem desativada para esta empresa.', null);
+    }
     if (kIsWeb) {
       return (false, 'Restauração na nuvem não está disponível na versão Web.', null);
     }
@@ -5529,8 +5543,22 @@ END $$;
   /// Bucket usado para armazenar dumps PostgreSQL na nuvem
   static const String _bucketDumps = 'dumps';
 
-  /// Quantos arquivos de backup (dump/empresa) são mantidos por empresa no bucket 'dumps'.
-  static const int _maxDumpsNuvemPorEmpresa = 30;
+  /// Quantos backups por empresa são mantidos — no computador E na nuvem.
+  ///
+  /// É a regra dos "5 últimos": quando entra um backup novo, o mais antigo sai,
+  /// tanto da pasta local desta empresa (`C:\ExodoBackups\<empresaId>`, com os
+  /// `.dump` na subpasta `dumps`) quanto da pasta dela no bucket `dumps`. Assim
+  /// o computador sempre tem os 5 que podem subir e a nuvem nunca cresce sem
+  /// limite.
+  static const int maxBackupsPorEmpresa = 5;
+
+  /// Pasta dos dumps (.dump) de uma empresa.
+  static String pastaDumpsLocais(String empresaId) =>
+      'C:\\ExodoBackups\\$empresaId\\dumps';
+
+  /// Pasta dos backups `.sql` e `.dump` de uma empresa.
+  static String pastaBackupDaEmpresa(String empresaId) =>
+      'C:\\ExodoBackups\\$empresaId';
 
   /// Garante que o bucket de dumps existe, criando-o se necessário
   Future<void> _garantirBucketDumps() async {
@@ -5549,17 +5577,24 @@ END $$;
     }
   }
 
-  /// Faz upload de um arquivo dump PostgreSQL (.dump/.sql) para o Supabase Storage
-  /// Retorna (sucesso, mensagem)
+  /// Faz upload de um backup (.dump/.sql) para o Supabase Storage.
+  ///
+  /// O arquivo sobe com o MESMO nome que tem no computador (ver
+  /// [nomeNaNuvemPara]) e, depois do envio, a pasta da empresa na nuvem fica com
+  /// os [maxBackupsPorEmpresa] últimos de cada tipo. Retorna (sucesso, mensagem).
   Future<(bool, String)> uploadDumpNaNuvem(File dumpFile) async {
     try {
+      if (!_dataService.nuvemHabilitada) {
+        return (false, 'Nuvem desativada para esta empresa.');
+      }
       final empresaId = _dataService.currentEmpresaId;
       if (empresaId == null) return (false, 'Empresa não selecionada');
       if (!SupabaseService.isAvailable) return (false, 'Supabase não disponível');
 
-      // Obter nome da empresa para incluir no nome do arquivo
+      // Nome da empresa para o caso de precisar MONTAR um nome (sem acento: o
+      // Storage recusa chaves acentuadas — ver [nomeSeguroParaStorage]).
       final nomeEmpresa = _dataService.empresaAtual?.nomeExibicao ?? empresaId;
-      final nomeLimpo = nomeEmpresa.replaceAll(RegExp(r'[^a-zA-Z0-9À-ú]'), '_').replaceAll(RegExp(r'_+'), '_').trim();
+      final nomeLimpo = nomeSeguroParaStorage(nomeEmpresa);
 
       final fileName = p.basename(dumpFile.path);
       final fileBytes = await dumpFile.readAsBytes();
@@ -5569,16 +5604,12 @@ END $$;
 
       await _garantirBucketDumps();
 
-      final now = DateTime.now();
-      final dataStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-      final horaStr = '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}';
-      // Preserva a extensão do arquivo de origem (.sql = backup SÓ da empresa,
-      // .dump = banco inteiro). Antes o nome era sempre fixado em .dump, o que
-      // rotulava errado um backup .sql enviado para a nuvem.
-      final extOrigem = p.extension(dumpFile.path).replaceFirst('.', '').toLowerCase();
-      final ext = extOrigem.isEmpty ? 'dump' : extOrigem;
-      final tipo = ext == 'sql' ? 'empresa' : 'dump';
-      final nomeArquivo = '${nomeLimpo}_${tipo}_${dataStr}_$horaStr.$ext';
+      // O arquivo sobe com o MESMO nome que tem no computador. É isso que deixa
+      // a tela dizer, sem baixar nada, o que já está na nuvem e o que ainda falta
+      // subir — e impede o mesmo backup de virar dois arquivos diferentes lá.
+      // A extensão também se conserva (.sql = backup SÓ da empresa, .dump =
+      // banco inteiro), que é como a lista identifica cada tipo.
+      final nomeArquivo = nomeNaNuvemPara(fileName, nomeLimpo, DateTime.now());
       final storagePath = '$empresaId/$nomeArquivo';
 
       try {
@@ -5598,45 +5629,113 @@ END $$;
       debugPrint('>>> [BackupRestore] ✅ Dump enviado para nuvem: $_bucketDumps/$storagePath');
 
       // Mantém apenas os últimos arquivos desta empresa na nuvem (evita crescer sem limite)
-      await _limparDumpsNuvemAntigos(empresaId, maxArquivos: _maxDumpsNuvemPorEmpresa);
+      await _limparDumpsNuvemAntigos(empresaId, maxArquivos: maxBackupsPorEmpresa);
 
-      return (true, 'Dump enviado com sucesso!');
+      return (true,
+          'Backup "$nomeArquivo" na nuvem (mantidos os $maxBackupsPorEmpresa últimos).');
     } catch (e) {
       debugPrint('>>> [BackupRestore] ❌ Erro ao enviar dump: $e');
       return (false, 'Erro ao enviar dump: ${_mensagemErroStorage(e)}');
     }
   }
 
-  /// Mantém apenas os [maxArquivos] arquivos mais recentes da empresa no bucket
-  /// 'dumps'. Cada empresa tem sua própria pasta (`{empresaId}/`), então a
-  /// limpeza nunca afeta outras empresas.
-  Future<void> _limparDumpsNuvemAntigos(String empresaId, {int maxArquivos = 30}) async {
+  /// Mantém apenas os [maxArquivos] arquivos mais recentes DE CADA TIPO (.dump
+  /// e .sql) da empresa no bucket 'dumps'. Cada empresa tem sua própria pasta
+  /// (`{empresaId}/`), então a limpeza nunca afeta outras empresas.
+  Future<void> _limparDumpsNuvemAntigos(String empresaId,
+      {int maxArquivos = maxBackupsPorEmpresa}) async {
     try {
       final prefix = '$empresaId/';
       final files = await _storageAdminClient.storage
           .from(_bucketDumps)
           .list(path: prefix);
 
-      if (files.length <= maxArquivos) return;
+      final antigos = <String>[];
+      for (final tipo in const ['.dump', '.sql']) {
+        final doTipo = files
+            .where((f) => f.name.toLowerCase().endsWith(tipo))
+            .toList()
+          ..sort((a, b) {
+            final da = DateTime.tryParse(a.createdAt ?? '') ??
+                DateTime.fromMillisecondsSinceEpoch(0);
+            final db = DateTime.tryParse(b.createdAt ?? '') ??
+                DateTime.fromMillisecondsSinceEpoch(0);
+            return db.compareTo(da);
+          });
+        if (doTipo.length <= maxArquivos) continue;
+        antigos.addAll(
+            doTipo.skip(maxArquivos).map((f) => '$prefix${f.name}'));
+      }
+      if (antigos.isEmpty) return;
 
-      final ordenados = files.toList()
-        ..sort((a, b) {
-          final da = DateTime.tryParse(a.createdAt ?? '') ??
-              DateTime.fromMillisecondsSinceEpoch(0);
-          final db = DateTime.tryParse(b.createdAt ?? '') ??
-              DateTime.fromMillisecondsSinceEpoch(0);
-          return db.compareTo(da);
-        });
-
-      final antigos = ordenados.sublist(maxArquivos);
-      final caminhos = antigos.map((f) => '$prefix${f.name}').toList();
-      if (caminhos.isEmpty) return;
-
-      await _storageAdminClient.storage.from(_bucketDumps).remove(caminhos);
-      debugPrint('>>> [BackupRestore] 🗑️ ${caminhos.length} arquivo(s) de backup antigo(s) removido(s) da nuvem (empresa $empresaId)');
+      await _storageAdminClient.storage.from(_bucketDumps).remove(antigos);
+      debugPrint('>>> [BackupRestore] 🗑️ ${antigos.length} arquivo(s) de backup antigo(s) '
+          'removido(s) da nuvem (empresa $empresaId) — ficam os $maxArquivos últimos de cada tipo');
     } catch (e) {
       debugPrint('>>> [BackupRestore] ⚠️ Erro ao limpar backups antigos da nuvem: $e');
     }
+  }
+
+  /// Nome de arquivo que o Storage do Supabase ACEITA.
+  ///
+  /// O Storage recusa chaves com acento — responde 400 "Invalid key" — e era
+  /// exatamente isso que impedia o backup de "É O BICHO PETSHOP" de subir: o
+  /// nome montado com o nome da empresa virava `É_O_BICHO_PETSHOP_...` e era
+  /// recusado (por isso a pasta dessa empresa na nuvem parou em 15/09).
+  ///
+  /// Aqui os acentos viram letras comuns (É→E, Ã→A, Ç→C) e o que sobrar de
+  /// estranho vira `_`. É a MESMA função dos dois lados da comparação (o nome
+  /// que sobe e o nome que a lista da nuvem devolve), então dá para saber o que
+  /// já subiu mesmo quando o nome original tinha acento.
+  static String nomeSeguroParaStorage(String nome) {
+    final semAcento = StringBuffer();
+    for (final caractere in nome.split('')) {
+      semAcento.write(_semAcento[caractere] ?? caractere);
+    }
+    return semAcento
+        .toString()
+        .replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_')
+        .replaceAll(RegExp(r'_+'), '_')
+        .trim();
+  }
+
+  /// Acentos que aparecem nos nomes de empresa/arquivo deste sistema.
+  static const Map<String, String> _semAcento = {
+    'á': 'a', 'à': 'a', 'â': 'a', 'ã': 'a', 'ä': 'a', 'å': 'a',
+    'Á': 'A', 'À': 'A', 'Â': 'A', 'Ã': 'A', 'Ä': 'A', 'Å': 'A',
+    'é': 'e', 'è': 'e', 'ê': 'e', 'ë': 'e',
+    'É': 'E', 'È': 'E', 'Ê': 'E', 'Ë': 'E',
+    'í': 'i', 'ì': 'i', 'î': 'i', 'ï': 'i',
+    'Í': 'I', 'Ì': 'I', 'Î': 'I', 'Ï': 'I',
+    'ó': 'o', 'ò': 'o', 'ô': 'o', 'õ': 'o', 'ö': 'o',
+    'Ó': 'O', 'Ò': 'O', 'Ô': 'O', 'Õ': 'O', 'Ö': 'O',
+    'ú': 'u', 'ù': 'u', 'û': 'u', 'ü': 'u',
+    'Ú': 'U', 'Ù': 'U', 'Û': 'U', 'Ü': 'U',
+    'ç': 'c', 'Ç': 'C', 'ñ': 'n', 'Ñ': 'N',
+  };
+
+  /// Nome do arquivo quando um backup local sobe para a nuvem.
+  ///
+  /// Usa o MESMO nome do arquivo local (`..._dump_diario_2026-09-25_1031.dump`,
+  /// `..._empresa_2026-09-25_1031.sql`), sem acento (ver
+  /// [nomeSeguroParaStorage]): o nome já traz data e hora, então a lista da
+  /// nuvem e a do computador falam a mesma língua — dá para ver o que já subiu e
+  /// reenviar não cria uma cópia com outro nome. Só quando o nome local não
+  /// serve (vazio, sem extensão ou sem nada aproveitável) é que um nome novo é
+  /// montado com a data/hora de agora.
+  @visibleForTesting
+  static String nomeNaNuvemPara(
+      String nomeLocal, String nomeEmpresaLimpa, DateTime agora) {
+    final limpo = nomeSeguroParaStorage(nomeLocal);
+    final ext = p.extension(limpo).replaceFirst('.', '').toLowerCase();
+    if (limpo.isNotEmpty && (ext == 'dump' || ext == 'sql')) return limpo;
+
+    final dataStr =
+        '${agora.year}-${agora.month.toString().padLeft(2, '0')}-${agora.day.toString().padLeft(2, '0')}';
+    final horaStr =
+        '${agora.hour.toString().padLeft(2, '0')}${agora.minute.toString().padLeft(2, '0')}';
+    final tipo = ext == 'sql' ? 'empresa' : 'dump';
+    return '${nomeEmpresaLimpa}_${tipo}_${dataStr}_$horaStr.${ext.isEmpty ? 'dump' : ext}';
   }
 
   /// Lista dumps PostgreSQL salvos na nuvem para a empresa atual
@@ -5681,6 +5780,9 @@ END $$;
     String? destino,
   }) async {
     try {
+      if (!_dataService.nuvemHabilitada) {
+        return (false, 'Nuvem desativada para esta empresa.', null);
+      }
       if (!SupabaseService.isAvailable) return (false, 'Supabase não disponível', null);
 
       debugPrint('>>> [BackupRestore] 📥 Baixando dump da nuvem: $storagePath');
@@ -5708,6 +5810,7 @@ END $$;
   /// Remove um dump da nuvem
   Future<bool> removerDumpNuvem(String storagePath) async {
     try {
+      if (!_dataService.nuvemHabilitada) return false;
       if (!SupabaseService.isAvailable) return false;
       await _storageAdminClient.storage
           .from(_bucketDumps)
@@ -5717,6 +5820,201 @@ END $$;
     } catch (e) {
       debugPrint('>>> [BackupRestore] ❌ Erro ao remover dump: $e');
       return false;
+    }
+  }
+
+  // ============================================================
+  // BACKUPS LOCAIS → NUVEM (regra dos 5 últimos dos dois lados)
+  // ============================================================
+
+  /// Arquivos de backup LOCAIS desta empresa, mais recentes primeiro.
+  ///
+  /// São dois lugares: os `.dump` da subpasta `dumps` (o dump do banco inteiro,
+  /// que é copiado para cada empresa) e os `.sql` da pasta da empresa (backup que
+  /// carrega SÓ os dados dela). Os `.sql` de OUTRAS empresas que estejam na pasta
+  /// são ignorados — o dono é lido do cabeçalho do arquivo, igual à tela: subir
+  /// o backup de outra empresa na pasta desta só confundiria a restauração.
+  Future<List<({File arquivo, String nome, DateTime data})>>
+      listarBackupsLocaisDaEmpresa(String empresaId) async {
+    final lista = <({File arquivo, String nome, DateTime data})>[];
+
+    final pastaDumps = Directory(pastaDumpsLocais(empresaId));
+    if (await pastaDumps.exists()) {
+      for (final f in pastaDumps.listSync().whereType<File>()) {
+        if (!f.path.toLowerCase().endsWith('.dump')) continue;
+        lista.add((arquivo: f, nome: p.basename(f.path), data: f.lastModifiedSync()));
+      }
+    }
+
+    final pastaEmpresa = Directory(pastaBackupDaEmpresa(empresaId));
+    if (await pastaEmpresa.exists()) {
+      for (final f in pastaEmpresa.listSync().whereType<File>()) {
+        if (!f.path.toLowerCase().endsWith('.sql')) continue;
+        final cabecalho = await lerCabecalhoScriptEmpresa(f);
+        if (cabecalho.empresaId == null || cabecalho.empresaId != empresaId) continue;
+        lista.add((arquivo: f, nome: p.basename(f.path), data: f.lastModifiedSync()));
+      }
+    }
+
+    lista.sort((a, b) => b.data.compareTo(a.data));
+    return lista;
+  }
+
+  /// Quais arquivos devem SAIR para sobrar só os [maximo] mais recentes.
+  ///
+  /// É a regra dos "5 últimos" isolada, sem tocar no disco, para poder ser
+  /// testada direto: recebe nome + data e devolve os nomes que passam do limite.
+  @visibleForTesting
+  static List<String> backupsQuePassamDoLimite(
+    List<({String nome, DateTime data})> arquivos, {
+    int maximo = maxBackupsPorEmpresa,
+  }) {
+    if (arquivos.length <= maximo) return const [];
+    final ordenados = [...arquivos]..sort((a, b) => b.data.compareTo(a.data));
+    return ordenados.skip(maximo).map((a) => a.nome).toList();
+  }
+
+  /// Os [maximo] backups locais mais recentes que ainda NÃO estão na nuvem — o
+  /// que falta subir. Puro, como a regra acima, para poder ser testado.
+  @visibleForTesting
+  static List<String> backupsQueFaltamNaNuvem(
+    List<({String nome, DateTime data})> locais,
+    Set<String> naNuvem, {
+    int maximo = maxBackupsPorEmpresa,
+  }) {
+    final ordenados = [...locais]..sort((a, b) => b.data.compareTo(a.data));
+    return ordenados
+        .take(maximo)
+        .map((a) => a.nome)
+        .where((nome) => !naNuvem.contains(nome))
+        .toList();
+  }
+
+  /// Deixa só os [maximo] backups LOCAIS mais recentes desta empresa, POR TIPO:
+  /// os .dump da subpasta `dumps` e os .sql da pasta da empresa (as duas listas
+  /// da tela) ficam com os 5 últimos cada.
+  ///
+  /// Devolve quantos arquivos saíram. É a regra dos "5 últimos" aplicada ao
+  /// computador: o que pode subir para a nuvem é exatamente o que fica aqui.
+  Future<int> manterUltimosBackupsLocais(String empresaId,
+      {int maximo = maxBackupsPorEmpresa}) async {
+    var removidos = 0;
+    try {
+      final locais = await listarBackupsLocaisDaEmpresa(empresaId);
+      if (locais.isEmpty) return 0;
+
+      final porNome = {for (final b in locais) b.nome: b.arquivo};
+      for (final tipo in const ['.dump', '.sql']) {
+        final doTipo = [
+          for (final b in locais)
+            if (b.nome.toLowerCase().endsWith(tipo)) (nome: b.nome, data: b.data)
+        ];
+        final sair = backupsQuePassamDoLimite(doTipo, maximo: maximo);
+        for (final nome in sair) {
+          final arquivo = porNome[nome];
+          if (arquivo == null) continue;
+          await arquivo.delete();
+          removidos++;
+          debugPrint('>>> [BackupRestore] 🗑️ Backup local antigo removido '
+              '(ficam os $maximo $tipo últimos): $nome');
+        }
+      }
+    } catch (e) {
+      debugPrint('>>> [BackupRestore] ⚠️ Erro ao limpar backups locais antigos: $e');
+    }
+    return removidos;
+  }
+
+  /// Sobe para a nuvem os backups que estão NESTE computador, desta empresa.
+  ///
+  /// Manda os [maxBackupsPorEmpresa] mais recentes de cada tipo (.dump e .sql),
+  /// pula o que já está na nuvem (mesmo nome, porque o upload conserva o nome do
+  /// arquivo) e, no fim, aplica a regra dos "5 últimos" dos dois lados: a pasta
+  /// local desta empresa e a pasta dela no bucket `dumps`. Retorna
+  /// (nada falhou, mensagem para mostrar na tela).
+  Future<(bool, String)> enviarBackupsLocaisParaNuvem({
+    void Function(String)? onProgress,
+  }) async {
+    if (!_dataService.nuvemHabilitada) {
+      return (false, 'Nuvem desativada para esta empresa. Nenhum backup foi enviado.');
+    }
+    final empresaId = _dataService.currentEmpresaId;
+    if (empresaId == null || empresaId.isEmpty) {
+      return (false, 'Empresa não selecionada');
+    }
+    if (!SupabaseService.isAvailable) {
+      return (false, 'Supabase não disponível no momento — nada foi enviado.');
+    }
+
+    try {
+      final locais = await listarBackupsLocaisDaEmpresa(empresaId);
+      if (locais.isEmpty) {
+        return (false, 'Não há backups deste computador para enviar.');
+      }
+
+      await _garantirBucketDumps();
+      // Comparação pelo nome SEGURO para o Storage (sem acento) dos dois lados:
+      // é assim que um backup de "É O BICHO PETSHOP" continua identificável.
+      final naNuvem = (await _storageAdminClient.storage
+              .from(_bucketDumps)
+              .list(path: '$empresaId/'))
+          .map((f) => nomeSeguroParaStorage(f.name))
+          .toSet();
+
+      final porNomeSeguro = <String, File>{};
+      final nomeLocalDe = <String, String>{};
+      for (final b in locais) {
+        final seguro = nomeSeguroParaStorage(b.nome);
+        porNomeSeguro[seguro] = b.arquivo;
+        nomeLocalDe[seguro] = b.nome;
+      }
+
+      // Mesma conta da limpeza, feita POR TIPO: os 5 .dump e os 5 .sql mais
+      // recentes que ainda não subiram.
+      final faltam = <String>[];
+      for (final tipo in const ['.dump', '.sql']) {
+        final doTipo = [
+          for (final b in locais)
+            if (b.nome.toLowerCase().endsWith(tipo))
+              (nome: nomeSeguroParaStorage(b.nome), data: b.data)
+        ];
+        faltam.addAll(backupsQueFaltamNaNuvem(doTipo, naNuvem));
+      }
+
+      var enviados = 0;
+      final falhas = <String>[];
+      for (final nome in faltam) {
+        final arquivo = porNomeSeguro[nome];
+        if (arquivo == null) continue;
+        final nomeLocal = nomeLocalDe[nome] ?? nome;
+        onProgress?.call('Enviando $nomeLocal...');
+        final (ok, msg) = await uploadDumpNaNuvem(arquivo);
+        if (ok) {
+          enviados++;
+          debugPrint('>>> [BackupRestore] ☁️ $nomeLocal: $msg');
+        } else {
+          falhas.add('$nomeLocal: $msg');
+          debugPrint('>>> [BackupRestore] ⚠️ Não subiu $nomeLocal: $msg');
+        }
+      }
+
+      // A regra dos 5 últimos: na nuvem (o próprio upload limpa) e aqui.
+      await _limparDumpsNuvemAntigos(empresaId, maxArquivos: maxBackupsPorEmpresa);
+      final removidosLocais = await manterUltimosBackupsLocais(empresaId);
+
+      final partes = <String>[
+        if (enviados > 0)
+          '$enviados backup(s) enviado(s) para a nuvem'
+        else
+          'nada novo para enviar (os últimos já estavam na nuvem)',
+        'nuvem e computador com os $maxBackupsPorEmpresa últimos de cada tipo',
+        if (removidosLocais > 0) '$removidosLocais arquivo(s) antigo(s) apagado(s) aqui',
+        if (falhas.isNotEmpty) 'falhou: ${falhas.join(' | ')}',
+      ];
+      return (falhas.isEmpty, partes.join(' • '));
+    } catch (e) {
+      debugPrint('>>> [BackupRestore] ❌ Erro ao enviar os backups locais: $e');
+      return (false, 'Erro ao enviar os backups locais: ${_mensagemErroStorage(e)}');
     }
   }
 

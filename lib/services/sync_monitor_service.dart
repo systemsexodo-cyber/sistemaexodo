@@ -56,6 +56,9 @@ class SyncMonitorService {
   }) async {
     if (!SupabaseService.isAvailable) return;
     if (empresaId.isEmpty) return;
+    // Servidor indisponível (PGRST002/503/504): a telemetria só geraria mais
+    // requisições que vão falhar — silencia durante o cooldown.
+    if (SupabaseService.instance.servidorIndisponivel) return;
 
     try {
       await SupabaseService.instance.upsert('sync_logs', {
@@ -83,6 +86,7 @@ class SyncMonitorService {
     String versaoApp = '',
   }) async {
     if (!SupabaseService.isAvailable || empresaId.isEmpty) return;
+    if (SupabaseService.instance.servidorIndisponivel) return;
 
     try {
       final agora = DateTime.now().toUtc().toIso8601String();
@@ -114,6 +118,7 @@ class SyncMonitorService {
   /// Atualiza o status quando ocorre um erro
   Future<void> _atualizarStatusErro(String empresaId, String erro) async {
     if (!SupabaseService.isAvailable || empresaId.isEmpty) return;
+    if (SupabaseService.instance.servidorIndisponivel) return;
 
     try {
       await SupabaseService.instance.upsert('sync_status', {
@@ -132,6 +137,7 @@ class SyncMonitorService {
   /// Atualiza heartbeat (sinal de que o cliente esta online)
   Future<void> _atualizarHeartbeat(String empresaId) async {
     if (!SupabaseService.isAvailable || empresaId.isEmpty) return;
+    if (SupabaseService.instance.servidorIndisponivel) return;
 
     try {
       await SupabaseService.instance.upsert('sync_status', {

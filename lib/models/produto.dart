@@ -8,6 +8,18 @@ import 'package:sistema_exodo_novo/models/regra_promocao.dart';
 
 class Produto {
   final String id;
+
+  /// A EMPRESA dona deste produto.
+  ///
+  /// Fica no modelo de propósito: sem isto, qualquer gravação carimbava o
+  /// produto com a empresa ABERTA no app naquele momento (é a regra do
+  /// PostgreSQL local) — então um produto que entrasse na memória vindo de
+  /// outro lugar era silenciosamente adotado pela empresa errada. Com a
+  /// empresa no próprio produto, a gravação cruzada é RECUSADA em vez de
+  /// mover o item de dono. `null` só em produto que ainda não foi gravado
+  /// (aí a empresa aberta é usada, que é o certo).
+  final String? empresaId;
+
   final String? codigo; // Pode ser null para produtos antigos
   final String? codigoBarras; // Código de barras principal (EAN, UPC, etc)
   final List<String> codigosBarrasAdicionais; // Códigos de barras extras (mesmo produto pode ter vários EANs)
@@ -113,9 +125,30 @@ class Produto {
 
   // Mapeamento de estoque por fornecedor (Ex: {"Ambev": 10.0, "Coca": 10.0})
   final Map<String, double> estoquePorFornecedor; 
+
+  // Mapeamento de estoque por ESTOQUE/local (Ex: {"estoque_loja": 8.0,
+  // "estoque_deposito": 20.0}). As chaves são os ids dos estoques da empresa
+  // (`empresa.configuracoes['estoques']`). A soma destes saldos é o `estoque`
+  // total do produto — e é o total que a venda baixa, como sempre.
+  // Vazio = o produto ainda não foi separado por estoque: todo o `estoque`
+  // está (implicitamente) no estoque padrão dele.
+  final Map<String, double> estoquePorEstoque;
+
+  /// Onde este produto MORA (o estoque padrão). É para onde entram as entradas
+  /// (nota de mercadoria, entrada manual) e onde a venda procura o saldo antes
+  /// de buscar nos outros estoques. Nulo = usa o estoque principal da empresa.
+  final String? estoquePadraoId;
+
   final bool enviaBalanca;
   final bool ativo; // Se true, produto aparece no PDV e pode ser vendido. Se false, está desativado.
   final bool cobrarGarcom; // Se true, cobra os 10% de taxa de garçom no PDV/Comandas
+
+  // Disponibilidade temporária: o produto continua VISÍVEL no catálogo, mas só
+  // pode ser vendido dentro desta janela (dia/hora). Fora dela fica marcado como
+  // "indisponível" e a venda é bloqueada com aviso. Nulo = sem limite naquele
+  // lado (sem nenhuma janela = sempre disponível).
+  final DateTime? disponivelDe; // Início da janela (a partir de)
+  final DateTime? disponivelAte; // Fim da janela (até)
   final String? perfilTributarioId; // ID do Perfil Tributário (impostos)
   final List<PerguntaSelecao> perguntasSelecao;
   final bool exibirComposicaoPdv;
@@ -125,6 +158,7 @@ class Produto {
 
   Produto({
     required this.id,
+    this.empresaId,
     this.codigo,
     this.codigoBarras,
     List<String>? codigosBarrasAdicionais,
@@ -172,6 +206,8 @@ class Produto {
     this.enviaBalanca = false,
     this.ativo = true,
     this.cobrarGarcom = true,
+    this.disponivelDe,
+    this.disponivelAte,
     this.perfilTributarioId,
     this.perguntasSelecao = const [],
     this.exibirComposicaoPdv = false,
@@ -200,6 +236,8 @@ class Produto {
     this.pedidoCompraGerado = false,
     this.dataUltimoPedido,
     Map<String, double>? estoquePorFornecedor,
+    Map<String, double>? estoquePorEstoque,
+    this.estoquePadraoId,
   }) : codigosFornecedor = codigosFornecedor ?? [],
        codigosBarrasAdicionais = codigosBarrasAdicionais ?? [],
        fotosUrls = fotosUrls ?? [],
@@ -210,6 +248,7 @@ class Produto {
        temAdicionais = temAdicionais ?? false,
        composicao = composicao ?? [],
        estoquePorFornecedor = estoquePorFornecedor ?? {},
+       estoquePorEstoque = estoquePorEstoque ?? {},
        formasVenda = formasVenda ?? [],
        promocoes = promocoes ?? [];
 
@@ -357,6 +396,45 @@ class Produto {
     return promocoes.any((r) => r.ativo && r.janelaValidaNoMomento());
   }
 
+  /// True se o produto tem alguma janela de disponibilidade temporária
+  /// configurada (início e/ou fim).
+  bool get temDisponibilidadeTemporaria =>
+      disponivelDe != null || disponivelAte != null;
+
+  /// True se o produto pode ser vendido no momento informado (padrão: agora).
+  /// Sem janela configurada, está sempre disponível.
+  bool disponivelEm([DateTime? agora]) {
+    if (disponivelDe == null && disponivelAte == null) return true;
+    final a = agora ?? DateTime.now();
+    if (disponivelDe != null && a.isBefore(disponivelDe!)) return false;
+    if (disponivelAte != null && a.isAfter(disponivelAte!)) return false;
+    return true;
+  }
+
+  /// True se o produto está dentro da janela de disponibilidade agora.
+  bool get disponivelAgora => disponivelEm();
+
+  /// Pode ser vendido agora? Junta a chave geral do produto (`ativo`) com a
+  /// janela de disponibilidade temporária.
+  bool get podeVenderAgora => ativo && disponivelAgora;
+
+  /// Texto curto explicando por que o produto está fora da janela (usado no
+  /// selo "INDISPONÍVEL" e no aviso do PDV). Null quando está disponível.
+  String? get indisponibilidadeTemporariaLabel {
+    if (disponivelAgora) return null;
+    String fmt(DateTime d) =>
+        '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year} '
+        '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+    final agora = DateTime.now();
+    if (disponivelDe != null && agora.isBefore(disponivelDe!)) {
+      return 'Disponível a partir de ${fmt(disponivelDe!)}';
+    }
+    if (disponivelAte != null) {
+      return 'Disponível até ${fmt(disponivelAte!)}';
+    }
+    return 'Indisponível no momento';
+  }
+
   /// Retorna o preço atual considerando as promoções ativas no momento,
   /// sem contexto de carrinho (quantidade 1). No PDV, o preço real é calculado
   /// com [aplicarPromocoes] usando a quantidade/subtotal do item.
@@ -477,6 +555,10 @@ class Produto {
   Map<String, dynamic> toMap() {
     return {
       'id': id,
+      // Vai junto SEMPRE: é o que permite a trava de empresa recusar a
+      // gravação de um produto de outra empresa em vez de carimbá-lo com a
+      // empresa aberta (o caminho que misturava os catálogos).
+      'empresa_id': empresaId,
       'codigo': codigo,
       'codigo_barras': codigoBarras,
       'codigos_barras_adicionais': codigosBarrasAdicionais,
@@ -527,6 +609,8 @@ class Produto {
       'envia_balanca': enviaBalanca,
       'ativo': ativo,
       'cobrar_garcom': cobrarGarcom,
+      'disponivel_de': disponivelDe?.toIso8601String(),
+      'disponivel_ate': disponivelAte?.toIso8601String(),
       'perfil_tributario_id': perfilTributarioId,
       'perguntas_selecao': perguntasSelecao.map((p) => p.toMap()).toList(),
       'exibir_composicao_pdv': exibirComposicaoPdv,
@@ -550,6 +634,8 @@ class Produto {
       'fornecedor_id': fornecedorId,
       'fornecedor_nome': fornecedorNome,
       'estoque_por_fornecedor': estoquePorFornecedor,
+      'estoque_por_estoque': estoquePorEstoque,
+      'estoque_padrao_id': estoquePadraoId,
       'pedido_compra_gerado': pedidoCompraGerado,
       'data_ultimo_pedido': dataUltimoPedido?.toIso8601String(),
     };
@@ -659,6 +745,8 @@ class Produto {
       enviaBalanca: getBool('enviaBalanca', 'envia_balanca') ?? false,
       ativo: getBool('ativo', 'ativo') ?? true,
       cobrarGarcom: getBool('cobrarGarcom', 'cobrar_garcom') ?? true,
+      disponivelDe: getDate('disponivelDe', 'disponivel_de'),
+      disponivelAte: getDate('disponivelAte', 'disponivel_ate'),
       perfilTributarioId: getStr('perfilTributarioId', 'perfil_tributario_id'),
       perguntasSelecao: getList('perguntasSelecao', 'perguntas_selecao')?.map((p) => PerguntaSelecao.fromMap(Map<String, dynamic>.from(p is Map ? p : {}))).toList() ?? [],
       exibirComposicaoPdv: getBool('exibirComposicaoPdv', 'exibir_composicao_pdv') ?? false,
@@ -691,16 +779,20 @@ class Produto {
       fornecedorId: getStr('fornecedorId', 'fornecedor_id'),
       fornecedorNome: getStr('fornecedorNome', 'fornecedor_nome'),
       estoquePorFornecedor: getMap('estoquePorFornecedor', 'estoque_por_fornecedor')?.map((k, v) => MapEntry(k as String, (v is num) ? v.toDouble() : (double.tryParse(v.toString()) ?? 0.0))) ?? {},
+      estoquePorEstoque: getMap('estoquePorEstoque', 'estoque_por_estoque')?.map((k, v) => MapEntry(k as String, (v is num) ? v.toDouble() : (double.tryParse(v.toString()) ?? 0.0))) ?? {},
+      estoquePadraoId: (map['estoquePadraoId'] ?? map['estoque_padrao_id'])?.toString(),
       pedidoCompraGerado: getBool('pedidoCompraGerado', 'pedido_compra_gerado') ?? false,
       dataUltimoPedido: getDate('dataUltimoPedido', 'data_ultimo_pedido'),
       precosPorPerfil: getMap('precosPorPerfil', 'precos_por_perfil')?.map((k, v) => MapEntry(k as String, (v is num) ? v.toDouble() : (double.tryParse(v.toString()) ?? 0.0))),
       regrasQuantidade: getList('regrasQuantidade', 'regras_quantidade')?.map((r) => RegraQuantidade.fromMap(Map<String, dynamic>.from(r is Map ? r : {}))).toList(),
+      empresaId: getStr('empresaId', 'empresa_id'),
     );
   }
 
   /// Cria uma cópia do produto com campos atualizados
   Produto copyWith({
     String? id,
+    String? empresaId,
     String? codigo,
     String? codigoBarras,
     List<String>? codigosBarrasAdicionais,
@@ -726,6 +818,12 @@ class Produto {
     String? ncm,
     double? icmsAliquota,
     String? icmsCst,
+    /// Apaga o CST (o `null` sozinho não consegue: aqui ele significa "não
+    /// mexer"). Usado na troca de regime, quando o produto passa para o Simples
+    /// e o código do regime antigo TEM que sair — senão o produto fica com
+    /// CSOSN e CST ao mesmo tempo e a emissão pega o código errado.
+    bool limparIcmsCst = false,
+    bool limparCsosn = false,
     double? ipiAliquota,
     String? ipiCst,
     double? pisAliquota,
@@ -765,11 +863,19 @@ class Produto {
     String? fornecedorId,
     String? fornecedorNome,
     Map<String, double>? estoquePorFornecedor,
+    Map<String, double>? estoquePorEstoque,
+    String? estoquePadraoId,
+    bool limparEstoquePadrao = false,
     bool? pedidoCompraGerado,
     DateTime? dataUltimoPedido,
     bool? enviaBalanca,
     bool? ativo,
     bool? cobrarGarcom,
+    DateTime? disponivelDe,
+    DateTime? disponivelAte,
+    /// Apaga a janela de disponibilidade inteira (o `null` sozinho não
+    /// consegue: aqui ele significa "não mexer").
+    bool limparDisponibilidade = false,
     String? perfilTributarioId,
     List<PerguntaSelecao>? perguntasSelecao,
     bool? exibirComposicaoPdv,
@@ -788,6 +894,7 @@ class Produto {
       formasVenda: formasVenda ?? this.formasVenda,
       grupo: grupo ?? this.grupo,
       subgrupo: subgrupo ?? this.subgrupo,
+      empresaId: empresaId ?? this.empresaId,
       preco: preco ?? this.preco,
       precoCusto: precoCusto ?? this.precoCusto,
       estoque: estoque ?? this.estoque,
@@ -801,7 +908,7 @@ class Produto {
       codigosFornecedor: codigosFornecedor ?? this.codigosFornecedor,
       ncm: ncm ?? this.ncm,
       icmsAliquota: icmsAliquota ?? this.icmsAliquota,
-      icmsCst: icmsCst ?? this.icmsCst,
+      icmsCst: limparIcmsCst ? null : (icmsCst ?? this.icmsCst),
       ipiAliquota: ipiAliquota ?? this.ipiAliquota,
       ipiCst: ipiCst ?? this.ipiCst,
       pisAliquota: pisAliquota ?? this.pisAliquota,
@@ -812,7 +919,7 @@ class Produto {
       origem: origem ?? this.origem,
       cfop: cfop ?? this.cfop,
       cest: cest ?? this.cest,
-      csosn: csosn ?? this.csosn,
+      csosn: limparCsosn ? null : (csosn ?? this.csosn),
       simplesNacionalAliquota: simplesNacionalAliquota ?? this.simplesNacionalAliquota,
       paraCozinha: paraCozinha ?? this.paraCozinha,
       paraBar: paraBar ?? this.paraBar,
@@ -841,11 +948,18 @@ class Produto {
       fornecedorId: fornecedorId ?? this.fornecedorId,
       fornecedorNome: fornecedorNome ?? this.fornecedorNome,
       estoquePorFornecedor: estoquePorFornecedor ?? this.estoquePorFornecedor,
+      estoquePorEstoque: estoquePorEstoque ?? this.estoquePorEstoque,
+      estoquePadraoId:
+          limparEstoquePadrao ? null : (estoquePadraoId ?? this.estoquePadraoId),
       pedidoCompraGerado: pedidoCompraGerado ?? this.pedidoCompraGerado,
       dataUltimoPedido: dataUltimoPedido ?? this.dataUltimoPedido,
       enviaBalanca: enviaBalanca ?? this.enviaBalanca,
       ativo: ativo ?? this.ativo,
       cobrarGarcom: cobrarGarcom ?? this.cobrarGarcom,
+      disponivelDe:
+          limparDisponibilidade ? null : (disponivelDe ?? this.disponivelDe),
+      disponivelAte:
+          limparDisponibilidade ? null : (disponivelAte ?? this.disponivelAte),
       perfilTributarioId: perfilTributarioId ?? this.perfilTributarioId,
       perguntasSelecao: perguntasSelecao ?? this.perguntasSelecao,
       exibirComposicaoPdv: exibirComposicaoPdv ?? this.exibirComposicaoPdv,

@@ -150,10 +150,7 @@ class NotaEntrada {
           : null,
       tipo: map['tipo'] ?? 'manual',
       status: map['status'] ?? 'rascunho',
-      itens: (map['itens'] as List<dynamic>?)
-              ?.map((item) => ItemNotaEntrada.fromMap(item as Map<String, dynamic>))
-              .toList() ??
-          [],
+      itens: _itensDaNota(map['itens']),
       observacao: map['observacao'],
       numeroNotaReal: map['numeroNotaReal'],
       chaveNFe: map['chaveNFe'],
@@ -237,4 +234,18 @@ class NotaEntrada {
   bool get isCancelada => status == 'cancelada';
   String get numeroNota => numeroNotaReal ?? 'ENT-${id.substring(id.length - 6)}';
   DateTime get dataHora => dataProcessamento ?? dataCriacao;
+}
+
+/// Aceita List, String com JSON e (legado) a toString de List<Map> do
+/// banco. A string legada n�o � JSON (`[{nome: ...}]`), ent�o, quando ela
+/// aparecer, devolvemos lista vazia: a nota � preservada (sem explodir o
+/// carregamento do cache) em vez de ser ignorada por completo.
+List<ItemNotaEntrada> _itensDaNota(dynamic bruto) {
+  if (bruto is List<dynamic>) {
+    return bruto
+        .map((item) =>
+            ItemNotaEntrada.fromMap(item as Map<String, dynamic>))
+        .toList();
+  }
+  return [];
 }

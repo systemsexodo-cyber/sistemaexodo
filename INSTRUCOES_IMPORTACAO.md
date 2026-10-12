@@ -1,3 +1,31 @@
+# Instruções - Importação via Excel
+
+## 👥 Importar CLIENTES (com saldo devedor / fiado)
+
+Na tela **Gerenciar Empresas**, use o card **"👥 IMPORTAR CLIENTES EXCEL"**.
+
+### Formato do Excel (qualquer ordem — o sistema detecta pelo cabeçalho):
+- **Nome** (obrigatório)
+- **CPF/CNPJ** (opcional)
+- **Telefone / Celular / WhatsApp**
+- **E-mail, Endereço, Número, Bairro, Cidade, UF, CEP**
+- **Limite de Crédito** (opcional)
+- **Saldo Devedor / Fiado** (opcional) — aceita `150,50` e `1.234,56`
+- **Observações** (opcional)
+
+### O que a importação faz:
+- Cria os clientes no **banco de dados local (PostgreSQL)** e replica para a nuvem.
+- Grava o **saldo devedor** de cada cliente.
+- Opcionalmente (checkbox no diálogo) lança o saldo como **FIADO em aberto**,
+  criando um pedido pendente por cliente que aparece na aba **FIADO/CREDIÁRIO**
+  do PDV e nos extratos.
+- Clientes já cadastrados têm o cadastro completado, mas o **saldo devedor
+  existente NÃO é alterado** (evita cobrar o fiado em dobro numa reimportação).
+
+⚠️ A primeira linha é o cabeçalho.
+
+---
+
 # Instruções - Importar Produtos do Excel
 
 ## ✅ O Botão de Importação Está em 3 Locais:

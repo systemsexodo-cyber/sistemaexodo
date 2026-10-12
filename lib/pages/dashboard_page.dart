@@ -10,11 +10,16 @@ import '../models/permissao.dart';
 import '../models/usuario.dart';
 import '../theme.dart';
 import '../models/conta_pagar.dart';
+import '../models/forma_pagamento.dart';
 import '../models/nfce.dart';
+import '../models/lote_produto.dart';
+import '../services/taxa_pagamento_service.dart';
 import '../widgets/sync_status_widget.dart';
+import '../widgets/horarios_pico_card.dart';
 import '../services/excel_export_service.dart';
 import '../services/lucro_calculator.dart';
 import '../services/garcom_service.dart';
+import '../utils/horarios_pico.dart';
 import 'relatorio_lucro_page.dart';
 import 'html_helper_stub.dart' if (dart.library.html) 'html_helper_web.dart' as html_helper;
 
@@ -32,6 +37,10 @@ class _DashboardPageState extends State<DashboardPage> {
   String _periodoSelecionado = 'mês'; // 'hoje', 'semana', 'mês', 'personalizado'
   DateTime? _dataInicioCustomizada;
   DateTime? _dataFimCustomizada;
+
+  /// No card de horários de pico: ver o pico pelo dinheiro (padrão) ou pela
+  /// quantidade de vendas. São leituras diferentes de propósito.
+  bool _picoPorQuantidade = false;
 
   DateTime _getInicioPeriodo() {
     final agora = DateTime.now();
@@ -168,7 +177,17 @@ class _DashboardPageState extends State<DashboardPage> {
             final topServicos = _calcularTopServicos(dataService, inicioPeriodo, fimPeriodo);
             final pedidosPendentes = _calcularPedidosPendentes(dataService);
             final contasPagar = _calcularContasPagar(dataService);
+            final lotesValidadeCritica =
+              dataService.lotesComValidadeCritica(dias: 30);
             final receitasDespesas = _calcularReceitasDespesas(dataService, inicioPeriodo, fimPeriodo);
+            // Horários que mais vendem (pico). Quem não pode ver totais olha
+            // por quantidade — a informação continua útil sem expor valores.
+            final horariosPico = calcularHorariosDePico(
+              _movimentosDoPeriodo(dataService, inicioPeriodo, fimPeriodo),
+              metrica: (podeVerTotais && !_picoPorQuantidade)
+                  ? MetricaPico.valor
+                  : MetricaPico.quantidade,
+            );
             final statsFiscalPeriodo = _calcularEstatisticasFiscal(dataService, inicioPeriodo, fimPeriodo);
             final statsFiscalDia = _calcularEstatisticasFiscal(dataService, inicioDia, fimDia);
 
@@ -227,6 +246,26 @@ class _DashboardPageState extends State<DashboardPage> {
                     ),
                   if (podeVerTotais) const SizedBox(height: 16),
 
+                  // Taxas de maquininha pagas no período
+                  if (podeVerTotais)
+                    _buildCardTaxasPagamento(
+                      _calcularTaxasPagamento(dataService, inicioPeriodo, fimPeriodo),
+                      statsPeriodo,
+                    ),
+                  if (podeVerTotais) const SizedBox(height: 16),
+
+                  // Horários que mais vendem (horário de pico)
+                  HorariosPicoCard(
+                    resumo: horariosPico,
+                    podeVerTotais: podeVerTotais,
+                    rotuloPeriodo: _getLabelPeriodo(_periodoSelecionado),
+                    onTrocarMetrica: podeVerTotais
+                        ? () => setState(
+                            () => _picoPorQuantidade = !_picoPorQuantidade)
+                        : null,
+                  ),
+                  const SizedBox(height: 16),
+
                   // Vendas Fiscais (NFC-e & NF-e)
                   if (podeVerTotais)
                     _buildCardVendasFiscais(statsFiscalPeriodo, statsFiscalDia),
@@ -240,6 +279,11 @@ class _DashboardPageState extends State<DashboardPage> {
                   // Status do Caixa (saldo fica visível para operação)
                   _buildCardCaixa(statsCaixa),
                   const SizedBox(height: 16),
+
+                  if (lotesValidadeCritica.isNotEmpty) ...[
+                    _buildCardProdutosValidade(dataService, lotesValidadeCritica),
+                    const SizedBox(height: 16),
+                  ],
 
                   // Vendas e Comissões dos Garçons
                   if (podeVerTotais)
@@ -541,6 +585,183 @@ class _DashboardPageState extends State<DashboardPage> {
       'quantidade': pedidosPendentes.length,
       'total': totalPendente,
     };
+  }
+
+  /// Soma as taxas de maquininha cobradas no período selecionado.
+  ///
+  /// Vendas de balcão contam pela data da venda; pedidos contam pela data de
+  /// recebimento do pagamento. Parcelas em aberto (fiado/crediário) não cobram
+  /// taxa, porque a transação ainda não passou na maquininha.
+  ResumoTaxas _calcularTaxasPagamento(
+    DataService dataService,
+    DateTime inicio,
+    DateTime fim,
+  ) {
+    final pagamentos = <PagamentoPedido>[];
+
+    for (final v in dataService.vendasBalcao) {
+      if (v.isCancelada) continue;
+      if (!v.dataVenda.isAfter(inicio) || !v.dataVenda.isBefore(fim)) continue;
+      if (v.pagamentos.isEmpty) {
+        pagamentos.add(PagamentoPedido(
+          id: v.id,
+          tipo: v.tipoPagamento,
+          valor: v.valorTotal,
+          recebido: true,
+        ));
+      } else {
+        for (final p in v.pagamentos) {
+          if (p.recebido && p.valor > 0) pagamentos.add(p);
+        }
+      }
+    }
+
+    for (final pedido in dataService.pedidos) {
+      if (pedido.status.toLowerCase() == 'cancelado') continue;
+      for (final pag in pedido.pagamentos) {
+        if (!pag.recebido || pag.valor <= 0) continue;
+        final data = pag.dataRecebimento ?? pedido.dataPedido;
+        if (data.isAfter(inicio) && data.isBefore(fim)) {
+          pagamentos.add(pag);
+        }
+      }
+    }
+
+    return TaxaPagamentoService.resumir(dataService.empresaAtual, pagamentos);
+  }
+
+  Widget _buildCardTaxasPagamento(
+    ResumoTaxas taxas,
+    Map<String, dynamic> statsPeriodo,
+  ) {
+    final moeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+    final faturamento = (statsPeriodo['total'] as num?)?.toDouble() ?? 0.0;
+    final percFaturamento =
+        faturamento > 0 ? (taxas.totalTaxas / faturamento) * 100.0 : 0.0;
+
+    final porForma = taxas.porForma.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.orange.withOpacity(0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(Icons.credit_card, color: Colors.orange),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Text(
+                  'Taxas de Maquininha',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          if (!taxas.temTaxas)
+            const Text(
+              'Nenhuma taxa registrada no período. Configure as taxas em Empresas → Formas de Pagamento (PDV).',
+              style: TextStyle(color: Colors.white54, fontSize: 13),
+            )
+          else ...[
+            Row(
+              children: [
+                Expanded(
+                  child: _buildTaxaMetric(
+                    'Total em taxas',
+                    moeda.format(taxas.totalTaxas),
+                    Colors.orange,
+                  ),
+                ),
+                Expanded(
+                  child: _buildTaxaMetric(
+                    'Transações',
+                    taxas.quantidade.toString(),
+                    Colors.blue,
+                  ),
+                ),
+                Expanded(
+                  child: _buildTaxaMetric(
+                    '% do faturamento',
+                    '${percFaturamento.toStringAsFixed(2)}%',
+                    Colors.purple,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            const Divider(color: Colors.white12),
+            const SizedBox(height: 8),
+            const Text(
+              'Por forma de pagamento',
+              style: TextStyle(
+                color: Colors.white70,
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 8),
+            ...porForma.map((e) {
+              final pct = taxas.totalTaxas > 0
+                  ? (e.value / taxas.totalTaxas) * 100.0
+                  : 0.0;
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      e.key,
+                      style: const TextStyle(color: Colors.white70, fontSize: 13),
+                    ),
+                    Text(
+                      '${moeda.format(e.value)}  (${pct.toStringAsFixed(0)}%)',
+                      style: const TextStyle(
+                        color: Colors.orange,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTaxaMetric(String label, String valor, Color cor) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: const TextStyle(color: Colors.white54, fontSize: 11)),
+        const SizedBox(height: 4),
+        Text(
+          valor,
+          style: TextStyle(color: cor, fontSize: 16, fontWeight: FontWeight.bold),
+        ),
+      ],
+    );
   }
 
   Map<String, dynamic> _calcularContasPagar(DataService dataService) {
@@ -1269,6 +1490,150 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
+  Widget _buildCardProdutosValidade(
+    DataService dataService,
+    List<LoteProduto> lotes,
+  ) {
+    final hoje = DateTime.now();
+    final hojeDia = DateTime(hoje.year, hoje.month, hoje.day);
+    final exibidos = lotes.take(8).toList();
+
+    return Card(
+      color: const Color(0xFF1E1E2E).withOpacity(0.9),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(
+                  Icons.warning_amber_rounded,
+                  color: Colors.orangeAccent,
+                  size: 24,
+                ),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Text(
+                    'Produtos próximos do vencimento',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                Text(
+                  '${lotes.length} lote(s)',
+                  style: const TextStyle(
+                    color: Colors.orangeAccent,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Vencidos ou com validade nos próximos 30 dias',
+              style: TextStyle(color: Colors.white54, fontSize: 11),
+            ),
+            const SizedBox(height: 10),
+            ...exibidos.map((lote) {
+              final validade = lote.dataValidade!;
+              final diaValidade =
+                  DateTime(validade.year, validade.month, validade.day);
+              final diasRestantes = diaValidade.difference(hojeDia).inDays;
+              final vencido = diasRestantes < 0;
+              final corStatus = vencido ? Colors.redAccent : Colors.orangeAccent;
+              final produtoNome =
+                  dataService.getProdutoById(lote.produtoId)?.nome ??
+                  'Produto ${lote.produtoId}';
+              final status = vencido
+                  ? 'Vencido há ${diasRestantes.abs()} dia(s)'
+                  : (diasRestantes == 0
+                      ? 'Vence hoje'
+                      : 'Vence em $diasRestantes dia(s)');
+
+              return Container(
+                margin: const EdgeInsets.only(top: 6),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+                decoration: BoxDecoration(
+                  color: corStatus.withOpacity(0.07),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: corStatus.withOpacity(0.25)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      vencido ? Icons.error_outline : Icons.schedule,
+                      color: corStatus,
+                      size: 18,
+                    ),
+                    const SizedBox(width: 9),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            produtoNome,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          Text(
+                            'Lote ${lote.numeroLote.isEmpty ? '(sem nº)' : lote.numeroLote} · Qtd ${lote.quantidade}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white54,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          DateFormat('dd/MM/yyyy').format(validade),
+                          style: TextStyle(
+                            color: corStatus,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                          ),
+                        ),
+                        Text(
+                          status,
+                          style: TextStyle(color: corStatus, fontSize: 10),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              );
+            }),
+            if (lotes.length > exibidos.length)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  'E mais ${lotes.length - exibidos.length} lote(s) em atenção',
+                  style: const TextStyle(color: Colors.white54, fontSize: 11),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildFiltroData() {
     return Card(
       color: const Color(0xFF1E1E2E).withOpacity(0.8),
@@ -1777,6 +2142,27 @@ class _DashboardPageState extends State<DashboardPage> {
         ),
       ),
     );
+  }
+
+  /// Vendas de balcão + pedidos do período em movimentos (data/hora + valor),
+  /// já sem os cancelados — mesma regra dos outros cálculos do dashboard.
+  List<MovimentoHora> _movimentosDoPeriodo(
+    DataService dataService,
+    DateTime inicio,
+    DateTime fim,
+  ) {
+    return <MovimentoHora>[
+      for (final venda in dataService.vendasBalcao)
+        if (!venda.isCancelada &&
+            venda.dataVenda.isAfter(inicio) &&
+            venda.dataVenda.isBefore(fim))
+          MovimentoHora(venda.dataVenda, venda.valorTotal),
+      for (final pedido in dataService.pedidos)
+        if (pedido.status.toLowerCase() != 'cancelado' &&
+            pedido.dataPedido.isAfter(inicio) &&
+            pedido.dataPedido.isBefore(fim))
+          MovimentoHora(pedido.dataPedido, pedido.totalRecebido),
+    ];
   }
 
   Widget _buildCardGraficoReceitas(Map<String, dynamic> dados) {

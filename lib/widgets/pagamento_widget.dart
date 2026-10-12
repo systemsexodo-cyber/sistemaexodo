@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../models/forma_pagamento.dart';
+import '../models/forma_pagamento_custom.dart';
+import '../services/taxa_pagamento_service.dart';
 import 'package:provider/provider.dart';
 import 'package:sistema_exodo_novo/services/data_service.dart';
 /// Widget para seleção e exibição de formas de pagamento
@@ -203,12 +205,25 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
     );
   }
 
+  /// Abre o diálogo para lançar uma forma de pagamento personalizada da
+  /// empresa (ex: Caju, VR). É registrada como [TipoPagamento.outro] com o nome
+  /// da forma, que é o que permite localizar a taxa da maquininha depois.
+  void _adicionarPagamentoCustom(FormaPagamentoCustom forma) {
+    final valorSugerido = _valorRestante > 0 ? _valorRestante : 0.0;
+    _mostrarDialogPagamento(
+      TipoPagamento.outro,
+      valorSugerido,
+      nomeFormaCustom: forma.nome,
+    );
+  }
+
   void _mostrarDialogPagamento(
     TipoPagamento tipo,
     double valorSugerido, {
     PagamentoPedido? pagamentoExistente,
     double descontoCalc = 0.0,
     double acrescimoCalc = 0.0,
+    String? nomeFormaCustom,
   }) {
     // Se não há pagamento existente e o valor sugerido é maior que 0, usar o valor sugerido
     // Caso contrário, usar o valor do pagamento existente ou 0
@@ -610,6 +625,7 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
                       final parcela = PagamentoPedido(
                         id: '${parcelamentoId}_$i',
                         tipo: tipo,
+                        nomeForma: nomeFormaCustom,
                         valor: valorCadaParcela,
                         parcelas: parcelas,
                         numeroParcela: i + 1,
@@ -626,10 +642,15 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
                           pagamentoExistente?.id ??
                           DateTime.now().millisecondsSinceEpoch.toString(),
                       tipo: tipo,
+                      nomeForma: nomeFormaCustom ?? pagamentoExistente?.nomeForma,
                       valor: valor,
                       observacao: obs,
                       valorRecebido: valorRecebidoFinal,
                       troco: trocoFinal,
+                      // Formas personalizadas entram como recebidas na hora.
+                      recebido: nomeFormaCustom != null
+                          ? true
+                          : (pagamentoExistente?.recebido ?? false),
                       // Se for fiado, usar a data de vencimento selecionada
                       dataVencimento: isFiado ? dataVencimentoFiado : null,
                     );
@@ -1369,12 +1390,60 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
   }
 
   Widget _buildBotoesPagamento() {
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final formasCustom =
+        TaxaPagamentoService.formasPersonalizadasAtivas(dataService.empresaAtual);
     return Wrap(
       spacing: 8,
       runSpacing: 8,
-      children: TipoPagamento.values.map((tipo) {
-        return _buildBotaoTipoPagamento(tipo);
-      }).toList(),
+      children: [
+        ...TipoPagamento.values.map((tipo) => _buildBotaoTipoPagamento(tipo)),
+        ...formasCustom.map((forma) => _buildBotaoFormaCustom(forma)),
+      ],
+    );
+  }
+
+  /// Botão de uma forma de pagamento personalizada (mesmo visual dos demais).
+  Widget _buildBotaoFormaCustom(FormaPagamentoCustom forma) {
+    const cor = Colors.deepPurpleAccent;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => _adicionarPagamentoCustom(forma),
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [cor.withOpacity(0.9), cor.withOpacity(0.7)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: [
+              BoxShadow(
+                color: cor.withOpacity(0.4),
+                blurRadius: 6,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.credit_card, color: Colors.white, size: 20),
+              const SizedBox(width: 8),
+              Text(
+                forma.nome,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 

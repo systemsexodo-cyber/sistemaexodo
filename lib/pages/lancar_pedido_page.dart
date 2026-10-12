@@ -498,6 +498,42 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
   }
 
   void _adicionarProduto(Produto produto, {double quantidade = 1.0}) {
+    // Fora da janela de disponibilidade temporária: continua visível, mas não
+    // pode entrar no pedido agora.
+    if (!produto.disponivelAgora) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Produto "${produto.nome}" indisponível: '
+              '${produto.indisponibilidadeTemporariaLabel ?? 'fora da janela de disponibilidade'}.',
+            ),
+            backgroundColor: Colors.orange,
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+      return;
+    }
+
+    // Reserva de estoque: com a configuração ligada, o disponível é o estoque
+    // menos o que outros pedidos em aberto já seguram.
+    final faltaEstoque = Provider.of<DataService>(context, listen: false)
+        .validarEstoqueDisponivel(produto, quantidade: quantidade);
+    if (faltaEstoque != null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(faltaEstoque),
+            backgroundColor: Colors.orange,
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+      return;
+    }
     if (produto.temAdicionais) {
       _exibirSelecaoAdicionais(produto, quantidade: quantidade);
       return;

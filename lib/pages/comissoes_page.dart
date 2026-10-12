@@ -10,6 +10,111 @@ import '../models/comissao_vendedor.dart';
 import '../theme.dart';
 import '../widgets/sync_status_widget.dart';
 
+/// Comissão de um motoboy em um período.
+///
+/// A comissão é a SOMA de duas partes independentes:
+///   * POR ENTREGA — R$ fixo por entrega, ou % da taxa da entrega;
+///   * DIÁRIA — R$ fixo por DIA trabalhado (conta UMA vez por dia, mesmo com
+///     várias entregas no mesmo dia).
+class ComissaoMotoboyCalculada {
+  final String motoristaId;
+  final int entregas;
+  final double totalPorEntrega;
+  final int diasTrabalhados;
+  final double totalDiaria;
+  final List<Map<String, dynamic>> itens;
+
+  const ComissaoMotoboyCalculada({
+    required this.motoristaId,
+    required this.entregas,
+    required this.totalPorEntrega,
+    required this.diasTrabalhados,
+    required this.totalDiaria,
+    required this.itens,
+  });
+
+  double get total => totalPorEntrega + totalDiaria;
+}
+
+/// Dia (yyyy-MM-dd) usado para contar a diária: o dia em que a entrega foi
+/// concluída quando houver, senão o dia em que ela foi criada.
+String diaDaEntrega(Entrega entrega) {
+  final DateTime dia = entrega.dataEntrega ?? entrega.dataCriacao;
+  return '${dia.year.toString().padLeft(4, '0')}-'
+      '${dia.month.toString().padLeft(2, '0')}-'
+      '${dia.day.toString().padLeft(2, '0')}';
+}
+
+/// Agrega a comissão dos motoboys: valor por entrega + diária.
+///
+/// Pura de propósito (não toca em widget): o cálculo é o pedido do balcão —
+/// "valor fixo de diário mais valor fixo na entrega para somar" — e precisa
+/// ser verificável sem abrir tela.
+List<ComissaoMotoboyCalculada> agregarComissaoMotoboys({
+  required Iterable<Entrega> entregas,
+  required Motorista? Function(String id) motoristaPorId,
+}) {
+  final Map<String, List<Entrega>> porMotorista = <String, List<Entrega>>{};
+  for (final entrega in entregas) {
+    final mId = entrega.motoristaId;
+    if (mId == null || mId.isEmpty) continue;
+    porMotorista.putIfAbsent(mId, () => <Entrega>[]).add(entrega);
+  }
+
+  final resultado = <ComissaoMotoboyCalculada>[];
+  for (final entrada in porMotorista.entries) {
+    final mId = entrada.key;
+    final doMotorista = entrada.value;
+    final motorista = motoristaPorId(mId);
+
+    double totalPorEntrega = 0.0;
+    final itens = <Map<String, dynamic>>[];
+    final dias = <String>{};
+
+    for (final entrega in doMotorista) {
+      final double valor = motorista != null
+          ? motorista.comissaoPorEntregas(
+              entregas: 1,
+              somaTaxasEntregas: entrega.taxaEntrega ?? 0.0,
+            )
+          : (entrega.taxaEntrega ?? 0.0); // Fallback: ganha a taxa integral
+      totalPorEntrega += valor;
+      dias.add(diaDaEntrega(entrega));
+      itens.add({
+        'desc': 'Entrega: ${entrega.clienteNome}',
+        'data': entrega.dataCriacao,
+        'valor': valor,
+        'detalhe': entrega.bairro != null ? 'Bairro: ${entrega.bairro}' : null,
+      });
+    }
+
+    final double diaria = motorista?.valorDiariaEfetiva ?? 0.0;
+    final int diasTrabalhados = dias.length;
+    final double totalDiaria = diaria * diasTrabalhados;
+    if (totalDiaria > 0) {
+      itens.add({
+        'desc': 'Diária ($diasTrabalhados dia(s) trabalhado(s))',
+        'data': itens.isNotEmpty ? itens.last['data'] : DateTime.now(),
+        'valor': totalDiaria,
+        'detalhe': 'R\$ ${diaria.toStringAsFixed(2)} por dia',
+      });
+    }
+
+    resultado.add(ComissaoMotoboyCalculada(
+      motoristaId: mId,
+      entregas: doMotorista.length,
+      totalPorEntrega: totalPorEntrega,
+      diasTrabalhados: diasTrabalhados,
+      totalDiaria: totalDiaria,
+      itens: itens,
+    ));
+  }
+
+  // Maior comissão primeiro, como no painel.
+  resultado.sort((a, b) => b.total.compareTo(a.total));
+  return resultado;
+}
+
 class ComissoesPage extends StatefulWidget {
   const ComissoesPage({super.key});
 
@@ -177,61 +282,52 @@ class _ComissoesPageState extends State<ComissoesPage> with SingleTickerProvider
       return true;
     }).toList();
 
-    final Map<String, Map<String, dynamic>> metricas = {};
+    // Valor por entrega + DIÁRIA (uma vez por dia trabalhado).
+    final calculadas = agregarComissaoMotoboys(
+      entregas: entregas,
+      motoristaPorId: (id) => _motoristaPorId(dataService, id),
+    );
 
-    for (final entrega in entregas) {
-      final mId = entrega.motoristaId!;
-      final motorista = dataService.motoristas.any((m) => m.id == mId) 
-          ? dataService.motoristas.firstWhere((m) => m.id == mId) : null;
-      
-      double valorComissao = 0.0;
-      if (motorista != null) {
-        if (motorista.tipoComissao == 'Fixo por Entrega') {
-          valorComissao = motorista.valorComissao;
-        } else if (motorista.tipoComissao == 'Porcentagem') {
-          valorComissao = (entrega.taxaEntrega ?? 0.0) * (motorista.valorComissao / 100);
-        } else {
-          // Diária costuma ser pago fora do cálculo por entrega, mas podemos somar aqui se for o caso
-          valorComissao = motorista.valorComissao; // Simplificado
-        }
-      } else {
-        valorComissao = entrega.taxaEntrega ?? 0.0; // Fallback: ganha a taxa integral
-      }
-
-      metricas.putIfAbsent(mId, () => {'total': 0.0, 'itens': []});
-      metricas[mId]!['total'] += valorComissao;
-      metricas[mId]!['itens'].add({
-        'desc': 'Entrega: ${entrega.clienteNome}',
-        'data': entrega.dataCriacao,
-        'valor': valorComissao,
-        'detalhe': entrega.bairro != null ? 'Bairro: ${entrega.bairro}' : null,
-      });
-    }
-
-    final totalGeral = metricas.values.fold(0.0, (sum, item) => sum + item['total']);
+    final totalGeral = calculadas.fold<double>(0.0, (sum, c) => sum + c.total);
 
     return Column(
       children: [
         _buildResumoTotal('Total Motoboys', totalGeral, mf),
         Expanded(
-          child: metricas.isEmpty
+          child: calculadas.isEmpty
               ? _buildEmptyState('Nenhuma comissão de motoboy encontrada')
               : ListView.builder(
                   padding: const EdgeInsets.all(16),
-                  itemCount: metricas.length,
+                  itemCount: calculadas.length,
                   itemBuilder: (context, index) {
-                    final mId = metricas.keys.elementAt(index);
-                    final dados = metricas[mId]!;
-                    final mNome = dataService.motoristas.any((m) => m.id == mId)
-                        ? dataService.motoristas.firstWhere((m) => m.id == mId).nome
-                        : 'Motoboy Desconhecido';
+                    final c = calculadas[index];
+                    final mNome = _motoristaPorId(dataService, c.motoristaId)?.nome ??
+                        'Motoboy Desconhecido';
 
-                    return _buildCardColaborador(mNome, dados['total'], dados['itens'], df, mf, Icons.motorcycle);
+                    return _buildCardColaborador(
+                      mNome,
+                      c.total,
+                      c.itens,
+                      df,
+                      mf,
+                      Icons.motorcycle,
+                      subtitulo: c.totalDiaria > 0
+                          ? '${c.entregas} entrega(s) • diária de '
+                              '${c.diasTrabalhados} dia(s)'
+                          : null,
+                    );
                   },
                 ),
         ),
       ],
     );
+  }
+
+  Motorista? _motoristaPorId(DataService dataService, String id) {
+    for (final m in dataService.motoristas) {
+      if (m.id == id) return m;
+    }
+    return null;
   }
 
   Widget _buildResumoTotal(String label, double total, NumberFormat mf) {
@@ -251,7 +347,7 @@ class _ComissoesPageState extends State<ComissoesPage> with SingleTickerProvider
     );
   }
 
-  Widget _buildCardColaborador(String nome, double total, List<dynamic> itens, DateFormat df, NumberFormat mf, IconData icon) {
+  Widget _buildCardColaborador(String nome, double total, List<dynamic> itens, DateFormat df, NumberFormat mf, IconData icon, {String? subtitulo}) {
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       child: ExpansionTile(
@@ -260,6 +356,9 @@ class _ComissoesPageState extends State<ComissoesPage> with SingleTickerProvider
           child: Icon(icon, color: Colors.orange, size: 20),
         ),
         title: Text(nome, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        subtitle: subtitulo == null
+            ? null
+            : Text(subtitulo, style: const TextStyle(color: Colors.white54, fontSize: 11)),
         trailing: Text(mf.format(total), style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold)),
         children: itens.map((item) => ListTile(
           dense: true,

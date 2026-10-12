@@ -107,14 +107,22 @@ if ($LASTEXITCODE -eq 0) {
     exit 1
 }
 
-# 3b. Migrar schema (uuid->text) para sincronizar com a nuvem (idempotente)
+# 3b. Migracoes de schema versionadas (scripts/migrations/*.sql) - idempotentes.
+#     Mesmo mecanismo que o app roda no boot.
 Write-Host ""
-Write-Host "Executando migracao de schema (uuid->text)..."
-$migrarScript = Join-Path $ScriptDir "migrar_schema.ps1"
-if (Test-Path $migrarScript) {
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $migrarScript -DbHost $DbHost -DbPort $DbPort -DbUser $DbUser -DbPassword $DbPassword -DbName $DbName 2>&1
+Write-Host "Aplicando migracoes de schema (scripts/migrations)..."
+$migDir = Join-Path $ScriptDir "migrations"
+if (Test-Path $migDir) {
+    Get-ChildItem -Path $migDir -Filter *.sql | Sort-Object Name | ForEach-Object {
+        Write-Host ("   -> " + $_.Name)
+        & $psql -U $DbUser -d $DbName -h $DbHost -p $DbPort -v ON_ERROR_STOP=1 --single-transaction -f $_.FullName 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host ("ERRO na migracao " + $_.Name)
+            exit 1
+        }
+    }
 } else {
-    Write-Host "AVISO: migrar_schema.ps1 nao encontrado"
+    Write-Host "AVISO: pasta scripts\migrations nao encontrada"
 }
 
 # 4. Confirmar as tabelas

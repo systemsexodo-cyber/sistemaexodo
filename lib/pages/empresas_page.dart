@@ -2,10 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:path/path.dart' as p;
+import 'dart:async';
 import 'dart:io';
 import '../services/auth_service.dart';
 import '../services/data_service.dart';
 import '../services/excel_import_service.dart';
+import '../services/cliente_import_service.dart';
 import '../models/empresa.dart';
 import '../theme.dart';
 import 'adicionar_empresa_page.dart';
@@ -14,7 +17,6 @@ import '../services/google_drive_service.dart';
 import '../services/bridge_management_service.dart';
 import 'google_drive_backup_page.dart';
 import '../services/supabase_service.dart';
-import '../services/process_utils.dart';
 import '../services/app_update_service.dart';
 import 'bloqueio_mensalidade_page.dart';
 import 'monitor_page.dart';
@@ -25,20 +27,17 @@ import 'backup_restore_page.dart';
 
 /// Destino escolhido para publicar a atualização do app.
 class _DestinoAtualizacao {
-  /// `null` = todos os clientes (`app_latest`).
-  final Empresa? empresa;
+  /// Vazio = todos os clientes (`app_latest`).
+  final List<Empresa> empresas;
 
-  const _DestinoAtualizacao.todos() : empresa = null;
-  const _DestinoAtualizacao.paraEmpresa(Empresa this.empresa);
+  const _DestinoAtualizacao.todos() : empresas = const [];
+  const _DestinoAtualizacao.paraEmpresas(this.empresas);
 
-  bool get global => empresa == null;
+  bool get global => empresas.isEmpty;
 }
 
-/// Pergunta para quem vai a atualização: TODOS os clientes (global, `app_latest`)
-/// ou uma empresa específica (`app_update_<id>`).
-///
-/// A escolha era fixa no cartão (sempre global) e só existia escondida no menu
-/// de cada empresa; aqui ela fica explícita e antes de publicar.
+/// Pergunta para quem vai a atualização: TODOS os clientes (`app_latest`) ou
+/// uma/várias empresas (`app_update_<id>`, um registro por empresa).
 class _DialogoDestinoAtualizacao extends StatefulWidget {
   final List<Empresa> empresas;
 
@@ -52,12 +51,14 @@ class _DialogoDestinoAtualizacao extends StatefulWidget {
 class _DialogoDestinoAtualizacaoState
     extends State<_DialogoDestinoAtualizacao> {
   bool _global = true;
-  Empresa? _empresa;
+  final Set<String> _marcadas = <String>{};
 
   @override
   void initState() {
     super.initState();
-    if (widget.empresas.isNotEmpty) _empresa = widget.empresas.first;
+    // Já vem com todas marcadas: publicar para as empresas de uma vez é o caso
+    // mais comum depois do global.
+    _marcadas.addAll(widget.empresas.map((e) => e.id));
   }
 
   String _idCurto(String id) => id.length > 8 ? '${id.substring(0, 8)}…' : id;
@@ -71,79 +72,112 @@ class _DialogoDestinoAtualizacaoState
         style: TextStyle(color: Colors.white),
       ),
       content: SizedBox(
-        width: 560,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Para quem vai a versão que você vai publicar?',
-              style: TextStyle(color: Colors.white70, fontSize: 13),
-            ),
-            const SizedBox(height: 12),
-            _buildOpcao(
-              selecionado: _global,
-              icone: Icons.public,
-              cor: Colors.teal,
-              titulo: 'TODOS os clientes (global)',
-              descricao: 'app_latest — todo cliente sem atualização direcionada '
-                  'baixa esta versão.',
-              onTap: () => setState(() => _global = true),
-            ),
-            const SizedBox(height: 8),
-            _buildOpcao(
-              selecionado: !_global,
-              icone: Icons.business,
-              cor: Colors.cyan,
-              titulo: 'Uma empresa específica',
-              descricao: 'app_update_<id> — só os computadores dessa empresa '
-                  'são atualizados; as outras continuam como estão.',
-              onTap: () => setState(() => _global = false),
-            ),
-            if (!_global) ...[
+        width: 620,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Para quem vai a versão que você vai publicar?',
+                style: TextStyle(color: Colors.white70, fontSize: 13),
+              ),
               const SizedBox(height: 12),
-              if (widget.empresas.isEmpty)
-                const Text(
-                  'Nenhuma empresa cadastrada para escolher. '
-                  'Use a publicação global.',
-                  style: TextStyle(color: Colors.orangeAccent, fontSize: 12),
-                )
-              else
-                DropdownButtonFormField<Empresa>(
-                  initialValue: _empresa,
-                  isExpanded: true,
-                  dropdownColor: const Color(0xFF26263A),
-                  style: const TextStyle(color: Colors.white, fontSize: 13),
-                  decoration: InputDecoration(
-                    labelText: 'Empresa',
-                    labelStyle: const TextStyle(color: Colors.white70),
-                    border: OutlineInputBorder(
+              _buildOpcao(
+                selecionado: _global,
+                icone: Icons.public,
+                cor: Colors.teal,
+                titulo: 'TODOS os clientes (global)',
+                descricao: 'app_latest — todo cliente sem versão direcionada '
+                    'baixa esta.',
+                onTap: () => setState(() => _global = true),
+              ),
+              const SizedBox(height: 8),
+              _buildOpcao(
+                selecionado: !_global,
+                icone: Icons.business,
+                cor: Colors.cyan,
+                titulo: 'Uma ou mais empresas',
+                descricao: 'app_update_<id> — só os computadores das empresas '
+                    'marcadas; as outras continuam como estão.',
+                onTap: () => setState(() => _global = false),
+              ),
+              if (!_global) ...[
+                const SizedBox(height: 12),
+                if (widget.empresas.isEmpty)
+                  const Text(
+                    'Nenhuma empresa cadastrada para escolher. '
+                    'Use a publicação global.',
+                    style: TextStyle(color: Colors.orangeAccent, fontSize: 12),
+                  )
+                else ...[
+                  Row(
+                    children: [
+                      TextButton.icon(
+                        onPressed: () => setState(() {
+                          _marcadas
+                            ..clear()
+                            ..addAll(widget.empresas.map((e) => e.id));
+                        }),
+                        icon: const Icon(Icons.done_all, size: 16),
+                        label: const Text('Marcar todas'),
+                      ),
+                      TextButton.icon(
+                        onPressed: () => setState(() => _marcadas.clear()),
+                        icon: const Icon(Icons.remove_done, size: 16),
+                        label: const Text('Limpar'),
+                      ),
+                      const Spacer(),
+                      Text(
+                        '${_marcadas.length} marcada(s)',
+                        style:
+                            const TextStyle(color: Colors.cyan, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                  Container(
+                    constraints: const BoxConstraints(maxHeight: 240),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.white12),
                       borderRadius: BorderRadius.circular(12),
                     ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide:
-                          BorderSide(color: Colors.white.withOpacity(0.2)),
+                    child: ListView(
+                      shrinkWrap: true,
+                      children: widget.empresas
+                          .map((empresa) => CheckboxListTile(
+                                dense: true,
+                                value: _marcadas.contains(empresa.id),
+                                activeColor: Colors.cyan,
+                                title: Text(
+                                  empresa.nomeExibicao,
+                                  style: const TextStyle(
+                                      color: Colors.white, fontSize: 13),
+                                ),
+                                subtitle: Text(
+                                  _idCurto(empresa.id),
+                                  style: const TextStyle(
+                                      color: Colors.white38, fontSize: 11),
+                                ),
+                                onChanged: (marcado) => setState(() {
+                                  if (marcado == true) {
+                                    _marcadas.add(empresa.id);
+                                  } else {
+                                    _marcadas.remove(empresa.id);
+                                  }
+                                }),
+                              ))
+                          .toList(),
                     ),
                   ),
-                  items: widget.empresas
-                      .map((empresa) => DropdownMenuItem<Empresa>(
-                            value: empresa,
-                            child: Text(
-                              '${empresa.nomeExibicao}  •  ${_idCurto(empresa.id)}',
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ))
-                      .toList(),
-                  onChanged: (empresa) => setState(() => _empresa = empresa),
-                ),
+                ],
+              ],
+              const SizedBox(height: 12),
+              const Text(
+                'A versão e o pacote são confirmados na próxima tela.',
+                style: TextStyle(color: Colors.white38, fontSize: 11),
+              ),
             ],
-            const SizedBox(height: 12),
-            const Text(
-              'A versão é confirmada na próxima tela.',
-              style: TextStyle(color: Colors.white38, fontSize: 11),
-            ),
-          ],
+          ),
         ),
       ),
       actions: [
@@ -158,9 +192,12 @@ class _DialogoDestinoAtualizacaoState
               Navigator.pop(context, const _DestinoAtualizacao.todos());
               return;
             }
-            final empresa = _empresa;
-            if (empresa == null) return; // nenhuma empresa escolhida
-            Navigator.pop(context, _DestinoAtualizacao.paraEmpresa(empresa));
+            final escolhidas = widget.empresas
+                .where((e) => _marcadas.contains(e.id))
+                .toList();
+            if (escolhidas.isEmpty) return; // nenhuma empresa marcada
+            Navigator.pop(
+                context, _DestinoAtualizacao.paraEmpresas(escolhidas));
           },
           icon: const Icon(Icons.cloud_upload, size: 18),
           label: const Text('Continuar'),
@@ -228,6 +265,1882 @@ class _DialogoDestinoAtualizacaoState
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Assistente "Gerar versão".
+///
+/// Existe porque publicar exigia, fora do sistema: subir o número no código,
+/// rodar `flutter build windows --release` e só depois abrir a publicação.
+/// Aqui isso vira um caminho só — e os detalhes do que mudou ficam guardados
+/// junto da versão (o cliente lê na tela de atualização e o projeto ganha o
+/// HISTORICO_VERSOES.md).
+class _DialogoGerarVersao extends StatefulWidget {
+  const _DialogoGerarVersao();
+
+  @override
+  State<_DialogoGerarVersao> createState() => _DialogoGerarVersaoState();
+}
+
+class _DialogoGerarVersaoState extends State<_DialogoGerarVersao> {
+  final TextEditingController _notas = TextEditingController();
+  final List<String> _log = [];
+  String? _pasta;
+  String? _versaoNoCodigo;
+  TipoIncrementoVersao _tipo = TipoIncrementoVersao.correcao;
+  bool _carregando = true;
+  bool _compilando = false;
+  /// Etapa atual da barra de progresso (o texto na tela é o rótulo dela).
+  EtapaGeracaoVersao _etapa = EtapaGeracaoVersao.gravandoCodigo;
+  /// Quanto tempo já passou na etapa atual — é o que faz a barra andar nos
+  /// minutos em que o compilador não imprime nada.
+  final Stopwatch _tempoNaEtapa = Stopwatch();
+  /// Tempo total desta geração, mostrado ao lado da barra.
+  final Stopwatch _tempoTotal = Stopwatch();
+  /// Redesenha a barra enquanto a versão está sendo gerada (o tique só serve
+  /// para o tempo andar; o trabalho de verdade é assíncrono).
+  Timer? _tiqueDaBarra;
+  String? _erro;
+  String? _versaoGerada;
+  PacoteAtualizacao? _pacote;
+
+  @override
+  void initState() {
+    super.initState();
+    _detectar();
+  }
+
+  @override
+  void dispose() {
+    _tiqueDaBarra?.cancel();
+    _notas.dispose();
+    super.dispose();
+  }
+
+  Future<void> _detectar() async {
+    setState(() {
+      _carregando = true;
+      _erro = null;
+    });
+    final pasta = AppUpdateService.pastaDoProjeto();
+    final versao =
+        pasta == null ? null : await AppUpdateService.lerVersaoDoCodigo(pasta);
+    if (!mounted) return;
+    setState(() {
+      _pasta = pasta;
+      _versaoNoCodigo = versao;
+      _carregando = false;
+      _erro = pasta == null
+          ? 'Não achei o código do projeto nesta máquina. Escolha a pasta onde '
+              'está o pubspec.yaml para eu conseguir compilar.'
+          : null;
+    });
+  }
+
+  String get _novaVersao => AppUpdateService.proximaVersao(
+      _versaoNoCodigo ?? '0.0.0', _tipo);
+
+  String _rotulo(TipoIncrementoVersao tipo) => switch (tipo) {
+        TipoIncrementoVersao.correcao => 'Correção',
+        TipoIncrementoVersao.versaoNova => 'Versão nova',
+        TipoIncrementoVersao.versaoGrande => 'Versão grande',
+      };
+
+  Future<void> _escolherPasta() async {
+    final escolhida = await FilePicker.platform.getDirectoryPath(
+        dialogTitle: 'Pasta do projeto (onde está o pubspec.yaml)');
+    if (escolhida == null) return;
+    final versao = await AppUpdateService.lerVersaoDoCodigo(escolhida);
+    if (!mounted) return;
+    setState(() {
+      _pasta = escolhida;
+      _versaoNoCodigo = versao;
+      _erro = versao == null
+          ? 'Não achei a linha currentAppVersion nessa pasta — confira se é a pasta do projeto.'
+          : null;
+    });
+  }
+
+  /// Entra numa etapa da barra: zera o cronômetro dela (é o que dá ritmo ao
+  /// percentual enquanto o compilador está mudo).
+  void _entrarNaEtapa(EtapaGeracaoVersao etapa) {
+    _tempoNaEtapa
+      ..reset()
+      ..start();
+    _etapa = etapa;
+  }
+
+  /// Liga o redesenho periódico da barra e o cronômetro total.
+  void _ligarTiqueDaBarra() {
+    _tiqueDaBarra?.cancel();
+    _tempoTotal
+      ..reset()
+      ..start();
+    _tiqueDaBarra = Timer.periodic(const Duration(milliseconds: 700), (_) {
+      if (!mounted) return;
+      setState(() {
+        // Se a saída do compilador não trouxer nenhum marco conhecido (muda
+        // conforme a versão do Flutter/MSBuild), a etapa avança por tempo.
+        final proxima = AppUpdateService.proximaEtapaPorTempo(
+          _etapa,
+          _tempoNaEtapa.elapsed,
+        );
+        if (proxima != null) _entrarNaEtapa(proxima);
+      });
+    });
+  }
+
+  void _pararTiqueDaBarra() {
+    _tiqueDaBarra?.cancel();
+    _tiqueDaBarra = null;
+    _tempoNaEtapa.stop();
+    _tempoTotal.stop();
+  }
+
+  /// Sai do estado "gerando": desliga a barra e mostra o motivo do erro.
+  void _encerrarGeracao(String erro) {
+    _pararTiqueDaBarra();
+    setState(() {
+      _compilando = false;
+      _erro = erro;
+    });
+  }
+
+  String get _tempoLegivel {
+    final segundos = _tempoTotal.elapsed.inSeconds;
+    if (segundos < 60) return '${segundos}s';
+    final minutos = segundos ~/ 60;
+    final resto = segundos % 60;
+    return resto == 0 ? '${minutos}min' : '${minutos}min ${resto}s';
+  }
+
+  double get _percentualDaBarra =>
+      AppUpdateService.percentualDaEtapa(_etapa, _tempoNaEtapa.elapsed);
+
+  /// Barra de progresso da geração: a etapa, o quanto já andou e há quanto
+  /// tempo. Fica no lugar do antigo "rodinha + frase", que não dizia se o
+  /// programa estava trabalhando ou travado.
+  Widget _buildProgressoDaVersao() {
+    final percentual = _percentualDaBarra;
+    final trabalhando = _etapa.numero <= EtapaGeracaoVersao.totalDeTrabalho;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.indigoAccent.withOpacity(0.10),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.indigoAccent.withOpacity(0.35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _etapa.rotulo,
+                  style: const TextStyle(color: Colors.white, fontSize: 12.5),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Text(
+                '${(percentual * 100).round()}%',
+                style: const TextStyle(
+                  color: Colors.indigoAccent,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: LinearProgressIndicator(
+              value: percentual,
+              minHeight: 10,
+              backgroundColor: Colors.white12,
+              valueColor:
+                  const AlwaysStoppedAnimation<Color>(Colors.indigoAccent),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Text(
+                '$_tempoLegivel nesta versão',
+                style: const TextStyle(color: Colors.white54, fontSize: 11),
+              ),
+              const Spacer(),
+              Text(
+                trabalhando
+                    ? 'etapa ${_etapa.numero} de ${EtapaGeracaoVersao.totalDeTrabalho}'
+                    : 'concluída',
+                style: const TextStyle(color: Colors.white54, fontSize: 11),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _gerarECompilar() async {
+    final pasta = _pasta;
+    if (pasta == null || _versaoNoCodigo == null) return;
+    final nova = _novaVersao;
+    setState(() {
+      _compilando = true;
+      _erro = null;
+      _pacote = null;
+      _log
+        ..clear()
+        ..add('>>> Gerando a versão $nova...');
+      _entrarNaEtapa(EtapaGeracaoVersao.gravandoCodigo);
+    });
+    _ligarTiqueDaBarra();
+
+    final (gravou, mensagemGravacao) =
+        await AppUpdateService.gravarVersaoNoCodigo(pasta, nova);
+    if (!mounted) return;
+    if (!gravou) {
+      _encerrarGeracao(mensagemGravacao);
+      return;
+    }
+    setState(() {
+      _log.add('>>> $mensagemGravacao');
+      _entrarNaEtapa(EtapaGeracaoVersao.preparandoCompilacao);
+    });
+
+    final (compilou, resultado) = await AppUpdateService.compilarProjeto(
+      pasta: pasta,
+      onLinha: (linha) {
+        if (!mounted) return;
+        setState(() {
+          _log.add(linha);
+          if (_log.length > 400) _log.removeAt(0);
+          // Os marcos do `flutter build` dizem em que ponto a compilação está.
+          final etapa = AppUpdateService.etapaDaLinhaDeCompilacao(linha);
+          if (etapa != null && etapa != _etapa) _entrarNaEtapa(etapa);
+        });
+      },
+    );
+    if (!mounted) return;
+    if (!compilou) {
+      _encerrarGeracao(resultado);
+      return;
+    }
+
+    setState(() => _entrarNaEtapa(EtapaGeracaoVersao.empacotando));
+    final pacote = await AppUpdateService.empacotarAtualizacao(
+        pasta: p.join(
+            pasta, 'build', 'windows', 'x64', 'runner', 'Release'));
+    if (!mounted) return;
+    setState(() {
+      _compilando = false;
+      _entrarNaEtapa(EtapaGeracaoVersao.pronta);
+      _versaoGerada = nova;
+      _pacote = pacote;
+      _erro = pacote == null
+          ? 'Compilou, mas não achei o programa em build/windows/x64/runner/Release para montar o pacote.'
+          : null;
+    });
+    _pararTiqueDaBarra();
+  }
+
+  Future<void> _publicar() async {
+    final versao = _versaoGerada;
+    final pacote = _pacote;
+    if (versao == null || pacote == null) return;
+
+    final empresas = Provider.of<AuthService>(context, listen: false)
+        .getEmpresasDoUsuario();
+    final destino = await showDialog<_DestinoAtualizacao>(
+      context: context,
+      builder: (context) => _DialogoDestinoAtualizacao(empresas: empresas),
+    );
+    if (destino == null || !mounted) return;
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) => _DialogoPublicarAtualizacao(
+        destino: destino,
+        versaoInicial: versao,
+        notasIniciais: _notas.text,
+        pacoteInicial: pacote,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: const Color(0xFF1E1E2E),
+      title: const Row(
+        children: [
+          Icon(Icons.rocket_launch, color: Colors.indigoAccent),
+          SizedBox(width: 12),
+          Text('Gerar versão', style: TextStyle(color: Colors.white)),
+        ],
+      ),
+      content: SizedBox(
+        width: 640,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (_carregando)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 24),
+                  child: Center(
+                      child: CircularProgressIndicator(
+                          color: Colors.indigoAccent)),
+                )
+              else ...[
+                _buildPasta(),
+                const SizedBox(height: 12),
+                if (_versaoNoCodigo != null) _buildNumeracao(),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _notas,
+                  enabled: !_compilando && _pacote == null,
+                  maxLines: 4,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    labelText: 'Detalhes desta atualização ("o que mudou")',
+                    labelStyle: const TextStyle(color: Colors.white70),
+                    helperText:
+                        'Aparece para o cliente na tela de atualização.',
+                    helperStyle: const TextStyle(color: Colors.white38),
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide:
+                          BorderSide(color: Colors.white.withOpacity(0.2)),
+                    ),
+                  ),
+                ),
+                if (_compilando) ...[
+                  const SizedBox(height: 12),
+                  _buildProgressoDaVersao(),
+                ],
+                if (_log.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    height: 140,
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.35),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Colors.white12),
+                    ),
+                    child: ListView(
+                      reverse: true,
+                      children: _log.reversed
+                          .take(60)
+                          .map((linha) => Text(
+                                linha,
+                                style: const TextStyle(
+                                    color: Colors.white54, fontSize: 11),
+                              ))
+                          .toList(),
+                    ),
+                  ),
+                ],
+                if (_erro != null) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.red.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.red.withOpacity(0.4)),
+                    ),
+                    child: Text(_erro!,
+                        style: const TextStyle(
+                            color: Colors.white, fontSize: 12)),
+                  ),
+                ],
+                if (_pacote != null) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.green.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.green.withOpacity(0.4)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Versão $_versaoGerada compilada e pacote pronto.',
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '${_pacote!.tamanhoLegivel}  •  ${_pacote!.conteudo.join(", ")}',
+                          style: const TextStyle(
+                              color: Colors.white70, fontSize: 11),
+                        ),
+                        const SizedBox(height: 4),
+                        const Text(
+                          'A versão só chega nos clientes quando você publicar.',
+                          style: TextStyle(
+                              color: Colors.white38, fontSize: 11),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _compilando ? null : () => Navigator.pop(context),
+          child: Text(_pacote == null ? 'Cancelar' : 'Publicar depois',
+              style: const TextStyle(color: Colors.white54)),
+        ),
+        if (_pacote == null)
+          ElevatedButton.icon(
+            onPressed: (_compilando || _pasta == null || _versaoNoCodigo == null)
+                ? null
+                : _gerarECompilar,
+            icon: _compilando
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: Colors.white),
+                  )
+                : const Icon(Icons.build, size: 18),
+            label: Text(_compilando ? 'Gerando...' : 'Gerar e compilar'),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.indigoAccent),
+          )
+        else
+          ElevatedButton.icon(
+            onPressed: _publicar,
+            icon: const Icon(Icons.cloud_upload, size: 18),
+            label: const Text('Publicar agora'),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.teal),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildPasta() {
+    final pasta = _pasta;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.04),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Código do projeto',
+              style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13)),
+          const SizedBox(height: 4),
+          Text(
+            pasta ?? 'não encontrado nesta máquina',
+            style: TextStyle(
+                color: pasta == null ? Colors.orangeAccent : Colors.white54,
+                fontSize: 11),
+          ),
+          if (_versaoNoCodigo != null)
+            Text(
+              'versão no código: $_versaoNoCodigo',
+              style: const TextStyle(color: Colors.white54, fontSize: 11),
+            ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              onPressed: _compilando ? null : _escolherPasta,
+              icon: const Icon(Icons.folder_open, size: 16),
+              label: const Text('Escolher pasta'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNumeracao() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Que tipo de versão é esta?',
+            style: TextStyle(color: Colors.white70, fontSize: 13)),
+        const SizedBox(height: 8),
+        ...TipoIncrementoVersao.values.map((tipo) {
+          final escolhido = _tipo == tipo;
+          final previa = AppUpdateService.proximaVersao(
+              _versaoNoCodigo ?? '0.0.0', tipo);
+          return InkWell(
+            onTap: _compilando ? null : () => setState(() => _tipo = tipo),
+            borderRadius: BorderRadius.circular(10),
+            child: Container(
+              margin: const EdgeInsets.only(bottom: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: (escolhido ? Colors.indigoAccent : Colors.white)
+                    .withOpacity(escolhido ? 0.14 : 0.03),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                    color: escolhido ? Colors.indigoAccent : Colors.white12,
+                    width: escolhido ? 2 : 1),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    escolhido
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_unchecked,
+                    color:
+                        escolhido ? Colors.indigoAccent : Colors.white24,
+                    size: 18,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      _rotulo(tipo),
+                      style: const TextStyle(
+                          color: Colors.white, fontSize: 13),
+                    ),
+                  ),
+                  Text(
+                    '→ $previa',
+                    style: TextStyle(
+                      color: escolhido ? Colors.indigoAccent : Colors.white38,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }),
+        const Text(
+          'Correção: 1.0.36 → 1.0.37  •  Versão nova: 1.0.36 → 1.1.0  •  '
+          'Versão grande: 1.0.36 → 2.0.0',
+          style: TextStyle(color: Colors.white38, fontSize: 11),
+        ),
+      ],
+    );
+  }
+}
+
+/// Confirmação da publicação: mostra a versão, quem vai receber e qual pacote
+/// sobe de verdade (arquivo, tamanho e data) ANTES de enviar para a nuvem.
+///
+/// O pacote é montado aqui, não no cartão: publicar o `.exe` sozinho (como era
+/// antes) não atualizava nada — o programa está no `data/app.so`./// De onde vem a versão que a publicação vai mandar para o cliente.
+///
+/// Publicar não é sempre "a versão que acabei de compilar": às vezes é repetir
+/// uma versão antiga numa empresa (o pacote já está na nuvem e nem precisa
+/// subir de novo) e às vezes é deixar o sistema achar o próximo número.
+///
+/// As três opções que sobem arquivo gravam a versão **no código e compilam**
+/// quando é preciso: o número que o cliente compara é o que está COMPILADO no
+/// `data/app.so` dele. Publicar um número novo com o pacote antigo faz o cliente
+/// baixar e continuar na mesma versão.
+enum _FonteVersao {
+  /// Compilada agora pelo assistente "Gerar versão" (pacote pronto aqui).
+  gerada,
+
+  /// Numeração automática: parte da maior versão conhecida (código × nuvem),
+  /// grava o número novo no código e compila antes de enviar.
+  automatica,
+
+  /// Pacote que JÁ está na nuvem: só muda quem recebe (não envia arquivo).
+  naNuvem,
+
+  /// Pacote compilado nesta máquina, com o número que estiver no campo.
+  local,
+}
+
+class _DialogoPublicarAtualizacao extends StatefulWidget {
+  final _DestinoAtualizacao destino;
+
+  /// Já vem preenchida quando a publicação segue o assistente de gerar versão.
+  final String? versaoInicial;
+  final String? notasIniciais;
+
+  /// Pacote já compilado pelo assistente (não remonta de novo).
+  final PacoteAtualizacao? pacoteInicial;
+
+  /// Versão escolhida no painel "Versões publicadas" (reaproveitar o pacote
+  /// que já está na nuvem, sem compilar e sem enviar nada).
+  final String? versaoNaNuvemInicial;
+
+  const _DialogoPublicarAtualizacao({
+    required this.destino,
+    this.versaoInicial,
+    this.notasIniciais,
+    this.pacoteInicial,
+    this.versaoNaNuvemInicial,
+  });
+
+  @override
+  State<_DialogoPublicarAtualizacao> createState() =>
+      _DialogoPublicarAtualizacaoState();
+}
+
+class _DialogoPublicarAtualizacaoState
+    extends State<_DialogoPublicarAtualizacao> {
+  late final TextEditingController _versao = TextEditingController(
+      text: widget.versaoInicial ?? AppUpdateService.currentAppVersion);
+  late final TextEditingController _notas =
+      TextEditingController(text: widget.notasIniciais ?? '');
+  bool _forcar = false;
+  bool _montandoPacote = true;
+  PacoteAtualizacao? _pacote;
+  String? _erroPacote;
+  bool _publicando = false;
+  String _etapa = '';
+  String? _resultado;
+  bool _sucesso = false;
+
+  /// Como a versão desta publicação é escolhida (as quatro opções da tela).
+  _FonteVersao _fonte = _FonteVersao.local;
+
+  /// Numeração automática: que tipo de número novo (correção/versão nova/grande).
+  TipoIncrementoVersao _tipoAutomatico = TipoIncrementoVersao.correcao;
+
+  /// Código do projeto nesta máquina — é dele que sai a numeração automática.
+  String? _pastaDoProjeto;
+  String? _versaoNoCodigo;
+
+  /// Versões cujo pacote já está na nuvem (podem ser reapontadas).
+  List<VersaoNaNuvem> _versoesNaNuvem = const [];
+  bool _carregandoNuvem = true;
+  String? _versaoNaNuvemEscolhida;
+
+  /// Saída da compilação quando a publicação é pela numeração automática.
+  final List<String> _log = [];
+
+  @override
+  void initState() {
+    super.initState();
+    // A versão digitada muda o aviso de "compilou antes de mudar a versão?"
+    _versao.addListener(_aoMudarVersao);
+    if (widget.versaoNaNuvemInicial != null) {
+      // Veio do painel de versões publicadas: reaproveitar o pacote da nuvem.
+      _versaoNaNuvemEscolhida = widget.versaoNaNuvemInicial;
+      _fonte = _FonteVersao.naNuvem;
+    } else if (widget.pacoteInicial != null) {
+      // Veio do assistente: o pacote acabou de ser compilado lá.
+      _pacote = widget.pacoteInicial;
+      _montandoPacote = false;
+      _fonte = _FonteVersao.gerada;
+    } else {
+      _montarPacote();
+    }
+    _carregarContexto();
+  }
+
+  /// Lê o que já está na nuvem (para reaproveitar pacote) e o código do projeto
+  /// (para a numeração automática). Roda em paralelo com o pacote local.
+  Future<void> _carregarContexto() async {
+    final pasta = AppUpdateService.pastaDoProjeto();
+    final versaoDoCodigo =
+        pasta == null ? null : await AppUpdateService.lerVersaoDoCodigo(pasta);
+    final versoes = await AppUpdateService.listarVersoesNaNuvem();
+    if (!mounted) return;
+    setState(() {
+      _pastaDoProjeto = pasta;
+      _versaoNoCodigo = versaoDoCodigo;
+      _versoesNaNuvem = versoes;
+      _carregandoNuvem = false;
+      // A escolha só vale se o pacote dela ainda estiver na nuvem (o painel de
+      // versões publicadas pode estar um pouco atrás do Storage).
+      final escolhida = versoes.any((v) => v.versao == _versaoNaNuvemEscolhida)
+          ? _versaoNaNuvemEscolhida
+          : (versoes.isEmpty ? null : versoes.first.versao);
+      _versaoNaNuvemEscolhida = escolhida;
+    });
+  }
+
+  void _aoMudarVersao() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _versao.removeListener(_aoMudarVersao);
+    _versao.dispose();
+    _notas.dispose();
+    super.dispose();
+  }
+
+  /// A maior versão conhecida: o que está no código × o que já subiu para a
+  /// nuvem. A numeração automática parte daqui para nunca repetir um número
+  /// (mesmo que o código esteja atrás do que foi publicado).
+  String get _versaoBase {
+    final maior = AppUpdateService.maiorVersao([
+      if (_versaoNoCodigo != null) _versaoNoCodigo!,
+      ..._versoesNaNuvem.map((v) => v.versao),
+    ]);
+    return maior.isEmpty ? AppUpdateService.currentAppVersion : maior;
+  }
+
+  String get _versaoAutomatica =>
+      AppUpdateService.proximaVersao(_versaoBase, _tipoAutomatico);
+
+  /// A versão que vai ser publicada, conforme a opção escolhida na tela.
+  String get _versaoEscolhida {
+    switch (_fonte) {
+      case _FonteVersao.gerada:
+        return widget.versaoInicial ?? AppUpdateService.currentAppVersion;
+      case _FonteVersao.automatica:
+        return _versaoAutomatica;
+      case _FonteVersao.naNuvem:
+        return _versaoNaNuvemEscolhida ?? '';
+      case _FonteVersao.local:
+        return _versao.text.trim().replaceAll('!', '');
+    }
+  }
+
+  /// Numeração automática só funciona com o código do projeto nesta máquina.
+  bool get _podeAutomatica =>
+      _pastaDoProjeto != null && _versaoNoCodigo != null;
+
+  bool get _podePublicar {
+    switch (_fonte) {
+      case _FonteVersao.gerada:
+        return widget.pacoteInicial != null;
+      case _FonteVersao.automatica:
+        return _podeAutomatica;
+      case _FonteVersao.naNuvem:
+        return (_versaoNaNuvemEscolhida ?? '').isNotEmpty;
+      case _FonteVersao.local:
+        return !_montandoPacote && _pacote != null;
+    }
+  }
+
+  /// Só estes dois caminhos usam o pacote montado/compilado nesta máquina.
+  bool get _precisaPacoteLocal =>
+      _fonte == _FonteVersao.local || _fonte == _FonteVersao.gerada;
+
+  /// A versão que os clientes comparam é a que está COMPILADA no `data/app.so`
+  /// (`currentAppVersion`), não a digitada aqui. Publicar um número novo sem
+  /// compilar de novo faz o cliente baixar e continuar na mesma versão (e tentar
+  /// baixar de novo em cada abertura). Vale só para o pacote desta máquina: os
+  /// outros caminhos compilam ou reaproveitam o pacote já certo.
+  bool get _versaoDiferenteDaCompilada =>
+      _fonte == _FonteVersao.local &&
+      widget.pacoteInicial == null &&
+      _versao.text.trim().replaceAll('!', '') !=
+          AppUpdateService.currentAppVersion;
+
+  Future<void> _montarPacote() async {
+    setState(() {
+      _montandoPacote = true;
+      _erroPacote = null;
+    });
+    final pacote = await AppUpdateService.empacotarAtualizacao();
+    if (!mounted) return;
+    setState(() {
+      _pacote = pacote;
+      _montandoPacote = false;
+      _erroPacote = pacote == null
+          ? 'Não encontrei o programa compilado (data/app.so + sistema_exodo_novo.exe).\n'
+              'Rode "flutter build windows --release" antes de publicar.'
+          : null;
+    });
+  }
+
+  Future<void> _publicar() async {
+    setState(() {
+      _publicando = true;
+      _resultado = null;
+      _etapa = 'Preparando...';
+      _log.clear();
+    });
+
+    final versao = _versaoEscolhida;
+
+    // Pacote que vai subir (só usado nos caminhos que enviam arquivo).
+    PacoteAtualizacao? pacote = switch (_fonte) {
+      _FonteVersao.gerada => widget.pacoteInicial,
+      _FonteVersao.local => _pacote,
+      _ => null,
+    };
+
+    if (_fonte == _FonteVersao.automatica) {
+      // A numeração automática precisa do programa COMPILADO com o número novo:
+      // grava no código, compila e monta o pacote aqui, antes de publicar.
+      final preparado = await _compilarNaVersaoAutomatica(versao);
+      if (preparado == null) return; // o erro já está na tela
+      pacote = preparado;
+    }
+
+    setState(() => _etapa = 'Publicando...');
+    final (sucesso, mensagem) = await AppUpdateService.publicarAtualizacao(
+      versao: versao,
+      empresaIds: widget.destino.empresas.map((e) => e.id).toList(),
+      force: _forcar,
+      pacote: pacote,
+      usarPacoteDaNuvem: _fonte == _FonteVersao.naNuvem,
+      notas: _notas.text,
+      onEtapa: (etapa) {
+        if (mounted) setState(() => _etapa = etapa);
+      },
+    );
+
+    // Histórico de versões no projeto (quando o publicador roda do código).
+    var historico = false;
+    if (sucesso) {
+      final destino = widget.destino.global
+          ? 'TODOS os clientes'
+          : 'empresas: ${widget.destino.empresas.map((e) => e.nomeExibicao).join(', ')}';
+      historico = await AppUpdateService.registrarNoHistorico(
+        versao: versao,
+        detalhes: _notas.text,
+        destino: destino,
+      );
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _publicando = false;
+      _etapa = '';
+      _resultado = historico
+          ? '$mensagem\n\nAnotado em HISTORICO_VERSOES.md no projeto.'
+          : mensagem;
+      _sucesso = sucesso;
+    });
+  }
+
+  /// Grava o número automático no código, compila o programa e monta o pacote.
+  ///
+  /// É o passo que faz o número publicado ser o MESMO que o cliente enxerga
+  /// depois de atualizar. Devolve `null` (deixando o motivo na tela) quando
+  /// alguma etapa falha — nesse caso nada é publicado.
+  Future<PacoteAtualizacao?> _compilarNaVersaoAutomatica(String versao) async {
+    final pasta = _pastaDoProjeto;
+
+    void erro(String mensagem) {
+      if (!mounted) return;
+      setState(() {
+        _publicando = false;
+        _etapa = '';
+        _sucesso = false;
+        _resultado = mensagem;
+      });
+    }
+
+    if (pasta == null) {
+      erro('Não achei o código do projeto nesta máquina para gerar a versão '
+          '$versao. Publique pelo pacote compilado aqui ou destrave a pasta do '
+          'projeto no assistente "Gerar versão".');
+      return null;
+    }
+
+    setState(() => _etapa = 'Gravando a versão $versao no código...');
+    final (gravou, mensagemGravacao) =
+        await AppUpdateService.gravarVersaoNoCodigo(pasta, versao);
+    if (!mounted) return null;
+    if (!gravou) {
+      erro(mensagemGravacao);
+      return null;
+    }
+    setState(() {
+      _log.add('>>> $mensagemGravacao');
+      _etapa = 'Compilando a versão $versao (pode levar alguns minutos)...';
+    });
+
+    final (compilou, resultado) = await AppUpdateService.compilarProjeto(
+      pasta: pasta,
+      onLinha: (linha) {
+        if (!mounted) return;
+        setState(() {
+          _log.add(linha);
+          if (_log.length > 300) _log.removeAt(0);
+        });
+      },
+    );
+    if (!mounted) return null;
+    if (!compilou) {
+      erro(resultado);
+      return null;
+    }
+
+    setState(() => _etapa = 'Montando o pacote da versão $versao...');
+    final pacote = await AppUpdateService.empacotarAtualizacao(
+      pasta: p.join(pasta, 'build', 'windows', 'x64', 'runner', 'Release'),
+    );
+    if (!mounted) return null;
+    if (pacote == null) {
+      erro('Compilou, mas não achei o programa em '
+          'build/windows/x64/runner/Release para montar o pacote.');
+      return null;
+    }
+    setState(() => _log.add('>>> Pacote pronto: ${pacote.tamanhoLegivel}'));
+    return pacote;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final destino = widget.destino;
+    return AlertDialog(
+      backgroundColor: const Color(0xFF1E1E2E),
+      title: Row(
+        children: [
+          Icon(destino.global ? Icons.public : Icons.business,
+              color: destino.global ? Colors.teal : Colors.cyan),
+          const SizedBox(width: 12),
+          Text(
+            destino.global ? 'Publicar para TODOS' : 'Publicar para empresas',
+            style: const TextStyle(color: Colors.white),
+          ),
+        ],
+      ),
+      content: SizedBox(
+        width: 620,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildDestino(destino),
+              const SizedBox(height: 16),
+              _buildEscolhaVersao(),
+              const SizedBox(height: 16),
+              TextField(
+                controller: _notas,
+                enabled: !_publicando,
+                maxLines: 4,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  labelText: 'Detalhes desta atualização ("o que mudou")',
+                  labelStyle: const TextStyle(color: Colors.white70),
+                  helperText:
+                      'Aparece para o cliente na tela de atualização.',
+                  helperStyle: const TextStyle(color: Colors.white38),
+                  border:
+                      OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: Colors.white.withOpacity(0.2)),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              if (_precisaPacoteLocal) _buildPacote(),
+              if (_fonte == _FonteVersao.naNuvem) _buildPacoteDaNuvem(),
+              if (_fonte == _FonteVersao.automatica) _buildPreparoAutomatico(),
+              const SizedBox(height: 8),
+              CheckboxListTile(
+                dense: true,
+                value: _forcar,
+                activeColor: Colors.orange,
+                onChanged: _publicando
+                    ? null
+                    : (v) => setState(() => _forcar = v ?? false),
+                title: const Text(
+                  'Forçar (quem já está numa versão mais nova também baixa)',
+                  style: TextStyle(color: Colors.white, fontSize: 13),
+                ),
+                subtitle: const Text(
+                  'Use para voltar atrás de uma versão com problema. Sem isto, '
+                  'só baixa quem estiver atrasado.',
+                  style: TextStyle(color: Colors.white38, fontSize: 11),
+                ),
+              ),
+              if (_publicando) ...[
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(_etapa,
+                          style: const TextStyle(color: Colors.white70)),
+                    ),
+                  ],
+                ),
+              ],
+              if (_resultado != null) ...[
+                const SizedBox(height: 12),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: (_sucesso ? Colors.green : Colors.red).withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                        color: (_sucesso ? Colors.green : Colors.red)
+                            .withOpacity(0.4)),
+                  ),
+                  child: Text(
+                    _resultado!,
+                    style: const TextStyle(color: Colors.white, fontSize: 12),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _publicando ? null : () => Navigator.pop(context),
+          child: Text(_resultado == null ? 'Cancelar' : 'Fechar',
+              style: const TextStyle(color: Colors.white54)),
+        ),
+        if (_resultado == null)
+          ElevatedButton.icon(
+            onPressed: (_publicando || !_podePublicar) ? null : _publicar,
+            icon: Icon(
+              _fonte == _FonteVersao.automatica
+                  ? Icons.auto_awesome
+                  : Icons.cloud_upload,
+              size: 18,
+            ),
+            label: Text(
+              _fonte == _FonteVersao.automatica
+                  ? 'Gerar, compilar e publicar'
+                  : 'Publicar',
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: widget.destino.global ? Colors.teal : Colors.cyan,
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildDestino(_DestinoAtualizacao destino) {
+    final cor = destino.global ? Colors.teal : Colors.cyan;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: cor.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: cor.withOpacity(0.3)),
+      ),
+      child: destino.global
+          ? const Text(
+              'TODOS os clientes que não têm versão direcionada vão baixar esta '
+              'quando abrirem o app.',
+              style: TextStyle(color: Colors.white70, fontSize: 12),
+            )
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${destino.empresas.length} empresa(s) vão baixar esta versão:',
+                  style: const TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+                const SizedBox(height: 6),
+                ...destino.empresas.map((e) => Padding(
+                      padding: const EdgeInsets.only(bottom: 2),
+                      child: Text(
+                        '• ${e.nomeExibicao}',
+                        style: const TextStyle(
+                            color: Colors.white, fontSize: 12),
+                      ),
+                    )),
+                const SizedBox(height: 6),
+                const Text(
+                  'As outras empresas não são afetadas.',
+                  style: TextStyle(color: Colors.white38, fontSize: 11),
+                ),
+              ],
+            ),
+    );
+  }
+
+  /// A escolha da versão que vai para o cliente: a que acabou de ser gerada,
+  /// a numeração automática, um pacote que já está na nuvem, ou o pacote
+  /// pronto nesta máquina (com o número digitado).
+  Widget _buildEscolhaVersao() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Qual versão vai para o cliente?',
+          style: TextStyle(
+              color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+        ),
+        const SizedBox(height: 4),
+        const Text(
+          'O cliente compara o número que está COMPILADO no programa dele com o '
+          'publicado aqui.',
+          style: TextStyle(color: Colors.white38, fontSize: 11),
+        ),
+        const SizedBox(height: 10),
+        if (widget.pacoteInicial != null)
+          _opcaoVersao(
+            fonte: _FonteVersao.gerada,
+            icone: Icons.rocket_launch,
+            cor: Colors.teal,
+            titulo: 'A que acabei de gerar — ${widget.versaoInicial}',
+            descricao: 'Pacote compilado nesta máquina agora '
+                '(${widget.pacoteInicial!.tamanhoLegivel}) — é ele que sobe.',
+          ),
+        _opcaoVersao(
+          fonte: _FonteVersao.automatica,
+          icone: Icons.auto_awesome,
+          cor: Colors.indigoAccent,
+          titulo: 'Numeração automática — $_versaoAutomatica',
+          descricao: _podeAutomatica
+              ? 'Grava o número no código e compila antes de publicar, então o '
+                  'cliente recebe exatamente a $_versaoAutomatica.'
+              : 'Não achei o código do projeto nesta máquina para numerar '
+                  'sozinho (use o assistente "Gerar versão" ou a pasta do '
+                  'projeto).',
+          habilitado: _podeAutomatica,
+          extra:
+              _fonte == _FonteVersao.automatica ? _buildTipoAutomatico() : null,
+        ),
+        _opcaoVersao(
+          fonte: _FonteVersao.naNuvem,
+          icone: Icons.cloud_done,
+          cor: Colors.cyan,
+          titulo: 'Pacote que já está na nuvem',
+          descricao: _carregandoNuvem
+              ? 'Lendo as versões publicadas...'
+              : _versoesNaNuvem.isEmpty
+                  ? 'Nenhum pacote publicado ainda.'
+                  : 'Não compila e não envia arquivo: só direciona uma versão '
+                      'que já subiu para quem você escolher (é assim que se '
+                      'volta atrás).',
+          habilitado: _versoesNaNuvem.isNotEmpty,
+          extra: _fonte == _FonteVersao.naNuvem ? _buildListaNaNuvem() : null,
+        ),
+        _opcaoVersao(
+          fonte: _FonteVersao.local,
+          icone: Icons.build,
+          cor: Colors.blueGrey,
+          titulo:
+              'Pacote pronto nesta máquina — ${_versao.text.trim().isEmpty ? AppUpdateService.currentAppVersion : _versao.text.trim()}',
+          descricao: 'Usa o programa já compilado aqui e envia o número que '
+              'estiver no campo.',
+          extra: _fonte == _FonteVersao.local ? _buildCampoVersao() : null,
+        ),
+        if (_fonte == _FonteVersao.local && _versaoDiferenteDaCompilada)
+          _buildAvisoCompilada(),
+      ],
+    );
+  }
+
+  Widget _opcaoVersao({
+    required _FonteVersao fonte,
+    required IconData icone,
+    required Color cor,
+    required String titulo,
+    required String descricao,
+    bool habilitado = true,
+    Widget? extra,
+  }) {
+    final selecionado = _fonte == fonte;
+    final ativo = habilitado && !_publicando;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        InkWell(
+          onTap: ativo ? () => setState(() => _fonte = fonte) : null,
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color:
+                  cor.withOpacity(selecionado ? 0.14 : (habilitado ? 0.04 : 0.02)),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: selecionado ? cor : Colors.white12,
+                width: selecionado ? 2 : 1,
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(icone, color: habilitado ? cor : Colors.white24, size: 22),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        titulo,
+                        style: TextStyle(
+                          color: habilitado
+                              ? (selecionado ? cor : Colors.white)
+                              : Colors.white38,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        descricao,
+                        style: const TextStyle(
+                            color: Colors.white54, fontSize: 11),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(
+                  selecionado
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_unchecked,
+                  color: selecionado ? cor : Colors.white24,
+                  size: 20,
+                ),
+              ],
+            ),
+          ),
+        ),
+        if (selecionado && extra != null)
+          Padding(
+            padding: const EdgeInsets.only(left: 12, top: 8, right: 12, bottom: 2),
+            child: extra,
+          ),
+        const SizedBox(height: 8),
+      ],
+    );
+  }
+
+  /// O campo do número quando o pacote é o desta máquina.
+  Widget _buildCampoVersao() {
+    return TextField(
+      controller: _versao,
+      enabled: !_publicando,
+      style: const TextStyle(color: Colors.white),
+      decoration: InputDecoration(
+        labelText: 'Número da versão',
+        labelStyle: const TextStyle(color: Colors.white70),
+        helperText: 'A compilada nesta máquina é a '
+            '${AppUpdateService.currentAppVersion}.',
+        helperStyle: const TextStyle(color: Colors.white38),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: Colors.white.withOpacity(0.2)),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAvisoCompilada() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 4, bottom: 4),
+      child: Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: Colors.orange.withOpacity(0.12),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.orange.withOpacity(0.4)),
+        ),
+        child: Text(
+          'Atenção: a versão que os clientes comparam é a que está COMPILADA no '
+          'programa (a desta máquina é a '
+          '${AppUpdateService.currentAppVersion}). Se você mudou o código, '
+          'ajuste currentAppVersion e rode "flutter build windows --release" '
+          'ANTES de publicar — senão o cliente baixa e continua na mesma '
+          'versão.',
+          style: const TextStyle(color: Colors.orangeAccent, fontSize: 11),
+        ),
+      ),
+    );
+  }
+
+  /// Que tipo de número novo a numeração automática vai criar.
+  Widget _buildTipoAutomatico() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Que tipo de número novo?',
+            style: TextStyle(color: Colors.white70, fontSize: 12)),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: TipoIncrementoVersao.values.map((tipo) {
+            final escolhido = _tipoAutomatico == tipo;
+            return InkWell(
+              onTap: _publicando
+                  ? null
+                  : () => setState(() => _tipoAutomatico = tipo),
+              borderRadius: BorderRadius.circular(20),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: escolhido
+                      ? Colors.indigoAccent.withOpacity(0.2)
+                      : Colors.white.withOpacity(0.04),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                      color:
+                          escolhido ? Colors.indigoAccent : Colors.white12),
+                ),
+                child: Text(
+                  '${_rotuloTipo(tipo)} → '
+                  '${AppUpdateService.proximaVersao(_versaoBase, tipo)}',
+                  style: TextStyle(
+                    color: escolhido ? Colors.indigoAccent : Colors.white54,
+                    fontSize: 12,
+                    fontWeight:
+                        escolhido ? FontWeight.bold : FontWeight.normal,
+                  ),
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Partindo da maior versão conhecida ($_versaoBase): no código '
+          '${_versaoNoCodigo ?? "—"}'
+          '${_versoesNaNuvem.isEmpty ? '' : ' • a mais nova na nuvem é a ${_versoesNaNuvem.first.versao}'}.',
+          style: const TextStyle(color: Colors.white38, fontSize: 11),
+        ),
+      ],
+    );
+  }
+
+  String _rotuloTipo(TipoIncrementoVersao tipo) => switch (tipo) {
+        TipoIncrementoVersao.correcao => 'Correção',
+        TipoIncrementoVersao.versaoNova => 'Versão nova',
+        TipoIncrementoVersao.versaoGrande => 'Versão grande',
+      };
+
+  /// A lista das versões que já têm pacote na nuvem (reaproveitar sem enviar).
+  Widget _buildListaNaNuvem() {
+    if (_carregandoNuvem) {
+      return const Row(
+        children: [
+          SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2)),
+          SizedBox(width: 12),
+          Text('Lendo as versões publicadas...',
+              style: TextStyle(color: Colors.white70, fontSize: 12)),
+        ],
+      );
+    }
+    if (_versoesNaNuvem.isEmpty) {
+      return const Text(
+        'Nenhum pacote publicado ainda — publique uma versão pelo assistente '
+        '"Gerar versão" para começar a lista.',
+        style: TextStyle(color: Colors.orangeAccent, fontSize: 12),
+      );
+    }
+    // O valor do DropdownButton tem que existir na lista (senão o Flutter
+    // recusa montar o widget): se a escolha não estiver aqui, cai na primeira.
+    final selecionada = _versoesNaNuvem
+            .any((v) => v.versao == _versaoNaNuvemEscolhida)
+        ? _versaoNaNuvemEscolhida
+        : _versoesNaNuvem.first.versao;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        DropdownButton<String>(
+          value: selecionada,
+          isExpanded: true,
+          dropdownColor: const Color(0xFF1E1E2E),
+          underline: const SizedBox.shrink(),
+          style: const TextStyle(color: Colors.white, fontSize: 13),
+          items: _versoesNaNuvem
+              .map((v) => DropdownMenuItem<String>(
+                    value: v.versao,
+                    child: Text(
+                      '${v.versao}  •  ${v.tamanhoLegivel}  •  enviado em '
+                      '${v.quandoLegivel}',
+                      style:
+                          const TextStyle(color: Colors.white, fontSize: 12),
+                    ),
+                  ))
+              .toList(),
+          onChanged: _publicando
+              ? null
+              : (v) => setState(() => _versaoNaNuvemEscolhida = v),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          '${_versoesNaNuvem.length} versão(ões) com pacote na nuvem. Escolher '
+          'uma delas não envia nada: só quem recebe muda.',
+          style: const TextStyle(color: Colors.white38, fontSize: 11),
+        ),
+      ],
+    );
+  }
+
+  /// Cartão do que vai acontecer quando o pacote vem da nuvem.
+  Widget _buildPacoteDaNuvem() {
+    final escolhidas =
+        _versoesNaNuvem.where((v) => v.versao == _versaoNaNuvemEscolhida);
+    final escolhida = escolhidas.isEmpty ? null : escolhidas.first;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.cyan.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.cyan.withOpacity(0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            escolhida == null
+                ? 'Nenhum pacote escolhido'
+                : '♻️ Nada será enviado — o pacote da versão '
+                    '${escolhida.versao} já está na nuvem '
+                    '(${escolhida.tamanhoLegivel}, enviado em '
+                    '${escolhida.quandoLegivel}).',
+            style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 13),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'A nuvem só passa a apontar esta versão para o destino escolhido. '
+            'Os computadores baixam no próximo "Verificar atualização".',
+            style: TextStyle(color: Colors.white70, fontSize: 11),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Cartão do que a numeração automática vai fazer antes de publicar.
+  Widget _buildPreparoAutomatico() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.indigoAccent.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.indigoAccent.withOpacity(0.3)),
+          ),
+          child: Text(
+            'Ao publicar: grava a versão $_versaoAutomatica no código, roda '
+            '"flutter build windows --release" nesta máquina (alguns minutos) '
+            'e só então envia o pacote para a nuvem.',
+            style: const TextStyle(color: Colors.white70, fontSize: 12),
+          ),
+        ),
+        if (_log.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Container(
+            height: 130,
+            width: double.infinity,
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.35),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.white12),
+            ),
+            child: ListView(
+              reverse: true,
+              children: _log.reversed
+                  .take(60)
+                  .map((linha) => Text(
+                        linha,
+                        style: const TextStyle(
+                            color: Colors.white54, fontSize: 11),
+                      ))
+                  .toList(),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildPacote() {
+    if (_montandoPacote) {
+      return const Row(
+        children: [
+          SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2)),
+          SizedBox(width: 12),
+          Text('Montando o pacote do programa...',
+              style: TextStyle(color: Colors.white70, fontSize: 12)),
+        ],
+      );
+    }
+    if (_erroPacote != null) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _erroPacote!,
+            style: const TextStyle(color: Colors.orangeAccent, fontSize: 12),
+          ),
+          TextButton.icon(
+            onPressed: _montarPacote,
+            icon: const Icon(Icons.refresh, size: 16),
+            label: const Text('Tentar de novo'),
+          ),
+        ],
+      );
+    }
+    final pacote = _pacote!;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.04),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Pacote que vai subir',
+              style: TextStyle(
+                  color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+          const SizedBox(height: 6),
+          Text(
+            '${pacote.tamanhoLegivel}  •  ${pacote.conteudo.join(", ")}',
+            style: const TextStyle(color: Colors.white70, fontSize: 11),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Montado de: ${pacote.caminho}',
+            style: const TextStyle(color: Colors.white38, fontSize: 10),
+          ),
+          Text(
+            'Última alteração do app.so: ${pacote.modificadoEm}',
+            style: const TextStyle(color: Colors.white38, fontSize: 10),
+          ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              onPressed: _montandoPacote ? null : _montarPacote,
+              icon: const Icon(Icons.refresh, size: 16),
+              label: const Text('Montar de novo'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Painel do que está publicado na nuvem: a versão de TODOS os clientes e as
+/// direcionadas por empresa, com opção de tirar o direcionamento.
+class _DialogoPublicacoes extends StatefulWidget {
+  final List<Empresa> empresas;
+
+  const _DialogoPublicacoes({required this.empresas});
+
+  @override
+  State<_DialogoPublicacoes> createState() => _DialogoPublicacoesState();
+}
+
+class _DialogoPublicacoesState extends State<_DialogoPublicacoes> {
+  bool _carregando = true;
+  List<PublicacaoVersao> _publicacoes = const [];
+
+  /// Pacotes por versão que estão no Storage: é o que permite reapontar uma
+  /// versão sem compilar e sem enviar arquivo de novo.
+  List<VersaoNaNuvem> _versoesNaNuvem = const [];
+  bool _mexendo = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _carregar();
+  }
+
+  Future<void> _carregar() async {
+    setState(() => _carregando = true);
+    final lista = await AppUpdateService.listarPublicacoes();
+    final versoes = await AppUpdateService.listarVersoesNaNuvem();
+    if (!mounted) return;
+    setState(() {
+      _publicacoes = lista;
+      _versoesNaNuvem = versoes;
+      _carregando = false;
+    });
+  }
+
+  VersaoNaNuvem? _pacoteNaNuvem(String versao) {
+    final achadas = _versoesNaNuvem.where((v) => v.versao == versao);
+    return achadas.isEmpty ? null : achadas.first;
+  }
+
+  /// Manda uma versão que JÁ está na nuvem para um destino (sem enviar arquivo).
+  /// É o caminho para voltar uma empresa a uma versão anterior.
+  Future<void> _direcionar(VersaoNaNuvem versao) async {
+    final destino = await showDialog<_DestinoAtualizacao>(
+      context: context,
+      builder: (context) => _DialogoDestinoAtualizacao(
+        empresas: widget.empresas,
+      ),
+    );
+    if (destino == null || !mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => _DialogoPublicarAtualizacao(
+        destino: destino,
+        versaoNaNuvemInicial: versao.versao,
+      ),
+    );
+    if (!mounted) return;
+    await _carregar();
+  }
+
+  String _nomeDoDestino(PublicacaoVersao p) {
+    if (p.global) return 'TODOS os clientes';
+    final achadas =
+        widget.empresas.where((e) => e.id == p.empresaId).toList();
+    return achadas.isEmpty
+        ? 'Empresa ${p.empresaId}'
+        : achadas.first.nomeExibicao;
+  }
+
+  Future<void> _remover(PublicacaoVersao p) async {
+    final confirmar = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        title: const Text('Remover esta publicação?',
+            style: TextStyle(color: Colors.white)),
+        content: Text(
+          p.global
+              ? 'Nenhum cliente vai receber atualização automática até você '
+                  'publicar de novo.'
+              : '${_nomeDoDestino(p)} volta a seguir a versão de TODOS os '
+                  'clientes. Os computadores dela não são alterados agora.',
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Remover'),
+          ),
+        ],
+      ),
+    );
+    if (confirmar != true) return;
+    setState(() => _mexendo = true);
+    final (ok, mensagem) =
+        await AppUpdateService.removerPublicacao(p.empresaId);
+    if (!mounted) return;
+    setState(() => _mexendo = false);
+    if (ok) {
+      await _carregar();
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(mensagem),
+      backgroundColor: ok ? Colors.green : Colors.red,
+    ));
+  }
+
+  /// As versões que já têm pacote na nuvem, com o botão de direcionar: escolher
+  /// uma delas não compila nada e não envia arquivo — só muda quem recebe.
+  Widget _buildPacotesNaNuvem() {
+    if (_carregando) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 8),
+        const Divider(color: Colors.white12),
+        const Text(
+          '📦 Pacotes na nuvem (dá para direcionar sem enviar de novo)',
+          style: TextStyle(
+              color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+        ),
+        const SizedBox(height: 4),
+        const Text(
+          'Use para voltar uma empresa a uma versão anterior ou repetir a mesma '
+          'versão em outra empresa.',
+          style: TextStyle(color: Colors.white38, fontSize: 11),
+        ),
+        const SizedBox(height: 8),
+        if (_versoesNaNuvem.isEmpty)
+          const Text(
+            'Nenhum pacote encontrado no Storage. Publique uma versão pelo app '
+            'para começar a lista.',
+            style: TextStyle(color: Colors.orangeAccent, fontSize: 12),
+          )
+        else
+          ..._versoesNaNuvem.map((v) => Container(
+                margin: const EdgeInsets.only(bottom: 6),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.04),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.white12),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.archive_outlined,
+                        size: 18, color: Colors.cyan),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        '${v.versao}  •  ${v.tamanhoLegivel}  •  enviado em '
+                        '${v.quandoLegivel}',
+                        style: const TextStyle(
+                            color: Colors.white, fontSize: 12),
+                      ),
+                    ),
+                    TextButton.icon(
+                      onPressed: _mexendo ? null : () => _direcionar(v),
+                      icon: const Icon(Icons.send, size: 16),
+                      label: const Text('Direcionar'),
+                    ),
+                  ],
+                ),
+              )),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: const Color(0xFF1E1E2E),
+      title: const Row(
+        children: [
+          Icon(Icons.cloud_done, color: Colors.cyan),
+          SizedBox(width: 12),
+          Text('Versões publicadas', style: TextStyle(color: Colors.white)),
+        ],
+      ),
+      content: SizedBox(
+        width: 620,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'O que está na nuvem agora. Empresa sem direcionamento segue a '
+                'versão de TODOS os clientes.',
+                style: TextStyle(color: Colors.white38, fontSize: 11),
+              ),
+              const SizedBox(height: 12),
+              if (_carregando)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 24),
+                  child: Center(
+                      child: CircularProgressIndicator(color: Colors.cyan)),
+                )
+              else if (_publicacoes.isEmpty)
+                const Text(
+                  'Nada publicado ainda (nem a versão global).',
+                  style: TextStyle(color: Colors.orangeAccent, fontSize: 12),
+                )
+              else
+                ..._publicacoes.map((p) => Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: (p.global ? Colors.teal : Colors.cyan)
+                            .withOpacity(0.08),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: (p.global ? Colors.teal : Colors.cyan)
+                              .withOpacity(0.3),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(p.global ? Icons.public : Icons.business,
+                              color: p.global ? Colors.teal : Colors.cyan,
+                              size: 20),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  _nomeDoDestino(p),
+                                  style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 13),
+                                ),
+                                Text(
+                                  'versão ${p.versao}'
+                                  '${p.forcada ? " (forçada)" : ""}'
+                                  '${p.url.isEmpty ? "  •  sem link (não atualiza)" : ""}'
+                                  '${_pacoteNaNuvem(p.versao) != null ? "  •  📦 pacote na nuvem" : (p.url.isEmpty ? "" : "  •  ⚠️ pacote não encontrado na nuvem")}',
+                                  style: const TextStyle(
+                                      color: Colors.white70, fontSize: 11),
+                                ),
+                                if (p.atualizadoEm != null)
+                                  Text(
+                                    'publicada em ${p.atualizadoEm}',
+                                    style: const TextStyle(
+                                        color: Colors.white38, fontSize: 10),
+                                  ),
+                              ],
+                            ),
+                          ),
+                          TextButton.icon(
+                            onPressed:
+                                _mexendo ? null : () => _remover(p),
+                            icon: const Icon(Icons.delete_outline,
+                                size: 16, color: Colors.red),
+                            label: const Text('Remover',
+                                style: TextStyle(color: Colors.red)),
+                          ),
+                        ],
+                      ),
+                    )),
+              _buildPacotesNaNuvem(),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton.icon(
+          onPressed: _carregando ? null : _carregar,
+          icon: const Icon(Icons.refresh, size: 16),
+          label: const Text('Atualizar'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Fechar'),
+        ),
+      ],
     );
   }
 }
@@ -426,6 +2339,8 @@ class _EmpresasPageState extends State<EmpresasPage> {
                 children: [
                   // Card de importação SEMPRE no topo (sempre visível)
                   _buildCardImportacao(context),
+                  // Card de importação de CLIENTES (com saldo devedor/fiado)
+                  _buildCardImportacaoClientes(context),
                   // NOVO: Card de Sincronização Supabase (Roxo)
                   if (podeAcessar)
                     _buildCardSupabaseSync(context),
@@ -438,6 +2353,9 @@ class _EmpresasPageState extends State<EmpresasPage> {
                   _buildCardGoogleDriveRestore(context),
                   // NOVO: Card de Backup e Restauracao Local (Vermelho)
                   _buildCardBackupRestore(context),
+                  // NOVO: Card de Gerar Versão (numera, compila e publica)
+                  if (podeAcessar)
+                    _buildCardGerarVersao(context),
                   // NOVO: Card de Publicar Atualização Global
                   if (podeAcessar)
                     _buildCardPublicarAtualizacaoGlobal(context),
@@ -674,7 +2592,10 @@ class _EmpresasPageState extends State<EmpresasPage> {
           borderRadius: BorderRadius.circular(16),
           child: Padding(
             padding: const EdgeInsets.all(20),
-            child: Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
               children: [
                 Container(
                   padding: const EdgeInsets.all(14),
@@ -710,7 +2631,9 @@ class _EmpresasPageState extends State<EmpresasPage> {
                       ),
                       SizedBox(height: 6),
                       Text(
-                        'Compilar e enviar para TODOS os clientes ou só para uma empresa específica.',
+                        'Escolher a versão (a que você acabou de gerar, o próximo '
+                        'número automático ou uma que já está na nuvem) e para '
+                        'quem vai: TODOS os clientes ou só as empresas marcadas.',
                         style: TextStyle(
                           fontSize: 14,
                           color: Colors.white70,
@@ -724,6 +2647,25 @@ class _EmpresasPageState extends State<EmpresasPage> {
                   Icons.public,
                   color: Colors.white,
                   size: 24,
+                ),
+              ],
+                ),
+                const Divider(color: Colors.white12, height: 20),
+                Row(
+                  children: [
+                    TextButton.icon(
+                      onPressed: _verPublicacoes,
+                      icon: const Icon(Icons.cloud_done,
+                          size: 18, color: Colors.cyan),
+                      label: const Text('Ver versões publicadas',
+                          style: TextStyle(color: Colors.cyan)),
+                    ),
+                    const Spacer(),
+                    Text(
+                      'compila ou reaproveita o pacote da nuvem',
+                      style: TextStyle(color: Colors.white38, fontSize: 11),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -755,156 +2697,127 @@ class _EmpresasPageState extends State<EmpresasPage> {
     if (destino == null) return;
     if (!mounted) return;
 
-    if (destino.global) {
-      await _publicarAtualizacaoGlobal(context);
-    } else {
-      await _publicarAtualizacaoParaEmpresa(context, destino.empresa!);
-    }
+    await _abrirConfirmacaoDePublicacao(destino);
   }
 
-  /// Publica atualização GLOBAL (app_latest) - afeta todos os clientes
-  Future<void> _publicarAtualizacaoGlobal(BuildContext context) async {
-    final versaoController = TextEditingController(text: AppUpdateService.currentAppVersion);
-    
-    final versao = await showDialog<String>(
+  /// Abre a confirmação (versão + pacote que vai subir) para o destino escolhido.
+  Future<void> _abrirConfirmacaoDePublicacao(
+      _DestinoAtualizacao destino) async {
+    if (!mounted) return;
+    await showDialog<void>(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1E1E2E),
-        title: const Text('Publicar Atualização GLOBAL', style: TextStyle(color: Colors.white)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.teal.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.teal.withOpacity(0.3)),
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.public, color: Colors.teal, size: 20),
-                  SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Isso vai atualizar TODOS os clientes que não têm atualização direcionada!',
-                      style: TextStyle(color: Colors.white, fontSize: 13),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: versaoController,
-              style: const TextStyle(color: Colors.white),
-              decoration: InputDecoration(
-                labelText: 'Versão',
-                labelStyle: const TextStyle(color: Colors.white70),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(color: Colors.white.withOpacity(0.2)),
-                ),
-              ),
-            ),
+      builder: (context) => _DialogoPublicarAtualizacao(destino: destino),
+    );
+  }
+
+  /// Abre o assistente que numera a versão, compila e publica.
+  Future<void> _gerarVersao() async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => const _DialogoGerarVersao(),
+    );
+  }
+
+  /// Card do assistente "Gerar versão" (numeração + compilação + detalhes).
+  Widget _buildCardGerarVersao(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            Colors.indigoAccent.withOpacity(0.3),
+            Colors.indigoAccent.withOpacity(0.1)
           ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
-          ),
-          ElevatedButton.icon(
-            onPressed: () => Navigator.pop(context, versaoController.text),
-            icon: const Icon(Icons.cloud_upload, size: 18),
-            label: const Text('Publicar Global'),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.teal),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.indigoAccent, width: 2),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.indigoAccent.withOpacity(0.3),
+            blurRadius: 10,
+            spreadRadius: 2,
           ),
         ],
       ),
-    );
-
-    if (versao == null || versao.isEmpty) return;
-
-    // Mostrar loading
-    if (!mounted) return;
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const AlertDialog(
-        backgroundColor: Color(0xFF1E1E2E),
-        title: Text('Publicando Global...', style: TextStyle(color: Colors.white)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            CircularProgressIndicator(color: Colors.teal),
-            SizedBox(height: 24),
-            Text(
-              'Compilando e enviando para todos os clientes...',
-              style: TextStyle(color: Colors.white70),
-            ),
-          ],
-        ),
-      ),
-    );
-
-    try {
-      final (sucesso, mensagem) = await AppUpdateService.publicarAtualizacao(
-        versao: versao,
-      );
-
-      if (mounted) Navigator.pop(context);
-
-      if (sucesso) {
-        if (mounted) {
-          showDialog(
-            context: context,
-            builder: (context) => AlertDialog(
-              backgroundColor: const Color(0xFF1E1E2E),
-              title: const Row(
-                children: [
-                  Icon(Icons.check_circle, color: Colors.green),
-                  SizedBox(width: 12),
-                  Text('Publicado Globalmente!', style: TextStyle(color: Colors.white)),
-                ],
-              ),
-              content: Text(
-                '$mensagem\n\nQuando abrirem o app, vão receber a atualização automaticamente.',
-                style: const TextStyle(color: Colors.white70),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('OK'),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: _gerarVersao,
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: Colors.indigoAccent,
+                    borderRadius: BorderRadius.circular(14),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.indigoAccent.withOpacity(0.5),
+                        blurRadius: 8,
+                        spreadRadius: 1,
+                      ),
+                    ],
+                  ),
+                  child: const Icon(
+                    Icons.rocket_launch,
+                    color: Colors.white,
+                    size: 36,
+                  ),
+                ),
+                const SizedBox(width: 20),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '🚀 GERAR VERSÃO',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                      SizedBox(height: 6),
+                      Text(
+                        'Numera a versão, grava no código, compila e publica — '
+                        'com os detalhes do que mudou.',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Colors.white70,
+                          height: 1.4,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(
+                  Icons.auto_awesome,
+                  color: Colors.white,
+                  size: 24,
                 ),
               ],
             ),
-          );
-        }
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('❌ Falha ao publicar globalmente.\n$mensagem'),
-              backgroundColor: Colors.red,
-              duration: const Duration(seconds: 10),
-            ),
-          );
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('❌ Erro ao publicar: $e'),
-            backgroundColor: Colors.red,
-            duration: const Duration(seconds: 10),
           ),
-        );
-      }
-    }
+        ),
+      ),
+    );
+  }
+
+  /// Painel do que está publicado na nuvem (global e por empresa).
+  Future<void> _verPublicacoes() async {
+    final empresas = Provider.of<AuthService>(context, listen: false)
+        .getEmpresasDoUsuario();
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => _DialogoPublicacoes(empresas: empresas),
+    );
   }
 
   Widget _buildCardBridgeManagement(BuildContext context) {
@@ -1956,6 +3869,107 @@ class _EmpresasPageState extends State<EmpresasPage> {
     );
   }
 
+  Widget _buildCardImportacaoClientes(BuildContext context) {
+    return Consumer<AuthService>(
+      builder: (context, authService, _) {
+        final empresaAtual = authService.empresaAtual;
+        final empresasPermitidas = authService.getEmpresasDoUsuario();
+        final podeImportar = empresaAtual != null || empresasPermitidas.length == 1;
+
+        return Container(
+          margin: const EdgeInsets.only(bottom: 16),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                Colors.cyanAccent.withOpacity(0.3),
+                Colors.blueAccent.withOpacity(0.1),
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.cyanAccent, width: 2),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.cyanAccent.withOpacity(0.3),
+                blurRadius: 10,
+                spreadRadius: 2,
+              ),
+            ],
+          ),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: () => _importarClientesExcel(context),
+              borderRadius: BorderRadius.circular(16),
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: Colors.cyanAccent,
+                        borderRadius: BorderRadius.circular(14),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.cyanAccent.withOpacity(0.5),
+                            blurRadius: 8,
+                            spreadRadius: 1,
+                          ),
+                        ],
+                      ),
+                      child: const Icon(
+                        Icons.people_alt,
+                        color: Colors.black87,
+                        size: 36,
+                      ),
+                    ),
+                    const SizedBox(width: 20),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            '👥 IMPORTAR CLIENTES EXCEL',
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            podeImportar
+                                ? empresaAtual != null
+                                    ? 'Empresa: ${empresaAtual.nomeExibicao}\n'
+                                        'Importa clientes e saldo devedor (fiado)'
+                                    : 'Importa clientes e saldo devedor (fiado)'
+                                : 'Selecione uma empresa antes de importar',
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: Colors.white.withOpacity(0.9),
+                              height: 1.4,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Icon(
+                      Icons.arrow_forward_ios,
+                      color: Colors.white,
+                      size: 24,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildEmpresaCard(
     BuildContext context,
     Empresa empresa,
@@ -2399,167 +4413,10 @@ class _EmpresasPageState extends State<EmpresasPage> {
   }
 
   /// Publica uma atualização do app direcionada para esta empresa no Supabase
-  Future<void> _publicarAtualizacaoParaEmpresa(BuildContext context, Empresa empresa) async {
-    // Pedir a versão (padrão: a versão do app que está rodando, não um número
-    // fixo antigo, que publicava uma versão errada por descuido)
-    final versaoController =
-        TextEditingController(text: AppUpdateService.currentAppVersion);
-    final versao = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1E1E2E),
-        title: const Text('Publicar Atualização', style: TextStyle(color: Colors.white)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text(
-              'Isso vai fazer upload da build atual para o Supabase\ne criar uma atualização direcionada para:',
-              style: TextStyle(color: Colors.white70, fontSize: 13),
-            ),
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.cyan.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.cyan.withOpacity(0.3)),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.business, color: Colors.cyan, size: 20),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      empresa.nomeExibicao,
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'ID: ${empresa.id}',
-              style: const TextStyle(color: Colors.white38, fontSize: 11),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: versaoController,
-              style: const TextStyle(color: Colors.white),
-              decoration: InputDecoration(
-                labelText: 'Versão',
-                labelStyle: const TextStyle(color: Colors.white70),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(color: Colors.white.withOpacity(0.2)),
-                ),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
-          ),
-          ElevatedButton.icon(
-            onPressed: () => Navigator.pop(context, versaoController.text),
-            icon: const Icon(Icons.cloud_upload, size: 18),
-            label: const Text('Publicar'),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.cyan),
-          ),
-        ],
-      ),
-    );
-
-    if (versao == null || versao.isEmpty) return;
-
-    // Mostrar loading
-    if (!mounted) return;
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const AlertDialog(
-        backgroundColor: Color(0xFF1E1E2E),
-        title: Text('Publicando...', style: TextStyle(color: Colors.white)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            CircularProgressIndicator(color: Colors.cyan),
-            SizedBox(height: 24),
-            Text(
-              'Enviando executável para o Supabase...',
-              style: TextStyle(color: Colors.white70),
-            ),
-          ],
-        ),
-      ),
-    );
-
-    try {
-      final (sucesso, mensagem) = await AppUpdateService.publicarAtualizacao(
-        versao: versao,
-        empresaId: empresa.id,
-      );
-
-      if (mounted) Navigator.pop(context); // Fechar loading
-
-      if (sucesso) {
-        if (mounted) {
-          showDialog(
-            context: context,
-            builder: (context) => AlertDialog(
-              backgroundColor: const Color(0xFF1E1E2E),
-              title: const Row(
-                children: [
-                  Icon(Icons.check_circle, color: Colors.green),
-                  SizedBox(width: 12),
-                  Text('Publicado!', style: TextStyle(color: Colors.white)),
-                ],
-              ),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '$mensagem\n\nQuando o cliente abrir o app, ele vai baixar e instalar automaticamente.',
-                    style: const TextStyle(color: Colors.white70),
-                  ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('OK'),
-                ),
-              ],
-            ),
-          );
-        }
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('❌ Falha ao publicar: $mensagem'),
-              backgroundColor: Colors.red,
-              duration: const Duration(seconds: 10),
-            ),
-          );
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('❌ Erro ao publicar: $e'),
-            backgroundColor: Colors.red,
-            duration: const Duration(seconds: 10),
-          ),
-        );
-      }
-    }
+  Future<void> _publicarAtualizacaoParaEmpresa(
+      BuildContext context, Empresa empresa) async {
+    await _abrirConfirmacaoDePublicacao(
+        _DestinoAtualizacao.paraEmpresas(<Empresa>[empresa]));
   }
 
   void _confirmarExclusao(
@@ -2957,6 +4814,354 @@ class _EmpresasPageState extends State<EmpresasPage> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Erro ao importar: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  /// Importa CLIENTES (com saldo devedor/fiado) de um arquivo Excel.
+  Future<void> _importarClientesExcel(BuildContext context) async {
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final dataService = Provider.of<DataService>(context, listen: false);
+
+    // Garantir empresa selecionada (mesma regra do importador de produtos).
+    if (authService.empresaAtual == null) {
+      final empresasPermitidas = authService.getEmpresasDoUsuario();
+      if (empresasPermitidas.length == 1) {
+        await authService.selecionarEmpresa(empresasPermitidas.first);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Empresa ${empresasPermitidas.first.nomeExibicao} selecionada automaticamente',
+              ),
+              backgroundColor: Colors.blue,
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+      } else if (empresasPermitidas.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Nenhuma empresa cadastrada. Adicione uma empresa primeiro.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Selecione uma empresa antes de importar clientes'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 3),
+          ),
+        );
+        return;
+      }
+    }
+
+    bool lancarFiadoEmAberto = true;
+
+    // Diálogo de instruções + opção de lançar o fiado inicial.
+    final continuar = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setStateDialog) => AlertDialog(
+          backgroundColor: const Color(0xFF1E1E2E),
+          title: const Text(
+            'Importar Clientes do Excel',
+            style: TextStyle(color: Colors.white),
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Formato esperado (qualquer ordem, o sistema detecta pelo cabeçalho):',
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Nome (obrigatório)\n'
+                  'CPF/CNPJ (opcional)\n'
+                  'Telefone / Celular / WhatsApp\n'
+                  'E-mail, Endereço, Número, Bairro, Cidade, UF, CEP\n'
+                  'Limite de Crédito (opcional)\n'
+                  'Saldo Devedor / Fiado (opcional)\n'
+                  'Observações (opcional)',
+                  style: TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.cyanAccent.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Text(
+                    'O saldo devedor é gravado no cadastro do cliente e fica '
+                    'disponível para recebimento.',
+                    style: TextStyle(color: Colors.cyanAccent, fontSize: 11),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                CheckboxListTile(
+                  value: lancarFiadoEmAberto,
+                  onChanged: (v) =>
+                      setStateDialog(() => lancarFiadoEmAberto = v ?? false),
+                  contentPadding: EdgeInsets.zero,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  activeColor: Colors.cyanAccent,
+                  title: const Text(
+                    'Lançar o saldo como FIADO em aberto',
+                    style: TextStyle(color: Colors.white, fontSize: 13),
+                  ),
+                  subtitle: const Text(
+                    'Cria um lançamento pendente por cliente, para aparecer na '
+                    'aba FIADO/CREDIÁRIO do PDV e nos extratos.',
+                    style: TextStyle(color: Colors.white54, fontSize: 11),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Text(
+                    '⚠️ A primeira linha é o cabeçalho.\n'
+                    '⚠️ Clientes já cadastrados têm o cadastro completado, mas o '
+                    'saldo devedor existente NÃO é alterado (evita cobrar em dobro).',
+                    style: TextStyle(color: Colors.orange, fontSize: 11),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.cyan),
+              child: const Text('Continuar'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (continuar != true) return;
+
+    // Selecionar arquivo.
+    FilePickerResult? result;
+    try {
+      result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['xlsx', 'xls'],
+        withData: true,
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erro ao selecionar arquivo: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+
+    if (result == null || result.files.isEmpty) return; // cancelado
+    final platformFile = result.files.single;
+    if (platformFile.bytes == null && platformFile.path == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Erro: não foi possível ler o arquivo'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+
+    // Diálogo de progresso.
+    final progressNotifier = ValueNotifier<ImportProgress>(
+      ImportProgress(processados: 0, total: 0, etapa: 'Iniciando...', mensagens: []),
+    );
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => ValueListenableBuilder<ImportProgress>(
+        valueListenable: progressNotifier,
+        builder: (context, progress, child) {
+          final percentual = progress.total > 0
+              ? (progress.processados / progress.total * 100).toStringAsFixed(1)
+              : '0.0';
+          return AlertDialog(
+            backgroundColor: const Color(0xFF1E1E2E),
+            title: const Text(
+              'Importando Clientes',
+              style: TextStyle(color: Colors.white, fontSize: 18),
+            ),
+            content: SizedBox(
+              width: 400,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  LinearProgressIndicator(
+                    value: progress.total > 0
+                        ? progress.processados / progress.total
+                        : 0,
+                    backgroundColor: Colors.white10,
+                    valueColor: const AlwaysStoppedAnimation<Color>(Colors.cyan),
+                    minHeight: 8,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    progress.total > 0
+                        ? '${progress.processados} de ${progress.total} ($percentual%)'
+                        : 'Processando...',
+                    style: const TextStyle(color: Colors.white70, fontSize: 14),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    progress.etapa,
+                    style: const TextStyle(color: Colors.cyan, fontSize: 12),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+
+    void onProgress(int processados, int total, String etapa) {
+      final atual = progressNotifier.value;
+      progressNotifier.value = ImportProgress(
+        processados: processados,
+        total: total > 0 ? total : atual.total,
+        etapa: etapa,
+        mensagens: [...atual.mensagens, etapa].take(20).toList(),
+      );
+    }
+
+    try {
+      final resultado = platformFile.bytes != null
+          ? await ClienteImportService.importarClientesDeBytes(
+              platformFile.bytes!,
+              dataService,
+              lancarFiadoEmAberto: lancarFiadoEmAberto,
+              onProgress: onProgress,
+            )
+          : await ClienteImportService.importarClientes(
+              File(platformFile.path!),
+              dataService,
+              lancarFiadoEmAberto: lancarFiadoEmAberto,
+              onProgress: onProgress,
+            );
+
+      if (!mounted) return;
+      Navigator.pop(context); // fecha progresso
+      progressNotifier.dispose();
+
+      final mensagens = (resultado['mensagens'] as List).cast<String>();
+      final sucesso = resultado['sucesso'] as int;
+      final atualizados = resultado['atualizados'] as int;
+      final ignorados = resultado['ignorados'] as int;
+      final erros = resultado['erros'] as int;
+      final fiados = resultado['fiados'] as int;
+      final saldoTotal = (resultado['saldoTotal'] as num).toDouble();
+
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          backgroundColor: const Color(0xFF1E1E2E),
+          title: const Text(
+            'Resultado da Importação',
+            style: TextStyle(color: Colors.white),
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '✅ Novos clientes: $sucesso\n'
+                  '💰 Saldo devedor total: R\$ ${saldoTotal.toStringAsFixed(2)}\n'
+                  '🧾 Fiados em aberto criados: $fiados\n'
+                  '🔄 Atualizados: $atualizados\n'
+                  '⚠️ Ignorados: $ignorados\n'
+                  '❌ Erros: $erros',
+                  style: const TextStyle(color: Colors.white70),
+                ),
+                if (mensagens.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Detalhes:',
+                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  ...mensagens.take(10).map(
+                    (m) => Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Text(
+                        m,
+                        style: const TextStyle(color: Colors.white54, fontSize: 11),
+                      ),
+                    ),
+                  ),
+                  if (mensagens.length > 10)
+                    Text(
+                      '... e mais ${mensagens.length - 10} mensagens',
+                      style: const TextStyle(
+                        color: Colors.white54,
+                        fontSize: 11,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.cyan),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+
+      if (sucesso > 0 || atualizados > 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✅ ${sucesso + atualizados} clientes processados com sucesso!'),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+        await Future.delayed(const Duration(seconds: 2));
+        await dataService.salvarImediatamente();
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context); // fecha loading
+        progressNotifier.dispose();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erro ao importar clientes: $e'),
             backgroundColor: Colors.red,
           ),
         );

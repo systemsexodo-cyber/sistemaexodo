@@ -1,0 +1,10 @@
+-- MOVIDA para a fonte única: scripts/migrations/005_ajustes_estoque_lote.sql
+--
+-- O conteúdo desta migração agora vive em scripts/migrations/ e é aplicado
+-- tanto pelo app (banco local) quanto pelo Supabase SQL Editor. Para aplicar
+-- na nuvem, abra e cole o arquivo:
+--
+--     scripts/migrations/005_ajustes_estoque_lote.sql
+--
+-- Este arquivo fica só como referência do histórico. Ver
+-- scripts/migrations/README.md.

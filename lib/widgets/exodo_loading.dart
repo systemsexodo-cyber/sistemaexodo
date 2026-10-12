@@ -1,12 +1,23 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'exodo_logo.dart';
+
+/// Quantidade com separador de milhar ("1.234"), sem depender do locale do SO.
+final NumberFormat _formatoQuantidade = NumberFormat.decimalPattern('pt_BR');
 
 /// Widget de loading com logo do Exodo
 /// Exibe o logo com animação de rotação e texto de carregamento
 class ExodoLoading extends StatefulWidget {
   final String? mensagem;
   final Color? corLoading;
+
+  /// O que já foi carregado na abertura do sistema (rótulo + quantidade).
+  ///
+  /// Quando informado, a tela lista os dados com os números — o usuário vê a
+  /// carga acontecendo (1.234 produtos, 320 clientes...) em vez de só o spinner
+  /// girando. Cada `notifyListeners()` do DataService atualiza a lista.
+  final List<({String rotulo, int quantidade})>? progresso;
 
   /// Ação do botão de escape exibido quando o carregamento demora.
   /// Quando informado (ex.: carga inicial da nuvem), o botão aparece com o
@@ -23,6 +34,7 @@ class ExodoLoading extends StatefulWidget {
     super.key,
     this.mensagem,
     this.corLoading,
+    this.progresso,
     this.onPular,
     this.textoPular = 'Continuar sem esperar',
     this.textoAjudaPular = 'A sincronização continua em segundo plano.',
@@ -142,6 +154,58 @@ class _ExodoLoadingState extends State<ExodoLoading>
               ),
               textAlign: TextAlign.center,
             ),
+            // Dados já carregados: o usuário acompanha a carga em vez de olhar
+            // só o spinner. Quantidade 0 = ainda não chegou.
+            if (widget.progresso != null && widget.progresso!.isNotEmpty) ...[
+              const SizedBox(height: 28),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 340),
+                child: Column(
+                  children: [
+                    for (final item in widget.progresso!)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 3),
+                        child: Row(
+                          children: [
+                            Icon(
+                              item.quantidade > 0
+                                  ? Icons.check_circle
+                                  : Icons.hourglass_empty,
+                              size: 13,
+                              color: item.quantidade > 0
+                                  ? corLoading
+                                  : Colors.white24,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                item.rotulo,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Colors.white60,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Text(
+                              _formatoQuantidade.format(item.quantidade),
+                              style: TextStyle(
+                                color: item.quantidade > 0
+                                    ? Colors.white
+                                    : Colors.white24,
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
             if (_mostrarCancelar) ...[
               const SizedBox(height: 40),
               ElevatedButton.icon(

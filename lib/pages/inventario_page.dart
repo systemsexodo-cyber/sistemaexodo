@@ -77,7 +77,8 @@ class _InventarioPageState extends State<InventarioPage> {
         content: Text(
           '${_contagens.length} produto(s) conferido(s)'
           '${naoConferidos > 0 ? ' • $naoConferidos ainda sem contagem (ficarão como estão)' : ''}.\n\n'
-          'As diferenças serão aplicadas no estoque e registradas no histórico como ajuste de inventário.',
+          'As diferenças serão aplicadas no estoque e registradas no histórico como ajuste de inventário.\n\n'
+          'O inventário inteiro fica num lote do Histórico de ajustes (no Ajuste Geral) e pode ser DESFEITO.',
           style: const TextStyle(color: Colors.white70, fontSize: 14),
         ),
         actions: [
@@ -102,6 +103,8 @@ class _InventarioPageState extends State<InventarioPage> {
       Map<String, double>.from(_contagens),
       usuario: usuario,
     );
+    // Lote criado pelo inventário — permite desfazer tudo de uma vez.
+    final loteId = dataService.ultimoAjusteLote?.id;
 
     if (!mounted) return;
     setState(() {
@@ -112,15 +115,44 @@ class _InventarioPageState extends State<InventarioPage> {
       }
     });
 
-    ScaffoldMessenger.of(context).showSnackBar(
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(
       SnackBar(
         content: Text(
           '✓ Inventário aplicado: ${resumo['conferidos']} conferidos • '
           '${resumo['faltas']} faltando • ${resumo['sobras']} sobrando • '
-          '${resumo['ajustados']} ajustados',
+          '${resumo['ajustados']} ajustados'
+          '${loteId != null ? ' • lote $loteId' : ''}',
         ),
         backgroundColor: Colors.tealAccent,
-        duration: const Duration(seconds: 5),
+        duration: const Duration(seconds: 8),
+        action: loteId == null
+            ? null
+            : SnackBarAction(
+                label: 'DESFAZER',
+                textColor: Colors.black,
+                onPressed: () async {
+                  try {
+                    final estorno = await dataService.desfazerAjusteEstoqueLote(
+                      loteId,
+                      usuario: usuario,
+                    );
+                    messenger.showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          '↩️ Inventário desfeito: ${estorno['estoquesRevertidos'] ?? 0} estoque(s) restaurados'
+                          '${(estorno['ignorados'] ?? 0) > 0 ? ' • ${estorno['ignorados']} ignorado(s)' : ''}.',
+                        ),
+                        backgroundColor: Colors.greenAccent,
+                      ),
+                    );
+                  } catch (e) {
+                    messenger.showSnackBar(
+                      SnackBar(content: Text('Erro ao desfazer inventário: $e'), backgroundColor: Colors.redAccent),
+                    );
+                  }
+                },
+              ),
       ),
     );
   }

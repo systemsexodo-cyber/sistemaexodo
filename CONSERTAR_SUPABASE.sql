@@ -65,11 +65,16 @@ ALTER TABLE produtos ADD COLUMN IF NOT EXISTS observacao_padrao TEXT;
 ALTER TABLE produtos ADD COLUMN IF NOT EXISTS fornecedor_id TEXT;
 ALTER TABLE produtos ADD COLUMN IF NOT EXISTS fornecedor_nome TEXT;
 ALTER TABLE produtos ADD COLUMN IF NOT EXISTS estoque_por_fornecedor JSONB DEFAULT '{}'::jsonb;
+-- Estoques (Loja, Depósito…): saldo do produto por estoque e estoque padrão dele.
+ALTER TABLE produtos ADD COLUMN IF NOT EXISTS estoque_por_estoque JSONB DEFAULT '{}'::jsonb;
+ALTER TABLE produtos ADD COLUMN IF NOT EXISTS estoque_padrao_id TEXT DEFAULT '';
 ALTER TABLE produtos ADD COLUMN IF NOT EXISTS pedido_compra_gerado BOOLEAN DEFAULT FALSE;
 ALTER TABLE produtos ADD COLUMN IF NOT EXISTS data_ultimo_pedido TIMESTAMP WITH TIME ZONE;
 ALTER TABLE produtos ADD COLUMN IF NOT EXISTS preco_promocional NUMERIC;
 ALTER TABLE produtos ADD COLUMN IF NOT EXISTS promocao_inicio TIMESTAMP WITH TIME ZONE;
 ALTER TABLE produtos ADD COLUMN IF NOT EXISTS promocao_fim TIMESTAMP WITH TIME ZONE;
+ALTER TABLE produtos ADD COLUMN IF NOT EXISTS disponivel_de TIMESTAMP WITH TIME ZONE;
+ALTER TABLE produtos ADD COLUMN IF NOT EXISTS disponivel_ate TIMESTAMP WITH TIME ZONE;
 ALTER TABLE produtos ADD COLUMN IF NOT EXISTS codigos_fornecedor JSONB DEFAULT '[]'::jsonb;
 
 -- === 3. TABELA PEDIDOS ===

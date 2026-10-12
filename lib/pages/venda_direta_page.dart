@@ -26,6 +26,8 @@ import 'package:sistema_exodo_novo/models/pedido.dart';
 import 'package:sistema_exodo_novo/models/item_pedido.dart';
 import 'package:sistema_exodo_novo/models/item_servico.dart';
 import 'package:sistema_exodo_novo/models/forma_pagamento.dart';
+import 'package:sistema_exodo_novo/models/forma_pagamento_custom.dart';
+import 'package:sistema_exodo_novo/services/taxa_pagamento_service.dart';
 import 'package:sistema_exodo_novo/models/venda_balcao.dart';
 import 'package:sistema_exodo_novo/models/empresa.dart';
 import 'package:sistema_exodo_novo/utils/units.dart';
@@ -2158,6 +2160,58 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       }
       return;
     }
+
+    // BLOQUEAR PRODUTO FORA DA JANELA DE DISPONIBILIDADE TEMPORÁRIA
+    // O produto continua visível no catálogo, mas não pode ser vendido agora.
+    if (!produto.disponivelAgora) {
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            backgroundColor: const Color(0xFF1E1E2E),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: const Row(
+              children: [
+                Icon(Icons.schedule_outlined, color: Colors.orangeAccent, size: 28),
+                SizedBox(width: 10),
+                Text('Produto Indisponível', style: TextStyle(color: Colors.white, fontSize: 18)),
+              ],
+            ),
+            content: Text(
+              'O produto "${produto.nome}" está fora da janela de disponibilidade e não pode ser vendido agora.\n\n'
+              '${produto.indisponibilidadeTemporariaLabel ?? 'Indisponível no momento'}.',
+              style: const TextStyle(color: Colors.white70, fontSize: 14),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('ENTENDI', style: TextStyle(color: Colors.blueAccent)),
+              ),
+            ],
+          ),
+        );
+      }
+      return;
+    }
+
+    // Reserva de estoque: com a configuração ligada, o disponível é o estoque
+    // menos o que outros pedidos em aberto já seguram.
+    final faltaEstoque = Provider.of<DataService>(context, listen: false)
+        .validarEstoqueDisponivel(produto);
+    if (faltaEstoque != null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(faltaEstoque),
+            backgroundColor: Colors.orange,
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+      return;
+    }
+
     final isServico = item is Servico;
 
     // INTERCEPTADOR DE COMBOS / PERGUNTAS DE SELEÇÃO
@@ -6822,6 +6876,32 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     List<PagamentoPedido> pagamentos,
   ) async {
     if (_estaFinalizando) return;
+
+    // BLOQUEIO DE CAIXA NA HORA DE GRAVAR: entre abrir o pagamento e confirmar,
+    // o caixa pode ter sido FECHADO no outro PC — o fechamento chega pela rede
+    // local e o operador daqui continuava gravando venda num caixa já fechado.
+    // Rechecar aqui (e não só ao abrir o pagamento) é o que fecha esse buraco.
+    if (!dataService.caixaAberto) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text(
+            'O caixa foi FECHADO (em outra máquina).\n'
+            'Abra o caixa para registrar esta venda.',
+          ),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+          action: SnackBarAction(
+            label: 'Abrir',
+            textColor: Colors.white,
+            onPressed: () {
+              _solicitarAberturaCaixa(context, dataService);
+            },
+          ),
+        ),
+      );
+      return;
+    }
+
     // CAPTURAR DADOS IMEDIATAMENTE (Atomicidade e Segurança contra Race Conditions)
     final itensVendaCapturados = List<ItemCarrinho>.from(_carrinho);
     final totalVendaCapturado = _totalCarrinho; 
@@ -13117,6 +13197,7 @@ recusando a emissão de NFC-e (erro 403).
     final hasScaffold = Scaffold.maybeOf(context) != null;
 
     final content = GestureDetector(
+      behavior: HitTestBehavior.translucent,
       onTap: () {
         if (!_atalhosFocusNode.hasFocus &&
             !_buscaFocusNode.hasFocus) {
@@ -13434,24 +13515,23 @@ recusando a emissão de NFC-e (erro 403).
         // Enter - Adicionar ao carrinho ou Ações
         if (key == LogicalKeyboardKey.enter ||
             key == LogicalKeyboardKey.numpadEnter) {
-          if (_focoNasCategorias) {
+          if (_focoNasCategorias && !_buscaFocusNode.hasFocus) {
             final index = _categoriaSelectedIndex;
             if (index == 0) {
-              // "Todos": toggle (mostra tudo; clicar/Enter de novo desmarca)
-              setState(() {
-                _categoriaAtiva = (_categoriaAtiva == 'Todos') ? null : 'Todos';
-                _termoBusca = '';
-                _buscaController.clear();
-                _gridSelectedIndex = -1; // Evita RangeError com grade vazia
-                _focoNoCarrinho = false;
-              });
+              // "Todos": vai direto para o campo de busca com Todos os produtos
+              _irParaBuscaTodos();
             } else if (index > 0 && index <= categorias.length) {
               final cat = categorias[index - 1];
               setState(() {
-                _categoriaAtiva = cat; // Remove toggle (não deseleciona)
+                _categoriaAtiva = cat;
                 _termoBusca = '';
                 _buscaController.clear();
+                _gridSelectedIndex = -1;
+                _focoNasCategorias = false;
+                _categoriaSelectedIndex = -1;
+                _focoNoCarrinho = false;
               });
+              _buscaFocusNode.requestFocus();
             }
             return KeyEventResult.handled;
           }
@@ -13468,12 +13548,19 @@ recusando a emissão de NFC-e (erro 403).
                 : _getProdutosPorCategoria(dataService);
             debugPrint('[PDV ENTER] Grid selecionado, index: $_gridSelectedIndex, total itens: ${itens.length}');
             if (_gridSelectedIndex < itens.length) {
-              debugPrint('[PDV ENTER] Adicionando item ${itens[_gridSelectedIndex].nome} ao carrinho');
-              _adicionarAoCarrinho(itens[_gridSelectedIndex], manterFoco: true);
+              // Lê o item ANTES de _irParaBuscaTodos(): ele zera o índice da grade.
+              final itemSelecionado = itens[_gridSelectedIndex];
+              debugPrint('[PDV ENTER] Adicionando item ${itemSelecionado.nome} ao carrinho');
+              _irParaBuscaTodos();
+              _adicionarAoCarrinho(itemSelecionado, manterFoco: true);
               return KeyEventResult.handled;
             }
           } else {
-            debugPrint('[PDV ENTER] Ignorando - focoNoCarrinho: $_focoNoCarrinho, gridIndex: $_gridSelectedIndex');
+            // ENTER com nada selecionado (o PDV abre com o foco na tela, não na
+            // busca): vai para o campo de busca com TODOS OS PRODUTOS.
+            debugPrint('[PDV ENTER] Nada selecionado → busca com todos os produtos');
+            _irParaBuscaTodos();
+            return KeyEventResult.handled;
           }
         }
 
@@ -14211,6 +14298,31 @@ recusando a emissão de NFC-e (erro 403).
     );
   }
 
+  /// Deixa o PDV pronto para o próximo item: foco no campo de busca e a grade
+  /// mostrando "TODOS OS PRODUTOS".
+  ///
+  /// Antes, depois do ENTER a grade continuava filtrada pela categoria anterior
+  /// (ou vazia, quando nenhuma estava escolhida) — o operador tinha de clicar em
+  /// "Todos" para ver o catálogo de novo.
+  void _irParaBuscaTodos() {
+    if (!mounted) return;
+    setState(() {
+      _categoriaAtiva = 'Todos';
+      _termoBusca = '';
+      _gridSelectedIndex = -1;
+      _focoNasCategorias = false;
+      _categoriaSelectedIndex = -1;
+      _focoNoCarrinho = false;
+    });
+    _buscaController.clear();
+    _buscaFocusNode.requestFocus();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _buscaFocusNode.canRequestFocus) {
+        _buscaFocusNode.requestFocus();
+      }
+    });
+  }
+
   Widget _buildBarraSuperior(DataService dataService) {
     final isSmallHeight = MediaQuery.of(context).size.height < 750;
     final screenWidth = MediaQuery.of(context).size.width;
@@ -14375,7 +14487,8 @@ recusando a emissão de NFC-e (erro 403).
                   // Se o carrinho tem itens e o campo está vazio, Enter finaliza a venda
                   _finalizarVenda(Provider.of<DataService>(context, listen: false));
                 } else {
-                  _buscaFocusNode.requestFocus();
+                  // ENTER no PDV vai para a busca com "Todos os produtos"
+                  _irParaBuscaTodos();
                 }
                 return;
               }
@@ -14421,6 +14534,7 @@ recusando a emissão de NFC-e (erro 403).
               if (itens.isNotEmpty) {
                 final primeiroItem = itens.first;
                 setState(() => _quantidadeDigitada = temMultiplicador ? qtd : _quantidadeDigitada);
+                _irParaBuscaTodos();
                 _adicionarAoCarrinho(primeiroItem, manterFoco: true);
                 _buscaController.clear();
                 setState(() => _termoBusca = '');
@@ -14436,8 +14550,7 @@ recusando a emissão de NFC-e (erro 403).
                   _quantidadeDigitada = numPuro;
                   _termoBusca = '';
                 });
-                _buscaController.clear();
-                _buscaFocusNode.requestFocus();
+                _irParaBuscaTodos();
                 _mostrarNotificacaoSucesso(
                   icone: Icons.scale,
                   titulo: 'Quantidade Definida',
@@ -14448,7 +14561,7 @@ recusando a emissão de NFC-e (erro 403).
               }
               
               // Se não encontrou nenhum item e não é uma quantidade válida (ex: código inexistente 22222)
-              _buscaFocusNode.requestFocus();
+              _irParaBuscaTodos();
               _mostrarNotificacaoSucesso(
                 icone: Icons.error_outline_rounded,
                 titulo: 'Código Inexistente',
@@ -14537,6 +14650,8 @@ recusando a emissão de NFC-e (erro 403).
                     const SizedBox(width: 4),
                     _buildBotaoComandas(dataService, compact: true),
                     const SizedBox(width: 4),
+                    _buildBotaoAbrirPorNumero(dataService, compact: true),
+                    const SizedBox(width: 4),
                   ],
                   if (habilitarCozinha) ...[
                     _buildBotaoCozinha(dataService, compact: true),
@@ -14555,6 +14670,8 @@ recusando a emissão de NFC-e (erro 403).
                 _buildBotaoMapaMesas(dataService, compact: true),
                 const SizedBox(width: 4),
                 _buildBotaoComandas(dataService, compact: true),
+                const SizedBox(width: 4),
+                _buildBotaoAbrirPorNumero(dataService, compact: true),
                 const SizedBox(width: 4),
               ],
               if (habilitarCozinha) ...[
@@ -14704,13 +14821,13 @@ recusando a emissão de NFC-e (erro 403).
                         _focoNasCategorias && _categoriaSelectedIndex == 0;
                     return GestureDetector(
                       onTap: () {
+                        final desmarcandoTodos = _categoriaAtiva == 'Todos';
                         setState(() {
-                          // Toggle: clicar de novo em "Todos" desmarca (volta ao estado inicial vazio)
-                          _categoriaAtiva = (_categoriaAtiva == 'Todos') ? null : 'Todos';
+                          _categoriaAtiva = desmarcandoTodos ? null : 'Todos';
                           _termoBusca = '';
                           _buscaController.clear();
-                          _focoNasCategorias = true;
-                          _categoriaSelectedIndex = 0;
+                          _focoNasCategorias = !desmarcandoTodos;
+                          _categoriaSelectedIndex = desmarcandoTodos ? -1 : 0;
                           _gridSelectedIndex = -1; // Evita RangeError com grade vazia
                           _focoNoCarrinho = false;
                         });
@@ -15000,6 +15117,191 @@ recusando a emissão de NFC-e (erro 403).
   }
 
   // ============ Métodos Auxiliares de Navegação ============
+
+  /// Atalho do PDV: digita o número e abre a tela de controle já naquela
+  /// mesa/comanda. Se o número não existir, cria e abre na hora.
+  Future<void> _abrirMesaComandaPorNumero(DataService dataService) async {
+    final controller = TextEditingController();
+    var tipoSelecionado = TipoControle.comanda;
+    String? mesaVinculadaId;
+    final mesasAbertas = dataService.mesasComandas
+        .where((m) => m.tipo == TipoControle.mesa && m.status == 'Aberta')
+        .toList();
+
+    final dadosEntrada = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          backgroundColor: const Color(0xFF1E1E2E),
+          title: const Text('O que deseja abrir?',
+              style: TextStyle(color: Colors.white)),
+          content: SizedBox(
+            width: 340,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SegmentedButton<TipoControle>(
+                  segments: const [
+                    ButtonSegment(
+                      value: TipoControle.comanda,
+                      label: Text('Comanda'),
+                      icon: Icon(Icons.receipt_long),
+                    ),
+                    ButtonSegment(
+                      value: TipoControle.mesa,
+                      label: Text('Mesa'),
+                      icon: Icon(Icons.table_restaurant),
+                    ),
+                  ],
+                  selected: {tipoSelecionado},
+                  onSelectionChanged: (selecionados) => setDialogState(
+                    () => tipoSelecionado = selecionados.first,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: controller,
+                  autofocus: true,
+                  style: const TextStyle(color: Colors.white),
+                  keyboardType: TextInputType.number,
+                  textInputAction: TextInputAction.go,
+                  decoration: const InputDecoration(
+                    labelText: 'Número',
+                    hintText: 'Ex.: 2',
+                    prefixIcon: Icon(Icons.numbers),
+                    labelStyle: TextStyle(color: Colors.white70),
+                    hintStyle: TextStyle(color: Colors.white38),
+                  ),
+                  onSubmitted: (_) => Navigator.pop(ctx, {
+                    'numero': controller.text,
+                    'tipo': tipoSelecionado,
+                    'mesaId': mesaVinculadaId,
+                  }),
+                ),
+                if (tipoSelecionado == TipoControle.comanda &&
+                    mesasAbertas.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    value: mesaVinculadaId,
+                    dropdownColor: const Color(0xFF1E1E2E),
+                    decoration: const InputDecoration(
+                      labelText: 'Vincular a uma mesa (opcional)',
+                      prefixIcon: Icon(Icons.link),
+                      labelStyle: TextStyle(color: Colors.white70),
+                    ),
+                    items: [
+                      const DropdownMenuItem<String>(
+                        value: null,
+                        child: Text('Sem vínculo'),
+                      ),
+                      ...mesasAbertas.map(
+                        (mesa) => DropdownMenuItem<String>(
+                          value: mesa.id,
+                          child: Text(mesa.numero),
+                        ),
+                      ),
+                    ],
+                    onChanged: (value) =>
+                        setDialogState(() => mesaVinculadaId = value),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton.icon(
+              onPressed: () => Navigator.pop(ctx, {
+                'numero': controller.text,
+                'tipo': tipoSelecionado,
+                'mesaId': mesaVinculadaId,
+              }),
+              icon: const Icon(Icons.open_in_new),
+              label: const Text('ABRIR'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    controller.dispose();
+    if (dadosEntrada == null) return;
+    final texto = (dadosEntrada['numero'] as String? ?? '').trim();
+    if (texto.isEmpty) return;
+
+    final tipo = dadosEntrada['tipo'] as TipoControle;
+    final alvoDigitos = texto.replaceAll(RegExp(r'[^0-9]'), '');
+    if (alvoDigitos.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Informe o número da mesa ou comanda.')),
+      );
+      return;
+    }
+
+    // Encontra o número dentro do tipo escolhido, inclusive registros antigos
+    // como "MESA-05" quando o usuário informa apenas 5.
+    MesaComanda? encontrada;
+    for (final m in dataService.mesasComandas) {
+      if (m.tipo != tipo) continue;
+      final digitosM = m.numero.replaceAll(RegExp(r'[^0-9]'), '');
+      if (encontrada == null &&
+          alvoDigitos.isNotEmpty &&
+          int.tryParse(digitosM) == int.tryParse(alvoDigitos)) {
+        encontrada = m;
+      }
+    }
+
+    MesaComanda mesa;
+    if (encontrada != null) {
+      mesa = encontrada;
+    } else {
+      // Não existe: cria com o número informado e abre na sequência.
+      final authService = Provider.of<AuthService>(context, listen: false);
+      final nova = MesaComanda(
+        id: const Uuid().v4(),
+        tipo: tipo,
+        numero: '${tipo == TipoControle.comanda ? 'CMD' : 'MESA'}-$alvoDigitos',
+        mesaId: tipo == TipoControle.comanda
+            ? dadosEntrada['mesaId'] as String?
+            : null,
+        status: 'Aberta',
+        usuarioCriou: authService.usuarioAtual?.nome ?? 'Sistema',
+      );
+      await dataService.addMesaComanda(nova);
+      mesa = nova;
+    }
+
+    if (!mounted) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => CozinhaMesasFuncionarioPage(mesaInicial: mesa),
+      ),
+    );
+  }
+
+  Widget _buildBotaoAbrirPorNumero(DataService dataService,
+      {bool compact = false}) {
+    return IconButton(
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(),
+      onPressed: () => _abrirMesaComandaPorNumero(dataService),
+      icon: Container(
+        padding: EdgeInsets.all(compact ? 6 : 8),
+        decoration: BoxDecoration(
+          color: Colors.cyanAccent.withOpacity(0.15),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.cyanAccent.withOpacity(0.4)),
+        ),
+        child: Icon(Icons.dialpad, color: Colors.cyanAccent, size: compact ? 18 : 22),
+      ),
+      tooltip: 'Abrir mesa/comanda por número',
+    );
+  }
 
   Widget _buildBotaoMapaMesas(DataService dataService, {bool compact = false}) {
     return IconButton(
@@ -15687,6 +15989,8 @@ recusando a emissão de NFC-e (erro 403).
     final codigo = isProduto ? (item as Produto).codigo : null;
     final estoque = isProduto ? (item as Produto).estoque : null;
     final isDesativado = isProduto && !(item as Produto).ativo;
+    final indisponivel =
+        isProduto && (item as Produto).ativo && !(item as Produto).disponivelAgora;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
@@ -15795,11 +16099,17 @@ recusando a emissão de NFC-e (erro 403).
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Text(
-                    isDesativado ? 'DESATIVADO' : _formatoMoeda.format(preco),
+                    isDesativado
+                        ? 'DESATIVADO'
+                        : (indisponivel ? 'INDISPONÍVEL' : _formatoMoeda.format(preco)),
                     style: TextStyle(
-                      color: isDesativado ? Colors.redAccent : (isDark ? Colors.greenAccent : const Color(0xFF15803D)),
+                      color: isDesativado
+                          ? Colors.redAccent
+                          : (indisponivel
+                              ? Colors.orangeAccent
+                              : (isDark ? Colors.greenAccent : const Color(0xFF15803D))),
                       fontWeight: FontWeight.bold,
-                      fontSize: isDesativado ? 10 : 15,
+                      fontSize: (isDesativado || indisponivel) ? 10 : 15,
                     ),
                   ),
                   if (isProduto && estoque != null)
@@ -15816,8 +16126,12 @@ recusando a emissão de NFC-e (erro 403).
               // Botão de adicionar
               IconButton(
                 icon: Icon(
-                  isDesativado ? Icons.lock_outline : Icons.add_circle_outline_rounded,
-                  color: isDesativado ? Colors.redAccent : Colors.blueAccent,
+                  isDesativado
+                      ? Icons.lock_outline
+                      : (indisponivel ? Icons.schedule_outlined : Icons.add_circle_outline_rounded),
+                  color: isDesativado
+                      ? Colors.redAccent
+                      : (indisponivel ? Colors.orangeAccent : Colors.blueAccent),
                   size: 24,
                 ),
                 onPressed: () => _adicionarAoCarrinho(item, manterFoco: true),
@@ -15838,6 +16152,8 @@ recusando a emissão de NFC-e (erro 403).
     final codigo = isProduto ? (item as Produto).codigo : null;
     final estoque = isProduto ? (item as Produto).estoque : null;
     final isDesativado = isProduto && !(item as Produto).ativo;
+    final indisponivel =
+        isProduto && (item as Produto).ativo && !(item as Produto).disponivelAgora;
 
     final screenHeight = MediaQuery.of(context).size.height;
     final isSmallHeight = screenHeight < 750;
@@ -16002,12 +16318,34 @@ recusando a emissão de NFC-e (erro 403).
                         ),
                       ),
                     ],
+                    if (indisponivel) ...[
+                      const SizedBox(width: 4),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: Colors.orangeAccent.withOpacity(0.85),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: const Text(
+                          'INDISPONÍVEL',
+                          style: TextStyle(
+                            color: Colors.black,
+                            fontSize: 7,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
                     const Spacer(),
                     Icon(
-                      isDesativado ? Icons.lock_outline : Icons.add_circle,
+                      isDesativado
+                          ? Icons.lock_outline
+                          : (indisponivel ? Icons.schedule_outlined : Icons.add_circle),
                       color: isDesativado
                           ? Colors.redAccent.withOpacity(0.7)
-                          : (isDark ? Colors.greenAccent.withOpacity(0.6) : Colors.green.shade700),
+                          : (indisponivel
+                              ? Colors.orangeAccent.withOpacity(0.8)
+                              : (isDark ? Colors.greenAccent.withOpacity(0.6) : Colors.green.shade700)),
                       size: 18,
                     ),
                   ],
@@ -16973,6 +17311,7 @@ recusando a emissão de NFC-e (erro 403).
   bool _globalKeyHandler(KeyEvent event) {
     if (event is! KeyDownEvent) return false;
     if (_dialogAberto || _estaFinalizando) return false;
+    if (ModalRoute.of(context)?.isCurrent != true) return false;
 
     final dataService = Provider.of<DataService>(context, listen: false);
     final key = event.logicalKey;
@@ -17024,6 +17363,44 @@ recusando a emissão de NFC-e (erro 403).
 
     // --- ATALHOS QUE CONFLITAM COM A BUSCA (Ignorados se buscando) ---
     if (searchFocused) return false;
+
+    // --- TECLA ENTER FORA DO CAMPO DE BUSCA ---
+    // Se o operador clicou fora ou soltou o foco, com APENAS 1 Enter o foco retorna
+    // imediatamente para o campo de busca com o grupo "Todos" selecionado.
+    if (key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.numpadEnter) {
+      if (!_focoNoCarrinho && _gridSelectedIndex >= 0) {
+        final itens = _termoBusca.isNotEmpty
+            ? _buscarItens(dataService)
+            : _getProdutosPorCategoria(dataService);
+        if (_gridSelectedIndex < itens.length) {
+          final itemSelecionado = itens[_gridSelectedIndex];
+          _irParaBuscaTodos();
+          _adicionarAoCarrinho(itemSelecionado, manterFoco: true);
+          return true;
+        }
+      }
+      if (_focoNasCategorias && _categoriaSelectedIndex > 0) {
+        final categorias = _getCategorias(dataService);
+        if (_categoriaSelectedIndex <= categorias.length) {
+          final cat = categorias[_categoriaSelectedIndex - 1];
+          setState(() {
+            _categoriaAtiva = cat;
+            _termoBusca = '';
+            _gridSelectedIndex = -1;
+            _focoNasCategorias = false;
+            _categoriaSelectedIndex = -1;
+            _focoNoCarrinho = false;
+          });
+          _buscaController.clear();
+          _buscaFocusNode.requestFocus();
+          return true;
+        }
+      }
+      // Clicou fora, foco solto, categorias em "Todos", carrinho, etc.:
+      // 1 único Enter já vai direto para o campo de busca com o grupo "Todos" selecionado.
+      _irParaBuscaTodos();
+      return true;
+    }
 
     // CTRL para Conferência
     if (key == LogicalKeyboardKey.controlLeft || key == LogicalKeyboardKey.controlRight) {
@@ -19304,12 +19681,80 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
     );
   }
 
+  /// Abre o diálogo para lançar uma forma de pagamento personalizada da empresa
+  /// (ex: Caju, VR). É registrada como [TipoPagamento.outro] com o nome da
+  /// forma, o que permite localizar a taxa da maquininha depois.
+  void _adicionarPagamentoCustom(FormaPagamentoCustom forma) {
+    // Numa venda salva o tipo "outro" fica como placeholder não recebido; se o
+    // operador for lançar uma forma personalizada, removemos o placeholder para
+    // não somar dois pagamentos.
+    if (widget.pagamentosIniciais.isNotEmpty) {
+      final temPlaceholder = _pagamentos.any(
+        (p) => p.tipo == TipoPagamento.outro && !p.recebido,
+      );
+      if (temPlaceholder) {
+        setState(() {
+          _pagamentos.removeWhere(
+            (p) => p.tipo == TipoPagamento.outro && !p.recebido,
+          );
+        });
+      }
+    }
+
+    final valorSugerido = _valorRestante > 0 ? _valorRestante : 0.0;
+    _mostrarDialogPagamento(
+      TipoPagamento.outro,
+      valorSugerido,
+      nomeFormaCustom: forma.nome,
+      recebidoImediato: true,
+    );
+  }
+
+  /// Botões das formas de pagamento personalizadas da empresa no PDV.
+  List<Widget> _buildBotoesFormaCustom(BuildContext context) {
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final formas = TaxaPagamentoService.formasPersonalizadasAtivas(
+      dataService.empresaAtual,
+    );
+    const cor = Colors.deepPurpleAccent;
+    return formas.map((forma) {
+      return GestureDetector(
+        onTap: () => _adicionarPagamentoCustom(forma),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+            color: cor.withOpacity(0.15),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: cor.withOpacity(0.3)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.credit_card, color: cor, size: 14),
+              const SizedBox(width: 4),
+              Text(
+                forma.nome,
+                style: const TextStyle(
+                  color: cor,
+                  fontWeight: FontWeight.w500,
+                  fontSize: 11,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }).toList();
+  }
+
   void _mostrarDialogPagamento(
     TipoPagamento tipo,
     double valorSugerido, {
     PagamentoPedido? pagamentoExistente,
     double descontoCalc = 0.0,
     double acrescimoCalc = 0.0,
+    String? nomeFormaCustom,
+    bool recebidoImediato = false,
   }) {
     final valorFocusNode = FocusNode();
     final valorController = TextEditingController(
@@ -19424,6 +19869,7 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
                   PagamentoPedido(
                     id: '${parcelamentoId}_$i',
                     tipo: tipo,
+                    nomeForma: nomeFormaCustom,
                     valor: valorCadaParcela,
                     parcelas: parcelas,
                     numeroParcela: i + 1,
@@ -19436,6 +19882,7 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
               }
             } else {
               final isRecebido =
+                  recebidoImediato ||
                   tipo == TipoPagamento.dinheiro ||
                   tipo == TipoPagamento.pix ||
                   tipo == TipoPagamento.cartaoCredito ||
@@ -19452,6 +19899,7 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
                 PagamentoPedido(
                   id: DateTime.now().millisecondsSinceEpoch.toString(),
                   tipo: tipo,
+                  nomeForma: nomeFormaCustom,
                   valor: valorALancar,
                   recebido: isRecebido,
                   dataRecebimento: isRecebido ? DateTime.now() : null,
@@ -20523,7 +20971,8 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
                     spacing: 8,
                     runSpacing: 8,
                     
-                    children: TipoPagamento.values.where((t) {
+                    children: [
+                      ...TipoPagamento.values.where((t) {
                       final dataService = Provider.of<DataService>(context, listen: false);
                       final pagamentosConfig = dataService.empresaAtual?.configuracoes?['pagamentos'] as Map?;
                       return (pagamentosConfig?[t.name]?['ativo'] as bool?) ?? true;
@@ -20593,6 +21042,8 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
                         ),
                       );
                     }).toList(),
+                      ..._buildBotoesFormaCustom(context),
+                    ],
                   ),
 
                   const SizedBox(height: 10),
@@ -21004,6 +21455,8 @@ class _PopupSucessoVendaState extends State<PopupSucessoVenda>
   final FocusNode _nfceNode = FocusNode();
   final FocusNode _whatsappNode = FocusNode();
   final FocusNode _imprimirNode = FocusNode();
+  // Captura as teclas quando nenhum botão está em foco (Enter/Esc/setas).
+  final FocusNode _tecladoNode = FocusNode();
 
   @override
   void initState() {
@@ -21031,10 +21484,15 @@ class _PopupSucessoVendaState extends State<PopupSucessoVenda>
       });
     }
 
-    // Focar no botão fechar após o popup abrir
+    // Ao abrir, o foco já fica no botão IMPRIMIR: assim o Enter do caixa
+    // dispara a impressão imediatamente, sem precisar mirar/clicar.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        _fecharNode.requestFocus();
+        if (widget.onImprimir != null) {
+          _imprimirNode.requestFocus();
+        } else {
+          _fecharNode.requestFocus();
+        }
       }
     });
     
@@ -21049,10 +21507,17 @@ class _PopupSucessoVendaState extends State<PopupSucessoVenda>
     if (mounted) setState(() {});
   }
 
-  void _fechar() {
+  /// Fecha a tela de venda finalizada.
+  ///
+  /// [aoSair] roda DEPOIS de o popup sair de cena e ANTES do `onDismiss`
+  /// (que pode voltar para a tela de mesas). É o gancho da impressão: assim o
+  /// cupom só é disparado com a tela verde já fora, e ainda com a página do PDV
+  /// montada — senão o diálogo de impressora perderia o contexto.
+  void _fechar({VoidCallback? aoSair}) {
     _scaleController.reverse().then((_) {
       if (mounted && Navigator.canPop(context)) {
         Navigator.pop(context);
+        aoSair?.call();
         widget.onDismiss?.call();
       }
     });
@@ -21076,12 +21541,73 @@ class _PopupSucessoVendaState extends State<PopupSucessoVenda>
     }
   }
 
+  /// Um Enter só: imprime E finaliza a venda.
+  ///
+  /// A ordem é deliberada — o popup sai de cena primeiro e a impressão
+  /// dispara depois. Se imprimíssemos com a tela verde aberta, o `Navigator.pop`
+  /// do fechamento cairia por cima do diálogo de impressora (é o pop que remove
+  /// a rota de cima), e a tela de "VENDA FINALIZADA!" ficaria aberta de fundo.
   void _imprimir() {
-    if (widget.onImprimir != null) {
-      if (mounted) {
-        widget.onImprimir?.call();
+    final imprimir = widget.onImprimir;
+    if (imprimir == null || !mounted) return;
+    _fechar(aoSair: imprimir);
+  }
+
+  /// Lista dos botões visíveis, na ordem em que aparecem na tela.
+  List<FocusNode> get _botoes => <FocusNode>[
+        if (widget.onEmitirNFCe != null) _nfceNode,
+        if (widget.onWhatsApp != null) _whatsappNode,
+        if (widget.onImprimir != null) _imprimirNode,
+        _fecharNode,
+      ];
+
+  /// Teclado do popup. Centraliza Enter/Esc/setas.
+  ///
+  /// Regra do Enter: se algum botão já está em foco, devolvemos
+  /// [KeyEventResult.ignored] para que o próprio botão receba o Enter uma única
+  /// vez (evita imprimir duas vezes). Se NADA estiver em foco, o Enter imprime
+  /// (ou fecha, quando não há impressão).
+  KeyEventResult _aoTeclar(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+
+    final botoes = _botoes;
+    final bool algumBotaoComFoco = botoes.any((b) => b.hasFocus);
+
+    final isEnter = event.logicalKey == LogicalKeyboardKey.enter ||
+        event.logicalKey == LogicalKeyboardKey.numpadEnter;
+
+    if (isEnter) {
+      if (algumBotaoComFoco) return KeyEventResult.ignored;
+      if (widget.onImprimir != null) {
+        _imprimir();
+        return KeyEventResult.handled;
       }
+      _fechar();
+      return KeyEventResult.handled;
     }
+
+    if (event.logicalKey == LogicalKeyboardKey.escape) {
+      _fechar();
+      return KeyEventResult.handled;
+    }
+
+    if (event.logicalKey == LogicalKeyboardKey.arrowLeft ||
+        event.logicalKey == LogicalKeyboardKey.arrowRight) {
+      final bool direita = event.logicalKey == LogicalKeyboardKey.arrowRight;
+      int index = botoes.indexWhere((b) => b.hasFocus);
+      if (index == -1) {
+        // Sem foco: começa pelo botão de impressão (ou pelo primeiro).
+        botoes[direita ? 0 : botoes.length - 1].requestFocus();
+        return KeyEventResult.handled;
+      }
+      final proximo = direita
+          ? (index + 1) % botoes.length
+          : (index - 1 + botoes.length) % botoes.length;
+      botoes[proximo].requestFocus();
+      return KeyEventResult.handled;
+    }
+
+    return KeyEventResult.ignored;
   }
 
   @override
@@ -21091,6 +21617,7 @@ class _PopupSucessoVendaState extends State<PopupSucessoVenda>
     _nfceNode.dispose();
     _whatsappNode.dispose();
     _imprimirNode.dispose();
+    _tecladoNode.dispose();
     super.dispose();
   }
 
@@ -21098,50 +21625,14 @@ class _PopupSucessoVendaState extends State<PopupSucessoVenda>
   Widget build(BuildContext context) {
     final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
 
-    return KeyboardListener(
-      focusNode: FocusNode(), // Capturar teclas globalmente no popup
-      onKeyEvent: (event) {
-        if (event is KeyDownEvent) {
-          // Lista de botões disponíveis para navegação
-          final listNodes = <FocusNode>[];
-          if (widget.onEmitirNFCe != null) listNodes.add(_nfceNode);
-          if (widget.onWhatsApp != null) listNodes.add(_whatsappNode);
-          if (widget.onImprimir != null) listNodes.add(_imprimirNode);
-          listNodes.add(_fecharNode);
-
-          if (event.logicalKey == LogicalKeyboardKey.enter || 
-              event.logicalKey == LogicalKeyboardKey.numpadEnter) {
-            // Enter aciona o botão focado
-            if (_nfceNode.hasFocus) {
-              _emitir();
-            } else if (_whatsappNode.hasFocus) {
-              _whatsApp();
-            } else if (_imprimirNode.hasFocus) {
-              _imprimir();
-            } else {
-              _fechar();
-            }
-          } else if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
-            // Mover foco para a esquerda
-            int index = listNodes.indexWhere((n) => n.hasFocus);
-            if (index > 0) {
-              listNodes[index - 1].requestFocus();
-            } else if (index == 0) {
-              listNodes.last.requestFocus();
-            }
-          } else if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
-            // Mover foco para a direita
-            int index = listNodes.indexWhere((n) => n.hasFocus);
-            if (index != -1 && index < listNodes.length - 1) {
-              listNodes[index + 1].requestFocus();
-            } else {
-              listNodes.first.requestFocus();
-            }
-          } else if (event.logicalKey == LogicalKeyboardKey.escape) {
-            _fechar();
-          }
-        }
-      },
+    return Focus(
+      focusNode: _tecladoNode,
+      // CanRequestFocus false: este nó é só um "ouvinte" ancestral dos botões.
+      // O foco real fica sempre em um dos botões (ver initState).
+      canRequestFocus: false,
+      skipTraversal: true,
+      descendantsAreFocusable: true,
+      onKeyEvent: _aoTeclar,
       child: Material(
         color: Colors.transparent,
         child: Stack(

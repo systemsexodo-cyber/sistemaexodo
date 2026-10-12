@@ -1,4 +1,6 @@
 import 'package:sistema_exodo_novo/models/adicional_produto.dart';
+import 'package:sistema_exodo_novo/models/forma_pagamento_custom.dart';
+
 /// Modelo para representar uma empresa
 class Empresa {
   final String id;
@@ -7,15 +9,16 @@ class Empresa {
   final String? cnpj;
   final String? inscricaoEstadual;
   final String? inscricaoMunicipal;
-  final int? crt; // Código de Regime Tributário (CRT): 1=Simples Nacional, 2=Simples Nacional - Excesso de Sublimite, 3=Regime Normal
+  final int?
+  crt; // Código de Regime Tributário (CRT): 1=Simples Nacional, 2=Simples Nacional - Excesso de Sublimite, 3=Regime Normal
   final String slug; // Link personalizado (friendly URL)
-  
+
   // Contato
   final String? email;
   final String? telefone;
   final String? celular;
   final String? site;
-  
+
   // Endereço
   final String? endereco;
   final String? numero;
@@ -25,7 +28,7 @@ class Empresa {
   final String? estado;
   final String? cep;
   final String? codigoIBGE; // Código IBGE do município (7 dígitos)
-  
+
   // Configurações
   final String? logoUrl;
   final String? corPrimaria; // Cor principal da empresa (hex)
@@ -33,37 +36,51 @@ class Empresa {
   final bool ativo;
   final DateTime createdAt;
   final DateTime updatedAt;
-  
+
   // Configurações NFC-e
-  final String? certificadoDigitalUrl; // URL ou path do certificado digital (.pfx)
+  final String?
+  certificadoDigitalUrl; // URL ou path do certificado digital (.pfx)
   final String? senhaCertificado; // Senha do certificado digital
-  final String? csc; // Código de Segurança do Contribuinte (fornecido pela SEFAZ)
+  final String?
+  csc; // Código de Segurança do Contribuinte (fornecido pela SEFAZ)
   final String? cscIdToken; // ID Token do CSC (fornecido pela SEFAZ)
   final String? serieNFCe; // Série da NFC-e (padrão: "1")
-  final bool? ambienteHomologacao; // true = Homologação, false = Produção (padrão: true)
-  final String? focusNFeToken; // Token da API Focus NFe (para emissão sem backend)
-  
+  final bool?
+  ambienteHomologacao; // true = Homologação, false = Produção (padrão: true)
+  final String?
+  focusNFeToken; // Token da API Focus NFe (para emissão sem backend)
+
   // Configurações do sistema
-  final Map<String, dynamic>? configuracoes; // Configurações específicas da empresa
-  final List<String> perfisDePreco; // Perfis de preço de clientes (ex: Revenda, VIP)
-  
+  final Map<String, dynamic>?
+  configuracoes; // Configurações específicas da empresa
+  final List<String>
+  perfisDePreco; // Perfis de preço de clientes (ex: Revenda, VIP)
+
   // Controle de acesso às telas
-  final Set<String>? telasPermitidas; // Códigos das telas que podem ser acessadas (null = todas permitidas)
+  final Set<String>?
+  telasPermitidas; // Códigos das telas que podem ser acessadas (null = todas permitidas)
 
   // Configurações WhatsApp (Evolution API)
-  final String? whatsappApiUrl;       // URL da Evolution API (ex: https://xxx.up.railway.app)
-  final String? whatsappApiKey;       // API Key da Evolution API
-  final String? whatsappInstanceName; // Nome da instância (ex: empresa_principal)
-  final String? whatsappTipo;         // 'evolution' ou 'twilio'
-  final bool whatsappAtivo;           // Se as notificações WhatsApp estão ativas
-  final bool moduloPet;               // Se o módulo Pet Shop está ativo
-  final List<AdicionalProduto> modelosAdicionais; // Modelos de adicionais reutilizáveis
-  
+  final String?
+  whatsappApiUrl; // URL da Evolution API (ex: https://xxx.up.railway.app)
+  final String? whatsappApiKey; // API Key da Evolution API
+  final String?
+  whatsappInstanceName; // Nome da instância (ex: empresa_principal)
+  final String? whatsappTipo; // 'evolution' ou 'twilio'
+  final bool whatsappAtivo; // Se as notificações WhatsApp estão ativas
+  final bool moduloPet; // Se o módulo Pet Shop está ativo
+  final List<AdicionalProduto>
+  modelosAdicionais; // Modelos de adicionais reutilizáveis
+
   // Fiscal / Contabilidade
-  final String? emailContabilidade;   // E-mail da contabilidade para envio de XMLs
-  final bool envioFiscalAutomatico;    // Se deve enviar no dia 01 de cada mês automaticamente
-  final bool incluirTaxaEntregaNfce;   // Incluir taxa de entrega no valor total da NFC-e
-  final bool incluirServicoGarcomNfce; // Incluir serviço do garçom (10%) no valor total da NFC-e
+  final String?
+  emailContabilidade; // E-mail da contabilidade para envio de XMLs
+  final bool
+  envioFiscalAutomatico; // Se deve enviar no dia 01 de cada mês automaticamente
+  final bool
+  incluirTaxaEntregaNfce; // Incluir taxa de entrega no valor total da NFC-e
+  final bool
+  incluirServicoGarcomNfce; // Incluir serviço do garçom (10%) no valor total da NFC-e
 
   Empresa({
     required this.id,
@@ -118,18 +135,47 @@ class Empresa {
   /// Retorna o nome de exibição (nome fantasia ou razão social)
   String get nomeExibicao => nomeFantasia ?? razaoSocial;
 
+  /// Se a empresa está permitindo sincronização com a nuvem.
+  /// Útil para testes locais, falhas temporárias ou manutenção por empresa.
+  bool get nuvemAtiva {
+    final raw =
+        configuracoes?['nuvem_ativa'] ??
+        configuracoes?['nuvemAtiva'] ??
+        configuracoes?['cloud_sync_ativa'] ??
+        true;
+
+    if (raw is bool) return raw;
+    if (raw is String) return raw.toLowerCase() != 'false';
+    return true;
+  }
+
   /// Identificador curto para exibição (evita mostrar o UUID completo)
   String get idCurto => id.length > 10 ? id.substring(0, 10) : id;
 
   /// Últimos 8 caracteres do ID (para exibir o "final" do UUID)
   String get idFinal => id.length > 8 ? id.substring(id.length - 8) : id;
 
+  /// Formas de pagamento personalizadas cadastradas para esta empresa.
+  List<FormaPagamentoCustom> get formasPagamentoCustom {
+    final raw = configuracoes?['formas_pagamento_custom'];
+    // Lista sempre MUTÁVEL/growable: quem consome costuma fazer add/remove
+    // (ex: tela de Editar Empresa). Um `const []` aqui estourava
+    // "UnsupportedError: Cannot add" e a forma personalizada nunca salvava.
+    if (raw is! List) return <FormaPagamentoCustom>[];
+    return raw
+        .whereType<Map>()
+        .map((m) => FormaPagamentoCustom.fromMap(Map<String, dynamic>.from(m)))
+        .toList();
+  }
+
   /// Retorna as regras completas configuradas para um perfil de preço
   Map<String, dynamic>? getConfigPerfilPreco(String? perfil) {
-    if (perfil == null || configuracoes == null || configuracoes!['perfis_preco'] == null) {
+    if (perfil == null ||
+        configuracoes == null ||
+        configuracoes!['perfis_preco'] == null) {
       return null;
     }
-    
+
     final perfisList = configuracoes!['perfis_preco'] as List;
     for (var p in perfisList) {
       if (p is Map && p['nome'] == perfil) {
@@ -142,7 +188,8 @@ class Empresa {
   /// Retorna o valor do modificador (desconto ou acréscimo) global para um determinado perfil
   double getModificadorPerfilValor(String? perfil) {
     final config = getConfigPerfilPreco(perfil);
-    if (config != null && (config['tipo'] == 'desconto' || config['tipo'] == 'acrescimo')) {
+    if (config != null &&
+        (config['tipo'] == 'desconto' || config['tipo'] == 'acrescimo')) {
       return (config['valor'] as num?)?.toDouble() ?? 0.0;
     }
     return 0.0;
@@ -258,17 +305,19 @@ class Empresa {
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       slug: slug ?? this.slug,
-      certificadoDigitalUrl: certificadoDigitalUrl ?? this.certificadoDigitalUrl,
+      certificadoDigitalUrl:
+          certificadoDigitalUrl ?? this.certificadoDigitalUrl,
       senhaCertificado: senhaCertificado ?? this.senhaCertificado,
       csc: csc ?? this.csc,
       cscIdToken: cscIdToken ?? this.cscIdToken,
       serieNFCe: serieNFCe ?? this.serieNFCe,
       ambienteHomologacao: ambienteHomologacao ?? this.ambienteHomologacao,
       focusNFeToken: focusNFeToken ?? this.focusNFeToken,
-      configuracoes: configuracoes != null 
-          ? (this.configuracoes != null 
-              ? (Map<String, dynamic>.from(this.configuracoes!)..addAll(configuracoes))
-              : configuracoes)
+      configuracoes: configuracoes != null
+          ? (this.configuracoes != null
+                ? (Map<String, dynamic>.from(this.configuracoes!)
+                    ..addAll(configuracoes))
+                : configuracoes)
           : this.configuracoes,
       perfisDePreco: perfisDePreco ?? this.perfisDePreco,
       telasPermitidas: telasPermitidas ?? this.telasPermitidas,
@@ -280,9 +329,12 @@ class Empresa {
       moduloPet: moduloPet ?? this.moduloPet,
       modelosAdicionais: modelosAdicionais ?? this.modelosAdicionais,
       emailContabilidade: emailContabilidade ?? this.emailContabilidade,
-      envioFiscalAutomatico: envioFiscalAutomatico ?? this.envioFiscalAutomatico,
-      incluirTaxaEntregaNfce: incluirTaxaEntregaNfce ?? this.incluirTaxaEntregaNfce,
-      incluirServicoGarcomNfce: incluirServicoGarcomNfce ?? this.incluirServicoGarcomNfce,
+      envioFiscalAutomatico:
+          envioFiscalAutomatico ?? this.envioFiscalAutomatico,
+      incluirTaxaEntregaNfce:
+          incluirTaxaEntregaNfce ?? this.incluirTaxaEntregaNfce,
+      incluirServicoGarcomNfce:
+          incluirServicoGarcomNfce ?? this.incluirServicoGarcomNfce,
     );
   }
 
@@ -291,36 +343,47 @@ class Empresa {
     String? getString(String camelCase, String snakeCase) {
       return map[camelCase] ?? map[snakeCase];
     }
-    
+
     bool? getBool(String camelCase, String snakeCase, bool defaultValue) {
       final val = map[camelCase] ?? map[snakeCase];
       if (val == null) return defaultValue;
       if (val is bool) return val;
       return val.toString().toLowerCase() == 'true';
     }
-    
+
     DateTime getDateTime(String camelCase, String snakeCase) {
       final val = map[camelCase] ?? map[snakeCase];
       if (val == null) return DateTime.now();
       if (val is DateTime) return val;
       return DateTime.parse(val.toString());
     }
-    
+
     return Empresa(
       id: map['id']?.toString() ?? '',
       razaoSocial: getString('razaoSocial', 'razao_social') ?? '',
       nomeFantasia: getString('nomeFantasia', 'nome_fantasia'),
       cnpj: getString('cnpj', 'cnpj'),
       inscricaoEstadual: getString('inscricaoEstadual', 'inscricao_estadual'),
-      inscricaoMunicipal: getString('inscricaoMunicipal', 'inscricao_municipal'),
-      crt: map['crt'] != null 
-          ? (map['crt'] is int ? map['crt'] as int : int.tryParse(map['crt'].toString()))
-          : (map['regime_tributario'] != null 
-              ? _converterRegimeTributarioParaCRT(map['regime_tributario'].toString())
-              : null),
+      inscricaoMunicipal: getString(
+        'inscricaoMunicipal',
+        'inscricao_municipal',
+      ),
+      crt: map['crt'] != null
+          ? (map['crt'] is int
+                ? map['crt'] as int
+                : int.tryParse(map['crt'].toString()))
+          : (map['regime_tributario'] != null
+                ? _converterRegimeTributarioParaCRT(
+                    map['regime_tributario'].toString(),
+                  )
+                : null),
       slug: (map['slug'] != null && map['slug'].toString().trim().isNotEmpty)
           ? map['slug'].toString()
-          : gerarSlug(getString('nomeFantasia', 'nome_fantasia') ?? getString('razaoSocial', 'razao_social') ?? ''),
+          : gerarSlug(
+              getString('nomeFantasia', 'nome_fantasia') ??
+                  getString('razaoSocial', 'razao_social') ??
+                  '',
+            ),
       email: getString('email', 'email'),
       telefone: getString('telefone', 'telefone'),
       celular: getString('celular', 'celular'),
@@ -339,12 +402,16 @@ class Empresa {
       ativo: getBool('ativo', 'ativo', true) ?? true,
       createdAt: getDateTime('createdAt', 'created_at'),
       updatedAt: getDateTime('updatedAt', 'updated_at'),
-      certificadoDigitalUrl: getString('certificadoDigitalUrl', 'certificado_digital_url'),
+      certificadoDigitalUrl: getString(
+        'certificadoDigitalUrl',
+        'certificado_digital_url',
+      ),
       senhaCertificado: getString('senhaCertificado', 'senha_certificado'),
       csc: getString('csc', 'csc'),
       cscIdToken: getString('cscIdToken', 'csc_id_token'),
       serieNFCe: getString('serieNFCe', 'serie_nfce'),
-      ambienteHomologacao: getBool('ambienteHomologacao', 'ambiente_homologacao', true) ?? true,
+      ambienteHomologacao:
+          getBool('ambienteHomologacao', 'ambiente_homologacao', true) ?? true,
       focusNFeToken: getString('focusNFeToken', 'focus_nfe_token'),
       configuracoes: map['configuracoes'] != null
           ? Map<String, dynamic>.from(map['configuracoes'])
@@ -353,14 +420,19 @@ class Empresa {
         // Prioridade 1: extrair nomes de configuracoes['perfis_preco']
         final perfisList = map['configuracoes']?['perfis_preco'];
         if (perfisList is List && perfisList.isNotEmpty) {
-          return perfisList.map((e) {
-            if (e is Map) return e['nome']?.toString() ?? '';
-            return e.toString(); // fallback se for string simples
-          }).where((n) => n.isNotEmpty).toList();
+          return perfisList
+              .map((e) {
+                if (e is Map) return e['nome']?.toString() ?? '';
+                return e.toString(); // fallback se for string simples
+              })
+              .where((n) => n.isNotEmpty)
+              .toList();
         }
         // Prioridade 2: campo perfisDePreco direto
-        if (map['perfisDePreco'] is List) return List<String>.from(map['perfisDePreco']);
-        if (map['perfis_de_preco'] is List) return List<String>.from(map['perfis_de_preco']);
+        if (map['perfisDePreco'] is List)
+          return List<String>.from(map['perfisDePreco']);
+        if (map['perfis_de_preco'] is List)
+          return List<String>.from(map['perfis_de_preco']);
         return <String>[];
       }(),
       telasPermitidas: map['telasPermitidas'] != null
@@ -368,17 +440,39 @@ class Empresa {
           : null,
       whatsappApiUrl: getString('whatsappApiUrl', 'whatsapp_api_url'),
       whatsappApiKey: getString('whatsappApiKey', 'whatsapp_api_key'),
-      whatsappInstanceName: getString('whatsappInstanceName', 'whatsapp_instance_name'),
+      whatsappInstanceName: getString(
+        'whatsappInstanceName',
+        'whatsapp_instance_name',
+      ),
       whatsappTipo: getString('whatsappTipo', 'whatsapp_tipo') ?? 'evolution',
       whatsappAtivo: getBool('whatsappAtivo', 'whatsapp_ativo', false) ?? false,
       moduloPet: getBool('moduloPet', 'modulo_pet', false) ?? false,
-      modelosAdicionais: ((map['modelosAdicionais'] ?? map['modelos_adicionais']) as List?)
-          ?.map((e) => AdicionalProduto.fromMap(e as Map<String, dynamic>))
-          .toList() ?? [],
-      emailContabilidade: getString('emailContabilidade', 'email_contabilidade'),
-      envioFiscalAutomatico: getBool('envioFiscalAutomatico', 'envio_fiscal_automatico', false) ?? false,
-      incluirTaxaEntregaNfce: getBool('incluirTaxaEntregaNfce', 'incluir_taxa_entrega_nfce', true) ?? true,
-      incluirServicoGarcomNfce: getBool('incluirServicoGarcomNfce', 'incluir_servico_garcom_nfce', true) ?? true,
+      modelosAdicionais:
+          ((map['modelosAdicionais'] ?? map['modelos_adicionais']) as List?)
+              ?.map((e) => AdicionalProduto.fromMap(e as Map<String, dynamic>))
+              .toList() ??
+          [],
+      emailContabilidade: getString(
+        'emailContabilidade',
+        'email_contabilidade',
+      ),
+      envioFiscalAutomatico:
+          getBool('envioFiscalAutomatico', 'envio_fiscal_automatico', false) ??
+          false,
+      incluirTaxaEntregaNfce:
+          getBool(
+            'incluirTaxaEntregaNfce',
+            'incluir_taxa_entrega_nfce',
+            true,
+          ) ??
+          true,
+      incluirServicoGarcomNfce:
+          getBool(
+            'incluirServicoGarcomNfce',
+            'incluir_servico_garcom_nfce',
+            true,
+          ) ??
+          true,
     );
   }
 
@@ -412,7 +506,6 @@ class Empresa {
       'telas_permitidas': telasPermitidas?.toList(),
       'telasPermitidas': telasPermitidas?.toList(),
       'perfisDePreco': perfisDePreco, // backup caso configuracoes seja nulo
-      
       // Colunas camelCase que existem no Supabase:
       'inscricaoEstadual': inscricaoEstadual,
       'inscricaoMunicipal': inscricaoMunicipal,
@@ -448,11 +541,14 @@ class Empresa {
   static int? _converterRegimeTributarioParaCRT(String? regime) {
     if (regime == null || regime.isEmpty) return null;
     final regimeLower = regime.toLowerCase();
-    if (regimeLower.contains('simples nacional') && regimeLower.contains('excesso')) {
+    if (regimeLower.contains('simples nacional') &&
+        regimeLower.contains('excesso')) {
       return 2;
     } else if (regimeLower.contains('simples nacional')) {
       return 1;
-    } else if (regimeLower.contains('normal') || regimeLower.contains('presumido') || regimeLower.contains('real')) {
+    } else if (regimeLower.contains('normal') ||
+        regimeLower.contains('presumido') ||
+        regimeLower.contains('real')) {
       return 3;
     }
     return null;
@@ -471,7 +567,7 @@ class Empresa {
         return null;
     }
   }
-  
+
   /// Verifica se uma tela pode ser acessada
   /// Retorna true se telasPermitidas for null (todas permitidas) ou se a tela estiver na lista
   bool podeAcessarTela(String codigoTela) {
@@ -501,7 +597,8 @@ class Empresa {
     // 3. Obter o dia do vencimento mensal (extrai dia do mês)
     int? diaVencimento;
     final dataCobrancaStr = configs['data_cobranca'] ?? configs['dataCobranca'];
-    if (dataCobrancaStr != null && dataCobrancaStr.toString().trim().isNotEmpty) {
+    if (dataCobrancaStr != null &&
+        dataCobrancaStr.toString().trim().isNotEmpty) {
       final str = dataCobrancaStr.toString().trim();
       final parsedDate = DateTime.tryParse(str);
       if (parsedDate != null) {
@@ -514,7 +611,8 @@ class Empresa {
     // Se o status do pagamento estiver como pendente e sem confirmação do mês -> bloqueia
     if (configs['status_pagamento'] == 'pendente') {
       final ultimoMesPago = configs['ultimo_mes_pago']?.toString();
-      final mesAtualStr = '${agora.year}-${agora.month.toString().padLeft(2, '0')}';
+      final mesAtualStr =
+          '${agora.year}-${agora.month.toString().padLeft(2, '0')}';
       if (ultimoMesPago == null || ultimoMesPago.compareTo(mesAtualStr) < 0) {
         return true;
       }
@@ -539,7 +637,8 @@ class Empresa {
       final ultimoMesPago = configs['ultimo_mes_pago']?.toString();
 
       // Sem o OK de pagamento (ultimo_mes_pago < mesCompetenciaNecessario) -> BLOQUEIA!
-      if (ultimoMesPago == null || ultimoMesPago.compareTo(mesCompetenciaNecessario) < 0) {
+      if (ultimoMesPago == null ||
+          ultimoMesPago.compareTo(mesCompetenciaNecessario) < 0) {
         return true;
       }
     }
@@ -556,7 +655,9 @@ class Empresa {
     // 1. Anti-Adulteração de Relógio do Sistema (voltar data)
     if (ultimaDataExecucao != null) {
       final agora = DateTime.now();
-      if (agora.isBefore(ultimaDataExecucao.subtract(const Duration(minutes: 5)))) {
+      if (agora.isBefore(
+        ultimaDataExecucao.subtract(const Duration(minutes: 5)),
+      )) {
         return MotivoBloqueioEmpresa.relogioAdulterado;
       }
     }
@@ -568,7 +669,9 @@ class Empresa {
 
     // 3. Excesso de dias sem sincronização online
     if (ultimaValidacaoOnline != null) {
-      final diferencaDias = DateTime.now().difference(ultimaValidacaoOnline).inDays;
+      final diferencaDias = DateTime.now()
+          .difference(ultimaValidacaoOnline)
+          .inDays;
       if (diferencaDias > limiteDiasOffline) {
         return MotivoBloqueioEmpresa.excessoDiasOffline;
       }
@@ -599,8 +702,12 @@ class Empresa {
 
     // Caso contrário, calcula o dia do vencimento deste mês
     int diaVencimento = dataCobrancaOriginal.day;
-    DateTime vencimentoDesteMes = DateTime(hoje.year, hoje.month, diaVencimento);
-    
+    DateTime vencimentoDesteMes = DateTime(
+      hoje.year,
+      hoje.month,
+      diaVencimento,
+    );
+
     // Se o vencimento deste mês já passou, o próximo vencimento é no mês seguinte
     if (vencimentoDesteMes.isBefore(hoje)) {
       vencimentoDesteMes = DateTime(hoje.year, hoje.month + 1, diaVencimento);
@@ -612,10 +719,10 @@ class Empresa {
   /// Gera um slug a partir de um texto (ex: "Exodo Systems" -> "exodo-systems")
   static String gerarSlug(String texto) {
     if (texto.isEmpty) return 'loja';
-    
+
     // Converter para minúsculas
     String slug = texto.toLowerCase();
-    
+
     // Remover acentos e caracteres especiais comuns no Brasil
     slug = slug
         .replaceAll(RegExp(r'[áàâãä]'), 'a')
@@ -625,19 +732,19 @@ class Empresa {
         .replaceAll(RegExp(r'[úùûü]'), 'u')
         .replaceAll(RegExp(r'[ç]'), 'c')
         .replaceAll(RegExp(r'[ñ]'), 'n');
-    
+
     // Remover qualquer outro caractere que não seja letra, número, espaço ou hífen
     slug = slug.replaceAll(RegExp(r'[^a-z0-9\s-]'), '');
-    
+
     // Substituir espaços e múltiplos hífens por um único hífen
     slug = slug.replaceAll(RegExp(r'[\s-]+'), '-');
-    
+
     // Remover hífens no início e fim
     slug = slug.replaceAll(RegExp(r'^-+|-+$'), '');
-    
+
     // Se ficou vazio, usar "loja"
     if (slug.isEmpty) return 'loja';
-    
+
     return slug.trim();
   }
 }

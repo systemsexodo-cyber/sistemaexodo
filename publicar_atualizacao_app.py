@@ -27,11 +27,22 @@ def main():
         print("❌ Erro: SUPABASE_URL ou SUPABASE_ANON_KEY não definidos no seu arquivo .env!")
         sys.exit(1)
 
-    # 2. Solicitar número da nova versão
-    new_version = input("Digite a nova versão do aplicativo (ex: 1.0.9): ").strip()
+    # 2. Número da nova versão (Enter = próxima correção, calculada do código)
+    from publicar_pacote_comum import (
+        proxima_versao, ler_versao_do_codigo, registrar_historico, enviar_notas,
+    )
+
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    versao_no_codigo = ler_versao_do_codigo(base_dir)
+    sugestao = proxima_versao(versao_no_codigo or "0.0.0")
+    if versao_no_codigo:
+        print(f"ℹ️ Versão que está no código agora: {versao_no_codigo}")
+    resposta = input(f"Nova versão (Enter para {sugestao}): ").strip()
+    new_version = resposta or sugestao
     if not re.match(r"^\d+\.\d+\.\d+(\.\d+)?$", new_version):
         print("❌ Versão inválida! Use o formato numérico X.Y.Z (ex: 1.0.9).")
         sys.exit(1)
+    notas = input("Detalhes desta atualização (opcional, Enter para pular): ").strip()
 
     # 3. Atualizar a versão no código (app_update_service.dart)
     update_service_path = "lib/services/app_update_service.dart"
@@ -62,14 +73,22 @@ def main():
         sys.exit(1)
     print("✅ Compilação concluída com sucesso!")
 
-    # 5. Fazer upload do executável para o Supabase Storage
-    local_exe_path = r"build\windows\x64\runner\Release\sistema_exodo_novo.exe"
-    if not os.path.exists(local_exe_path):
-        print(f"❌ Erro: Executável compilado não encontrado em {local_exe_path}!")
+    # 5. Fazer upload do PACOTE (.zip) para o Supabase Storage
+    #    Só o .exe NÃO atualiza o programa: ele é o runner do Flutter (~85 KB) e
+    #    é igual em todas as versões — o código fica no data/app.so.
+    from publicar_pacote_comum import empacotar_programa, nome_pacote
+
+    file_name = nome_pacote(new_version)
+    local_exe_path = os.path.join(base_dir, file_name)
+    try:
+        empacotar_programa(base_dir, local_exe_path)
+    except FileNotFoundError as erro:
+        print(f"❌ Erro: {erro}")
         sys.exit(1)
+    print(f"📦 Pacote: {local_exe_path} "
+          f"({os.path.getsize(local_exe_path) / 1024 / 1024:.1f} MB)")
 
     bucket_name = "atualizacoes"
-    file_name = "sistema_exodo_novo.exe"
 
     # Criar/garantir bucket
     print("\n📦 Verificando/Criando bucket 'atualizacoes' no Supabase...")
@@ -90,8 +109,8 @@ def main():
     except Exception as e:
         print(f"⚠️ Não foi possível verificar/criar o bucket: {e}")
 
-    # Upload do executável
-    print("📤 Fazendo upload do executável para o Supabase Storage (isso pode levar alguns segundos)...")
+    # Upload do pacote
+    print("📤 Fazendo upload do pacote para o Supabase Storage (isso pode levar alguns segundos)...")
     upload_url = f"{supabase_url}/storage/v1/object/{bucket_name}/{file_name}"
     headers_upload = {
         "Authorization": f"Bearer {supabase_key}",
@@ -107,7 +126,17 @@ def main():
     if r.status_code not in (200, 201):
         print(f"❌ Falha ao subir arquivo para o Storage: {r.status_code} - {r.text}")
         sys.exit(1)
-    print("✅ Executável enviado com sucesso!")
+    print("✅ Pacote enviado com sucesso!")
+    if enviar_notas(supabase_url, headers_upload, bucket_name, new_version, notas):
+        print("📝 Detalhes da versão enviados (o cliente lê na tela de atualização).")
+    elif notas:
+        print("⚠️ Não consegui enviar os detalhes (a atualização segue normalmente).")
+    registrar_historico(base_dir, new_version, notas, "TODOS os clientes")
+    print("📚 Anotado em HISTORICO_VERSOES.md")
+    try:
+        os.remove(local_exe_path)
+    except OSError:
+        pass
 
     # 6. Atualizar a tabela bridge_config no Supabase
     download_url = f"{supabase_url}/storage/v1/object/public/{bucket_name}/{file_name}"

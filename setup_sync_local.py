@@ -34,6 +34,25 @@ def main():
         );
     """)
 
+    print("[*] Criando tabela de apagados (_exodo_deletados)...")
+    # Tombstones: guardam QUEM foi apagado e QUANDO. Sem eles a sincronizacao
+    # entre os PCs da rede local nao enxerga o DELETE (a linha simplesmente
+    # nao esta mais na tabela do par) e o outro PC reenviaria a linha antiga.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS _exodo_deletados (
+            id BIGSERIAL PRIMARY KEY,
+            tabela TEXT NOT NULL,
+            registro_id TEXT NOT NULL,
+            empresa_id TEXT DEFAULT '',
+            deletado_em TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            UNIQUE (tabela, registro_id)
+        );
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_exodo_deletados_busca
+            ON _exodo_deletados (tabela, deletado_em);
+    """)
+
     print("[*] Criando tabela de conflitos (exodo_sync_conflitos)...")
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS exodo_sync_conflitos (
@@ -73,6 +92,16 @@ def main():
                     ON CONFLICT (table_name, record_id) 
                     DO UPDATE SET operation = EXCLUDED.operation, created_at = NOW();
                     
+                    -- Registra o apagado para a sincronizacao LAN. A checagem
+                    -- de existencia protege instalacoes antigas (sem a tabela,
+                    -- o DELETE continuaria funcionando normalmente).
+                    IF to_regclass('public._exodo_deletados') IS NOT NULL THEN
+                        INSERT INTO _exodo_deletados (tabela, registro_id, empresa_id, deletado_em)
+                        VALUES (TG_TABLE_NAME, rec_id, COALESCE(to_jsonb(OLD)->>'empresa_id', ''), NOW())
+                        ON CONFLICT (tabela, registro_id)
+                        DO UPDATE SET deletado_em = NOW();
+                    END IF;
+
                     PERFORM pg_notify('exodo_sync_event', TG_TABLE_NAME);
                 END IF;
                 RETURN OLD;
@@ -92,6 +121,28 @@ def main():
         $$ LANGUAGE plpgsql;
     """)
 
+    print("[*] Criando funcao de trigger set_updated_at()...")
+    # A sincronizacao entre os PCs (LAN) descobre o que mudou pela coluna de
+    # data da tabela (updated_at). Varios models do app gravam sem tocar em
+    # updated_at, entao a alteracao nunca era vista pelo outro PC e o dado so
+    # chegava pela nuvem. Este trigger carimba updated_at em toda alteracao do
+    # USUARIO, mantendo a LAN confiavel.
+    #
+    # NAO carimba quando o sincronizador esta aplicando replica
+    # (exodo.sync_mode='on'): se carimbasse, a linha voltaria a parecer nova no
+    # outro PC e as duas maquinas ficariam puxando a mesma linha eternamente.
+    cursor.execute("""
+        CREATE OR REPLACE FUNCTION set_updated_at()
+        RETURNS TRIGGER AS $$
+        BEGIN
+            IF current_setting('exodo.sync_mode', true) IS DISTINCT FROM 'on' THEN
+                NEW.updated_at := NOW();
+            END IF;
+            RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql;
+    """)
+
     cursor.execute("""
         SELECT table_name 
         FROM information_schema.tables 
@@ -103,6 +154,13 @@ def main():
         AND table_name NOT IN ('cache_dados', 'bridge_status', 'bridge_commands', 'exodo_sync_conflitos', 'exodo_config', 'sync_status', 'configuracoes_locais', 'sync_logs')
     """)
     tabelas = [row[0] for row in cursor.fetchall()]
+
+    # Só as tabelas que TÊM a coluna updated_at recebem o trigger de carimbo.
+    cursor.execute("""
+        SELECT table_name FROM information_schema.columns
+        WHERE table_schema = 'public' AND column_name = 'updated_at'
+    """)
+    tabelas_com_updated_at = {row[0] for row in cursor.fetchall()}
 
     print(f"[*] Encontradas {len(tabelas)} tabelas. Configurando triggers isolados...")
 
@@ -124,6 +182,16 @@ def main():
             FOR EACH ROW
             EXECUTE FUNCTION log_sync_event();
         """)
+
+        # Carimbo de updated_at (usado pela LAN para detectar mudancas).
+        if tabela in tabelas_com_updated_at:
+            cursor.execute(f"""
+                DROP TRIGGER IF EXISTS trg_exodo_set_updated_at_{tabela} ON "{tabela}";
+                CREATE TRIGGER trg_exodo_set_updated_at_{tabela}
+                BEFORE UPDATE ON "{tabela}"
+                FOR EACH ROW
+                EXECUTE FUNCTION set_updated_at();
+            """)
 
     print("[+] Configuracao concluida! O banco local esta com a fila de sincronizacao ativa.")
 

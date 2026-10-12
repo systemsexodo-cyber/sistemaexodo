@@ -906,10 +906,12 @@ class NFCeBackendService extends NFCeServiceBase {
       final data = jsonDecode(response.body) as Map<String, dynamic>;
 
       if (data['success'] == true) {
-        // Atualizar status no Supabase
-        _atualizarStatusSupabase(nfce.id, 'cancelada').catchError(
-          (e) => debugPrint('>>> [NFCeLocal] Erro ao cancelar no Supabase: $e'),
-        );
+        // Atualizar status no Supabase (somente com nuvem ativa)
+        if (empresa.nuvemAtiva) {
+          _atualizarStatusSupabase(nfce.id, 'cancelada').catchError(
+            (e) => debugPrint('>>> [NFCeLocal] Erro ao cancelar no Supabase: $e'),
+          );
+        }
         // Atualizar status no PostgreSQL
         _atualizarStatusPostgres(nfce.id, 'cancelada').catchError(
           (e) => debugPrint('>>> [NFCeLocal] Erro ao cancelar no PostgreSQL: $e'),
@@ -984,9 +986,11 @@ class NFCeBackendService extends NFCeServiceBase {
       final sucesso = data['success'] == true;
 
       if (sucesso) {
-        _atualizarStatusSupabase(nfce.id, 'inutilizada').catchError(
-          (e) => debugPrint('>>> [NFCeLocal] Erro ao inutilizar no Supabase: $e'),
-        );
+        if (empresa.nuvemAtiva) {
+          _atualizarStatusSupabase(nfce.id, 'inutilizada').catchError(
+            (e) => debugPrint('>>> [NFCeLocal] Erro ao inutilizar no Supabase: $e'),
+          );
+        }
         _atualizarStatusPostgres(nfce.id, 'inutilizada').catchError(
           (e) => debugPrint('>>> [NFCeLocal] Erro ao inutilizar no PostgreSQL: $e'),
         );
@@ -1013,10 +1017,14 @@ class NFCeBackendService extends NFCeServiceBase {
   /// Salva a NFC-e emitida no Supabase e no PostgreSQL local.
   /// Roda em background - não bloqueia a UI.
   void _salvarNosbancos(NFCe nfce, Empresa empresa) {
-    // 1. Supabase
-    _salvarNoSupabase(nfce).catchError(
-      (e) => debugPrint('>>> [NFCeLocal] Falha ao salvar no Supabase: $e'),
-    );
+    // 1. Supabase (somente se nuvem ativa para esta empresa)
+    if (empresa.nuvemAtiva) {
+      _salvarNoSupabase(nfce).catchError(
+        (e) => debugPrint('>>> [NFCeLocal] Falha ao salvar no Supabase: $e'),
+      );
+    } else {
+      debugPrint('>>> [NFCeLocal] ☁️⛔ Nuvem desativada — NFC-e não enviada ao Supabase.');
+    }
 
     // 2. PostgreSQL
     _salvarNoPostgres(nfce).catchError(

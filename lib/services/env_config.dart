@@ -10,19 +10,66 @@ class EnvConfig {
     return _cachedEnv!;
   }
 
+  /// Arquivo `.env` em uso neste computador (null quando não existe em
+  /// nenhum dos locais procurados).
+  ///
+  /// É por aqui que o app GRAVA configurações que o sincronizador de bandeja
+  /// também precisa ler — as duas partes leem o mesmo `.env`.
+  static File? get arquivoEnv => _acharArquivoEnv();
+
+  /// Esquece o que foi lido: a próxima consulta lê o `.env` do disco de novo.
+  ///
+  /// Necessário depois de gravar no `.env` pela tela de configuração, senão o
+  /// app continuaria usando os valores antigos até ser reiniciado.
+  static void recarregar() {
+    _cachedEnv = null;
+  }
+
+  /// Procura o `.env` onde ele realmente costuma estar.
+  ///
+  /// Além da pasta atual e da pasta do executável, sobe alguns níveis a partir
+  /// das duas (o app rodando de `build\windows\x64\runner\Debug` — comum ao
+  /// abrir o executável compilado direto ou por atalho — achava `.env` só lá, não
+  /// achava e caía nas credenciais PADRÃO). Com a senha errada o PostgreSQL local
+  /// recusa a conexão em SILÊNCIO (a leitura devolve lista vazia) e o sistema só
+  /// mostra dados depois de sincronizar com a nuvem.
+  static File? _acharArquivoEnv() {
+    final candidatos = <String>[];
+    void adicionarComPais(String caminho) {
+      var dir = Directory(caminho);
+      for (var nivel = 0; nivel < 5; nivel++) {
+        candidatos.add('${dir.path}${Platform.pathSeparator}.env');
+        final pai = dir.parent;
+        if (pai.path == dir.path) break;
+        dir = pai;
+      }
+    }
+
+    try {
+      adicionarComPais(Directory.current.path);
+    } catch (_) {}
+    if (!kIsWeb) {
+      try {
+        adicionarComPais(File(Platform.resolvedExecutable).parent.path);
+      } catch (_) {}
+    }
+
+    for (final caminho in candidatos) {
+      final arquivo = File(caminho);
+      if (arquivo.existsSync()) return arquivo;
+    }
+    return null;
+  }
+
   static Map<String, String> _loadEnv() {
     final values = <String, String>{};
     try {
-      var file = File('.env');
-      
-      if (!file.existsSync() && !kIsWeb) {
-        try {
-          final exeDir = File(Platform.resolvedExecutable).parent;
-          final fallbackFile = File('${exeDir.path}${Platform.pathSeparator}.env');
-          if (fallbackFile.existsSync()) {
-            file = fallbackFile;
-          }
-        } catch (_) {}
+      final file = _acharArquivoEnv();
+      if (file == null) {
+        debugPrint('>>> [EnvConfig] ⚠️ Arquivo .env não encontrado a partir de '
+            '${Directory.current.path} nem da pasta do programa. Usando os '
+            'valores padrão (o banco local NÃO vai conectar com eles).');
+        return values;
       }
 
       if (file.existsSync()) {
@@ -42,9 +89,8 @@ class EnvConfig {
           }
           values[key] = val;
         }
-        debugPrint('>>> [EnvConfig] ✅ Arquivo .env carregado com sucesso (${values.length} variáveis)');
-      } else {
-        debugPrint('>>> [EnvConfig] ⚠️ Arquivo .env não encontrado no diretório atual (${Directory.current.path})');
+        debugPrint('>>> [EnvConfig] ✅ Arquivo .env carregado de ${file.path} '
+            '(${values.length} variáveis)');
       }
     } catch (e) {
       debugPrint('>>> [EnvConfig] ❌ Erro ao ler arquivo .env: $e');

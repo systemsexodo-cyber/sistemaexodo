@@ -233,6 +233,8 @@ CREATE TABLE IF NOT EXISTS lotes_produto (
     numero_lote TEXT,
     fornecedor_id TEXT,
     fornecedor_nome TEXT,
+    estoque_id TEXT,
+    estoque_nome TEXT,
     data_fabricacao TIMESTAMP WITH TIME ZONE,
     data_validade TIMESTAMP WITH TIME ZONE,
     quantidade NUMERIC DEFAULT 0,
@@ -241,9 +243,11 @@ CREATE TABLE IF NOT EXISTS lotes_produto (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Lote atrelado ao fornecedor: colunas em tabelas já existentes
+-- Lote atrelado ao fornecedor e ao depósito: colunas em tabelas já existentes
 ALTER TABLE lotes_produto ADD COLUMN IF NOT EXISTS fornecedor_id TEXT;
 ALTER TABLE lotes_produto ADD COLUMN IF NOT EXISTS fornecedor_nome TEXT;
+ALTER TABLE lotes_produto ADD COLUMN IF NOT EXISTS estoque_id TEXT;
+ALTER TABLE lotes_produto ADD COLUMN IF NOT EXISTS estoque_nome TEXT;
 
 -- Índices para consulta rápida de validade/vencimento
 CREATE INDEX IF NOT EXISTS idx_lotes_produto_produto_id ON lotes_produto(produto_id);

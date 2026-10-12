@@ -29,6 +29,9 @@ bool FlutterWindow::OnCreate() {
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
     this->Show();
+    // Abre o sistema MAXIMIZADO já no primeiro frame: o operador não precisa
+    // clicar em maximizar toda vez que inicia o Exodo.
+    ::ShowWindow(this->GetHandle(), SW_MAXIMIZE);
   });
 
   // Flutter can complete the first frame before the "show window" callback is

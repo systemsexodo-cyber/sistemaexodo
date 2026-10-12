@@ -15,6 +15,7 @@ import '../services/windows_certificate_service.dart';
 import '../models/empresa.dart';
 import '../models/tela_sistema.dart';
 import '../models/forma_pagamento.dart';
+import '../models/forma_pagamento_custom.dart';
 import '../theme.dart';
 import '../services/data_service.dart';
 import '../services/whatsapp_service.dart';
@@ -38,7 +39,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
   final _inscricaoEstadualController = TextEditingController();
   final _inscricaoMunicipalController = TextEditingController();
   final _emailController = TextEditingController();
-  
+
   int? _crt; // Código de Regime Tributário
   final _telefoneController = TextEditingController();
   final _celularController = TextEditingController();
@@ -51,7 +52,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
   final _estadoController = TextEditingController();
   final _cepController = TextEditingController();
   final _codigoIBGEController = TextEditingController();
-  
+
   // Campos NFC-e
   final _senhaCertificadoController = TextEditingController();
   final _cscController = TextEditingController();
@@ -59,20 +60,25 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
   final _serieNFCeController = TextEditingController();
   String? _certificadoDigitalUrl;
   String? _certificadoDigitalNome;
-  String? _certificadoDigitalBytes; // Bytes em base64 (fallback se não conseguir salvar arquivo)
+  String?
+  _certificadoDigitalBytes; // Bytes em base64 (fallback se não conseguir salvar arquivo)
   String? _certificadoWindowsThumbprint; // Thumbprint do certificado do Windows
-  final _ultimoNumeroNFCeController = TextEditingController(); // Novo: controle de numeração
+  final _ultimoNumeroNFCeController =
+      TextEditingController(); // Novo: controle de numeração
   bool _ambienteHomologacao = true; // Padrão: homologação
-  final _bridgeNfceUrlController = TextEditingController(text: 'http://localhost:8000');
+  final _bridgeNfceUrlController = TextEditingController(
+    text: 'http://localhost:8000',
+  );
 
   final _bridgeNfceKeyController = TextEditingController();
-  
+
   // Fiscal / Contabilidade
   final _emailContabilidadeController = TextEditingController();
   bool _envioFiscalAutomatico = false;
+  bool _nuvemAtiva = true;
   bool _incluirTaxaEntregaNfce = true;
   bool _incluirServicoGarcomNfce = true;
-  
+
   // Customizações de Impressão NFC-e
 
   final _nfceMargemEsquerdaController = TextEditingController(text: '5.0');
@@ -89,15 +95,15 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
   final _comandaFonteCorpoController = TextEditingController(text: '9.0');
   final _comandaFonteStatusController = TextEditingController(text: '8.0');
   bool _comandaNegrito = true;
-  bool _mostrarEnderecoCupom = true; // Exibir endereco de entrega no cupom nao fiscal
+  bool _mostrarEnderecoCupom =
+      true; // Exibir endereco de entrega no cupom nao fiscal
   // Janela de seleção de impressora (estilo Windows) antes de imprimir
   bool _mostrarDialogoImpressora = false;
   String _impressoraSelecionada = ''; // Última impressora escolhida (padrão)
 
-  
   Color _corPrimaria = Colors.blueAccent;
   Color _corSecundaria = Colors.blue;
-  
+
   // Controle de acesso às telas
   Set<String> _telasPermitidas = {}; // Vazio = todas permitidas
 
@@ -107,11 +113,14 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
   final _whatsappInstanceNameController = TextEditingController();
   bool _whatsappAtivo = false;
   Map<String, Map<String, dynamic>> _pagamentosConfig = {};
+  List<FormaPagamentoCustom> _formasPagamentoCustom = [];
   List<String> _perfisDePreco = [];
   List<Map<String, dynamic>> _configPerfisPreco = [];
   final _novoPerfilController = TextEditingController();
   String _whatsappTipo = 'evolution'; // 'evolution' ou 'twilio'
   bool _moduloPet = false;
+  // Reserva de estoque em pedidos de venda (configuração da empresa).
+  bool _reservarEstoquePedidos = false;
   String? _whatsappConnectionState; // 'open', 'close', ou null
   bool _whatsappTestando = false;
 
@@ -152,60 +161,96 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
     _estadoController.text = empresa.estado ?? '';
     _cepController.text = empresa.cep ?? '';
     _codigoIBGEController.text = empresa.codigoIBGE ?? '';
-    
+
     // Campos NFC-e
     _certificadoDigitalUrl = empresa.certificadoDigitalUrl;
-    _certificadoDigitalBytes = empresa.configuracoes?['certificadoDigitalBytes'] as String?;
-    _certificadoWindowsThumbprint = empresa.configuracoes?['certificadoWindowsThumbprint'] as String?;
-    
+    _certificadoDigitalBytes =
+        empresa.configuracoes?['certificadoDigitalBytes'] as String?;
+    _certificadoWindowsThumbprint =
+        empresa.configuracoes?['certificadoWindowsThumbprint'] as String?;
+
     debugPrint('>>> [AdicionarEmpresa] Carregando certificado da empresa:');
-    debugPrint('>>> [AdicionarEmpresa]   certificadoDigitalUrl: $_certificadoDigitalUrl');
-    debugPrint('>>> [AdicionarEmpresa]   certificadoDigitalBytes: ${_certificadoDigitalBytes != null ? "presente (${_certificadoDigitalBytes!.length} chars)" : "null"}');
-    debugPrint('>>> [AdicionarEmpresa]   certificadoWindowsThumbprint: $_certificadoWindowsThumbprint');
-    
+    debugPrint(
+      '>>> [AdicionarEmpresa]   certificadoDigitalUrl: $_certificadoDigitalUrl',
+    );
+    debugPrint(
+      '>>> [AdicionarEmpresa]   certificadoDigitalBytes: ${_certificadoDigitalBytes != null ? "presente (${_certificadoDigitalBytes!.length} chars)" : "null"}',
+    );
+    debugPrint(
+      '>>> [AdicionarEmpresa]   certificadoWindowsThumbprint: $_certificadoWindowsThumbprint',
+    );
+
     // Determinar nome do certificado
     if (_certificadoWindowsThumbprint != null) {
       // Se tem thumbprint do Windows, tentar buscar o subject do certificado
-      _certificadoDigitalNome = empresa.configuracoes?['certificadoWindowsSubject'] as String? ?? 'Certificado do Windows';
-      debugPrint('>>> [AdicionarEmpresa] Certificado do Windows carregado: $_certificadoDigitalNome');
+      _certificadoDigitalNome =
+          empresa.configuracoes?['certificadoWindowsSubject'] as String? ??
+          'Certificado do Windows';
+      debugPrint(
+        '>>> [AdicionarEmpresa] Certificado do Windows carregado: $_certificadoDigitalNome',
+      );
     } else if (_certificadoDigitalUrl != null) {
-      _certificadoDigitalNome = _certificadoDigitalUrl!.split('/').last
+      _certificadoDigitalNome = _certificadoDigitalUrl!
+          .split('/')
+          .last
           .replaceAll('base64:', '')
           .replaceAll('base64:pem:', '')
           .replaceAll('windows:pem:', '');
-      debugPrint('>>> [AdicionarEmpresa] Certificado de arquivo carregado: $_certificadoDigitalNome');
+      debugPrint(
+        '>>> [AdicionarEmpresa] Certificado de arquivo carregado: $_certificadoDigitalNome',
+      );
     } else {
       _certificadoDigitalNome = null;
       debugPrint('>>> [AdicionarEmpresa] Nenhum certificado encontrado');
     }
-    
+
     _senhaCertificadoController.text = empresa.senhaCertificado ?? '';
     _cscController.text = empresa.csc ?? '';
     _cscIdTokenController.text = empresa.cscIdToken ?? '';
     _serieNFCeController.text = empresa.serieNFCe ?? '1';
     _ambienteHomologacao = empresa.ambienteHomologacao ?? true;
-    _ultimoNumeroNFCeController.text = empresa.configuracoes?['ultimo_numero_nfce']?.toString() ?? '';
+    _ultimoNumeroNFCeController.text =
+        empresa.configuracoes?['ultimo_numero_nfce']?.toString() ?? '';
 
-    _bridgeNfceUrlController.text = empresa.configuracoes?['bridgeNfceUrl'] as String? ?? 'http://localhost:8000';
-    _bridgeNfceKeyController.text = empresa.configuracoes?['bridgeNfceKey'] as String? ?? '';
+    _bridgeNfceUrlController.text =
+        empresa.configuracoes?['bridgeNfceUrl'] as String? ??
+        'http://localhost:8000';
+    _bridgeNfceKeyController.text =
+        empresa.configuracoes?['bridgeNfceKey'] as String? ?? '';
 
-    _nfceMargemEsquerdaController.text = empresa.configuracoes?['nfceMargemEsquerda']?.toString() ?? '5.0';
-    _nfceLarguraBobinaController.text = empresa.configuracoes?['nfceLarguraBobina']?.toString() ?? '80.0';
-    _nfceMargemDireitaController.text = empresa.configuracoes?['nfceMargemDireita']?.toString() ?? '15.0';
-    _nfceFonteEscalaController.text = empresa.configuracoes?['nfceFonteEscala']?.toString() ?? '1.0';
-    _comandaMargemEsqController.text = empresa.configuracoes?['comandaMargemEsq']?.toString() ?? 
-                                       empresa.configuracoes?['comandaMargemH']?.toString() ?? '10.0';
-    _comandaMargemDirController.text = empresa.configuracoes?['comandaMargemDir']?.toString() ?? 
-                                       empresa.configuracoes?['comandaMargemH']?.toString() ?? '15.0';
-    _comandaMargemVController.text = empresa.configuracoes?['comandaMargemV']?.toString() ?? '10.0';
-    _comandaLarguraBobinaController.text = empresa.configuracoes?['comandaLarguraBobina']?.toString() ?? '80.0';
-    _comandaFonteTituloController.text = empresa.configuracoes?['comandaFonteTitulo']?.toString() ?? '14.0';
-    _comandaFonteCorpoController.text = empresa.configuracoes?['comandaFonteCorpo']?.toString() ?? '9.0';
-    _comandaFonteStatusController.text = empresa.configuracoes?['comandaFonteStatus']?.toString() ?? '8.0';
+    _nfceMargemEsquerdaController.text =
+        empresa.configuracoes?['nfceMargemEsquerda']?.toString() ?? '5.0';
+    _nfceLarguraBobinaController.text =
+        empresa.configuracoes?['nfceLarguraBobina']?.toString() ?? '80.0';
+    _nfceMargemDireitaController.text =
+        empresa.configuracoes?['nfceMargemDireita']?.toString() ?? '15.0';
+    _nfceFonteEscalaController.text =
+        empresa.configuracoes?['nfceFonteEscala']?.toString() ?? '1.0';
+    _comandaMargemEsqController.text =
+        empresa.configuracoes?['comandaMargemEsq']?.toString() ??
+        empresa.configuracoes?['comandaMargemH']?.toString() ??
+        '10.0';
+    _comandaMargemDirController.text =
+        empresa.configuracoes?['comandaMargemDir']?.toString() ??
+        empresa.configuracoes?['comandaMargemH']?.toString() ??
+        '15.0';
+    _comandaMargemVController.text =
+        empresa.configuracoes?['comandaMargemV']?.toString() ?? '10.0';
+    _comandaLarguraBobinaController.text =
+        empresa.configuracoes?['comandaLarguraBobina']?.toString() ?? '80.0';
+    _comandaFonteTituloController.text =
+        empresa.configuracoes?['comandaFonteTitulo']?.toString() ?? '14.0';
+    _comandaFonteCorpoController.text =
+        empresa.configuracoes?['comandaFonteCorpo']?.toString() ?? '9.0';
+    _comandaFonteStatusController.text =
+        empresa.configuracoes?['comandaFonteStatus']?.toString() ?? '8.0';
     _comandaNegrito = empresa.configuracoes?['comandaNegrito'] ?? true;
-    _mostrarEnderecoCupom = empresa.configuracoes?['mostrarEnderecoCupom'] ?? true;
-    _mostrarDialogoImpressora = empresa.configuracoes?['mostrarDialogoImpressora'] ?? false;
-    _impressoraSelecionada = (empresa.configuracoes?['impressoraSelecionada'] as String?) ?? '';
+    _mostrarEnderecoCupom =
+        empresa.configuracoes?['mostrarEnderecoCupom'] ?? true;
+    _mostrarDialogoImpressora =
+        empresa.configuracoes?['mostrarDialogoImpressora'] ?? false;
+    _impressoraSelecionada =
+        (empresa.configuracoes?['impressoraSelecionada'] as String?) ?? '';
     if (_impressoraSelecionada.isEmpty) {
       ImpressaoService.getUltimaImpressora(empresaId: empresa.id).then((val) {
         if (val != null && val.isNotEmpty && mounted) {
@@ -214,7 +259,6 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
       });
     }
 
-    
     // Converter cores hex para Color
     if (empresa.corPrimaria != null && empresa.corPrimaria!.isNotEmpty) {
       _corPrimaria = _hexToColor(empresa.corPrimaria!) ?? Colors.blueAccent;
@@ -222,12 +266,12 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
     if (empresa.corSecundaria != null && empresa.corSecundaria!.isNotEmpty) {
       _corSecundaria = _hexToColor(empresa.corSecundaria!) ?? Colors.blue;
     }
-    
+
     // Carregar telas permitidas
     _telasPermitidas = empresa.telasPermitidas != null
         ? Set<String>.from(empresa.telasPermitidas!)
         : <String>{}; // Vazio = todas permitidas
-    
+
     // Campos WhatsApp
     _whatsappApiUrlController.text = empresa.whatsappApiUrl ?? '';
     _whatsappApiKeyController.text = empresa.whatsappApiKey ?? '';
@@ -235,51 +279,70 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
     _whatsappAtivo = empresa.whatsappAtivo;
     _whatsappTipo = empresa.whatsappTipo ?? 'evolution';
     _moduloPet = empresa.moduloPet;
+    _reservarEstoquePedidos =
+        empresa.configuracoes?['reservar_estoque_pedidos'] == true;
     _perfisDePreco = List.from(empresa.perfisDePreco);
-    
+
     if (empresa.configuracoes?['perfis_preco'] != null) {
       _configPerfisPreco = List<Map<String, dynamic>>.from(
-        (empresa.configuracoes!['perfis_preco'] as List).map((e) => Map<String, dynamic>.from(e as Map))
+        (empresa.configuracoes!['perfis_preco'] as List).map(
+          (e) => Map<String, dynamic>.from(e as Map),
+        ),
       );
       // Força a sincronização dos nomes
-      _perfisDePreco = _configPerfisPreco.map((c) => c['nome'] as String).toList();
+      _perfisDePreco = _configPerfisPreco
+          .map((c) => c['nome'] as String)
+          .toList();
     } else {
       // Retrocompatibilidade
-      _configPerfisPreco = _perfisDePreco.map((p) => <String, dynamic>{
-        'nome': p,
-        'tipo': 'fixo',
-        'valor': 0.0,
-      }).toList();
+      _configPerfisPreco = _perfisDePreco
+          .map(
+            (p) => <String, dynamic>{'nome': p, 'tipo': 'fixo', 'valor': 0.0},
+          )
+          .toList();
     }
-    
+
     // Fiscal / Contabilidade
     _emailContabilidadeController.text = empresa.emailContabilidade ?? '';
     _envioFiscalAutomatico = empresa.envioFiscalAutomatico;
+    _nuvemAtiva = empresa.nuvemAtiva;
     _incluirTaxaEntregaNfce = empresa.incluirTaxaEntregaNfce;
     _incluirServicoGarcomNfce = empresa.incluirServicoGarcomNfce;
-    
+
     // Configurações de visibilidade dos botões do PDV
-    _mostrarBotaoCliente = empresa.configuracoes?['mostrarBotaoCliente'] ?? true;
-    _mostrarBotaoVendedor = empresa.configuracoes?['mostrarBotaoVendedor'] ?? true;
-    _mostrarBotaoEntregas = empresa.configuracoes?['mostrarBotaoEntregas'] ?? true;
-    _mostrarBotaoHistorico = empresa.configuracoes?['mostrarBotaoHistorico'] ?? true;
-    _mostrarBotaoCentral = empresa.configuracoes?['mostrarBotaoCentral'] ?? true;
-    _mostrarBotaoDespesa = empresa.configuracoes?['mostrarBotaoDespesa'] ?? true;
-    
+    _mostrarBotaoCliente =
+        empresa.configuracoes?['mostrarBotaoCliente'] ?? true;
+    _mostrarBotaoVendedor =
+        empresa.configuracoes?['mostrarBotaoVendedor'] ?? true;
+    _mostrarBotaoEntregas =
+        empresa.configuracoes?['mostrarBotaoEntregas'] ?? true;
+    _mostrarBotaoHistorico =
+        empresa.configuracoes?['mostrarBotaoHistorico'] ?? true;
+    _mostrarBotaoCentral =
+        empresa.configuracoes?['mostrarBotaoCentral'] ?? true;
+    _mostrarBotaoDespesa =
+        empresa.configuracoes?['mostrarBotaoDespesa'] ?? true;
+
     // Configurações de Senha do Administrador e Segurança
     _senhaAdminController.text = empresa.configuracoes?['senha_admin'] ?? '';
-    _exigirSenhaAlterarPedido = empresa.configuracoes?['exigir_senha_alterar_pedido'] ?? false;
-    _exigirSenhaCancelarPedido = empresa.configuracoes?['exigir_senha_cancelar_pedido'] ?? false;
+    _exigirSenhaAlterarPedido =
+        empresa.configuracoes?['exigir_senha_alterar_pedido'] ?? false;
+    _exigirSenhaCancelarPedido =
+        empresa.configuracoes?['exigir_senha_cancelar_pedido'] ?? false;
 
     if (empresa.configuracoes?['pagamentos'] != null) {
       _pagamentosConfig = Map<String, Map<String, dynamic>>.from(
         (empresa.configuracoes!['pagamentos'] as Map).map(
-          (key, value) => MapEntry(key.toString(), Map<String, dynamic>.from(value as Map)),
+          (key, value) =>
+              MapEntry(key.toString(), Map<String, dynamic>.from(value as Map)),
         ),
       );
     } else {
       _pagamentosConfig = {};
     }
+
+    // Cópia growable: a tela adiciona/remove formas nesta lista.
+    _formasPagamentoCustom = List.of(empresa.formasPagamentoCustom);
   }
 
   // Senha do Administrador e Segurança
@@ -342,159 +405,225 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
 
       debugPrint('>>> [AdicionarEmpresa] Criando objeto Empresa...');
       final empresa = Empresa(
-      id: widget.empresa?.id ?? const Uuid().v4(),
-      razaoSocial: _razaoSocialController.text.trim(),
-      slug: Empresa.gerarSlug(_nomeFantasiaController.text.trim().isNotEmpty 
-          ? _nomeFantasiaController.text.trim() 
-          : _razaoSocialController.text.trim()),
-      nomeFantasia: _nomeFantasiaController.text.trim().isEmpty
-          ? null
-          : _nomeFantasiaController.text.trim(),
-      cnpj: _cnpjController.text.trim().isEmpty
-          ? null
-          : _cnpjController.text.trim(),
-      inscricaoEstadual: _inscricaoEstadualController.text.trim().isEmpty
-          ? null
-          : _inscricaoEstadualController.text.trim(),
-      inscricaoMunicipal: _inscricaoMunicipalController.text.trim().isEmpty
-          ? null
-          : _inscricaoMunicipalController.text.trim(),
-      crt: _crt,
-      email: _emailController.text.trim().isEmpty
-          ? null
-          : _emailController.text.trim(),
-      telefone: _telefoneController.text.trim().isEmpty
-          ? null
-          : _telefoneController.text.trim(),
-      celular: _celularController.text.trim().isEmpty
-          ? null
-          : _celularController.text.trim(),
-      site: _siteController.text.trim().isEmpty
-          ? null
-          : _siteController.text.trim(),
-      endereco: _enderecoController.text.trim().isEmpty
-          ? null
-          : _enderecoController.text.trim(),
-      numero: _numeroController.text.trim().isEmpty
-          ? null
-          : _numeroController.text.trim(),
-      complemento: _complementoController.text.trim().isEmpty
-          ? null
-          : _complementoController.text.trim(),
-      bairro: _bairroController.text.trim().isEmpty
-          ? null
-          : _bairroController.text.trim(),
-      cidade: _cidadeController.text.trim().isEmpty
-          ? null
-          : _cidadeController.text.trim(),
-      estado: _estadoController.text.trim().isEmpty
-          ? null
-          : _estadoController.text.trim(),
-      cep: _cepController.text.trim().isEmpty
-          ? null
-          : _cepController.text.trim(),
-      codigoIBGE: _codigoIBGEController.text.trim().isEmpty
-          ? null
-          : _codigoIBGEController.text.trim(),
-      corPrimaria: _colorToHex(_corPrimaria),
-      corSecundaria: _colorToHex(_corSecundaria),
-      ativo: widget.empresa?.ativo ?? true,
-      createdAt: widget.empresa?.createdAt ?? agora,
-      updatedAt: agora,
-      certificadoDigitalUrl: _certificadoDigitalUrl,
-      senhaCertificado: _senhaCertificadoController.text.trim().isEmpty
-          ? null
-          : _senhaCertificadoController.text.trim(),
-      csc: _cscController.text.trim().isEmpty
-          ? null
-          : _cscController.text.trim(),
-      cscIdToken: _cscIdTokenController.text.trim().isEmpty
-          ? null
-          : _cscIdTokenController.text.trim(),
-      serieNFCe: _serieNFCeController.text.trim().isEmpty
-          ? '1'
-          : _serieNFCeController.text.trim(),
-      ambienteHomologacao: _ambienteHomologacao,
-      telasPermitidas: _telasPermitidas.isEmpty ? null : _telasPermitidas,
-      perfisDePreco: _perfisDePreco,
-      whatsappApiUrl: _whatsappApiUrlController.text.trim().isEmpty
-          ? null
-          : _whatsappApiUrlController.text.trim(),
-      whatsappApiKey: _whatsappApiKeyController.text.trim().isEmpty
-          ? null
-          : _whatsappApiKeyController.text.trim(),
-      whatsappInstanceName: _whatsappInstanceNameController.text.trim().isEmpty
-          ? null
-          : _whatsappInstanceNameController.text.trim(),
-      whatsappTipo: _whatsappTipo,
-      whatsappAtivo: _whatsappAtivo,
-      moduloPet: _moduloPet,
-      emailContabilidade: _emailContabilidadeController.text.trim().isEmpty ? null : _emailContabilidadeController.text.trim(),
-      envioFiscalAutomatico: _envioFiscalAutomatico,
-      incluirTaxaEntregaNfce: _incluirTaxaEntregaNfce,
-      incluirServicoGarcomNfce: _incluirServicoGarcomNfce,
-      configuracoes: {
-        ...?widget.empresa?.configuracoes, // Preservar outras configurações
-        if (_crt != null) 'crt': _crt, // Código de Regime Tributário (1=Simples Nacional, 2=SN excesso, 3=Regime Normal)
-        if (_certificadoDigitalBytes != null)
-          'certificadoDigitalBytes': _certificadoDigitalBytes,
-        if (_certificadoWindowsThumbprint != null)
-          'certificadoWindowsThumbprint': _certificadoWindowsThumbprint,
-        if (_certificadoWindowsThumbprint != null && _certificadoDigitalNome != null)
-          'certificadoWindowsSubject': _certificadoDigitalNome,
-        'bridgeNfceUrl': _bridgeNfceUrlController.text.trim(),
-        'bridgeNfceKey': _bridgeNfceKeyController.text.trim(),
+        id: widget.empresa?.id ?? const Uuid().v4(),
+        razaoSocial: _razaoSocialController.text.trim(),
+        slug: Empresa.gerarSlug(
+          _nomeFantasiaController.text.trim().isNotEmpty
+              ? _nomeFantasiaController.text.trim()
+              : _razaoSocialController.text.trim(),
+        ),
+        nomeFantasia: _nomeFantasiaController.text.trim().isEmpty
+            ? null
+            : _nomeFantasiaController.text.trim(),
+        cnpj: _cnpjController.text.trim().isEmpty
+            ? null
+            : _cnpjController.text.trim(),
+        inscricaoEstadual: _inscricaoEstadualController.text.trim().isEmpty
+            ? null
+            : _inscricaoEstadualController.text.trim(),
+        inscricaoMunicipal: _inscricaoMunicipalController.text.trim().isEmpty
+            ? null
+            : _inscricaoMunicipalController.text.trim(),
+        crt: _crt,
+        email: _emailController.text.trim().isEmpty
+            ? null
+            : _emailController.text.trim(),
+        telefone: _telefoneController.text.trim().isEmpty
+            ? null
+            : _telefoneController.text.trim(),
+        celular: _celularController.text.trim().isEmpty
+            ? null
+            : _celularController.text.trim(),
+        site: _siteController.text.trim().isEmpty
+            ? null
+            : _siteController.text.trim(),
+        endereco: _enderecoController.text.trim().isEmpty
+            ? null
+            : _enderecoController.text.trim(),
+        numero: _numeroController.text.trim().isEmpty
+            ? null
+            : _numeroController.text.trim(),
+        complemento: _complementoController.text.trim().isEmpty
+            ? null
+            : _complementoController.text.trim(),
+        bairro: _bairroController.text.trim().isEmpty
+            ? null
+            : _bairroController.text.trim(),
+        cidade: _cidadeController.text.trim().isEmpty
+            ? null
+            : _cidadeController.text.trim(),
+        estado: _estadoController.text.trim().isEmpty
+            ? null
+            : _estadoController.text.trim(),
+        cep: _cepController.text.trim().isEmpty
+            ? null
+            : _cepController.text.trim(),
+        codigoIBGE: _codigoIBGEController.text.trim().isEmpty
+            ? null
+            : _codigoIBGEController.text.trim(),
+        corPrimaria: _colorToHex(_corPrimaria),
+        corSecundaria: _colorToHex(_corSecundaria),
+        ativo: widget.empresa?.ativo ?? true,
+        createdAt: widget.empresa?.createdAt ?? agora,
+        updatedAt: agora,
+        certificadoDigitalUrl: _certificadoDigitalUrl,
+        senhaCertificado: _senhaCertificadoController.text.trim().isEmpty
+            ? null
+            : _senhaCertificadoController.text.trim(),
+        csc: _cscController.text.trim().isEmpty
+            ? null
+            : _cscController.text.trim(),
+        cscIdToken: _cscIdTokenController.text.trim().isEmpty
+            ? null
+            : _cscIdTokenController.text.trim(),
+        serieNFCe: _serieNFCeController.text.trim().isEmpty
+            ? '1'
+            : _serieNFCeController.text.trim(),
+        ambienteHomologacao: _ambienteHomologacao,
+        telasPermitidas: _telasPermitidas.isEmpty ? null : _telasPermitidas,
+        perfisDePreco: _perfisDePreco,
+        whatsappApiUrl: _whatsappApiUrlController.text.trim().isEmpty
+            ? null
+            : _whatsappApiUrlController.text.trim(),
+        whatsappApiKey: _whatsappApiKeyController.text.trim().isEmpty
+            ? null
+            : _whatsappApiKeyController.text.trim(),
+        whatsappInstanceName:
+            _whatsappInstanceNameController.text.trim().isEmpty
+            ? null
+            : _whatsappInstanceNameController.text.trim(),
+        whatsappTipo: _whatsappTipo,
+        whatsappAtivo: _whatsappAtivo,
+        moduloPet: _moduloPet,
+        emailContabilidade: _emailContabilidadeController.text.trim().isEmpty
+            ? null
+            : _emailContabilidadeController.text.trim(),
+        envioFiscalAutomatico: _envioFiscalAutomatico,
+        incluirTaxaEntregaNfce: _incluirTaxaEntregaNfce,
+        incluirServicoGarcomNfce: _incluirServicoGarcomNfce,
+        configuracoes: {
+          ...?widget.empresa?.configuracoes, // Preservar outras configurações
+          if (_crt != null)
+            'crt':
+                _crt, // Código de Regime Tributário (1=Simples Nacional, 2=SN excesso, 3=Regime Normal)
+          if (_certificadoDigitalBytes != null)
+            'certificadoDigitalBytes': _certificadoDigitalBytes,
+          if (_certificadoWindowsThumbprint != null)
+            'certificadoWindowsThumbprint': _certificadoWindowsThumbprint,
+          if (_certificadoWindowsThumbprint != null &&
+              _certificadoDigitalNome != null)
+            'certificadoWindowsSubject': _certificadoDigitalNome,
+          'bridgeNfceUrl': _bridgeNfceUrlController.text.trim(),
+          'bridgeNfceKey': _bridgeNfceKeyController.text.trim(),
 
-        'nfceMargemEsquerda': double.tryParse(_nfceMargemEsquerdaController.text.trim()) ?? 5.0,
-        'nfceLarguraBobina': double.tryParse(_nfceLarguraBobinaController.text.trim()) ?? 80.0,
-        'nfceMargemDireita': double.tryParse(_nfceMargemDireitaController.text.trim()) ?? 15.0,
-        'nfceFonteEscala': double.tryParse(_nfceFonteEscalaController.text.trim()) ?? 1.0,
+          'nfceMargemEsquerda':
+              double.tryParse(_nfceMargemEsquerdaController.text.trim()) ?? 5.0,
+          'nfceLarguraBobina':
+              double.tryParse(_nfceLarguraBobinaController.text.trim()) ?? 80.0,
+          'nfceMargemDireita':
+              double.tryParse(_nfceMargemDireitaController.text.trim()) ?? 15.0,
+          'nfceFonteEscala':
+              double.tryParse(_nfceFonteEscalaController.text.trim()) ?? 1.0,
 
-        'comandaMargemEsq': double.tryParse(_comandaMargemEsqController.text.trim()) ?? 10.0,
-        'comandaMargemDir': double.tryParse(_comandaMargemDirController.text.trim()) ?? 15.0,
-        'comandaMargemV': double.tryParse(_comandaMargemVController.text.trim()) ?? 10.0,
-        'comandaLarguraBobina': double.tryParse(_comandaLarguraBobinaController.text.trim()) ?? 80.0,
-        'comandaFonteTitulo': double.tryParse(_comandaFonteTituloController.text.trim()) ?? 14.0,
-        'comandaFonteCorpo': double.tryParse(_comandaFonteCorpoController.text.trim()) ?? 9.0,
-        'comandaFonteStatus': double.tryParse(_comandaFonteStatusController.text.trim()) ?? 8.0,
-        'comandaNegrito': _comandaNegrito,
-        'mostrarEnderecoCupom': _mostrarEnderecoCupom,
-        'mostrarDialogoImpressora': _mostrarDialogoImpressora,
-        'impressoraSelecionada': _impressoraSelecionada,
+          'comandaMargemEsq':
+              double.tryParse(_comandaMargemEsqController.text.trim()) ?? 10.0,
+          'comandaMargemDir':
+              double.tryParse(_comandaMargemDirController.text.trim()) ?? 15.0,
+          'comandaMargemV':
+              double.tryParse(_comandaMargemVController.text.trim()) ?? 10.0,
+          'comandaLarguraBobina':
+              double.tryParse(_comandaLarguraBobinaController.text.trim()) ??
+              80.0,
+          'comandaFonteTitulo':
+              double.tryParse(_comandaFonteTituloController.text.trim()) ??
+              14.0,
+          'comandaFonteCorpo':
+              double.tryParse(_comandaFonteCorpoController.text.trim()) ?? 9.0,
+          'comandaFonteStatus':
+              double.tryParse(_comandaFonteStatusController.text.trim()) ?? 8.0,
+          'comandaNegrito': _comandaNegrito,
+          'mostrarEnderecoCupom': _mostrarEnderecoCupom,
+          'mostrarDialogoImpressora': _mostrarDialogoImpressora,
+          'impressoraSelecionada': _impressoraSelecionada,
 
-        'ultimo_numero_nfce': _ultimoNumeroNFCeController.text.trim().isEmpty ? null : _ultimoNumeroNFCeController.text.trim(),
-        
-        // Configurações de visibilidade dos botões do PDV
-        'mostrarBotaoCliente': _mostrarBotaoCliente,
-        'mostrarBotaoVendedor': _mostrarBotaoVendedor,
-        'mostrarBotaoEntregas': _mostrarBotaoEntregas,
-        'mostrarBotaoHistorico': _mostrarBotaoHistorico,
-        'mostrarBotaoCentral': _mostrarBotaoCentral,
-        'mostrarBotaoDespesa': _mostrarBotaoDespesa,
-        
-        // Senha do Administrador e Segurança
-        'senha_admin': _senhaAdminController.text.trim(),
-        'exigir_senha_alterar_pedido': _exigirSenhaAlterarPedido,
-        'exigir_senha_cancelar_pedido': _exigirSenhaCancelarPedido,
-        
-        'perfis_preco': _configPerfisPreco,
-        'pagamentos': _pagamentosConfig,
-      },
-    );
+          'ultimo_numero_nfce': _ultimoNumeroNFCeController.text.trim().isEmpty
+              ? null
+              : _ultimoNumeroNFCeController.text.trim(),
 
-      debugPrint('>>> [AdicionarEmpresa] Objeto Empresa criado. ID: ${empresa.id}');
+          // Configurações de visibilidade dos botões do PDV
+          'mostrarBotaoCliente': _mostrarBotaoCliente,
+          'mostrarBotaoVendedor': _mostrarBotaoVendedor,
+          'mostrarBotaoEntregas': _mostrarBotaoEntregas,
+          'mostrarBotaoHistorico': _mostrarBotaoHistorico,
+          'mostrarBotaoCentral': _mostrarBotaoCentral,
+          'mostrarBotaoDespesa': _mostrarBotaoDespesa,
+
+          // Senha do Administrador e Segurança
+          'senha_admin': _senhaAdminController.text.trim(),
+          'exigir_senha_alterar_pedido': _exigirSenhaAlterarPedido,
+          'exigir_senha_cancelar_pedido': _exigirSenhaCancelarPedido,
+          'nuvem_ativa': _nuvemAtiva,
+          'nuvemAtiva': _nuvemAtiva,
+
+          'reservar_estoque_pedidos': _reservarEstoquePedidos,
+          'perfis_preco': _configPerfisPreco,
+          'pagamentos': _pagamentosConfig,
+          'formas_pagamento_custom': _formasPagamentoCustom
+              .map((f) => f.toMap())
+              .toList(),
+        },
+      );
+
+      debugPrint(
+        '>>> [AdicionarEmpresa] Objeto Empresa criado. ID: ${empresa.id}',
+      );
       debugPrint('>>> [AdicionarEmpresa] Razão Social: ${empresa.razaoSocial}');
-      debugPrint('>>> [AdicionarEmpresa] Certificado presente: ${empresa.configuracoes?['certificadoDigitalBytes'] != null ? "SIM" : "NÃO"}');
-      
+      debugPrint(
+        '>>> [AdicionarEmpresa] Certificado presente: ${empresa.configuracoes?['certificadoDigitalBytes'] != null ? "SIM" : "NÃO"}',
+      );
+
       // =====================================================================
       // MIGRAÇÃO DE IMPOSTOS AO TROCAR O REGIME TRIBUTÁRIO
       // =====================================================================
-      final crtAnterior = widget.empresa?.configuracoes?['crt']?.toString() ?? widget.empresa?.crt?.toString();
+      final crtAnterior =
+          widget.empresa?.configuracoes?['crt']?.toString() ??
+          widget.empresa?.crt?.toString();
       final regimeAnterior = crtAnterior == '3' ? 'normal' : 'simples';
       final regimeNovo = _crt == 3 ? 'normal' : 'simples';
       // Guard: só migra se houver empresa, se o usuário escolheu um regime (_crt != null)
       // e se o regime realmente mudou.
-      final trocouRegime = widget.empresa != null && _crt != null && regimeAnterior != regimeNovo;
+      final trocouRegime =
+          widget.empresa != null &&
+          _crt != null &&
+          regimeAnterior != regimeNovo;
+
+      // A troca de regime reescreve o código fiscal dos produtos DA EMPRESA
+      // editada. Duas garantias antes de encostar em qualquer coisa:
+      //   1. o PLANO é montado só com os produtos DELA (produto de outra empresa
+      //      nunca entra na conta — era assim que a troca de regime mexia em
+      //      item de outra empresa);
+      //   2. o usuário vê os números e confirma. Sem confirmação, NADA é salvo
+      //      (nem a empresa, nem os impostos).
+      PlanoMigracaoImpostos? planoMigracao;
+      if (trocouRegime) {
+        // O mesmo plano que a migração vai executar (produtos e perfis da
+        // empresa): o que o usuário confirmar aqui é o que é gravado.
+        planoMigracao = dataService.planejarTrocaDeRegime(
+          paraSimples: regimeNovo == 'simples',
+          empresaId: widget.empresa!.id,
+        );
+        final confirmou = await _confirmarTrocaDeRegime(
+          plano: planoMigracao,
+          paraSimples: regimeNovo == 'simples',
+        );
+        if (!confirmou) {
+          debugPrint(
+            '>>> [AdicionarEmpresa] 🛡️ Troca de regime cancelada pelo '
+            'usuário: nada foi salvo.',
+          );
+          return;
+        }
+      }
 
       if (widget.empresa == null) {
         debugPrint('>>> [AdicionarEmpresa] Adicionando nova empresa...');
@@ -505,31 +634,58 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
         await authService.atualizarEmpresa(empresa);
         debugPrint('>>> [AdicionarEmpresa] ✓ Empresa atualizada com sucesso');
 
-        // Se o regime mudou, migrar os impostos de todos os produtos
-        // (CSOSN <-> CST e perfil equivalente) automaticamente.
+        // Se o regime mudou, migrar os impostos SÓ dos produtos desta empresa
+        // (CSOSN <-> CST e perfil equivalente).
         if (trocouRegime) {
-          debugPrint('>>> [AdicionarEmpresa] Regime alterado: $regimeAnterior -> $regimeNovo. Migrando impostos dos produtos...');
-          final alterados = await dataService.migrarImpostosProdutosPorRegime(
-            paraSimples: regimeNovo == 'simples',
+          debugPrint(
+            '>>> [AdicionarEmpresa] Regime alterado: $regimeAnterior -> $regimeNovo. Migrando impostos dos produtos...',
           );
-          debugPrint('>>> [AdicionarEmpresa] ✓ Migração concluída: $alterados produto(s) alterado(s)');
+          final resultado = await dataService.migrarImpostosProdutosPorRegime(
+            paraSimples: regimeNovo == 'simples',
+            empresaId: empresa.id,
+          );
+          debugPrint(
+            '>>> [AdicionarEmpresa] ✓ Migração concluída: '
+            '${resultado.convertidos} produto(s) com imposto convertidos; '
+            '${resultado.vinculadosAoPadrao} sem perfil vincularam o perfil padrão; '
+            '${resultado.preenchidos} sem imposto nenhum receberam o perfil padrão; '
+            '${resultado.deOutraEmpresa} de outra empresa ficaram intactos.',
+          );
 
           // Sincronizar o regime atualizado no DataService para que o filtro de
           // perfis e os dropdowns reflitam o novo regime imediatamente.
           dataService.setEmpresaAtual(empresa);
 
           if (mounted) {
+            final destino = resultado.deOutraEmpresa > 0
+                ? ' (${resultado.deOutraEmpresa} item(ns) de outra empresa ficaram intactos)'
+                : '';
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(
-                  'Regime alterado para ${regimeNovo == 'simples' ? 'Simples Nacional' : 'Regime Normal'}: impostos de $alterados produto(s) migrados (CSOSN ↔ CST).',
+                  'Regime alterado para ${regimeNovo == 'simples' ? 'Simples Nacional' : 'Regime Normal'}: '
+                  '${resultado.convertidos} produto(s) com imposto cadastrado foram convertidos '
+                  '(o cadastro de cada um foi respeitado); '
+                  '${resultado.vinculadosAoPadrao} sem perfil passaram a usar o perfil padrão; '
+                  '${resultado.preenchidos} sem imposto nenhum ganharam o perfil padrão; '
+                  '${resultado.semMudanca} já estavam certos$destino.',
                 ),
-                backgroundColor: Colors.orange.shade800,
+                backgroundColor: resultado.deOutraEmpresa > 0
+                    ? Colors.red.shade800
+                    : Colors.orange.shade800,
                 duration: const Duration(seconds: 6),
               ),
             );
           }
         }
+      }
+
+      // Atualiza a empresa no DataService quando é a empresa atual. Sem isso o
+      // PDV e esta própria tela (aberta a partir de dataService.empresaAtual)
+      // continuam enxergando a empresa ANTIGA e as novas configurações — formas
+      // de pagamento, taxas da maquininha etc. — parecem não ter sido salvas.
+      if (dataService.empresaAtual?.id == empresa.id) {
+        dataService.setEmpresaAtual(empresa);
       }
 
       if (mounted && fecharTela) {
@@ -568,16 +724,18 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
   Widget build(BuildContext context) {
     final authService = Provider.of<AuthService>(context);
     final usuarioAtual = authService.usuarioAtual;
-    
+
     // Verificar se o usuário é "user" (único que pode acessar configuração da empresa)
     final podeAcessar = usuarioAtual?.email.toLowerCase() == 'user';
-    
+
     if (!podeAcessar) {
       return AppTheme.appBackground(
         child: Scaffold(
           backgroundColor: Colors.transparent,
           appBar: AppBar(
-            title: Text(widget.empresa == null ? 'Adicionar Empresa' : 'Editar Empresa'),
+            title: Text(
+              widget.empresa == null ? 'Adicionar Empresa' : 'Editar Empresa',
+            ),
           ),
           body: Center(
             child: Padding(
@@ -603,10 +761,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                   Text(
                     'Apenas o usuário "user" pode acessar a configuração de empresas.',
                     textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: Colors.white70,
-                    ),
+                    style: TextStyle(fontSize: 16, color: Colors.white70),
                   ),
                 ],
               ),
@@ -615,12 +770,14 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
         ),
       );
     }
-    
+
     return AppTheme.appBackground(
       child: Scaffold(
         backgroundColor: Colors.transparent,
         appBar: AppBar(
-          title: Text(widget.empresa == null ? 'Adicionar Empresa' : 'Editar Empresa'),
+          title: Text(
+            widget.empresa == null ? 'Adicionar Empresa' : 'Editar Empresa',
+          ),
         ),
         body: Form(
           key: _formKey,
@@ -770,7 +927,8 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                 label: 'URL do Emissor Local (Bridge)',
                 icon: Icons.lan,
                 hintText: 'http://localhost:8000',
-                helperText: 'URL do emissor NFC-e rodando localmente (padrão: http://localhost:8000)',
+                helperText:
+                    'URL do emissor NFC-e rodando localmente (padrão: http://localhost:8000)',
               ),
               const SizedBox(height: 8),
               _buildTextField(
@@ -778,7 +936,8 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                 label: 'Chave de API do Emissor',
                 icon: Icons.key,
                 obscureText: true,
-                helperText: 'Chave gerada pelo executável (veja no log do bridge)',
+                helperText:
+                    'Chave gerada pelo executável (veja no log do bridge)',
               ),
               const SizedBox(height: 16),
               _buildCertificadoUpload(),
@@ -836,7 +995,8 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                 label: 'Largura da Bobina (mm)',
                 icon: Icons.print,
                 hintText: '80.0 ou 58.0',
-                helperText: 'A largura do papel da sua impressora. Geralmente 80.0 (maiorinha) ou 58.0 (pequena/maquininha).',
+                helperText:
+                    'A largura do papel da sua impressora. Geralmente 80.0 (maiorinha) ou 58.0 (pequena/maquininha).',
                 keyboardType: TextInputType.number,
               ),
               const SizedBox(height: 16),
@@ -855,7 +1015,8 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                 label: 'Série da NFC-e',
                 icon: Icons.confirmation_number,
                 hintText: 'Ex: 1',
-                helperText: 'Série da NFC-e (padrão: 1). Cada empresa deve ter sua própria série.',
+                helperText:
+                    'Série da NFC-e (padrão: 1). Cada empresa deve ter sua própria série.',
                 keyboardType: TextInputType.number,
               ),
               const SizedBox(height: 16),
@@ -864,7 +1025,8 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                 label: 'Último número da NFC-e emitido',
                 icon: Icons.numbers_rounded,
                 hintText: 'Ex: 125',
-                helperText: 'O sistema somará +1 para a próxima nota (ex: 126). Só altere se a SEFAZ estiver em um número diferente.',
+                helperText:
+                    'O sistema somará +1 para a próxima nota (ex: 126). Só altere se a SEFAZ estiver em um número diferente.',
                 keyboardType: TextInputType.number,
               ),
               const SizedBox(height: 16),
@@ -874,9 +1036,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                 decoration: BoxDecoration(
                   color: Colors.white.withOpacity(0.05),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: Colors.white.withOpacity(0.1),
-                  ),
+                  border: Border.all(color: Colors.white.withOpacity(0.1)),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -884,8 +1044,12 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                     Row(
                       children: [
                         Icon(
-                          _ambienteHomologacao ? Icons.bug_report : Icons.verified_user,
-                          color: _ambienteHomologacao ? Colors.orange : Colors.green,
+                          _ambienteHomologacao
+                              ? Icons.bug_report
+                              : Icons.verified_user,
+                          color: _ambienteHomologacao
+                              ? Colors.orange
+                              : Colors.green,
                           size: 20,
                         ),
                         const SizedBox(width: 8),
@@ -904,7 +1068,8 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                       children: [
                         Expanded(
                           child: GestureDetector(
-                            onTap: () => setState(() => _ambienteHomologacao = true),
+                            onTap: () =>
+                                setState(() => _ambienteHomologacao = true),
                             child: Container(
                               padding: const EdgeInsets.all(12),
                               decoration: BoxDecoration(
@@ -924,15 +1089,21 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                                 children: [
                                   Icon(
                                     Icons.bug_report,
-                                    color: _ambienteHomologacao ? Colors.orange : Colors.white54,
+                                    color: _ambienteHomologacao
+                                        ? Colors.orange
+                                        : Colors.white54,
                                     size: 18,
                                   ),
                                   const SizedBox(width: 8),
                                   Text(
                                     'Homologação',
                                     style: TextStyle(
-                                      color: _ambienteHomologacao ? Colors.orange : Colors.white54,
-                                      fontWeight: _ambienteHomologacao ? FontWeight.bold : FontWeight.normal,
+                                      color: _ambienteHomologacao
+                                          ? Colors.orange
+                                          : Colors.white54,
+                                      fontWeight: _ambienteHomologacao
+                                          ? FontWeight.bold
+                                          : FontWeight.normal,
                                     ),
                                   ),
                                 ],
@@ -943,7 +1114,8 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                         const SizedBox(width: 12),
                         Expanded(
                           child: GestureDetector(
-                            onTap: () => setState(() => _ambienteHomologacao = false),
+                            onTap: () =>
+                                setState(() => _ambienteHomologacao = false),
                             child: Container(
                               padding: const EdgeInsets.all(12),
                               decoration: BoxDecoration(
@@ -963,15 +1135,21 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                                 children: [
                                   Icon(
                                     Icons.verified_user,
-                                    color: !_ambienteHomologacao ? Colors.green : Colors.white54,
+                                    color: !_ambienteHomologacao
+                                        ? Colors.green
+                                        : Colors.white54,
                                     size: 18,
                                   ),
                                   const SizedBox(width: 8),
                                   Text(
                                     'Produção',
                                     style: TextStyle(
-                                      color: !_ambienteHomologacao ? Colors.green : Colors.white54,
-                                      fontWeight: !_ambienteHomologacao ? FontWeight.bold : FontWeight.normal,
+                                      color: !_ambienteHomologacao
+                                          ? Colors.green
+                                          : Colors.white54,
+                                      fontWeight: !_ambienteHomologacao
+                                          ? FontWeight.bold
+                                          : FontWeight.normal,
                                     ),
                                   ),
                                 ],
@@ -987,7 +1165,9 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                           ? '⚠️ Ambiente de testes. Use para validar antes de produção.'
                           : '✅ Ambiente de produção. NFC-e emitidas terão validade fiscal.',
                       style: TextStyle(
-                        color: _ambienteHomologacao ? Colors.orange.shade300 : Colors.green.shade300,
+                        color: _ambienteHomologacao
+                            ? Colors.orange.shade300
+                            : Colors.green.shade300,
                         fontSize: 12,
                       ),
                     ),
@@ -997,16 +1177,81 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
 
               const SizedBox(height: 24),
               _buildSectionTitle('Fiscal / Contabilidade'),
+              SwitchListTile(
+                title: const Text(
+                  'Nuvem temporariamente ativa',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                subtitle: const Text(
+                  'Desativa a sincronização de dados desta empresa. As alterações ficam no PostgreSQL local e entram na fila para envio quando reativada.',
+                  style: TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+                value: _nuvemAtiva,
+                onChanged: (bool value) {
+                  setState(() {
+                    _nuvemAtiva = value;
+                  });
+                },
+                activeColor: Colors.cyan,
+                secondary: const Icon(Icons.cloud_done, color: Colors.cyan),
+                contentPadding: EdgeInsets.zero,
+              ),
+              const SizedBox(height: 8),
+              // Botão explícito de Modo Sem Nuvem
+              Align(
+                alignment: Alignment.centerLeft,
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _nuvemAtiva
+                        ? Colors.grey.shade800
+                        : Colors.red.shade700,
+                    foregroundColor: Colors.white,
+                  ),
+                  icon: Icon(_nuvemAtiva ? Icons.cloud_off : Icons.cloud_off_outlined),
+                  label: Text(
+                    _nuvemAtiva
+                        ? 'Ativar Modo Sem Nuvem (somente local)'
+                        : 'Modo Sem Nuvem ATIVO — toque para reativar a nuvem',
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      _nuvemAtiva = !_nuvemAtiva;
+                    });
+                  },
+                ),
+              ),
+              if (!_nuvemAtiva)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    '☁️⛔ Modo sem nuvem ativo: dados e certificado ficam apenas no PostgreSQL local. Nada é enviado ao Supabase.',
+                    style: TextStyle(color: Colors.orange.shade300, fontSize: 12),
+                  ),
+                ),
+              const SizedBox(height: 8),
               _buildTextField(
                 controller: _emailContabilidadeController,
                 label: 'E-mail do Contador (Contabilidade)',
                 icon: Icons.alternate_email,
                 hintText: 'exemplo@contabilidade.com.br',
-                helperText: 'E-mail para onde os XMLs e relatórios serão enviados.',
+                helperText:
+                    'E-mail para onde os XMLs e relatórios serão enviados.',
               ),
               SwitchListTile(
-                title: const Text('Envio Fiscal Automático', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                subtitle: const Text('Enviar arquivos no dia 1 de cada mês automaticamente ao abrir o sistema.', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                title: const Text(
+                  'Envio Fiscal Automático',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                subtitle: const Text(
+                  'Enviar arquivos no dia 1 de cada mês automaticamente ao abrir o sistema.',
+                  style: TextStyle(color: Colors.white70, fontSize: 12),
+                ),
                 value: _envioFiscalAutomatico,
                 onChanged: (bool value) {
                   setState(() {
@@ -1020,8 +1265,17 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
               const SizedBox(height: 8),
               _buildSectionTitle('Emissão Fiscal (NFC-e / NF-e)'),
               SwitchListTile(
-                title: const Text('Incluir Taxa de Entrega na NFC-e', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                subtitle: const Text('Se ativo, a taxa de entrega será somada ao valor total da nota fiscal. Se desativo, a taxa fica apenas no cupom.', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                title: const Text(
+                  'Incluir Taxa de Entrega na NFC-e',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                subtitle: const Text(
+                  'Se ativo, a taxa de entrega será somada ao valor total da nota fiscal. Se desativo, a taxa fica apenas no cupom.',
+                  style: TextStyle(color: Colors.white70, fontSize: 12),
+                ),
                 value: _incluirTaxaEntregaNfce,
                 onChanged: (bool value) {
                   setState(() {
@@ -1029,12 +1283,24 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                   });
                 },
                 activeColor: Colors.greenAccent,
-                secondary: const Icon(Icons.delivery_dining, color: Colors.greenAccent),
+                secondary: const Icon(
+                  Icons.delivery_dining,
+                  color: Colors.greenAccent,
+                ),
                 contentPadding: EdgeInsets.zero,
               ),
               SwitchListTile(
-                title: const Text('Incluir Serviço do Garçom (10%) na NFC-e', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                subtitle: const Text('Se ativo, a taxa de serviço (garçom) será somada ao valor total da nota fiscal. Se desativo, fica apenas no cupom.', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                title: const Text(
+                  'Incluir Serviço do Garçom (10%) na NFC-e',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                subtitle: const Text(
+                  'Se ativo, a taxa de serviço (garçom) será somada ao valor total da nota fiscal. Se desativo, fica apenas no cupom.',
+                  style: TextStyle(color: Colors.white70, fontSize: 12),
+                ),
                 value: _incluirServicoGarcomNfce,
                 onChanged: (bool value) {
                   setState(() {
@@ -1042,7 +1308,10 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                   });
                 },
                 activeColor: Colors.amberAccent,
-                secondary: const Icon(Icons.restaurant, color: Colors.amberAccent),
+                secondary: const Icon(
+                  Icons.restaurant,
+                  color: Colors.amberAccent,
+                ),
                 contentPadding: EdgeInsets.zero,
               ),
 
@@ -1050,10 +1319,17 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
 
               _buildSectionTitle('Ajuste de Todas as Impressões (Geral)'),
               SwitchListTile(
-                title: const Text('Sempre Perguntar a Impressora ao Imprimir (Windows)', style: TextStyle(color: Colors.white)),
-                subtitle: const Text('Ao imprimir, abre uma janela para escolher ou confirmar a impressora. A escolha fica salva como padrão — e você pode trocar quando quiser.', style: TextStyle(color: Colors.white60, fontSize: 11)),
+                title: const Text(
+                  'Sempre Perguntar a Impressora ao Imprimir (Windows)',
+                  style: TextStyle(color: Colors.white),
+                ),
+                subtitle: const Text(
+                  'Ao imprimir, abre uma janela para escolher ou confirmar a impressora. A escolha fica salva como padrão — e você pode trocar quando quiser.',
+                  style: TextStyle(color: Colors.white60, fontSize: 11),
+                ),
                 value: _mostrarDialogoImpressora,
-                onChanged: (value) => setState(() => _mostrarDialogoImpressora = value),
+                onChanged: (value) =>
+                    setState(() => _mostrarDialogoImpressora = value),
                 activeColor: Colors.blueAccent,
                 contentPadding: EdgeInsets.zero,
               ),
@@ -1070,16 +1346,22 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                   'Clique para selecionar ou trocar a impressora padrão',
                   style: TextStyle(color: Colors.white60, fontSize: 11),
                 ),
-                trailing: const Icon(Icons.chevron_right, color: Colors.white54),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                trailing: const Icon(
+                  Icons.chevron_right,
+                  color: Colors.white54,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
                 tileColor: Colors.white.withOpacity(0.05),
                 onTap: () async {
                   // Portal: define a impressora padrão da EMPRESA (compartilhada entre máquinas)
-                  final escolhida = await ImpressaoService.selecionarImpressoraPadrao(
-                    context,
-                    empresa: widget.empresa,
-                    somenteLocal: false,
-                  );
+                  final escolhida =
+                      await ImpressaoService.selecionarImpressoraPadrao(
+                        context,
+                        empresa: widget.empresa,
+                        somenteLocal: false,
+                      );
                   if (escolhida != null && mounted) {
                     setState(() => _impressoraSelecionada = escolhida);
                     await ImpressaoService.salvarUltimaImpressora(
@@ -1109,7 +1391,8 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                       icon: Icons.format_align_right,
                       hintText: '15.0',
                       keyboardType: TextInputType.number,
-                      helperText: 'Aumente se o valor estiver cortando à direita.',
+                      helperText:
+                          'Aumente se o valor estiver cortando à direita.',
                     ),
                   ),
                 ],
@@ -1128,7 +1411,8 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                 label: 'Largura Física da Bobina (mm)',
                 icon: Icons.print,
                 hintText: '80.0 ou 58.0',
-                helperText: 'Largura do papel da impressora. Padrão: 80.0 (grande) ou 58.0 (pequena).',
+                helperText:
+                    'Largura do papel da impressora. Padrão: 80.0 (grande) ou 58.0 (pequena).',
                 keyboardType: TextInputType.number,
               ),
               const SizedBox(height: 16),
@@ -1167,8 +1451,14 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
               ),
               const SizedBox(height: 16),
               SwitchListTile(
-                title: const Text('Usar Negrito nos Textos Principais', style: TextStyle(color: Colors.white)),
-                subtitle: const Text('Melhora a leitura em algumas impressoras térmicas', style: TextStyle(color: Colors.white60, fontSize: 11)),
+                title: const Text(
+                  'Usar Negrito nos Textos Principais',
+                  style: TextStyle(color: Colors.white),
+                ),
+                subtitle: const Text(
+                  'Melhora a leitura em algumas impressoras térmicas',
+                  style: TextStyle(color: Colors.white60, fontSize: 11),
+                ),
                 value: _comandaNegrito,
                 onChanged: (value) => setState(() => _comandaNegrito = value),
                 activeColor: Colors.purple,
@@ -1176,10 +1466,17 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
               ),
               const SizedBox(height: 8),
               SwitchListTile(
-                title: const Text('Mostrar Endereço de Entrega no Cupom', style: TextStyle(color: Colors.white)),
-                subtitle: const Text('Quando a venda for DELIVERY, exibe o endereço de entrega destacado no cupom não fiscal', style: TextStyle(color: Colors.white60, fontSize: 11)),
+                title: const Text(
+                  'Mostrar Endereço de Entrega no Cupom',
+                  style: TextStyle(color: Colors.white),
+                ),
+                subtitle: const Text(
+                  'Quando a venda for DELIVERY, exibe o endereço de entrega destacado no cupom não fiscal',
+                  style: TextStyle(color: Colors.white60, fontSize: 11),
+                ),
                 value: _mostrarEnderecoCupom,
-                onChanged: (value) => setState(() => _mostrarEnderecoCupom = value),
+                onChanged: (value) =>
+                    setState(() => _mostrarEnderecoCupom = value),
                 activeColor: Colors.orange,
                 contentPadding: EdgeInsets.zero,
               ),
@@ -1228,7 +1525,10 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                 child: SwitchListTile(
                   title: const Text(
                     'Módulo Pet Shop',
-                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                   subtitle: const Text(
                     'Habilita funções de agenda de banho, vacinas e cadastro de pets.',
@@ -1242,6 +1542,44 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                     });
                   },
                   activeColor: Colors.blueAccent,
+                ),
+              ),
+
+              const SizedBox(height: 16),
+
+              // Reserva de estoque em pedidos de venda
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.teal.shade900.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: Colors.teal.shade400.withOpacity(0.4),
+                  ),
+                ),
+                child: SwitchListTile(
+                  title: const Text(
+                    'Reservar estoque em pedidos de venda',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  subtitle: const Text(
+                    'Pedido salvo e ainda em aberto reserva a quantidade dos produtos: a unidade não fica disponível para outro pedido. Ao ficar Pago/Concluído a baixa real acontece; ao cancelar, a reserva é liberada.',
+                    style: TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+                  secondary: const Icon(
+                    Icons.bookmark_added_outlined,
+                    color: Colors.tealAccent,
+                  ),
+                  value: _reservarEstoquePedidos,
+                  onChanged: (value) {
+                    setState(() {
+                      _reservarEstoquePedidos = value;
+                    });
+                  },
+                  activeColor: Colors.tealAccent,
                 ),
               ),
 
@@ -1299,7 +1637,10 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                         // Indicador de status
                         if (_whatsappAtivo && _whatsappConnectionState != null)
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
                             margin: const EdgeInsets.only(right: 8),
                             decoration: BoxDecoration(
                               color: _whatsappConnectionState == 'open'
@@ -1345,12 +1686,12 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                         ),
                       ],
                     ),
-                    
+
                     if (_whatsappAtivo) ...[
                       const SizedBox(height: 16),
                       const Divider(color: Colors.white24),
                       const SizedBox(height: 16),
-                      
+
                       // Seletor de Tipo
                       Container(
                         padding: const EdgeInsets.all(12),
@@ -1364,93 +1705,137 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                           children: [
                             const Text(
                               'Serviço de WhatsApp:',
-                              style: TextStyle(color: Colors.white70, fontSize: 13),
+                              style: TextStyle(
+                                color: Colors.white70,
+                                fontSize: 13,
+                              ),
                             ),
                             const SizedBox(height: 8),
                             Row(
                               children: [
-                                _buildTipoWhatsAppChip('evolution', 'Evolution API (Gratuito/Self-host)'),
+                                _buildTipoWhatsAppChip(
+                                  'evolution',
+                                  'Evolution API (Gratuito/Self-host)',
+                                ),
                                 const SizedBox(width: 8),
-                                _buildTipoWhatsAppChip('twilio', 'Twilio Bridge (Pagamento p/ uso)'),
+                                _buildTipoWhatsAppChip(
+                                  'twilio',
+                                  'Twilio Bridge (Pagamento p/ uso)',
+                                ),
                               ],
                             ),
                           ],
                         ),
                       ),
                       const SizedBox(height: 16),
-                      
+
                       // URL da API
                       _buildTextField(
                         controller: _whatsappApiUrlController,
-                        label: _whatsappTipo == 'evolution' ? 'URL da Evolution API' : 'URL da Ponte no Render',
+                        label: _whatsappTipo == 'evolution'
+                            ? 'URL da Evolution API'
+                            : 'URL da Ponte no Render',
                         icon: Icons.link,
-                        hintText: _whatsappTipo == 'evolution' ? 'https://sua-api.up.railway.app' : 'https://seu-bridge.onrender.com',
-                        helperText: _whatsappTipo == 'evolution' 
-                          ? 'URL da sua instância Evolution' 
-                          : 'URL do serviço que você criou no Render',
+                        hintText: _whatsappTipo == 'evolution'
+                            ? 'https://sua-api.up.railway.app'
+                            : 'https://seu-bridge.onrender.com',
+                        helperText: _whatsappTipo == 'evolution'
+                            ? 'URL da sua instância Evolution'
+                            : 'URL do serviço que você criou no Render',
                       ),
-                      
+
                       // API Key
                       _buildTextField(
                         controller: _whatsappApiKeyController,
-                        label: _whatsappTipo == 'evolution' ? 'API Key' : 'BRIDGE_API_SECRET',
+                        label: _whatsappTipo == 'evolution'
+                            ? 'API Key'
+                            : 'BRIDGE_API_SECRET',
                         icon: Icons.vpn_key,
-                        hintText: _whatsappTipo == 'evolution' ? 'Sua API Key' : 'Sua senha do Bridge',
-                        helperText: _whatsappTipo == 'evolution' 
-                          ? 'Chave de autenticação' 
-                          : 'A senha que você configurou no Render',
+                        hintText: _whatsappTipo == 'evolution'
+                            ? 'Sua API Key'
+                            : 'Sua senha do Bridge',
+                        helperText: _whatsappTipo == 'evolution'
+                            ? 'Chave de autenticação'
+                            : 'A senha que você configurou no Render',
                         obscureText: true,
                       ),
-                      
+
                       // Nome da Instância (Opcional para Twilio)
-                      if (_whatsappTipo == 'evolution') 
+                      if (_whatsappTipo == 'evolution')
                         _buildTextField(
                           controller: _whatsappInstanceNameController,
                           label: 'Nome da Instância',
                           icon: Icons.phone_android,
                           hintText: 'empresa_principal',
-                          helperText: 'Nome da instância criada na Evolution API',
+                          helperText:
+                              'Nome da instância criada na Evolution API',
                         ),
-                      
+
                       const SizedBox(height: 16),
-                      
+
                       // Botões de ação
                       Row(
                         children: [
                           // Botão Testar Conexão
                           Expanded(
                             child: OutlinedButton.icon(
-                              onPressed: _whatsappTestando ? null : _testarConexaoWhatsApp,
+                              onPressed: _whatsappTestando
+                                  ? null
+                                  : _testarConexaoWhatsApp,
                               style: OutlinedButton.styleFrom(
-                                padding: const EdgeInsets.symmetric(vertical: 12),
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 12,
+                                ),
                                 side: BorderSide(color: Colors.green.shade400),
                               ),
-                              icon: _whatsappTestando 
-                                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                                : const Icon(Icons.refresh, color: Colors.green),
-                              label: const Text('TESTAR CONEXÃO', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
+                              icon: _whatsappTestando
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Icon(
+                                      Icons.refresh,
+                                      color: Colors.green,
+                                    ),
+                              label: const Text(
+                                'TESTAR CONEXÃO',
+                                style: TextStyle(
+                                  color: Colors.green,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
                             ),
                           ),
                         ],
                       ),
-                      
+
                       // Botão para Gerenciamento Avançado
                       const SizedBox(height: 16),
                       ElevatedButton.icon(
                         onPressed: () {
                           Navigator.push(
                             context,
-                            MaterialPageRoute(builder: (_) => WhatsAppGerenciamentoPage()),
+                            MaterialPageRoute(
+                              builder: (_) => WhatsAppGerenciamentoPage(),
+                            ),
                           );
                         },
                         style: ElevatedButton.styleFrom(
                           backgroundColor: const Color(0xFF25D366),
                           foregroundColor: Colors.white,
                           padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
                         ),
                         icon: const Icon(Icons.qr_code_scanner),
-                        label: const Text('ABRIR PAINEL DE CONEXÃO (QR CODE)', style: TextStyle(fontWeight: FontWeight.bold)),
+                        label: const Text(
+                          'ABRIR PAINEL DE CONEXÃO (QR CODE)',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
                       ),
 
                       const SizedBox(height: 12),
@@ -1483,7 +1868,11 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                   children: [
                     Row(
                       children: [
-                        Icon(Icons.lock_outline, color: Colors.purple.shade300, size: 24),
+                        Icon(
+                          Icons.lock_outline,
+                          color: Colors.purple.shade300,
+                          size: 24,
+                        ),
                         const SizedBox(width: 12),
                         Expanded(
                           child: Column(
@@ -1517,7 +1906,9 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                             setState(() {
                               if (value) {
                                 // Ativar controle: selecionar todas as telas por padrão
-                                _telasPermitidas = TelaSistema.values.map((t) => t.codigo).toSet();
+                                _telasPermitidas = TelaSistema.values
+                                    .map((t) => t.codigo)
+                                    .toSet();
                               } else {
                                 // Desativar controle: permitir todas
                                 _telasPermitidas.clear();
@@ -1533,10 +1924,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                       const SizedBox(height: 8),
                       Text(
                         'Selecione as telas que podem ser acessadas pelos usuários desta empresa:',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: Colors.white70,
-                        ),
+                        style: TextStyle(fontSize: 13, color: Colors.white70),
                       ),
                       const SizedBox(height: 12),
                       ...TelaSistema.porCategoria().entries.map((entry) {
@@ -1568,7 +1956,11 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                   children: [
                     Row(
                       children: [
-                        Icon(Icons.tune, color: Colors.orange.shade300, size: 24),
+                        Icon(
+                          Icons.tune,
+                          color: Colors.orange.shade300,
+                          size: 24,
+                        ),
                         const SizedBox(width: 12),
                         Expanded(
                           child: Column(
@@ -1598,58 +1990,64 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                     const SizedBox(height: 16),
                     const Divider(color: Colors.white24),
                     const SizedBox(height: 8),
-                    
+
                     // Botão Cliente
                     _buildBotaoToggle(
                       icon: Icons.person,
                       label: 'Cliente',
                       value: _mostrarBotaoCliente,
-                      onChanged: (value) => setState(() => _mostrarBotaoCliente = value),
+                      onChanged: (value) =>
+                          setState(() => _mostrarBotaoCliente = value),
                       color: Colors.green,
                     ),
-                    
+
                     // Botão Vendedor
                     _buildBotaoToggle(
                       icon: Icons.badge,
                       label: 'Vendedor',
                       value: _mostrarBotaoVendedor,
-                      onChanged: (value) => setState(() => _mostrarBotaoVendedor = value),
+                      onChanged: (value) =>
+                          setState(() => _mostrarBotaoVendedor = value),
                       color: Colors.purple,
                     ),
-                    
+
                     // Botão Entregas
                     _buildBotaoToggle(
                       icon: Icons.delivery_dining,
                       label: 'Entregas',
                       value: _mostrarBotaoEntregas,
-                      onChanged: (value) => setState(() => _mostrarBotaoEntregas = value),
+                      onChanged: (value) =>
+                          setState(() => _mostrarBotaoEntregas = value),
                       color: Colors.orange,
                     ),
-                    
+
                     // Botão Histórico
                     _buildBotaoToggle(
                       icon: Icons.history,
                       label: 'Histórico',
                       value: _mostrarBotaoHistorico,
-                      onChanged: (value) => setState(() => _mostrarBotaoHistorico = value),
+                      onChanged: (value) =>
+                          setState(() => _mostrarBotaoHistorico = value),
                       color: Colors.amber,
                     ),
-                    
+
                     // Botão Central
                     _buildBotaoToggle(
                       icon: Icons.assignment,
                       label: 'Central',
                       value: _mostrarBotaoCentral,
-                      onChanged: (value) => setState(() => _mostrarBotaoCentral = value),
+                      onChanged: (value) =>
+                          setState(() => _mostrarBotaoCentral = value),
                       color: Colors.blue,
                     ),
-                    
+
                     // Botão Despesa
                     _buildBotaoToggle(
                       icon: Icons.money_off,
                       label: 'Despesa',
                       value: _mostrarBotaoDespesa,
-                      onChanged: (value) => setState(() => _mostrarBotaoDespesa = value),
+                      onChanged: (value) =>
+                          setState(() => _mostrarBotaoDespesa = value),
                       color: Colors.red,
                     ),
                   ],
@@ -1659,98 +2057,132 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
               const SizedBox(height: 32),
 
               // Segurança e Senha do Administrador
-
-                    const SizedBox(height: 24),
-                    _buildSectionTitle('Formas de Pagamento (PDV)'),
-                    Card(
-                      color: Colors.white.withOpacity(0.05),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      child: Padding(
-                        padding: const EdgeInsets.all(16.0),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'Configure quais formas de pagamento estarão ativas no PDV e se elas possuem descontos/acréscimos automáticos.',
-                              style: TextStyle(color: Colors.white70),
-                            ),
-                            const SizedBox(height: 16),
-                            ...TipoPagamento.values.map((tipo) {
-                              final nome = tipo.nome;
-                              final config = _pagamentosConfig[tipo.name] ?? {'ativo': true, 'descontoPerc': 0.0, 'acrescimoPerc': 0.0};
-                              final bool isAtivo = config['ativo'] ?? true;
-                              
-                              return Padding(
-                                padding: const EdgeInsets.only(bottom: 16.0),
-                                child: Row(
-                                  children: [
-                                    Expanded(
-                                      flex: 2,
-                                      child: SwitchListTile(
-                                        title: Text(nome, style: const TextStyle(color: Colors.white)),
-                                        value: isAtivo,
-                                        activeColor: ExodoTheme.primaryColor,
-                                        onChanged: (v) {
-                                          setState(() {
-                                            _pagamentosConfig[tipo.name] = {
-                                              ...config,
-                                              'ativo': v,
-                                            };
-                                          });
-                                        },
-                                      ),
-                                    ),
-                                    Expanded(
-                                      flex: 1,
-                                      child: TextFormField(
-                                        enabled: isAtivo,
-                                        initialValue: (config['descontoPerc'] ?? 0.0).toString(),
-                                        style: const TextStyle(color: Colors.white),
-                                        decoration: const InputDecoration(
-                                          labelText: 'Desconto (%)',
-                                          labelStyle: TextStyle(color: Colors.white54),
-                                          enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
-                                        ),
-                                        keyboardType: TextInputType.number,
-                                        onChanged: (v) {
-                                          final val = double.tryParse(v.replaceAll(',', '.')) ?? 0.0;
-                                          _pagamentosConfig[tipo.name] = {
-                                            ...config,
-                                            'descontoPerc': val,
-                                          };
-                                        },
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      flex: 1,
-                                      child: TextFormField(
-                                        enabled: isAtivo,
-                                        initialValue: (config['acrescimoPerc'] ?? 0.0).toString(),
-                                        style: const TextStyle(color: Colors.white),
-                                        decoration: const InputDecoration(
-                                          labelText: 'Acréscimo (%)',
-                                          labelStyle: TextStyle(color: Colors.white54),
-                                          enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
-                                        ),
-                                        keyboardType: TextInputType.number,
-                                        onChanged: (v) {
-                                          final val = double.tryParse(v.replaceAll(',', '.')) ?? 0.0;
-                                          _pagamentosConfig[tipo.name] = {
-                                            ...config,
-                                            'acrescimoPerc': val,
-                                          };
-                                        },
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            }).toList(),
-                          ],
-                        ),
+              const SizedBox(height: 24),
+              _buildSectionTitle('Formas de Pagamento (PDV)'),
+              Card(
+                color: Colors.white.withOpacity(0.05),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Configure quais formas de pagamento estarão ativas no PDV e se elas possuem descontos/acréscimos automáticos.',
+                        style: TextStyle(color: Colors.white70),
                       ),
-                    ),
+                      const SizedBox(height: 16),
+                      ...TipoPagamento.values.map((tipo) {
+                        final nome = tipo.nome;
+                        final config =
+                            _pagamentosConfig[tipo.name] ??
+                            {
+                              'ativo': true,
+                              'descontoPerc': 0.0,
+                              'acrescimoPerc': 0.0,
+                            };
+                        final bool isAtivo = config['ativo'] ?? true;
+
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 16.0),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                flex: 2,
+                                child: SwitchListTile(
+                                  title: Text(
+                                    nome,
+                                    style: const TextStyle(color: Colors.white),
+                                  ),
+                                  value: isAtivo,
+                                  activeColor: ExodoTheme.primaryColor,
+                                  onChanged: (v) {
+                                    setState(() {
+                                      _pagamentosConfig[tipo.name] = {
+                                        ...config,
+                                        'ativo': v,
+                                      };
+                                    });
+                                  },
+                                ),
+                              ),
+                              Expanded(
+                                flex: 1,
+                                child: _campoNumerico(
+                                  label: 'Desconto (%)',
+                                  enabled: isAtivo,
+                                  valorInicial:
+                                      ((config['descontoPerc'] ?? 0) as num)
+                                          .toDouble(),
+                                  onChanged: (val) => _atualizarConfigPagamento(
+                                    tipo.name,
+                                    'descontoPerc',
+                                    val,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                flex: 1,
+                                child: _campoNumerico(
+                                  label: 'Acréscimo (%)',
+                                  enabled: isAtivo,
+                                  valorInicial:
+                                      ((config['acrescimoPerc'] ?? 0) as num)
+                                          .toDouble(),
+                                  onChanged: (val) => _atualizarConfigPagamento(
+                                    tipo.name,
+                                    'acrescimoPerc',
+                                    val,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                flex: 1,
+                                child: _campoNumerico(
+                                  label: 'Taxa (R\$)',
+                                  enabled: isAtivo,
+                                  valorInicial:
+                                      ((config['taxaFixa'] ?? 0) as num)
+                                          .toDouble(),
+                                  onChanged: (val) => _atualizarConfigPagamento(
+                                    tipo.name,
+                                    'taxaFixa',
+                                    val,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                flex: 1,
+                                child: _campoNumerico(
+                                  label: 'Taxa (%)',
+                                  enabled: isAtivo,
+                                  valorInicial:
+                                      ((config['taxaPercentual'] ?? 0) as num)
+                                          .toDouble(),
+                                  onChanged: (val) => _atualizarConfigPagamento(
+                                    tipo.name,
+                                    'taxaPercentual',
+                                    val,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }).toList(),
+                    ],
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 16),
+              _buildFormasPersonalizadasCard(),
+
               _buildSectionTitle('Segurança e Senha do Administrador'),
               Container(
                 padding: const EdgeInsets.all(16),
@@ -1767,7 +2199,11 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                   children: [
                     Row(
                       children: [
-                        Icon(Icons.gpp_good_outlined, color: Colors.red.shade300, size: 24),
+                        Icon(
+                          Icons.gpp_good_outlined,
+                          color: Colors.red.shade300,
+                          size: 24,
+                        ),
                         const SizedBox(width: 12),
                         const Expanded(
                           child: Column(
@@ -1802,7 +2238,8 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                       label: 'Senha do Administrador (Master) *',
                       icon: Icons.vpn_key_rounded,
                       obscureText: true,
-                      helperText: 'Senha solicitada aos funcionários para autorizar alterações',
+                      helperText:
+                          'Senha solicitada aos funcionários para autorizar alterações',
                     ),
                     const SizedBox(height: 12),
                     // Toggle Exigir senha para alterar pedido
@@ -1810,7 +2247,8 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                       icon: Icons.edit_document,
                       label: 'Exigir Senha para Alterar Pedido Pago/Fiado',
                       value: _exigirSenhaAlterarPedido,
-                      onChanged: (value) => setState(() => _exigirSenhaAlterarPedido = value),
+                      onChanged: (value) =>
+                          setState(() => _exigirSenhaAlterarPedido = value),
                       color: Colors.redAccent,
                     ),
                     const SizedBox(height: 8),
@@ -1819,7 +2257,8 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                       icon: Icons.cancel_presentation,
                       label: 'Exigir Senha para Cancelar Pedidos',
                       value: _exigirSenhaCancelarPedido,
-                      onChanged: (value) => setState(() => _exigirSenhaCancelarPedido = value),
+                      onChanged: (value) =>
+                          setState(() => _exigirSenhaCancelarPedido = value),
                       color: Colors.redAccent,
                     ),
                   ],
@@ -1831,7 +2270,9 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
               // Botão deletar todos os dados operacionais (apenas quando editando empresa existente)
               if (widget.empresa != null) ...[
                 OutlinedButton.icon(
-                  onPressed: _isLoading ? null : () => _confirmarDeletarTodosDados(context),
+                  onPressed: _isLoading
+                      ? null
+                      : () => _confirmarDeletarTodosDados(context),
                   style: OutlinedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(vertical: 16),
                     side: const BorderSide(color: Colors.red, width: 2),
@@ -1839,7 +2280,11 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                   icon: const Icon(Icons.delete_sweep, color: Colors.red),
                   label: const Text(
                     'Deletar Todos os Dados',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.red),
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.red,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -1847,7 +2292,11 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                   padding: EdgeInsets.symmetric(horizontal: 16),
                   child: Text(
                     'Deleta produtos, pedidos, vendas, serviços, clientes e agendamentos desta empresa',
-                    style: TextStyle(fontSize: 12, color: Colors.white70, fontStyle: FontStyle.italic),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.white70,
+                      fontStyle: FontStyle.italic,
+                    ),
                     textAlign: TextAlign.center,
                   ),
                 ),
@@ -1867,8 +2316,13 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : Text(
-                        widget.empresa == null ? 'Adicionar Empresa' : 'Salvar Alterações',
-                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                        widget.empresa == null
+                            ? 'Adicionar Empresa'
+                            : 'Salvar Alterações',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
               ),
             ],
@@ -1888,6 +2342,346 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
           fontWeight: FontWeight.bold,
           color: Colors.white,
         ),
+      ),
+    );
+  }
+
+  /// Atualiza uma chave da configuração de uma forma de pagamento do sistema,
+  /// lendo sempre o valor mais recente para não perder edições em campos
+  /// vizinhos (o `config` do build pode estar desatualizado).
+  void _atualizarConfigPagamento(String tipo, String campo, double valor) {
+    final atual = Map<String, dynamic>.from(_pagamentosConfig[tipo] ?? {});
+    atual[campo] = valor;
+    _pagamentosConfig[tipo] = atual;
+  }
+
+  /// Campo numérico compacto usado na configuração de taxas de pagamento.
+  Widget _campoNumerico({
+    required String label,
+    required bool enabled,
+    required double valorInicial,
+    required ValueChanged<double> onChanged,
+  }) {
+    return TextFormField(
+      enabled: enabled,
+      initialValue: valorInicial == 0 ? '' : valorInicial.toString(),
+      style: const TextStyle(color: Colors.white),
+      decoration: InputDecoration(
+        labelText: label,
+        labelStyle: const TextStyle(color: Colors.white54, fontSize: 12),
+        isDense: true,
+        enabledBorder: const UnderlineInputBorder(
+          borderSide: BorderSide(color: Colors.white24),
+        ),
+      ),
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      onChanged: (v) =>
+          onChanged(double.tryParse(v.replaceAll(',', '.')) ?? 0.0),
+    );
+  }
+
+  /// Abre o diálogo de cadastro/edição de uma forma de pagamento personalizada
+  /// (nome livre + taxa da maquininha).
+  Future<void> _mostrarDialogFormaPersonalizada({
+    FormaPagamentoCustom? forma,
+  }) async {
+    final nomeController = TextEditingController(text: forma?.nome ?? '');
+    final taxaFixaController = TextEditingController(
+      text: forma == null || forma.taxaFixa == 0
+          ? ''
+          : forma.taxaFixa.toString(),
+    );
+    final taxaPercController = TextEditingController(
+      text: forma == null || forma.taxaPercentual == 0
+          ? ''
+          : forma.taxaPercentual.toString(),
+    );
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
+          forma == null
+              ? 'Nova Forma de Pagamento'
+              : 'Editar Forma de Pagamento',
+          style: const TextStyle(color: Colors.white, fontSize: 18),
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(
+                controller: nomeController,
+                style: const TextStyle(color: Colors.white),
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(
+                  labelText: 'Nome (ex: Caju, VR, Crédito 3x)',
+                  labelStyle: TextStyle(color: Colors.white54),
+                  enabledBorder: UnderlineInputBorder(
+                    borderSide: BorderSide(color: Colors.white24),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: taxaFixaController,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(
+                  labelText: 'Taxa fixa por transação (R\$) — opcional',
+                  labelStyle: TextStyle(color: Colors.white54),
+                  enabledBorder: UnderlineInputBorder(
+                    borderSide: BorderSide(color: Colors.white24),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: taxaPercController,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(
+                  labelText: 'Taxa percentual sobre a venda (%) — opcional',
+                  labelStyle: TextStyle(color: Colors.white54),
+                  enabledBorder: UnderlineInputBorder(
+                    borderSide: BorderSide(color: Colors.white24),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          if (forma != null)
+            TextButton(
+              onPressed: () {
+                setState(
+                  () => _formasPagamentoCustom.removeWhere(
+                    (f) => f.id == forma.id,
+                  ),
+                );
+                Navigator.pop(ctx);
+                _persistirFormasPagamento();
+              },
+              child: const Text(
+                'Excluir',
+                style: TextStyle(color: Colors.redAccent),
+              ),
+            ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text(
+              'Cancelar',
+              style: TextStyle(color: Colors.white70),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final nome = nomeController.text.trim();
+              if (nome.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Informe o nome da forma de pagamento.'),
+                  ),
+                );
+                return;
+              }
+              final nova = FormaPagamentoCustom(
+                id:
+                    forma?.id ??
+                    DateTime.now().millisecondsSinceEpoch.toString(),
+                nome: nome,
+                taxaFixa:
+                    double.tryParse(
+                      taxaFixaController.text.replaceAll(',', '.'),
+                    ) ??
+                    0.0,
+                taxaPercentual:
+                    double.tryParse(
+                      taxaPercController.text.replaceAll(',', '.'),
+                    ) ??
+                    0.0,
+                ativo: forma?.ativo ?? true,
+              );
+              setState(() {
+                final idx = _formasPagamentoCustom.indexWhere(
+                  (f) => f.id == nova.id,
+                );
+                if (idx >= 0) {
+                  _formasPagamentoCustom[idx] = nova;
+                } else {
+                  _formasPagamentoCustom.add(nova);
+                }
+              });
+              Navigator.pop(ctx);
+              _persistirFormasPagamento();
+            },
+            child: const Text('Salvar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Persiste apenas as formas de pagamento personalizadas (e sua presença na
+  /// configuração da empresa), sem depender da validação dos outros campos do
+  /// formulário. Assim a forma recém-cadastrada não se perde se algum campo
+  /// obrigatório da empresa estiver pendente.
+  Future<void> _persistirFormasPagamento() async {
+    try {
+      // Empresa nova ainda não existe: salva pelo fluxo normal ao finalizar.
+      if (widget.empresa == null) {
+        await _salvar(fecharTela: false);
+        return;
+      }
+
+      final authService = Provider.of<AuthService>(context, listen: false);
+      final dataService = Provider.of<DataService>(context, listen: false);
+
+      final atual = authService.empresas.firstWhere(
+        (e) => e.id == widget.empresa!.id,
+        orElse: () => widget.empresa!,
+      );
+      final novasConfig = Map<String, dynamic>.from(atual.configuracoes ?? {});
+      novasConfig['formas_pagamento_custom'] = _formasPagamentoCustom
+          .map((f) => f.toMap())
+          .toList();
+      // Aproveita para gravar também as taxas/descontos das formas do sistema
+      // que o usuário acabou de digitar na tela.
+      novasConfig['pagamentos'] = _pagamentosConfig;
+
+      final atualizada = atual.copyWith(configuracoes: novasConfig);
+      await authService.atualizarEmpresa(atualizada);
+
+      if (dataService.empresaAtual?.id == atualizada.id) {
+        dataService.setEmpresaAtual(atualizada);
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✓ Formas de pagamento salvas!'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint(
+        '>>> [AdicionarEmpresa] ❌ Erro ao salvar formas de pagamento: $e',
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erro ao salvar formas de pagamento: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  /// Lista de formas de pagamento personalizadas (com taxa da maquininha).
+  Widget _buildFormasPersonalizadasCard() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Formas personalizadas (com taxa da maquininha)',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: () => _mostrarDialogFormaPersonalizada(),
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('Adicionar'),
+              ),
+            ],
+          ),
+          const Text(
+            'Cadastre formas que não estão na lista acima (ex: Caju, VR, Crédito 3x) e informe a taxa cobrada por transação.',
+            style: TextStyle(color: Colors.white54, fontSize: 12),
+          ),
+          const SizedBox(height: 8),
+          if (_formasPagamentoCustom.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 8),
+              child: Text(
+                'Nenhuma forma personalizada cadastrada.',
+                style: TextStyle(
+                  color: Colors.white38,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            )
+          else
+            ..._formasPagamentoCustom.map((f) {
+              final partes = <String>[];
+              if (f.taxaFixa > 0) {
+                partes.add('R\$ ${f.taxaFixa.toStringAsFixed(2)}');
+              }
+              if (f.taxaPercentual > 0) {
+                partes.add('${f.taxaPercentual.toStringAsFixed(2)}%');
+              }
+              final texto = partes.isEmpty
+                  ? 'Sem taxa'
+                  : 'Taxa: ${partes.join(' + ')} por transação';
+              return ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(
+                  f.nome,
+                  style: const TextStyle(color: Colors.white),
+                ),
+                subtitle: Text(
+                  texto,
+                  style: const TextStyle(color: Colors.white54, fontSize: 12),
+                ),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Switch(
+                      value: f.ativo,
+                      activeColor: ExodoTheme.primaryColor,
+                      onChanged: (v) => setState(() {
+                        final idx = _formasPagamentoCustom.indexOf(f);
+                        if (idx >= 0) {
+                          _formasPagamentoCustom[idx] = f.copyWith(ativo: v);
+                        }
+                      }),
+                    ),
+                    IconButton(
+                      icon: const Icon(
+                        Icons.edit,
+                        color: Colors.blueAccent,
+                        size: 20,
+                      ),
+                      onPressed: () =>
+                          _mostrarDialogFormaPersonalizada(forma: f),
+                    ),
+                  ],
+                ),
+              );
+            }),
+        ],
       ),
     );
   }
@@ -1918,7 +2712,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
       );
 
       final state = await service.verificarConexao();
-      
+
       if (mounted) {
         setState(() {
           _whatsappConnectionState = state;
@@ -2014,7 +2808,9 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
           setState(() => _whatsappTestando = false);
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Erro ao preparar instância no servidor. Verifique a URL e API Key.'),
+              content: Text(
+                'Erro ao preparar instância no servidor. Verifique a URL e API Key.',
+              ),
               backgroundColor: Colors.red,
             ),
           );
@@ -2023,59 +2819,72 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
       }
 
       // Em seguida verifica se já está conectado
-    final state = await service.verificarConexao();
-    
-    if (state == 'open') {
-      if (mounted) {
-        setState(() => _whatsappTestando = false);
-        
-        final disconnect = await showDialog<bool>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('WhatsApp já Conectado'),
-            content: const Text('Esta instância já está conectada a um celular. Deseja desconectar para escanear com outro aparelho?'),
-            actions: [
-              TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
-              TextButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('Desconectar e Ver QR Code', style: TextStyle(color: Colors.orange)),
-              ),
-            ],
-          ),
-        );
+      final state = await service.verificarConexao();
 
-        if (disconnect == true) {
-          setState(() => _whatsappTestando = true);
-          final ok = await service.desconectar();
-          if (!ok) {
-            if (mounted) {
-              setState(() => _whatsappTestando = false);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Erro ao desconectar. Tente novamente.'), backgroundColor: Colors.red),
-              );
+      if (state == 'open') {
+        if (mounted) {
+          setState(() => _whatsappTestando = false);
+
+          final disconnect = await showDialog<bool>(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: const Text('WhatsApp já Conectado'),
+              content: const Text(
+                'Esta instância já está conectada a um celular. Deseja desconectar para escanear com outro aparelho?',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Cancelar'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text(
+                    'Desconectar e Ver QR Code',
+                    style: TextStyle(color: Colors.orange),
+                  ),
+                ),
+              ],
+            ),
+          );
+
+          if (disconnect == true) {
+            setState(() => _whatsappTestando = true);
+            final ok = await service.desconectar();
+            if (!ok) {
+              if (mounted) {
+                setState(() => _whatsappTestando = false);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Erro ao desconectar. Tente novamente.'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
+              return;
             }
+            // Aguarda um pouco para a API atualizar
+            await Future.delayed(const Duration(seconds: 2));
+          } else {
             return;
           }
-          // Aguarda um pouco para a API atualizar
-          await Future.delayed(const Duration(seconds: 2));
-        } else {
-          return;
         }
       }
-    }
 
       // Obtém o QR Code
       final qrCodeBase64 = await service.obterQRCode();
-      
+
       if (mounted) {
         setState(() => _whatsappTestando = false);
-        
+
         if (qrCodeBase64 != null) {
           _showQRCodeDialog(qrCodeBase64);
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Não foi possível obter o QR Code. Verifique as configurações.'),
+              content: Text(
+                'Não foi possível obter o QR Code. Verifique as configurações.',
+              ),
               backgroundColor: Colors.red,
             ),
           );
@@ -2104,10 +2913,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
           children: [
             Icon(Icons.qr_code, color: Colors.green),
             SizedBox(width: 8),
-            Text(
-              'Conectar WhatsApp',
-              style: TextStyle(color: Colors.white),
-            ),
+            Text('Conectar WhatsApp', style: TextStyle(color: Colors.white)),
           ],
         ),
         content: Column(
@@ -2189,7 +2995,9 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 10),
           decoration: BoxDecoration(
-            color: isSelected ? Colors.green.withOpacity(0.2) : Colors.white.withOpacity(0.05),
+            color: isSelected
+                ? Colors.green.withOpacity(0.2)
+                : Colors.white.withOpacity(0.05),
             borderRadius: BorderRadius.circular(8),
             border: Border.all(
               color: isSelected ? Colors.green : Colors.white12,
@@ -2213,14 +3021,18 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
   }
 
   /// Widget para toggle de visibilidade de botões do PDV
-  
+
   Widget _buildPerfisDePreco() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text(
           'Perfis de Preço (Clientes)',
-          style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+          ),
         ),
         const SizedBox(height: 8),
         const Text(
@@ -2236,7 +3048,13 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
         ),
         const SizedBox(height: 16),
         if (_configPerfisPreco.isEmpty)
-          const Text('Nenhum perfil cadastrado.', style: TextStyle(color: Colors.white54, fontStyle: FontStyle.italic))
+          const Text(
+            'Nenhum perfil cadastrado.',
+            style: TextStyle(
+              color: Colors.white54,
+              fontStyle: FontStyle.italic,
+            ),
+          )
         else
           ListView.builder(
             shrinkWrap: true,
@@ -2250,22 +3068,30 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
               // inteiros, ex: 5) quanto double (salvo localmente) — evita o crash
               // "type 'int' is not a subtype of type 'double?'".
               final valor = (config['valor'] as num?)?.toDouble() ?? 0.0;
-              
+
               return Card(
                 color: Colors.white.withOpacity(0.05),
                 margin: const EdgeInsets.only(bottom: 8),
                 child: ListTile(
-                  title: Text(nome, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  title: Text(
+                    nome,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                   subtitle: Text(
-                    isDesconto 
-                      ? 'Desconto Global: ${valor.toStringAsFixed(1)}%' 
-                      : (config['tipo'] == 'acrescimo' 
-                          ? 'Acréscimo Global: ${valor.toStringAsFixed(1)}%' 
-                          : 'Preço Fixo no Cadastro do Produto'),
+                    isDesconto
+                        ? 'Desconto Global: ${valor.toStringAsFixed(1)}%'
+                        : (config['tipo'] == 'acrescimo'
+                              ? 'Acréscimo Global: ${valor.toStringAsFixed(1)}%'
+                              : 'Preço Fixo no Cadastro do Produto'),
                     style: TextStyle(
-                      color: isDesconto 
-                          ? Colors.greenAccent 
-                          : (config['tipo'] == 'acrescimo' ? Colors.redAccent : Colors.orangeAccent)
+                      color: isDesconto
+                          ? Colors.greenAccent
+                          : (config['tipo'] == 'acrescimo'
+                                ? Colors.redAccent
+                                : Colors.orangeAccent),
                     ),
                   ),
                   trailing: IconButton(
@@ -2302,7 +3128,10 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
           builder: (context, setStateModal) {
             return AlertDialog(
               backgroundColor: const Color(0xFF1E1E2E),
-              title: const Text('Nova Tabela de Preço', style: TextStyle(color: Colors.white)),
+              title: const Text(
+                'Nova Tabela de Preço',
+                style: TextStyle(color: Colors.white),
+              ),
               content: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -2314,52 +3143,86 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                       decoration: const InputDecoration(
                         labelText: 'Nome do Perfil (ex: Revenda, VIP)',
                         labelStyle: TextStyle(color: Colors.white70),
-                        enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+                        enabledBorder: UnderlineInputBorder(
+                          borderSide: BorderSide(color: Colors.white24),
+                        ),
                       ),
                     ),
                     const SizedBox(height: 24),
-                    const Text('Tipo de Regra', style: TextStyle(color: Colors.white70)),
+                    const Text(
+                      'Tipo de Regra',
+                      style: TextStyle(color: Colors.white70),
+                    ),
                     RadioListTile<String>(
-                      title: const Text('Preço Fixo no Produto', style: TextStyle(color: Colors.white, fontSize: 14)),
+                      title: const Text(
+                        'Preço Fixo no Produto',
+                        style: TextStyle(color: Colors.white, fontSize: 14),
+                      ),
                       value: 'fixo',
                       groupValue: tipoSelecionado,
                       activeColor: Colors.blueAccent,
-                      onChanged: (v) => setStateModal(() => tipoSelecionado = v!),
+                      onChanged: (v) =>
+                          setStateModal(() => tipoSelecionado = v!),
                     ),
                     RadioListTile<String>(
-                      title: const Text('Desconto Global (%)', style: TextStyle(color: Colors.white, fontSize: 14)),
+                      title: const Text(
+                        'Desconto Global (%)',
+                        style: TextStyle(color: Colors.white, fontSize: 14),
+                      ),
                       value: 'desconto',
                       groupValue: tipoSelecionado,
                       activeColor: Colors.blueAccent,
-                      onChanged: (v) => setStateModal(() => tipoSelecionado = v!),
+                      onChanged: (v) =>
+                          setStateModal(() => tipoSelecionado = v!),
                     ),
                     RadioListTile<String>(
-                      title: const Text('Acréscimo Global (%)', style: TextStyle(color: Colors.white, fontSize: 14)),
+                      title: const Text(
+                        'Acréscimo Global (%)',
+                        style: TextStyle(color: Colors.white, fontSize: 14),
+                      ),
                       value: 'acrescimo',
                       groupValue: tipoSelecionado,
                       activeColor: Colors.blueAccent,
-                      onChanged: (v) => setStateModal(() => tipoSelecionado = v!),
+                      onChanged: (v) =>
+                          setStateModal(() => tipoSelecionado = v!),
                     ),
-                    if (tipoSelecionado == 'desconto' || tipoSelecionado == 'acrescimo') ...[
+                    if (tipoSelecionado == 'desconto' ||
+                        tipoSelecionado == 'acrescimo') ...[
                       const SizedBox(height: 16),
                       TextField(
                         controller: valorController,
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        style: TextStyle(color: tipoSelecionado == 'desconto' ? Colors.greenAccent : Colors.redAccent),
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        style: TextStyle(
+                          color: tipoSelecionado == 'desconto'
+                              ? Colors.greenAccent
+                              : Colors.redAccent,
+                        ),
                         decoration: InputDecoration(
-                          labelText: tipoSelecionado == 'desconto' ? 'Desconto (%)' : 'Acréscimo (%)',
+                          labelText: tipoSelecionado == 'desconto'
+                              ? 'Desconto (%)'
+                              : 'Acréscimo (%)',
                           labelStyle: const TextStyle(color: Colors.white70),
-                          enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+                          enabledBorder: const UnderlineInputBorder(
+                            borderSide: BorderSide(color: Colors.white24),
+                          ),
                         ),
                       ),
                     ],
-                    
+
                     const Padding(
                       padding: EdgeInsets.symmetric(vertical: 16),
                       child: Divider(color: Colors.white24),
                     ),
-                    
-                    const Text('Regras Opcionais', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+
+                    const Text(
+                      'Regras Opcionais',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                     const SizedBox(height: 8),
                     const Text(
                       'Preencha apenas se quiser restringir o uso desta tabela.',
@@ -2373,38 +3236,60 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                       decoration: const InputDecoration(
                         labelText: 'Qtd. Mínima (Deixe vazio p/ não usar)',
                         labelStyle: TextStyle(color: Colors.white70),
-                        enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+                        enabledBorder: UnderlineInputBorder(
+                          borderSide: BorderSide(color: Colors.white24),
+                        ),
                       ),
                     ),
                     const SizedBox(height: 8),
                     RadioListTile<String>(
-                      title: const Text('Contabilizar pelo Total do Carrinho', style: TextStyle(color: Colors.white, fontSize: 13)),
+                      title: const Text(
+                        'Contabilizar pelo Total do Carrinho',
+                        style: TextStyle(color: Colors.white, fontSize: 13),
+                      ),
                       value: 'carrinho',
                       groupValue: tipoQtdSelecionado,
                       activeColor: Colors.blueAccent,
                       contentPadding: EdgeInsets.zero,
-                      onChanged: (v) => setStateModal(() => tipoQtdSelecionado = v!),
+                      onChanged: (v) =>
+                          setStateModal(() => tipoQtdSelecionado = v!),
                     ),
                     RadioListTile<String>(
-                      title: const Text('Contabilizar Por Item/Produto', style: TextStyle(color: Colors.white, fontSize: 13)),
+                      title: const Text(
+                        'Contabilizar Por Item/Produto',
+                        style: TextStyle(color: Colors.white, fontSize: 13),
+                      ),
                       value: 'item',
                       groupValue: tipoQtdSelecionado,
                       activeColor: Colors.blueAccent,
                       contentPadding: EdgeInsets.zero,
-                      onChanged: (v) => setStateModal(() => tipoQtdSelecionado = v!),
+                      onChanged: (v) =>
+                          setStateModal(() => tipoQtdSelecionado = v!),
                     ),
                     const SizedBox(height: 24),
-                    const Text('Formas de Pagamento Aceitas', style: TextStyle(color: Colors.white70)),
+                    const Text(
+                      'Formas de Pagamento Aceitas',
+                      style: TextStyle(color: Colors.white70),
+                    ),
                     const SizedBox(height: 8),
                     Wrap(
                       spacing: 8,
                       runSpacing: 8,
                       children: TipoPagamento.values.map((tipo) {
-                        final isSelected = formasSelecionadas.contains(tipo.name);
+                        final isSelected = formasSelecionadas.contains(
+                          tipo.name,
+                        );
                         return FilterChip(
-                          label: Text(tipo.nome, style: TextStyle(color: isSelected ? Colors.white : Colors.white70)),
+                          label: Text(
+                            tipo.nome,
+                            style: TextStyle(
+                              color: isSelected ? Colors.white : Colors.white70,
+                            ),
+                          ),
                           selected: isSelected,
-                          selectedColor: ExodoTheme.primaryColor.withOpacity(0.3),
+                          selectedColor: ExodoTheme.primaryColor.withOpacity(
+                            0.3,
+                          ),
                           checkmarkColor: Colors.white,
                           backgroundColor: Colors.white.withOpacity(0.05),
                           onSelected: (bool selected) {
@@ -2425,30 +3310,47 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(ctx),
-                  child: const Text('Cancelar', style: TextStyle(color: Colors.white70)),
+                  child: const Text(
+                    'Cancelar',
+                    style: TextStyle(color: Colors.white70),
+                  ),
                 ),
                 ElevatedButton(
                   onPressed: () {
                     final nome = nomeController.text.trim();
                     if (nome.isEmpty) {
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Por favor, informe o nome da tabela.')),
-                      );
-                      return;
-                    }
-                    
-                    if (_configPerfisPreco.any((p) => (p['nome'] as String).toLowerCase() == nome.toLowerCase())) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Já existe um perfil com esse nome.')),
+                        const SnackBar(
+                          content: Text('Por favor, informe o nome da tabela.'),
+                        ),
                       );
                       return;
                     }
 
-                    final valor = (tipoSelecionado == 'desconto' || tipoSelecionado == 'acrescimo')
-                        ? (double.tryParse(valorController.text.replaceAll(',', '.')) ?? 0.0) 
+                    if (_configPerfisPreco.any(
+                      (p) =>
+                          (p['nome'] as String).toLowerCase() ==
+                          nome.toLowerCase(),
+                    )) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Já existe um perfil com esse nome.'),
+                        ),
+                      );
+                      return;
+                    }
+
+                    final valor =
+                        (tipoSelecionado == 'desconto' ||
+                            tipoSelecionado == 'acrescimo')
+                        ? (double.tryParse(
+                                valorController.text.replaceAll(',', '.'),
+                              ) ??
+                              0.0)
                         : 0.0;
-                        
-                    final qtdMinima = int.tryParse(qtdMinimaController.text) ?? 0;
+
+                    final qtdMinima =
+                        int.tryParse(qtdMinimaController.text) ?? 0;
 
                     setState(() {
                       _perfisDePreco.add(nome);
@@ -2457,13 +3359,15 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                         'tipo': tipoSelecionado,
                         'valor': valor,
                         if (qtdMinima > 0) 'quantidade_minima': qtdMinima,
-                        if (qtdMinima > 0) 'tipo_quantidade_minima': tipoQtdSelecionado,
-                        if (formasSelecionadas.isNotEmpty) 'formas_pagamento': formasSelecionadas,
+                        if (qtdMinima > 0)
+                          'tipo_quantidade_minima': tipoQtdSelecionado,
+                        if (formasSelecionadas.isNotEmpty)
+                          'formas_pagamento': formasSelecionadas,
                       });
                     });
-                    
+
                     Navigator.pop(ctx);
-                    
+
                     // Auto-salvar sem fechar a tela
                     _salvar(fecharTela: false);
                   },
@@ -2471,7 +3375,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                 ),
               ],
             );
-          }
+          },
         );
       },
     );
@@ -2492,7 +3396,9 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
-            color: value ? color.withOpacity(0.15) : Colors.white.withOpacity(0.05),
+            color: value
+                ? color.withOpacity(0.15)
+                : Colors.white.withOpacity(0.05),
             borderRadius: BorderRadius.circular(8),
             border: Border.all(
               color: value ? color.withOpacity(0.5) : Colors.white12,
@@ -2574,7 +3480,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
   Widget _buildCertificadoUpload() {
     // SEMPRE mostrar o botão (sem condições)
     final isWindows = _isWindows();
-    
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
       child: Column(
@@ -2587,12 +3493,16 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
               color: Colors.transparent,
               child: InkWell(
                 onTap: () {
-                  debugPrint('>>> [AdicionarEmpresa] Botão clicado! isWindows: $isWindows');
+                  debugPrint(
+                    '>>> [AdicionarEmpresa] Botão clicado! isWindows: $isWindows',
+                  );
                   if (isWindows) {
                     _selecionarCertificadoWindows();
                   } else {
                     // Mesmo se não detectar Windows, tentar executar
-                    debugPrint('>>> [AdicionarEmpresa] Não detectado como Windows, mas tentando mesmo assim...');
+                    debugPrint(
+                      '>>> [AdicionarEmpresa] Não detectado como Windows, mas tentando mesmo assim...',
+                    );
                     _selecionarCertificadoWindows();
                   }
                 },
@@ -2600,7 +3510,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                 child: Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    color: isWindows 
+                    color: isWindows
                         ? Colors.blue.withOpacity(0.3)
                         : Colors.grey.withOpacity(0.2),
                     borderRadius: BorderRadius.circular(12),
@@ -2614,7 +3524,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                   child: Row(
                     children: [
                       Icon(
-                        Icons.security, 
+                        Icons.security,
                         color: isWindows ? Colors.blueAccent : Colors.grey,
                         size: 28,
                       ),
@@ -2626,7 +3536,9 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                             Text(
                               '🔐 Selecionar Certificado do Windows',
                               style: TextStyle(
-                                color: isWindows ? Colors.white : Colors.white54,
+                                color: isWindows
+                                    ? Colors.white
+                                    : Colors.white54,
                                 fontSize: 16,
                                 fontWeight: FontWeight.bold,
                               ),
@@ -2635,11 +3547,13 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                             Text(
                               isWindows
                                   ? (_certificadoWindowsThumbprint != null
-                                      ? '✓ Certificado selecionado do Windows'
-                                      : 'Usar certificado instalado no Windows (Recomendado)')
+                                        ? '✓ Certificado selecionado do Windows'
+                                        : 'Usar certificado instalado no Windows (Recomendado)')
                                   : 'Disponível apenas no Windows',
                               style: TextStyle(
-                                color: isWindows ? Colors.white70 : Colors.white54,
+                                color: isWindows
+                                    ? Colors.white70
+                                    : Colors.white54,
                                 fontSize: 12,
                               ),
                             ),
@@ -2657,7 +3571,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
               ),
             ),
           ),
-          
+
           // Divisor "OU" - sempre mostrar
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 8),
@@ -2668,17 +3582,14 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: Text(
                     'OU',
-                    style: TextStyle(
-                      color: Colors.white54,
-                      fontSize: 12,
-                    ),
+                    style: TextStyle(color: Colors.white54, fontSize: 12),
                   ),
                 ),
                 Expanded(child: Divider(color: Colors.white.withOpacity(0.3))),
               ],
             ),
           ),
-          
+
           // Mensagem informativa sobre uso de arquivo
           Container(
             padding: const EdgeInsets.all(12),
@@ -2693,7 +3604,11 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
             ),
             child: Row(
               children: [
-                Icon(Icons.info_outline, color: Colors.green.shade300, size: 20),
+                Icon(
+                  Icons.info_outline,
+                  color: Colors.green.shade300,
+                  size: 20,
+                ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
@@ -2707,7 +3622,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
               ],
             ),
           ),
-          
+
           // Botão para selecionar arquivo - DESTACADO
           InkWell(
             onTap: _selecionarCertificado,
@@ -2748,13 +3663,16 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          _certificadoDigitalNome ?? 'Clique para selecionar arquivo PFX/PEM',
+                          _certificadoDigitalNome ??
+                              'Clique para selecionar arquivo PFX/PEM',
                           style: TextStyle(
-                            color: _certificadoDigitalNome != null 
-                                ? Colors.green.shade200 
+                            color: _certificadoDigitalNome != null
+                                ? Colors.green.shade200
                                 : Colors.green.shade300,
                             fontSize: 14,
-                            fontWeight: _certificadoDigitalNome != null ? FontWeight.normal : FontWeight.w500,
+                            fontWeight: _certificadoDigitalNome != null
+                                ? FontWeight.normal
+                                : FontWeight.w500,
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -2796,7 +3714,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
               ),
             ),
           ),
-          
+
           // Instruções adicionais
           if (_certificadoDigitalNome == null)
             Padding(
@@ -2816,7 +3734,11 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                   children: [
                     Row(
                       children: [
-                        Icon(Icons.help_outline, color: Colors.blue.shade300, size: 18),
+                        Icon(
+                          Icons.help_outline,
+                          color: Colors.blue.shade300,
+                          size: 18,
+                        ),
                         const SizedBox(width: 8),
                         Text(
                           'Como usar:',
@@ -2858,19 +3780,23 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
       return false;
     }
   }
-  
+
   /// Seleciona certificado do Windows Certificate Store
   Future<void> _selecionarCertificadoWindows() async {
     try {
-      debugPrint('>>> [AdicionarEmpresa] _selecionarCertificadoWindows chamado');
-      
+      debugPrint(
+        '>>> [AdicionarEmpresa] _selecionarCertificadoWindows chamado',
+      );
+
       // Sempre tentar executar, mesmo se não detectar Windows
       // O PowerShell vai falhar se não for Windows, mas vamos tentar
       final isWindows = _isWindows();
       debugPrint('>>> [AdicionarEmpresa] isWindows = $isWindows');
-      
+
       if (!isWindows) {
-        debugPrint('>>> [AdicionarEmpresa] Aviso: não detectado como Windows, mas tentando mesmo assim...');
+        debugPrint(
+          '>>> [AdicionarEmpresa] Aviso: não detectado como Windows, mas tentando mesmo assim...',
+        );
         // Não retornar, continuar tentando
       }
 
@@ -2899,9 +3825,14 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
 
       try {
         // Listar certificados disponíveis
-        debugPrint('>>> [AdicionarEmpresa] Chamando WindowsCertificateService.listarCertificados()...');
-        final certificados = await WindowsCertificateService.listarCertificados();
-        debugPrint('>>> [AdicionarEmpresa] Certificados recebidos: ${certificados.length}');
+        debugPrint(
+          '>>> [AdicionarEmpresa] Chamando WindowsCertificateService.listarCertificados()...',
+        );
+        final certificados =
+            await WindowsCertificateService.listarCertificados();
+        debugPrint(
+          '>>> [AdicionarEmpresa] Certificados recebidos: ${certificados.length}',
+        );
 
         if (mounted) {
           Navigator.pop(context); // Fechar loading
@@ -2911,9 +3842,11 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
-                content: Text('Nenhum certificado com chave privada encontrado no Windows.\n\n'
-                    'Certifique-se de que o certificado está instalado no repositório "Pessoal".\n\n'
-                    'Para instalar: Duplo clique no arquivo .pfx e siga o assistente.'),
+                content: Text(
+                  'Nenhum certificado com chave privada encontrado no Windows.\n\n'
+                  'Certifique-se de que o certificado está instalado no repositório "Pessoal".\n\n'
+                  'Para instalar: Duplo clique no arquivo .pfx e siga o assistente.',
+                ),
                 backgroundColor: Colors.orange,
                 duration: Duration(seconds: 8),
               ),
@@ -2921,8 +3854,10 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
           }
           return;
         }
-        
-        debugPrint('>>> [AdicionarEmpresa] ${certificados.length} certificado(s) encontrado(s), mostrando diálogo...');
+
+        debugPrint(
+          '>>> [AdicionarEmpresa] ${certificados.length} certificado(s) encontrado(s), mostrando diálogo...',
+        );
 
         // Mostrar diálogo de seleção
         if (mounted) {
@@ -2944,11 +3879,11 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                     final subject = cert['subject'] as String;
                     final issuer = cert['issuer'] as String;
                     final notAfter = cert['notAfter'] as String;
-                    
+
                     // Extrair CNPJ do subject se houver
                     final cnpjMatch = RegExp(r'\d{14}').firstMatch(subject);
                     final cnpj = cnpjMatch?.group(0);
-                    
+
                     return Card(
                       color: Colors.white.withOpacity(0.1),
                       margin: const EdgeInsets.only(bottom: 8),
@@ -2962,12 +3897,18 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                           children: [
                             Text(
                               'Emitido por: $issuer',
-                              style: TextStyle(color: Colors.white70, fontSize: 12),
+                              style: TextStyle(
+                                color: Colors.white70,
+                                fontSize: 12,
+                              ),
                             ),
                             if (notAfter.isNotEmpty)
                               Text(
                                 'Válido até: $notAfter',
-                                style: TextStyle(color: Colors.white60, fontSize: 11),
+                                style: TextStyle(
+                                  color: Colors.white60,
+                                  fontSize: 11,
+                                ),
                               ),
                           ],
                         ),
@@ -2982,7 +3923,10 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(context),
-                  child: const Text('CANCELAR', style: TextStyle(color: Colors.white70)),
+                  child: const Text(
+                    'CANCELAR',
+                    style: TextStyle(color: Colors.white70),
+                  ),
                 ),
               ],
             ),
@@ -3019,10 +3963,11 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
             try {
               // Exportar certificado
               final thumbprint = certificadoSelecionado['thumbprint'] as String;
-              final resultado = await WindowsCertificateService.exportarCertificado(
-                thumbprint,
-                senha,
-              );
+              final resultado =
+                  await WindowsCertificateService.exportarCertificado(
+                    thumbprint,
+                    senha,
+                  );
 
               if (mounted) {
                 Navigator.pop(context); // Fechar loading
@@ -3031,12 +3976,12 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
               // Salvar informações
               final subject = certificadoSelecionado['subject'] as String;
               final cnpjMatch = RegExp(r'\d{14}').firstMatch(subject);
-              final nomeExibicao = cnpjMatch != null 
+              final nomeExibicao = cnpjMatch != null
                   ? 'CNPJ: ${cnpjMatch.group(0)}'
-                  : subject.length > 50 
-                      ? '${subject.substring(0, 50)}...'
-                      : subject;
-              
+                  : subject.length > 50
+                  ? '${subject.substring(0, 50)}...'
+                  : subject;
+
               String? certificadoBase64;
               if (resultado['tipo'] == 'pem') {
                 // Salvar conteúdo PEM
@@ -3050,42 +3995,52 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                   certificadoBase64 = base64Encode(bytes);
                 }
               }
-              
+
               // Validar certificado via backend Python se disponível
               String? cnpj;
               DateTime? validade;
               bool usadoBackend = false;
-              
+
               if (certificadoBase64 != null) {
                 try {
-                  debugPrint('>>> [Certificado] Validando certificado do Windows via backend Python...');
+                  debugPrint(
+                    '>>> [Certificado] Validando certificado do Windows via backend Python...',
+                  );
                   final backendService = CertificadoBackendService();
-                  final backendDisponivel = await backendService.verificarDisponibilidade();
-                  
+                  final backendDisponivel = await backendService
+                      .verificarDisponibilidade();
+
                   if (backendDisponivel) {
-                    final resultadoValidacao = await backendService.validarCertificado(
-                      certificadoBase64: certificadoBase64,
-                      senha: senha,
-                    );
-                    
+                    final resultadoValidacao = await backendService
+                        .validarCertificado(
+                          certificadoBase64: certificadoBase64,
+                          senha: senha,
+                        );
+
                     if (resultadoValidacao['success'] == true) {
                       usadoBackend = true;
                       cnpj = resultadoValidacao['cnpj'] as String?;
                       if (resultadoValidacao['validade'] != null) {
-                        validade = DateTime.parse(resultadoValidacao['validade'] as String);
+                        validade = DateTime.parse(
+                          resultadoValidacao['validade'] as String,
+                        );
                       }
-                      debugPrint('>>> [Certificado] ✓✓✓ Certificado do Windows validado via backend Python!');
+                      debugPrint(
+                        '>>> [Certificado] ✓✓✓ Certificado do Windows validado via backend Python!',
+                      );
                     }
                   }
                 } catch (e) {
-                  debugPrint('>>> [Certificado] ⚠️ Erro ao validar via backend: $e');
+                  debugPrint(
+                    '>>> [Certificado] ⚠️ Erro ao validar via backend: $e',
+                  );
                 }
               }
-              
+
               setState(() {
                 _certificadoWindowsThumbprint = thumbprint;
                 _certificadoDigitalNome = nomeExibicao;
-                
+
                 if (resultado['tipo'] == 'pem') {
                   _certificadoDigitalBytes = certificadoBase64;
                   _certificadoDigitalUrl = 'windows:pem:$subject';
@@ -3105,15 +4060,18 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                   mensagem += '\nCNPJ: $cnpj';
                 }
                 if (validade != null) {
-                  final diasRestantes = validade.difference(DateTime.now()).inDays;
-                  mensagem += '\nValidade: ${validade.day}/${validade.month}/${validade.year}';
+                  final diasRestantes = validade
+                      .difference(DateTime.now())
+                      .inDays;
+                  mensagem +=
+                      '\nValidade: ${validade.day}/${validade.month}/${validade.year}';
                   if (diasRestantes > 0) {
                     mensagem += ' ($diasRestantes dias restantes)';
                   } else {
                     mensagem += ' (EXPIRADO)';
                   }
                 }
-                
+
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text(mensagem),
@@ -3164,13 +4122,18 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
     try {
       FilePickerResult? result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
-        allowedExtensions: ['pem', 'crt', 'pfx', 'p12'], // PEM primeiro (recomendado)
+        allowedExtensions: [
+          'pem',
+          'crt',
+          'pfx',
+          'p12',
+        ], // PEM primeiro (recomendado)
         withData: true,
       );
 
       if (result != null && result.files.isNotEmpty) {
         final file = result.files.single;
-        
+
         if (file.bytes == null) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -3210,7 +4173,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
           // Verificar se é arquivo PEM (já convertido)
           final extensao = file.name.toLowerCase();
           final isPEM = extensao.endsWith('.pem') || extensao.endsWith('.crt');
-          
+
           if (isPEM) {
             // Arquivo PEM - usar diretamente
             await _processarCertificadoPEM(file);
@@ -3242,51 +4205,70 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
   /// Processa certificado PFX - versão simplificada que SEMPRE salva
   Future<void> _processarCertificadoPFX(PlatformFile file) async {
     try {
-      debugPrint('>>> [AdicionarEmpresa] ========================================');
+      debugPrint(
+        '>>> [AdicionarEmpresa] ========================================',
+      );
       debugPrint('>>> [AdicionarEmpresa] PROCESSANDO CERTIFICADO PFX');
-      debugPrint('>>> [AdicionarEmpresa] ========================================');
+      debugPrint(
+        '>>> [AdicionarEmpresa] ========================================',
+      );
       debugPrint('>>> [AdicionarEmpresa] Nome do arquivo: ${file.name}');
       debugPrint('>>> [AdicionarEmpresa] Tamanho: ${file.size} bytes');
-      
+
       // PASSO 1: Ler bytes do arquivo
       Uint8List? bytes;
       if (file.bytes != null) {
         bytes = file.bytes;
-        debugPrint('>>> [AdicionarEmpresa] ✅ Bytes do arquivo carregados: ${bytes!.length} bytes');
+        debugPrint(
+          '>>> [AdicionarEmpresa] ✅ Bytes do arquivo carregados: ${bytes!.length} bytes',
+        );
       } else if (file.path != null && !kIsWeb) {
         try {
-        final arquivo = File(file.path!);
-        if (await arquivo.exists()) {
-          bytes = await arquivo.readAsBytes();
-            debugPrint('>>> [AdicionarEmpresa] ✅ Bytes lidos do arquivo: ${bytes.length} bytes');
+          final arquivo = File(file.path!);
+          if (await arquivo.exists()) {
+            bytes = await arquivo.readAsBytes();
+            debugPrint(
+              '>>> [AdicionarEmpresa] ✅ Bytes lidos do arquivo: ${bytes.length} bytes',
+            );
           } else {
-            debugPrint('>>> [AdicionarEmpresa] ⚠️ Arquivo não existe no caminho: ${file.path}');
+            debugPrint(
+              '>>> [AdicionarEmpresa] ⚠️ Arquivo não existe no caminho: ${file.path}',
+            );
           }
         } catch (e) {
           debugPrint('>>> [AdicionarEmpresa] ⚠️ Erro ao ler arquivo: $e');
         }
       }
-      
+
       if (bytes == null || bytes.isEmpty) {
-        throw Exception('Não foi possível ler o arquivo PFX. Verifique se o arquivo está acessível.');
+        throw Exception(
+          'Não foi possível ler o arquivo PFX. Verifique se o arquivo está acessível.',
+        );
       }
-      
+
       // PASSO 2: Converter para base64
       final base64Bytes = base64Encode(bytes);
-      debugPrint('>>> [AdicionarEmpresa] ✅ Certificado convertido para base64: ${base64Bytes.length} caracteres');
-      debugPrint('>>> [AdicionarEmpresa] Primeiros 50 chars: ${base64Bytes.substring(0, base64Bytes.length > 50 ? 50 : base64Bytes.length)}...');
-      
+      debugPrint(
+        '>>> [AdicionarEmpresa] ✅ Certificado convertido para base64: ${base64Bytes.length} caracteres',
+      );
+      debugPrint(
+        '>>> [AdicionarEmpresa] Primeiros 50 chars: ${base64Bytes.substring(0, base64Bytes.length > 50 ? 50 : base64Bytes.length)}...',
+      );
+
       // PASSO 3: SALVAR IMEDIATAMENTE (sem validação - validação será feita na emissão)
       setState(() {
         _certificadoDigitalNome = file.name;
-        _certificadoDigitalUrl = 'base64:pfx:${file.name}'; // Prefixo para identificar PFX em base64
+        _certificadoDigitalUrl =
+            'base64:pfx:${file.name}'; // Prefixo para identificar PFX em base64
         _certificadoDigitalBytes = base64Bytes; // SEMPRE salvar em base64
       });
       debugPrint('>>> [AdicionarEmpresa] ✅✅✅ CERTIFICADO SALVO COM SUCESSO!');
       debugPrint('>>> [AdicionarEmpresa] Nome: $_certificadoDigitalNome');
       debugPrint('>>> [AdicionarEmpresa] URL: $_certificadoDigitalUrl');
-      debugPrint('>>> [AdicionarEmpresa] Base64: ${_certificadoDigitalBytes?.length ?? 0} caracteres');
-      
+      debugPrint(
+        '>>> [AdicionarEmpresa] Base64: ${_certificadoDigitalBytes?.length ?? 0} caracteres',
+      );
+
       // PASSO 4: Tentar validar (opcional - não bloqueia o salvamento)
       try {
         // Solicitar senha se não tiver
@@ -3297,43 +4279,48 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
             _senhaCertificadoController.text = senha;
           }
         }
-        
+
         // Tentar validar apenas se tiver senha
         if (senha != null && senha.isNotEmpty) {
-          debugPrint('>>> [AdicionarEmpresa] Tentando validar certificado (opcional)...');
-          
+          debugPrint(
+            '>>> [AdicionarEmpresa] Tentando validar certificado (opcional)...',
+          );
+
           try {
             final backendService = CertificadoBackendService();
-            final backendDisponivel = await backendService.verificarDisponibilidade();
-            
+            final backendDisponivel = await backendService
+                .verificarDisponibilidade();
+
             if (backendDisponivel) {
               final resultado = await backendService.validarCertificado(
                 certificadoBase64: base64Bytes,
                 senha: senha,
               );
-              
+
               if (resultado['success'] == true) {
                 final cnpj = resultado['cnpj'] as String?;
-                final validade = resultado['validade'] != null 
-                    ? DateTime.parse(resultado['validade'] as String) 
+                final validade = resultado['validade'] != null
+                    ? DateTime.parse(resultado['validade'] as String)
                     : null;
                 final diasRestantes = resultado['dias_restantes'] as int? ?? 0;
                 final valido = resultado['valido'] as bool? ?? false;
-                
+
                 if (mounted) {
-                  String mensagem = '✓ Certificado PFX carregado com sucesso!\n\n';
+                  String mensagem =
+                      '✓ Certificado PFX carregado com sucesso!\n\n';
                   if (cnpj != null) {
                     mensagem += 'CNPJ: $cnpj\n';
                   }
                   if (validade != null) {
-                    mensagem += 'Validade: ${validade.day}/${validade.month}/${validade.year}';
+                    mensagem +=
+                        'Validade: ${validade.day}/${validade.month}/${validade.year}';
                     if (diasRestantes > 0) {
                       mensagem += ' ($diasRestantes dias restantes)';
-          } else {
+                    } else {
                       mensagem += ' (EXPIRADO)';
                     }
                   }
-                  
+
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
                       content: Text(mensagem),
@@ -3346,35 +4333,45 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
               }
             }
           } catch (eValidacao) {
-            debugPrint('>>> [AdicionarEmpresa] ⚠️ Validação falhou (não bloqueia salvamento): $eValidacao');
+            debugPrint(
+              '>>> [AdicionarEmpresa] ⚠️ Validação falhou (não bloqueia salvamento): $eValidacao',
+            );
           }
         }
-        
+
         // Se chegou aqui, certificado foi salvo mas validação não foi feita ou falhou
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('✓ Certificado PFX carregado!\n\nO certificado foi salvo. A validação será feita na emissão da NFC-e.'),
+              content: Text(
+                '✓ Certificado PFX carregado!\n\nO certificado foi salvo. A validação será feita na emissão da NFC-e.',
+              ),
               backgroundColor: Colors.green,
               duration: Duration(seconds: 4),
             ),
           );
         }
       } catch (e) {
-        debugPrint('>>> [AdicionarEmpresa] ⚠️ Erro na validação (não bloqueia salvamento): $e');
+        debugPrint(
+          '>>> [AdicionarEmpresa] ⚠️ Erro na validação (não bloqueia salvamento): $e',
+        );
         // Mesmo com erro na validação, certificado já foi salvo
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('✓ Certificado PFX carregado!\n\nO certificado foi salvo. A validação será feita na emissão da NFC-e.'),
+              content: Text(
+                '✓ Certificado PFX carregado!\n\nO certificado foi salvo. A validação será feita na emissão da NFC-e.',
+              ),
               backgroundColor: Colors.green,
               duration: Duration(seconds: 4),
             ),
           );
         }
       }
-      } catch (e) {
-      debugPrint('>>> [AdicionarEmpresa] ❌ Erro crítico ao processar certificado PFX: $e');
+    } catch (e) {
+      debugPrint(
+        '>>> [AdicionarEmpresa] ❌ Erro crítico ao processar certificado PFX: $e',
+      );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -3392,105 +4389,127 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
     try {
       // SEMPRE salvar em base64 para garantir que será carregado depois
       final pemBase64 = base64Encode(file.bytes!);
-      debugPrint('>>> [AdicionarEmpresa] Certificado PEM salvo em base64: ${pemBase64.length} caracteres');
-      
+      debugPrint(
+        '>>> [AdicionarEmpresa] Certificado PEM salvo em base64: ${pemBase64.length} caracteres',
+      );
+
       // Solicitar senha se não tiver (PEM pode ter senha)
-          String? senha = _senhaCertificadoController.text.trim();
-          if (senha.isEmpty) {
-            senha = await _solicitarSenhaCertificado();
-            if (senha == null || senha.isEmpty) {
+      String? senha = _senhaCertificadoController.text.trim();
+      if (senha.isEmpty) {
+        senha = await _solicitarSenhaCertificado();
+        if (senha == null || senha.isEmpty) {
           // PEM pode não ter senha, continuar mesmo assim
           senha = '';
         } else {
-            _senhaCertificadoController.text = senha;
+          _senhaCertificadoController.text = senha;
         }
-          }
-          
-          // TENTAR 1: Validar usando backend Python (PyNFe)
-          String? cnpj;
-          DateTime? validade;
-          bool usadoBackend = false;
-          
-          try {
-        debugPrint('>>> [Certificado] Tentando validar PEM via backend Python...');
-            final backendService = CertificadoBackendService();
-            final backendDisponivel = await backendService.verificarDisponibilidade();
-            
-            if (backendDisponivel) {
+      }
+
+      // TENTAR 1: Validar usando backend Python (PyNFe)
+      String? cnpj;
+      DateTime? validade;
+      bool usadoBackend = false;
+
+      try {
+        debugPrint(
+          '>>> [Certificado] Tentando validar PEM via backend Python...',
+        );
+        final backendService = CertificadoBackendService();
+        final backendDisponivel = await backendService
+            .verificarDisponibilidade();
+
+        if (backendDisponivel) {
           debugPrint('>>> [Certificado] Backend disponível, validando PEM...');
-              final resultado = await backendService.validarCertificado(
+          final resultado = await backendService.validarCertificado(
             certificadoBase64: pemBase64,
-                senha: senha,
-              );
-              
-              if (resultado['success'] == true) {
-                usadoBackend = true;
-                cnpj = resultado['cnpj'] as String?;
-                if (resultado['validade'] != null) {
-                  validade = DateTime.parse(resultado['validade'] as String);
-                }
-                
-                final diasRestantes = resultado['dias_restantes'] as int? ?? 0;
-                final valido = resultado['valido'] as bool? ?? false;
-                
-            debugPrint('>>> [Certificado] ✓✓✓ Certificado PEM validado via backend Python!');
-                
-                // Atualizar estado com certificado validado
-                setState(() {
-                  _certificadoDigitalNome = file.name;
+            senha: senha,
+          );
+
+          if (resultado['success'] == true) {
+            usadoBackend = true;
+            cnpj = resultado['cnpj'] as String?;
+            if (resultado['validade'] != null) {
+              validade = DateTime.parse(resultado['validade'] as String);
+            }
+
+            final diasRestantes = resultado['dias_restantes'] as int? ?? 0;
+            final valido = resultado['valido'] as bool? ?? false;
+
+            debugPrint(
+              '>>> [Certificado] ✓✓✓ Certificado PEM validado via backend Python!',
+            );
+
+            // Atualizar estado com certificado validado
+            setState(() {
+              _certificadoDigitalNome = file.name;
               _certificadoDigitalUrl = 'base64:pem:${file.name}';
               _certificadoDigitalBytes = pemBase64;
-                });
-                
-                // Mostrar sucesso com informações do certificado
-                if (mounted) {
-              String mensagem = '✓ Certificado PEM processado e validado com sucesso!\n';
-                  mensagem += '(Validado via backend Python)\n\n';
-                  if (cnpj != null) {
-                    mensagem += 'CNPJ: $cnpj\n';
-                  }
-                  if (validade != null) {
-                    mensagem += 'Validade: ${validade.day}/${validade.month}/${validade.year}';
-                    if (diasRestantes > 0) {
-                      mensagem += ' ($diasRestantes dias restantes)';
-                    } else {
-                      mensagem += ' (EXPIRADO)';
-                    }
-                  }
-                  mensagem += '\n\nCertificado armazenado em memória (base64)';
-                  
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(mensagem),
-                      backgroundColor: valido ? Colors.green : Colors.orange,
-                      duration: const Duration(seconds: 5),
-                    ),
-                  );
-                }
-                
-            debugPrint('>>> [Certificado] Certificado PEM processado e validado com sucesso via backend');
-            return; // Certificado processado
-              } else {
-                debugPrint('>>> [Certificado] ⚠️ Backend retornou erro: ${resultado['error']}');
+            });
+
+            // Mostrar sucesso com informações do certificado
+            if (mounted) {
+              String mensagem =
+                  '✓ Certificado PEM processado e validado com sucesso!\n';
+              mensagem += '(Validado via backend Python)\n\n';
+              if (cnpj != null) {
+                mensagem += 'CNPJ: $cnpj\n';
               }
-            } else {
-              debugPrint('>>> [Certificado] Backend não disponível, usando serviço local...');
+              if (validade != null) {
+                mensagem +=
+                    'Validade: ${validade.day}/${validade.month}/${validade.year}';
+                if (diasRestantes > 0) {
+                  mensagem += ' ($diasRestantes dias restantes)';
+                } else {
+                  mensagem += ' (EXPIRADO)';
+                }
+              }
+              mensagem += '\n\nCertificado armazenado em memória (base64)';
+
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(mensagem),
+                  backgroundColor: valido ? Colors.green : Colors.orange,
+                  duration: const Duration(seconds: 5),
+                ),
+              );
             }
-          } catch (eBackend) {
-            debugPrint('>>> [Certificado] ⚠️ Erro ao validar via backend: $eBackend');
-            debugPrint('>>> [Certificado] Usando fallback para serviço local...');
+
+            debugPrint(
+              '>>> [Certificado] Certificado PEM processado e validado com sucesso via backend',
+            );
+            return; // Certificado processado
+          } else {
+            debugPrint(
+              '>>> [Certificado] ⚠️ Backend retornou erro: ${resultado['error']}',
+            );
           }
-          
-          // TENTAR 2: Validar usando serviço local (fallback)
-          if (!usadoBackend) {
-        debugPrint('>>> [Certificado] Validando PEM usando serviço local (fallback)...');
+        } else {
+          debugPrint(
+            '>>> [Certificado] Backend não disponível, usando serviço local...',
+          );
+        }
+      } catch (eBackend) {
+        debugPrint(
+          '>>> [Certificado] ⚠️ Erro ao validar via backend: $eBackend',
+        );
+        debugPrint('>>> [Certificado] Usando fallback para serviço local...');
+      }
+
+      // TENTAR 2: Validar usando serviço local (fallback)
+      if (!usadoBackend) {
+        debugPrint(
+          '>>> [Certificado] Validando PEM usando serviço local (fallback)...',
+        );
         try {
           Directory tempDir;
           try {
             tempDir = await getTemporaryDirectory();
           } catch (e) {
             if (_isWindows()) {
-              final tempPath = Platform.environment['TEMP'] ?? Platform.environment['TMP'] ?? '.';
+              final tempPath =
+                  Platform.environment['TEMP'] ??
+                  Platform.environment['TMP'] ??
+                  '.';
               tempDir = Directory(tempPath);
             } else {
               tempDir = Directory('/tmp');
@@ -3499,66 +4518,73 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
               await tempDir.create(recursive: true);
             }
           }
-          
-          final tempPemFile = File('${tempDir.path}/certificado_pem_${DateTime.now().millisecondsSinceEpoch}.pem');
+
+          final tempPemFile = File(
+            '${tempDir.path}/certificado_pem_${DateTime.now().millisecondsSinceEpoch}.pem',
+          );
           final pemDecodificado = utf8.decode(base64Decode(pemBase64));
           await tempPemFile.writeAsString(pemDecodificado);
-          
+
           final certificadoService = CertificadoService();
-            final certificado = await certificadoService.carregarCertificado(
+          final certificado = await certificadoService.carregarCertificado(
             tempPemFile.path,
-              senha,
-            );
-            
-            cnpj = certificado.cnpj;
-            validade = certificado.validade;
-            
-          debugPrint('>>> [Certificado] ✓✓✓ Certificado PEM validado via serviço local!');
+            senha,
+          );
+
+          cnpj = certificado.cnpj;
+          validade = certificado.validade;
+
+          debugPrint(
+            '>>> [Certificado] ✓✓✓ Certificado PEM validado via serviço local!',
+          );
         } catch (e) {
-          debugPrint('>>> [Certificado] ⚠️ Erro ao validar via serviço local: $e');
+          debugPrint(
+            '>>> [Certificado] ⚠️ Erro ao validar via serviço local: $e',
+          );
           // Continuar mesmo com erro, apenas armazenar
         }
-          }
-          
-          // Atualizar estado com certificado validado
-          setState(() {
-            _certificadoDigitalNome = file.name;
+      }
+
+      // Atualizar estado com certificado validado
+      setState(() {
+        _certificadoDigitalNome = file.name;
         _certificadoDigitalUrl = 'base64:pem:${file.name}';
         _certificadoDigitalBytes = pemBase64;
-          });
-          
-          // Mostrar sucesso com informações do certificado
-          if (mounted) {
+      });
+
+      // Mostrar sucesso com informações do certificado
+      if (mounted) {
         String mensagem = '✓ Certificado PEM processado com sucesso!\n';
-            if (!usadoBackend) {
-              mensagem += '(Validado via serviço local)\n';
-            }
-            mensagem += '\n';
-            if (cnpj != null) {
-              mensagem += 'CNPJ: $cnpj\n';
-            }
-            if (validade != null) {
-              final diasRestantes = validade.difference(DateTime.now()).inDays;
-              mensagem += 'Validade: ${validade.day}/${validade.month}/${validade.year}';
-              if (diasRestantes > 0) {
-                mensagem += ' (${diasRestantes} dias restantes)';
-              } else {
-                mensagem += ' (EXPIRADO)';
-              }
-            }
-            mensagem += '\n\nCertificado armazenado em memória (base64)';
-            
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(mensagem),
-                backgroundColor: Colors.green,
-                duration: const Duration(seconds: 5),
-              ),
-            );
+        if (!usadoBackend) {
+          mensagem += '(Validado via serviço local)\n';
+        }
+        mensagem += '\n';
+        if (cnpj != null) {
+          mensagem += 'CNPJ: $cnpj\n';
+        }
+        if (validade != null) {
+          final diasRestantes = validade.difference(DateTime.now()).inDays;
+          mensagem +=
+              'Validade: ${validade.day}/${validade.month}/${validade.year}';
+          if (diasRestantes > 0) {
+            mensagem += ' (${diasRestantes} dias restantes)';
+          } else {
+            mensagem += ' (EXPIRADO)';
           }
-          
+        }
+        mensagem += '\n\nCertificado armazenado em memória (base64)';
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(mensagem),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+
       debugPrint('>>> [Certificado] Certificado PEM processado com sucesso');
-        } catch (e) {
+    } catch (e) {
       debugPrint('>>> [Certificado] ERRO ao processar PEM: $e');
       rethrow;
     }
@@ -3567,21 +4593,23 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
   /// Solicita senha do certificado ao usuário
   Future<String?> _solicitarSenhaCertificado() async {
     String? senha;
-    
+
     if (!mounted) return null;
-    
+
     await showDialog(
-            context: context,
+      context: context,
       barrierDismissible: false,
       builder: (context) {
         final controller = TextEditingController();
         return AlertDialog(
           title: const Text('Senha do Certificado'),
           content: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-              const Text('Digite a senha do certificado para conversão automática:'),
-                    const SizedBox(height: 16),
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Digite a senha do certificado para conversão automática:',
+              ),
+              const SizedBox(height: 16),
               TextField(
                 controller: controller,
                 obscureText: true,
@@ -3595,18 +4623,18 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                 },
               ),
             ],
-              ),
-              actions: [
-                TextButton(
+          ),
+          actions: [
+            TextButton(
               onPressed: () {
                 Navigator.pop(context);
               },
               child: const Text('Cancelar'),
             ),
             ElevatedButton(
-                  onPressed: () {
+              onPressed: () {
                 senha = controller.text;
-                    Navigator.pop(context);
+                Navigator.pop(context);
               },
               child: const Text('OK'),
             ),
@@ -3616,6 +4644,165 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
     );
 
     return senha;
+  }
+
+  /// Mostra o que a troca de regime vai fazer com o catálogo ANTES de salvar.
+  ///
+  /// Existe porque a troca mexe no imposto dos produtos da empresa. Duas coisas
+  /// precisam estar claras antes de qualquer gravação:
+  ///   1. o CADASTRO de cada produto é respeitado (código e perfil personalizado
+  ///      continuam como o usuário deixou — o perfil padrão do regime antigo só
+  ///      troca pelo equivalente do novo);
+  ///   2. produto SEM nenhum imposto cadastrado recebe o PERFIL PADRÃO do regime
+  ///      novo, e o diálogo diz QUAL perfil é esse (CFOP/CSOSN/CST).
+  /// Antes, isso rodava sem avisar e usando "todos os produtos da memória", o
+  /// que misturava itens de empresas diferentes.
+  Future<bool> _confirmarTrocaDeRegime({
+    required PlanoMigracaoImpostos plano,
+    required bool paraSimples,
+  }) async {
+    final padrao = plano.perfilPadraoDoRegimeNovo;
+    final codigoPadrao = paraSimples
+        ? 'CSOSN ${(padrao.csosn ?? '').trim()}'
+        : 'CST ${(padrao.icmsCst ?? '').trim()}';
+    final confirmou = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        title: const Row(
+          children: [
+            Icon(Icons.receipt_long, color: Colors.orangeAccent),
+            SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Trocar o regime tributário',
+                style: TextStyle(color: Colors.white),
+              ),
+            ),
+          ],
+        ),
+        content: SizedBox(
+          width: 560,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'O regime desta empresa vai virar '
+                  '${paraSimples ? 'Simples Nacional' : 'Regime Normal'}. '
+                  'O imposto cadastrado em cada produto DELA é respeitado — '
+                  'só quem não tem imposto nenhum é que muda:',
+                  style: const TextStyle(color: Colors.white70, fontSize: 13),
+                ),
+                const SizedBox(height: 12),
+                _linhaDoPlano(
+                  Icons.check_circle_outline,
+                  '${plano.convertidos}',
+                  'produto(s) com imposto próprio (código e/ou perfil): o '
+                      'cadastro é mantido — o código só troca de espécie se o '
+                      'regime exigir (CSOSN ↔ CST) e o perfil personalizado '
+                      'continua vinculado',
+                ),
+                if (plano.vinculadosAoPadrao > 0)
+                  _linhaDoPlano(
+                    Icons.link,
+                    '${plano.vinculadosAoPadrao}',
+                    'produto(s) tinham código fiscal mas NENHUM perfil '
+                        'cadastrado: passam a usar o perfil PADRÃO do mesmo '
+                        'imposto deles (o código NÃO muda)',
+                  ),
+                _linhaDoPlano(
+                  Icons.add_circle_outline,
+                  '${plano.preenchidos}',
+                  'produto(s) SEM imposto nenhum cadastrado: ganham o PERFIL '
+                      'PADRÃO do regime novo ($codigoPadrao, CFOP '
+                      '${padrao.cfop}${padrao.nome.trim().isEmpty ? '' : ' — ${padrao.nome}'})',
+                ),
+                _linhaDoPlano(
+                  Icons.done_all,
+                  '${plano.semMudanca}',
+                  'já estão no regime novo — não são tocados',
+                ),
+                if (plano.semCarimbo.isNotEmpty)
+                  _linhaDoPlano(
+                    Icons.help_outline,
+                    '${plano.semCarimbo.length}',
+                    'sem empresa carimbada (registro antigo) — entram como seu',
+                  ),
+                if (plano.deOutraEmpresa.isNotEmpty)
+                  _linhaDoPlano(
+                    Icons.shield,
+                    '${plano.deOutraEmpresa.length}',
+                    'de OUTRA empresa — NÃO serão tocados (e isso não deveria '
+                        'acontecer; vale investigar)',
+                    cor: Colors.redAccent,
+                  ),
+                const SizedBox(height: 12),
+                Text(
+                  'Vai ser gravado em ${plano.paraGravar.length} produto(s) desta '
+                  'empresa. Nenhum item de outra empresa é alterado.',
+                  style: const TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Se cancelar, nada é salvo: o regime continua como está e os '
+                  'impostos ficam exatamente como estão agora.',
+                  style: TextStyle(color: Colors.white38, fontSize: 11),
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar (não trocar o regime)'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () => Navigator.pop(context, true),
+            icon: const Icon(Icons.check, size: 18),
+            label: const Text('Trocar e migrar'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orange.shade800,
+            ),
+          ),
+        ],
+      ),
+    );
+    return confirmou == true;
+  }
+
+  Widget _linhaDoPlano(
+    IconData icone,
+    String numero,
+    String texto, {
+    Color cor = Colors.white70,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icone, size: 16, color: cor),
+          const SizedBox(width: 8),
+          Text(
+            '$numero ',
+            style: TextStyle(
+              color: cor,
+              fontWeight: FontWeight.bold,
+              fontSize: 12,
+            ),
+          ),
+          Expanded(
+            child: Text(
+              texto,
+              style: const TextStyle(color: Colors.white70, fontSize: 12),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   /// Widget para seleção do CRT (Código de Regime Tributário)
@@ -3648,27 +4835,21 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
         style: const TextStyle(color: Colors.white),
         icon: const Icon(Icons.arrow_drop_down, color: Colors.white70),
         items: const [
-          DropdownMenuItem<int>(
-            value: 1,
-            child: Text('1 - Simples Nacional'),
-          ),
+          DropdownMenuItem<int>(value: 1, child: Text('1 - Simples Nacional')),
           DropdownMenuItem<int>(
             value: 2,
             child: Text('2 - Simples Nacional - Excesso de Sublimite'),
           ),
-          DropdownMenuItem<int>(
-            value: 3,
-            child: Text('3 - Regime Normal'),
-          ),
+          DropdownMenuItem<int>(value: 3, child: Text('3 - Regime Normal')),
         ],
         onChanged: (value) {
-              setState(() {
+          setState(() {
             _crt = value;
           });
         },
-                  ),
-                );
-              }
+      ),
+    );
+  }
 
   /// Converte Color para hex string
   String _colorToHex(Color color) {
@@ -3700,9 +4881,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
         decoration: BoxDecoration(
           color: Colors.white.withOpacity(0.1),
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: Colors.white.withOpacity(0.2),
-          ),
+          border: Border.all(color: Colors.white.withOpacity(0.2)),
         ),
         child: Row(
           children: [
@@ -3711,10 +4890,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
             Expanded(
               child: Text(
                 label,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                ),
+                style: const TextStyle(color: Colors.white, fontSize: 16),
               ),
             ),
             Container(
@@ -3756,7 +4932,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
       );
 
       final sucesso = await service.desconectar();
-      
+
       if (mounted) {
         setState(() {
           _whatsappTestando = false;
@@ -3765,7 +4941,9 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
 
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(sucesso ? 'WhatsApp desconectado!' : 'Erro ao desconectar.'),
+            content: Text(
+              sucesso ? 'WhatsApp desconectado!' : 'Erro ao desconectar.',
+            ),
             backgroundColor: sucesso ? Colors.orange : Colors.red,
           ),
         );
@@ -3784,11 +4962,16 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Limpar Instância?'),
-        content: const Text('Isso removerá completamente a instância do servidor. Você precisará criar uma nova para conectar.'),
+        content: const Text(
+          'Isso removerá completamente a instância do servidor. Você precisará criar uma nova para conectar.',
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
           TextButton(
-            onPressed: () => Navigator.pop(context, true), 
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
             child: const Text('Limpar', style: TextStyle(color: Colors.red)),
           ),
         ],
@@ -3807,7 +4990,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
       );
 
       final sucesso = await service.deletarInstancia();
-      
+
       if (mounted) {
         setState(() {
           _whatsappTestando = false;
@@ -3816,7 +4999,9 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
 
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(sucesso ? 'Instância removida!' : 'Erro ao remover instância.'),
+            content: Text(
+              sucesso ? 'Instância removida!' : 'Erro ao remover instância.',
+            ),
             backgroundColor: sucesso ? Colors.blue : Colors.red,
           ),
         );
@@ -3833,7 +5018,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
     ValueChanged<Color> onColorChanged,
   ) {
     Color corSelecionada = corAtual;
-    
+
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -3878,7 +5063,9 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                   // Botão para cor customizada
                   OutlinedButton.icon(
                     onPressed: () {
-                      _mostrarColorPickerCustomizado(context, corSelecionada, (cor) {
+                      _mostrarColorPickerCustomizado(context, corSelecionada, (
+                        cor,
+                      ) {
                         setState(() {
                           corSelecionada = cor;
                         });
@@ -3898,11 +5085,12 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                     child: GridView.builder(
                       shrinkWrap: true,
                       physics: const AlwaysScrollableScrollPhysics(),
-                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 6,
-                        crossAxisSpacing: 8,
-                        mainAxisSpacing: 8,
-                      ),
+                      gridDelegate:
+                          const SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: 6,
+                            crossAxisSpacing: 8,
+                            mainAxisSpacing: 8,
+                          ),
                       itemCount: _coresDisponiveis.length,
                       itemBuilder: (context, index) {
                         final cor = _coresDisponiveis[index];
@@ -3925,7 +5113,11 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                               ),
                             ),
                             child: isSelecionada
-                                ? const Icon(Icons.check, color: Colors.white, size: 20)
+                                ? const Icon(
+                                    Icons.check,
+                                    color: Colors.white,
+                                    size: 20,
+                                  )
                                 : null,
                           ),
                         );
@@ -3939,14 +5131,19 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+              child: const Text(
+                'Cancelar',
+                style: TextStyle(color: Colors.white54),
+              ),
             ),
             ElevatedButton(
               onPressed: () {
                 onColorChanged(corSelecionada);
                 Navigator.pop(context);
               },
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blueAccent,
+              ),
               child: const Text('Confirmar'),
             ),
           ],
@@ -3962,7 +5159,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
     ValueChanged<Color> onColorChanged,
   ) {
     Color corSelecionada = corAtual;
-    
+
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -3981,95 +5178,100 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                // Preview da cor
-                Container(
-                  width: double.infinity,
-                  height: 60,
-                  decoration: BoxDecoration(
-                    color: corSelecionada,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.white.withOpacity(0.3)),
-                  ),
-                  child: Center(
-                    child: Text(
-                      _colorToHex(corSelecionada),
-                      style: TextStyle(
-                        color: corSelecionada.computeLuminance() > 0.5
-                            ? Colors.black
-                            : Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
+                  // Preview da cor
+                  Container(
+                    width: double.infinity,
+                    height: 60,
+                    decoration: BoxDecoration(
+                      color: corSelecionada,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.white.withOpacity(0.3)),
+                    ),
+                    child: Center(
+                      child: Text(
+                        _colorToHex(corSelecionada),
+                        style: TextStyle(
+                          color: corSelecionada.computeLuminance() > 0.5
+                              ? Colors.black
+                              : Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
                       ),
                     ),
                   ),
-                ),
-                const SizedBox(height: 20),
-                // Sliders RGB
-                _buildColorSlider(
-                  'Vermelho (R)',
-                  corSelecionada.red.toDouble(),
-                  255,
-                  Colors.red,
-                  (value) {
-                    setState(() {
-                      corSelecionada = Color.fromRGBO(
-                        value.round(),
-                        corSelecionada.green,
-                        corSelecionada.blue,
-                        1.0,
-                      );
-                    });
-                  },
-                ),
-                const SizedBox(height: 12),
-                _buildColorSlider(
-                  'Verde (G)',
-                  corSelecionada.green.toDouble(),
-                  255,
-                  Colors.green,
-                  (value) {
-                    setState(() {
-                      corSelecionada = Color.fromRGBO(
-                        corSelecionada.red,
-                        value.round(),
-                        corSelecionada.blue,
-                        1.0,
-                      );
-                    });
-                  },
-                ),
-                const SizedBox(height: 12),
-                _buildColorSlider(
-                  'Azul (B)',
-                  corSelecionada.blue.toDouble(),
-                  255,
-                  Colors.blue,
-                  (value) {
-                    setState(() {
-                      corSelecionada = Color.fromRGBO(
-                        corSelecionada.red,
-                        corSelecionada.green,
-                        value.round(),
-                        1.0,
-                      );
-                    });
-                  },
-                ),
-              ],
+                  const SizedBox(height: 20),
+                  // Sliders RGB
+                  _buildColorSlider(
+                    'Vermelho (R)',
+                    corSelecionada.red.toDouble(),
+                    255,
+                    Colors.red,
+                    (value) {
+                      setState(() {
+                        corSelecionada = Color.fromRGBO(
+                          value.round(),
+                          corSelecionada.green,
+                          corSelecionada.blue,
+                          1.0,
+                        );
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  _buildColorSlider(
+                    'Verde (G)',
+                    corSelecionada.green.toDouble(),
+                    255,
+                    Colors.green,
+                    (value) {
+                      setState(() {
+                        corSelecionada = Color.fromRGBO(
+                          corSelecionada.red,
+                          value.round(),
+                          corSelecionada.blue,
+                          1.0,
+                        );
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  _buildColorSlider(
+                    'Azul (B)',
+                    corSelecionada.blue.toDouble(),
+                    255,
+                    Colors.blue,
+                    (value) {
+                      setState(() {
+                        corSelecionada = Color.fromRGBO(
+                          corSelecionada.red,
+                          corSelecionada.green,
+                          value.round(),
+                          1.0,
+                        );
+                      });
+                    },
+                  ),
+                ],
               ),
             ),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+              child: const Text(
+                'Cancelar',
+                style: TextStyle(color: Colors.white54),
+              ),
             ),
             ElevatedButton(
               onPressed: () {
                 onColorChanged(corSelecionada);
                 Navigator.pop(context);
               },
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blueAccent,
+              ),
               child: const Text('Confirmar'),
             ),
           ],
@@ -4098,7 +5300,11 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
             ),
             Text(
               value.round().toString(),
-              style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+              ),
             ),
           ],
         ),
@@ -4110,12 +5316,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
             thumbColor: color,
             overlayColor: color.withOpacity(0.2),
           ),
-          child: Slider(
-            value: value,
-            min: 0,
-            max: max,
-            onChanged: onChanged,
-          ),
+          child: Slider(value: value, min: 0, max: max, onChanged: onChanged),
         ),
       ],
     );
@@ -4209,11 +5410,11 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
 
     final dataService = Provider.of<DataService>(context, listen: false);
     final authService = Provider.of<AuthService>(context, listen: false);
-    
+
     // Garantir que a empresa está selecionada antes de contar
     await authService.selecionarEmpresa(widget.empresa!);
     await dataService.definirEmpresaAtual(widget.empresa!.id);
-    
+
     // Contar dados da empresa atual
     final totalProdutos = dataService.produtos.length;
     final totalPedidos = dataService.pedidos.length;
@@ -4229,10 +5430,21 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
     final totalNotas = dataService.notasEntrada.length;
     final totalNfces = dataService.nfces.length;
     final totalMesas = dataService.mesasComandas.length;
-    final totalGeral = totalProdutos + totalPedidos + totalVendas + totalServicos + 
-                      totalClientes + totalAgendamentos + totalOrdens + totalEntregas +
-                      totalFuncionarios + totalTaxas + totalContas + totalNotas + 
-                      totalNfces + totalMesas;
+    final totalGeral =
+        totalProdutos +
+        totalPedidos +
+        totalVendas +
+        totalServicos +
+        totalClientes +
+        totalAgendamentos +
+        totalOrdens +
+        totalEntregas +
+        totalFuncionarios +
+        totalTaxas +
+        totalContas +
+        totalNotas +
+        totalNfces +
+        totalMesas;
 
     if (totalGeral == 0) {
       if (mounted) {
@@ -4250,9 +5462,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF1E1E2E),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Row(
           children: [
             const Icon(Icons.warning, color: Colors.red, size: 28),
@@ -4271,7 +5481,11 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
           children: [
             Text(
               'Tem certeza que deseja excluir TODOS os dados operacionais desta empresa?',
-              style: const TextStyle(color: Colors.white70, fontSize: 16, fontWeight: FontWeight.bold),
+              style: const TextStyle(
+                color: Colors.white70,
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+              ),
             ),
             const SizedBox(height: 16),
             Container(
@@ -4286,43 +5500,135 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                 children: [
                   const Text(
                     'Serão deletados TODOS os dados operacionais:',
-                    style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                   const SizedBox(height: 8),
                   if (totalProdutos > 0)
-                    Text('  • $totalProdutos produto(s)', style: const TextStyle(color: Colors.white70, fontSize: 13)),
+                    Text(
+                      '  • $totalProdutos produto(s)',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 13,
+                      ),
+                    ),
                   if (totalPedidos > 0)
-                    Text('  • $totalPedidos pedido(s)', style: const TextStyle(color: Colors.white70, fontSize: 13)),
+                    Text(
+                      '  • $totalPedidos pedido(s)',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 13,
+                      ),
+                    ),
                   if (totalVendas > 0)
-                    Text('  • $totalVendas venda(s)', style: const TextStyle(color: Colors.white70, fontSize: 13)),
+                    Text(
+                      '  • $totalVendas venda(s)',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 13,
+                      ),
+                    ),
                   if (totalServicos > 0)
-                    Text('  • $totalServicos serviço(s)', style: const TextStyle(color: Colors.white70, fontSize: 13)),
+                    Text(
+                      '  • $totalServicos serviço(s)',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 13,
+                      ),
+                    ),
                   if (totalClientes > 0)
-                    Text('  • $totalClientes cliente(s)', style: const TextStyle(color: Colors.white70, fontSize: 13)),
+                    Text(
+                      '  • $totalClientes cliente(s)',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 13,
+                      ),
+                    ),
                   if (totalAgendamentos > 0)
-                    Text('  • $totalAgendamentos agendamento(s)', style: const TextStyle(color: Colors.white70, fontSize: 13)),
+                    Text(
+                      '  • $totalAgendamentos agendamento(s)',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 13,
+                      ),
+                    ),
                   if (totalOrdens > 0)
-                    Text('  • $totalOrdens ordem(ns) de serviço', style: const TextStyle(color: Colors.white70, fontSize: 13)),
+                    Text(
+                      '  • $totalOrdens ordem(ns) de serviço',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 13,
+                      ),
+                    ),
                   if (totalEntregas > 0)
-                    Text('  • $totalEntregas entrega(s)', style: const TextStyle(color: Colors.white70, fontSize: 13)),
+                    Text(
+                      '  • $totalEntregas entrega(s)',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 13,
+                      ),
+                    ),
                   if (totalFuncionarios > 0)
-                    Text('  • $totalFuncionarios funcionário(s)', style: const TextStyle(color: Colors.white70, fontSize: 13)),
+                    Text(
+                      '  • $totalFuncionarios funcionário(s)',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 13,
+                      ),
+                    ),
                   if (totalTaxas > 0)
-                    Text('  • $totalTaxas taxa(s) de entrega', style: const TextStyle(color: Colors.white70, fontSize: 13)),
+                    Text(
+                      '  • $totalTaxas taxa(s) de entrega',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 13,
+                      ),
+                    ),
                   if (totalContas > 0)
-                    Text('  • $totalContas conta(s) a pagar', style: const TextStyle(color: Colors.white70, fontSize: 13)),
+                    Text(
+                      '  • $totalContas conta(s) a pagar',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 13,
+                      ),
+                    ),
                   if (totalNotas > 0)
-                    Text('  • $totalNotas nota(s) de entrada', style: const TextStyle(color: Colors.white70, fontSize: 13)),
+                    Text(
+                      '  • $totalNotas nota(s) de entrada',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 13,
+                      ),
+                    ),
                   if (totalNfces > 0)
-                    Text('  • $totalNfces NFC-e(s)', style: const TextStyle(color: Colors.white70, fontSize: 13)),
+                    Text(
+                      '  • $totalNfces NFC-e(s)',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 13,
+                      ),
+                    ),
                   if (totalMesas > 0)
-                    Text('  • $totalMesas mesa(s)/comanda(s)', style: const TextStyle(color: Colors.white70, fontSize: 13)),
+                    Text(
+                      '  • $totalMesas mesa(s)/comanda(s)',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 13,
+                      ),
+                    ),
                   if (totalGeral > 0)
                     Padding(
                       padding: const EdgeInsets.only(top: 8),
                       child: Text(
                         'Total: $totalGeral item(ns)',
-                        style: const TextStyle(color: Colors.orange, fontSize: 13, fontWeight: FontWeight.bold),
+                        style: const TextStyle(
+                          color: Colors.orange,
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ),
                 ],
@@ -4358,7 +5664,10 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar', style: TextStyle(color: Colors.white70)),
+            child: const Text(
+              'Cancelar',
+              style: TextStyle(color: Colors.white70),
+            ),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
@@ -4375,36 +5684,49 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
     if (confirmar == true && mounted) {
       try {
         setState(() => _isLoading = true);
-        
+
         // Garantir que a empresa está selecionada
         final authService = Provider.of<AuthService>(context, listen: false);
         await authService.selecionarEmpresa(widget.empresa!);
         await dataService.definirEmpresaAtual(widget.empresa!.id);
-        
+
         // Deletar todos os dados operacionais
         await dataService.deletarTodosDadosOperacionais(confirmar: true);
-        
+
         // Recarregar os dados para garantir que a interface seja atualizada
         await dataService.recarregarDados();
-        
+
         if (mounted) {
-          final mensagem = StringBuffer('✅ Todos os dados foram excluídos com sucesso!\n\n');
-          if (totalProdutos > 0) mensagem.writeln('• $totalProdutos produto(s)');
+          final mensagem = StringBuffer(
+            '✅ Todos os dados foram excluídos com sucesso!\n\n',
+          );
+          if (totalProdutos > 0)
+            mensagem.writeln('• $totalProdutos produto(s)');
           if (totalPedidos > 0) mensagem.writeln('• $totalPedidos pedido(s)');
           if (totalVendas > 0) mensagem.writeln('• $totalVendas venda(s)');
-          if (totalServicos > 0) mensagem.writeln('• $totalServicos serviço(s)');
-          if (totalClientes > 0) mensagem.writeln('• $totalClientes cliente(s)');
-          if (totalAgendamentos > 0) mensagem.writeln('• $totalAgendamentos agendamento(s)');
-          if (totalOrdens > 0) mensagem.writeln('• $totalOrdens ordem(ns) de serviço');
-          if (totalEntregas > 0) mensagem.writeln('• $totalEntregas entrega(s)');
-          if (totalFuncionarios > 0) mensagem.writeln('• $totalFuncionarios funcionário(s)');
-          if (totalTaxas > 0) mensagem.writeln('• $totalTaxas taxa(s) de entrega');
-          if (totalContas > 0) mensagem.writeln('• $totalContas conta(s) a pagar');
-          if (totalNotas > 0) mensagem.writeln('• $totalNotas nota(s) de entrada');
+          if (totalServicos > 0)
+            mensagem.writeln('• $totalServicos serviço(s)');
+          if (totalClientes > 0)
+            mensagem.writeln('• $totalClientes cliente(s)');
+          if (totalAgendamentos > 0)
+            mensagem.writeln('• $totalAgendamentos agendamento(s)');
+          if (totalOrdens > 0)
+            mensagem.writeln('• $totalOrdens ordem(ns) de serviço');
+          if (totalEntregas > 0)
+            mensagem.writeln('• $totalEntregas entrega(s)');
+          if (totalFuncionarios > 0)
+            mensagem.writeln('• $totalFuncionarios funcionário(s)');
+          if (totalTaxas > 0)
+            mensagem.writeln('• $totalTaxas taxa(s) de entrega');
+          if (totalContas > 0)
+            mensagem.writeln('• $totalContas conta(s) a pagar');
+          if (totalNotas > 0)
+            mensagem.writeln('• $totalNotas nota(s) de entrada');
           if (totalNfces > 0) mensagem.writeln('• $totalNfces NFC-e(s)');
-          if (totalMesas > 0) mensagem.writeln('• $totalMesas mesa(s)/comanda(s)');
+          if (totalMesas > 0)
+            mensagem.writeln('• $totalMesas mesa(s)/comanda(s)');
           mensagem.writeln('\n✅ A empresa está pronta para começar do zero!');
-          
+
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(mensagem.toString()),
@@ -4495,7 +5817,3 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
     const Color(0xFFFF6D00), // Orange Accent
   ];
 }
-
-
-
-

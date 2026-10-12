@@ -33,6 +33,7 @@ import '../models/empresa.dart';
 import '../models/nfce.dart';
 import '../widgets/sync_status_widget.dart';
 import '../widgets/historico_nfce_pdv_dialog.dart';
+import '../utils/numeracao_venda.dart';
 
 /// Página do PDV - Ponto de Venda com abas
 /// Receber Pedidos, Venda Direta e Consulta Cliente
@@ -685,7 +686,7 @@ class _PdvPageState extends State<PdvPage> {
 
       bool match = false;
 
-      // Buscar por número da venda (VND-) - ignorando zeros à esquerda
+      // Buscar por número da venda (CX1-0001, VND-0001) - ignorando zeros à esquerda
       if (numeroVenda == termoLower ||
           numeroVendaLimpo == numerosNoTermo ||
           numeroVendaSemZero == numerosNoTermo ||  // Compara sem zeros à esquerda
@@ -3800,12 +3801,12 @@ class _PdvPageState extends State<PdvPage> {
     } else if (_filtroTipoDocumento == 'PEDIDOS') {
       pedidosFiadoOuCrediario = [];
       pedidosOutros = pedidosPendentes
-          .where((p) => p.numero.startsWith('PED-') || (!p.numero.startsWith('VND-') && !p.numero.startsWith('VND')))
+          .where((p) => !NumeracaoVenda.ehVendaPdv(p.numero))
           .toList();
     } else if (_filtroTipoDocumento == 'VENDAS') {
       pedidosFiadoOuCrediario = [];
       pedidosOutros = pedidosPendentes
-          .where((p) => p.numero.startsWith('VND-') || p.numero.startsWith('VND'))
+          .where((p) => NumeracaoVenda.ehVendaPdv(p.numero))
           .toList();
     } else {
       // TODOS
@@ -4421,11 +4422,7 @@ class _PdvPageState extends State<PdvPage> {
             const Icon(Icons.check, color: Colors.green, size: 16),
             const SizedBox(width: 8),
             Text(
-              pedido.numero.isNotEmpty && pedido.numero.startsWith('VND-')
-                  ? pedido.numero
-                  : pedido.numero.isNotEmpty
-                  ? pedido.numero
-                  : 'Sem número',
+              pedido.numero.isNotEmpty ? pedido.numero : 'Sem número',
               style: const TextStyle(
                 color: Colors.white,
                 fontWeight: FontWeight.bold,
@@ -7416,12 +7413,12 @@ class _PdvPageState extends State<PdvPage> {
     } else if (_filtroTipoDocumento == 'PEDIDOS') {
       pedidosFiadoOuCrediario = [];
       pedidosOutros = pedidos
-          .where((p) => p.numero.startsWith('PED-') || (!p.numero.startsWith('VND-') && !p.numero.startsWith('VND')))
+          .where((p) => !NumeracaoVenda.ehVendaPdv(p.numero))
           .toList();
     } else if (_filtroTipoDocumento == 'VENDAS') {
       pedidosFiadoOuCrediario = [];
       pedidosOutros = pedidos
-          .where((p) => p.numero.startsWith('VND-') || p.numero.startsWith('VND'))
+          .where((p) => NumeracaoVenda.ehVendaPdv(p.numero))
           .toList();
     } else {
       // TODOS
@@ -7963,12 +7960,7 @@ class _PdvPageState extends State<PdvPage> {
                     Row(
                       children: [
                         Text(
-                          pedido.numero.isNotEmpty &&
-                                  pedido.numero.startsWith('VND-')
-                              ? pedido.numero
-                              : pedido.numero.isNotEmpty
-                              ? pedido.numero
-                              : 'Sem número',
+                          pedido.numero.isNotEmpty ? pedido.numero : 'Sem número',
                           style: const TextStyle(
                             color: Colors.white,
                             fontWeight: FontWeight.bold,
@@ -9508,7 +9500,9 @@ class _PdvPageState extends State<PdvPage> {
                                   style: const TextStyle(color: Colors.white, fontSize: 14),
                                 ),
                                 subtitle: Text(
-                                  'R\$ ${produto.preco.toStringAsFixed(2)} • Estoque: ${produto.estoque.toStringAsFixed(2)}',
+                                  dataService.reservarEstoquePedidosAtivo
+                                      ? 'R\$ ${produto.preco.toStringAsFixed(2)} • Disponível: ${dataService.estoqueDisponivelDe(produto).toStringAsFixed(2)}'
+                                      : 'R\$ ${produto.preco.toStringAsFixed(2)} • Estoque: ${produto.estoque.toStringAsFixed(2)}',
                                   style: const TextStyle(color: Colors.white54, fontSize: 11),
                                 ),
                                 onTap: () {
@@ -9543,6 +9537,25 @@ class _PdvPageState extends State<PdvPage> {
     Produto produto,
     DataService dataService,
   ) async {
+    // Produto fora da janela de disponibilidade temporária: continua visível no
+    // catálogo, mas não pode entrar no pedido agora.
+    if (!produto.disponivelAgora) {
+      _avisarEdicaoPedido(
+        'Produto "${produto.nome}" indisponível: '
+        '${produto.indisponibilidadeTemporariaLabel ?? 'fora da janela de disponibilidade'}.',
+        erro: true,
+      );
+      return;
+    }
+
+    // Reserva de estoque: com a configuração ligada, o disponível é o estoque
+    // menos o que outros pedidos em aberto já seguram.
+    final faltaEstoque = dataService.validarEstoqueDisponivel(produto);
+    if (faltaEstoque != null) {
+      _avisarEdicaoPedido(faltaEstoque, erro: true);
+      return;
+    }
+
     final produtos = List<ItemPedido>.from(pedido.produtos);
     final indexExistente = produtos.indexWhere(
       (i) => i.id == produto.id && i.adicionais.isEmpty,

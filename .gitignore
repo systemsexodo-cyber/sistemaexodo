@@ -66,6 +66,7 @@ local.properties
 
 # Arquivos de ambiente
 .env
+.env.*
 .env.local
 
 # Arquivos de cache

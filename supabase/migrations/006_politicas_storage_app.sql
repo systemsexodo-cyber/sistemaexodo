@@ -1,0 +1,6 @@
+-- MOVIDA para a fonte única: scripts/migrations/006_politicas_storage_app.sql
+--
+-- Para aplicar na nuvem, abra e cole o arquivo:
+--     scripts/migrations/006_politicas_storage_app.sql
+--
+-- Ver scripts/migrations/README.md.

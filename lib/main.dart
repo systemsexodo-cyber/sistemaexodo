@@ -17,6 +17,7 @@ import 'package:sistema_exodo_novo/services/supabase_service.dart';
 import 'package:sistema_exodo_novo/services/app_update_service.dart';
 import 'package:sistema_exodo_novo/services/nfce_contingencia_service.dart';
 import 'package:sistema_exodo_novo/services/clock_check_service.dart';
+import 'package:sistema_exodo_novo/services/diagnostico_layout_service.dart';
 
 import 'dart:async';
 import 'dart:io';
@@ -73,6 +74,92 @@ Future<void> _logBoot(String msg) async {
   } catch (_) {}
 }
 
+/// Fila de gravação do log de erros.
+///
+/// As gravações são assíncronas e antes rodavam TODAS ao mesmo tempo. Quando
+/// três erros caíam no mesmo frame, os blocos saíam embaralhados no arquivo
+/// (pilhas cortadas no meio) e entradas inteiras se perdiam — a PIOR delas é
+/// justamente a primeira, que é a que explica a tela vermelha. Agora cada
+/// gravação só começa quando a anterior termina.
+Future<void> _filaDoLogDeErros = Future<void>.value();
+
+/// Grava um erro do framework (tela vermelha) em erro_flutter.log, no mesmo
+/// diretório do boot.log, com o contexto (widget que estava sendo construído)
+/// e a pilha completa. Sem isto o erro só existe no console do `flutter run` —
+/// quando o app é fechado (ou quando se olha só a tela) a causa se perde.
+Future<void> _logErroFramework(FlutterErrorDetails details,
+    {String origem = 'FLUTTER'}) {
+  final gravar = _filaDoLogDeErros
+      .then((_) => _gravarErroFramework(details, origem: origem));
+  _filaDoLogDeErros = gravar.catchError((_) {});
+  return gravar;
+}
+
+/// Grava UM erro no arquivo, em partes.
+///
+/// Cada parte é gravada sozinha e protegida por conta própria DE PROPÓSITO: o
+/// relatório de estouro de layout anda na árvore de renderização, e quando a
+/// árvore JÁ está quebrada (que é o caso de uma tela vermelha) esse passe pode
+/// estourar. Antes, uma falha no diagnóstico levava junto a mensagem do erro —
+/// a causa raiz se perdia no meio do caminho. Agora o essencial (erro +
+/// contexto) é gravado primeiro, e só depois vêm os enfeites.
+Future<void> _gravarErroFramework(FlutterErrorDetails details,
+    {String origem = 'FLUTTER'}) async {
+  if (kIsWeb) return;
+  late final File logFile;
+  try {
+    final supportDir = await getApplicationSupportDirectory();
+    logFile = File(p.join(supportDir.path, 'erro_flutter.log'));
+    // Não deixa o arquivo crescer sem limite numa máquina em uso diário.
+    if (await logFile.exists() && await logFile.length() > 1024 * 1024) {
+      await logFile.writeAsString('');
+    }
+    final buffer = StringBuffer()
+      ..writeln('════════════════ ${DateTime.now().toIso8601String()} [$origem] ════════════════')
+      ..writeln('Erro: ${details.exception.runtimeType}: ${details.exception}')
+      ..writeln('Contexto: ${details.context?.toString() ?? '(sem contexto)'}')
+      ..writeln('Biblioteca: ${details.library}');
+    await logFile.writeAsString(buffer.toString(), mode: FileMode.append);
+  } catch (_) {
+    return;
+  }
+
+  // O que o Flutter sabe do erro (inclui o "error-causing widget", com arquivo
+  // e linha — é o que aponta o culpado direto no nosso código).
+  try {
+    final informacoes =
+        details.informationCollector?.call() ?? const <DiagnosticsNode>[];
+    if (informacoes.isNotEmpty) {
+      final buffer = StringBuffer();
+      for (final info in informacoes) {
+        buffer
+          ..writeln('----')
+          ..writeln(info.toStringDeep());
+      }
+      await logFile.writeAsString(buffer.toString(), mode: FileMode.append);
+    }
+  } catch (_) {}
+
+  // Estouro de layout (RenderFlex overflow): o log do Flutter não diz QUAL
+  // filho é o gigante. Este relatório anda na árvore de renderização e aponta
+  // o widget culpado — é o que permite corrigir sem adivinhar.
+  try {
+    final estouro = DiagnosticoLayoutService.relatorioDeEstouro(details);
+    if (estouro != null) {
+      await logFile.writeAsString('$estouro\n', mode: FileMode.append);
+    }
+  } catch (_) {}
+
+  try {
+    await logFile.writeAsString(
+      'Pilha:\n${details.stack?.toString() ?? '(sem pilha)'}\n\n',
+      mode: FileMode.append,
+    );
+  } catch (_) {}
+
+  debugPrint('>>>>> [ERRO GLOBAL] log gravado em ${logFile.path}');
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -85,10 +172,15 @@ void main() async {
     debugPrint('>>>>> Stack trace completo:');
     debugPrint(details.stack.toString());
     debugPrint('>>>>> FIM DO STACK TRACE');
+    unawaited(_logErroFramework(details));
   };
   PlatformDispatcher.instance.onError = (Object error, StackTrace stack) {
     debugPrint('>>>>> [ERRO PLATFORM] $error');
     debugPrint('>>>>> Stack: $stack');
+    unawaited(_logErroFramework(
+      FlutterErrorDetails(exception: error, stack: stack),
+      origem: 'PLATFORM',
+    ));
     return true;
   };
   
@@ -101,14 +193,20 @@ void main() async {
   // nova SEM acesso a nuvem, isso podia travar PARA SEMPRE antes do runApp(),
   // fazendo o app 'nao abrir / nao carregar'. Agora: se nao responder em 8s,
   // o app abre mesmo assim (offline) e a sincronizacao tenta depois.
-  await _logBoot('Inicializando Supabase (timeout 8s)...');
-  try {
-    await SupabaseService.initialize().timeout(const Duration(seconds: 12));
-    await _logBoot('Supabase inicializado');
-  } catch (e) {
-    debugPrint('>>> [SISTEMA] ⚠️ Supabase timeout/erro (app abrindo offline): $e');
-    await _logBoot('Supabase timeout/erro (offline): $e');
-  }
+  // NÃO bloqueia a abertura do app: o Supabase é a NUVEM (espelho assíncrono) e
+  // o sistema roda local. Antes, aguardar aqui segurava o boot até 12s numa
+  // máquina sem internet. Agora o app abre na hora e inicializa/verifica em
+  // background; todo acesso à nuvem já se protege com isAvailable/erro.
+  await _logBoot('Inicializando Supabase em background...');
+  unawaited(
+    SupabaseService.initialize()
+        .timeout(const Duration(seconds: 15))
+        .then((_) => _logBoot('Supabase inicializado'))
+        .catchError((Object e) {
+      debugPrint('>>> [SISTEMA] ⚠️ Supabase timeout/erro (app segue offline): $e');
+      _logBoot('Supabase timeout/erro (offline): $e');
+    }),
+  );
   
   if (kIsWeb) {
     try {
@@ -439,6 +537,10 @@ class _AuthWrapperState extends State<AuthWrapper> {
   String _versaoRemota = '';
   String _erroAtualizacao = '';
 
+  /// Detalhes da versão que está sendo baixada (), o que o suporte anotou ao
+  /// publicar. Vem da nuvem em paralelo — não atrasa o download.
+  String _notasAtualizacao = '';
+
   @override
   void initState() {
     super.initState();
@@ -471,9 +573,18 @@ class _AuthWrapperState extends State<AuthWrapper> {
             _baixandoAtualizacao = true;
             _versaoRemota = version;
             _progressoAtualizacao = 0.0;
+            _notasAtualizacao = '';
           });
 
-          final success = await AppUpdateService.baixarEAplicarAtualizacao(
+          // Busca os detalhes em paralelo: se demorar, o download já começou.
+          unawaited(AppUpdateService.buscarNotas(downloadUrl).then((texto) {
+            if (mounted && texto != null && texto.isNotEmpty) {
+              setState(() => _notasAtualizacao = texto);
+            }
+          }));
+
+          final (success, motivo) =
+              await AppUpdateService.baixarEAplicarAtualizacao(
             downloadUrl,
             (progress) {
               if (mounted) {
@@ -488,6 +599,28 @@ class _AuthWrapperState extends State<AuthWrapper> {
             setState(() {
               _baixandoAtualizacao = false;
             });
+            // O app continua funcionando na versão atual; dizer o motivo evita
+            // a impressão de que "atualizou e não mudou nada".
+            if (motivo.isNotEmpty) {
+              showDialog<void>(
+                context: context,
+                builder: (context) => AlertDialog(
+                  backgroundColor: const Color(0xFF1E1E2E),
+                  title: const Text('Atualização não aplicada',
+                      style: TextStyle(color: Colors.white)),
+                  content: Text(
+                    '$motivo\n\nVocê continua na versão atual. Avise o suporte.',
+                    style: const TextStyle(color: Colors.white70),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('OK'),
+                    ),
+                  ],
+                ),
+              );
+            }
           }
         }
       }
@@ -582,6 +715,40 @@ class _AuthWrapperState extends State<AuthWrapper> {
                   fontSize: 14,
                 ),
               ),
+              if (_notasAtualizacao.isNotEmpty) ...[
+                const SizedBox(height: 20),
+                Container(
+                  width: 380,
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.05),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.white12),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'O que mudou nesta versão',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _notasAtualizacao,
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 12,
+                          height: 1.4,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
               const SizedBox(height: 8),
               const Text(
                 'O aplicativo será reiniciado automaticamente.',
@@ -695,7 +862,10 @@ class _AuthWrapperState extends State<AuthWrapper> {
             
             // Se o DataService está carregando, mostrar loading
             if (dataService.isLoading == true) {
-              return ExodoLoading(mensagem: dataService.mensagemLoading);
+              return ExodoLoading(
+                mensagem: dataService.mensagemLoading,
+                progresso: dataService.progressoLoading,
+              );
             }
 
             // Carga inicial da NUVEM: mantém a tela de carregando até os dados
@@ -705,6 +875,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
             if (dataService.sincronizandoInicial == true) {
               return ExodoLoading(
                 mensagem: dataService.mensagemLoading,
+                progresso: dataService.progressoLoading,
                 segundosParaMostrarPular: 5,
                 onPular: dataService.pularEsperaSincronizacaoInicial,
               );
@@ -735,8 +906,8 @@ class _AuthWrapperState extends State<AuthWrapper> {
               // Só dispara o setup se realmente a empresa mudou
               WidgetsBinding.instance.addPostFrameCallback((_) {
                 if (dataService.currentEmpresaId != empresaAtual.id) {
-                  dataService.definirEmpresaAtual(empresaAtual.id);
                   dataService.setEmpresaAtual(empresaAtual);
+                  dataService.definirEmpresaAtual(empresaAtual.id);
                 }
               });
               // Retornar loading enquanto o setup acontece (evita flash de tela)

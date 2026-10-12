@@ -2696,7 +2696,29 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                     subtitle: const Text('Dispara o comando para todos os emissores ativos na nuvem.', style: TextStyle(color: Colors.white54, fontSize: 11)),
                     onTap: () {
                       Navigator.pop(dialogContext);
-                      _confirmarComandoBridge(pageContext, comando, 'Deseja $acaoTitulo em TODOS os emissores simultaneamente?', targetPc: null, extraData: extraData);
+                      // Uma ordem POR PC registrado. Antes ia um ÚNICO comando
+                      // sem alvo (target_pc nulo): várias máquinas o pegavam ao
+                      // mesmo tempo e todas executavam — a atualização "abria e
+                      // fechava" em máquina que não deveria atualizar.
+                      final pcs = todosDocs
+                          .map((d) => d['id']?.toString() ?? '')
+                          .where((id) => id.isNotEmpty)
+                          .toList();
+                      if (pcs.isEmpty) {
+                        ScaffoldMessenger.of(pageContext).showSnackBar(
+                          const SnackBar(
+                            content: Text('Nenhum computador registrado ainda. Use "Enviar direto pelo CNPJ".'),
+                            backgroundColor: Colors.orange,
+                            duration: Duration(seconds: 4),
+                          ),
+                        );
+                        return;
+                      }
+                      _confirmarComandoBridgeParaMultiplos(
+                        pageContext, comando,
+                        'Deseja $acaoTitulo nos ${pcs.length} computadores registrados?',
+                        pcs, extraData: extraData,
+                      );
                     },
                   ),
                   const Divider(color: Colors.white24),
