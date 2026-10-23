@@ -983,6 +983,10 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
     // (caixa.ver_totais_formas_pagamento)
     final podeVerFormasPagamento = PermissionHelper.podeVerTotaisFormasPagamento(authServiceTotais.usuarioAtual);
 
+    // No celular as ações do topo descem para o menu "⋮", com o mesmo
+    // padrão da tela de Produtos.
+    final ehCelular = MediaQuery.sizeOf(context).width < 700;
+
     return Scaffold(
       backgroundColor: const Color(0xFF161621),
       appBar: AppBar(
@@ -993,6 +997,7 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
         backgroundColor: const Color(0xFF1E1E2E),
         actions: [
           const SyncStatusWidget(),
+          if (!ehCelular) ...[
           IconButton(
             icon: const Icon(Icons.point_of_sale, color: Colors.greenAccent),
             onPressed: () => _mostrarResumoCaixas(context, itens, dataService),
@@ -1032,6 +1037,73 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
               );
             },
           ),
+          ],
+          if (ehCelular)
+            PopupMenuButton<String>(
+              icon: const Icon(Icons.more_vert, color: Colors.white),
+              tooltip: 'Mais ações',
+              onSelected: (valor) {
+                if (valor == 'resumo') {
+                  _mostrarResumoCaixas(context, itens, dataService);
+                } else if (valor == 'produtos') {
+                  _mostrarVendasPorProduto(context, dataService, itens);
+                } else if (valor == 'trocas') {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const TrocasDevolucoesBuscarPage(),
+                    ),
+                  );
+                } else if (valor == 'nfce') {
+                  final authService = Provider.of<AuthService>(
+                    context,
+                    listen: false,
+                  );
+                  final empresa = authService.empresaAtual;
+                  if (empresa == null) return;
+                  showDialog(
+                    context: context,
+                    builder: (context) =>
+                        HistoricoNFCePDVDialog(empresa: empresa),
+                  );
+                }
+              },
+              itemBuilder: (context) => const [
+                PopupMenuItem(
+                  value: 'resumo',
+                  child: Row(children: [
+                    Icon(Icons.point_of_sale,
+                        size: 18, color: Colors.greenAccent),
+                    SizedBox(width: 8),
+                    Text('Resumo dos Caixas'),
+                  ]),
+                ),
+                PopupMenuItem(
+                  value: 'produtos',
+                  child: Row(children: [
+                    Icon(Icons.inventory_2, size: 18, color: Colors.blueAccent),
+                    SizedBox(width: 8),
+                    Text('Produtos Vendidos'),
+                  ]),
+                ),
+                PopupMenuItem(
+                  value: 'trocas',
+                  child: Row(children: [
+                    Icon(Icons.swap_horiz, size: 18, color: Colors.amberAccent),
+                    SizedBox(width: 8),
+                    Text('Trocas e Devoluções'),
+                  ]),
+                ),
+                PopupMenuItem(
+                  value: 'nfce',
+                  child: Row(children: [
+                    Icon(Icons.receipt_long, size: 18, color: Colors.cyanAccent),
+                    SizedBox(width: 8),
+                    Text('Histórico NFC-e'),
+                  ]),
+                ),
+              ],
+            ),
         ],
       ),
       body: Column(
@@ -1559,12 +1631,18 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                 fontWeight: FontWeight.bold,
               ),
             ),
-            Text(
-              isMoeda ? _formatoMoeda.format(val) : val.toInt().toString(),
-              style: TextStyle(
-                color: col,
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
+            // FittedBox: em telas estreitas o valor encolhe em vez de
+            // estourar a coluna (1/3 da largura no celular).
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text(
+                isMoeda ? _formatoMoeda.format(val) : val.toInt().toString(),
+                style: TextStyle(
+                  color: col,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
           ],

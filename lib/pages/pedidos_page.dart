@@ -67,6 +67,8 @@ class _PedidosPageState extends State<PedidosPage> {
     final dataService = Provider.of<DataService>(context, listen: true);
     final authService = Provider.of<AuthService>(context, listen: false);
     final pedidos = _filtrarPedidos(dataService.pedidos, authService, dataService);
+    // Largura de celular: aplica o mesmo padrão da tela de Produtos.
+    final ehCelular = MediaQuery.sizeOf(context).width < 700;
 
     return AppTheme.appBackground(
       child: Scaffold(
@@ -111,6 +113,8 @@ class _PedidosPageState extends State<PedidosPage> {
                 },
               ),
             ] else ...[
+              // No celular estes dois atalhos descem para o menu "⋮".
+              if (!ehCelular) ...[
               IconButton(
                 icon: const Icon(Icons.request_quote, color: Colors.purpleAccent),
                 tooltip: 'Orçamentos (propostas com validade)',
@@ -131,6 +135,7 @@ class _PedidosPageState extends State<PedidosPage> {
                   MaterialPageRoute(builder: (context) => const RomaneiosPage()),
                 ),
               ),
+              ],
               const SyncStatusWidget(),
               // Botão de busca
               IconButton(
@@ -202,6 +207,7 @@ class _PedidosPageState extends State<PedidosPage> {
                   )
                   .toList(),
             ),
+            if (!ehCelular) ...[
             // Botão controle de entregas
             IconButton(
               icon: Icon(Icons.local_shipping, color: Colors.blue.shade800),
@@ -224,6 +230,79 @@ class _PedidosPageState extends State<PedidosPage> {
                 );
               },
             ),
+            ],
+            // No celular os quatro atalhos acima ficam no menu "⋮", com o
+            // mesmo padrão da tela de Produtos (topo compacto).
+            if (ehCelular && !_modoSelecao)
+              PopupMenuButton<String>(
+                icon: Icon(
+                  Icons.more_vert,
+                  color: Theme.of(context).colorScheme.onPrimary,
+                ),
+                tooltip: 'Mais ações',
+                onSelected: (valor) {
+                  if (valor == 'orcamentos') {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (context) => const OrcamentosPage()),
+                    ).then((_) {
+                      if (mounted) setState(() {});
+                    });
+                  } else if (valor == 'romaneios') {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => const RomaneiosPage()),
+                    );
+                  } else if (valor == 'entregas') {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => const EntregasPage()),
+                    );
+                  } else if (valor == 'pdv') {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => VendaDiretaPage()),
+                    );
+                  }
+                },
+                itemBuilder: (context) => const [
+                  PopupMenuItem(
+                    value: 'orcamentos',
+                    child: Row(children: [
+                      Icon(Icons.request_quote,
+                          size: 18, color: Colors.purpleAccent),
+                      SizedBox(width: 8),
+                      Text('Orçamentos'),
+                    ]),
+                  ),
+                  PopupMenuItem(
+                    value: 'romaneios',
+                    child: Row(children: [
+                      Icon(Icons.assignment_outlined, size: 18),
+                      SizedBox(width: 8),
+                      Text('Romaneios'),
+                    ]),
+                  ),
+                  PopupMenuItem(
+                    value: 'entregas',
+                    child: Row(children: [
+                      Icon(Icons.local_shipping, size: 18),
+                      SizedBox(width: 8),
+                      Text('Controle de Entregas'),
+                    ]),
+                  ),
+                  PopupMenuItem(
+                    value: 'pdv',
+                    child: Row(children: [
+                      Icon(Icons.point_of_sale,
+                          size: 18, color: Colors.greenAccent),
+                      SizedBox(width: 8),
+                      Text('Abrir PDV'),
+                    ]),
+                  ),
+                ],
+              ),
             // Botão adicionar
             IconButton(
               icon: Icon(
@@ -729,6 +808,7 @@ class _PedidosPageState extends State<PedidosPage> {
   }
 
   Widget _buildFiltroData() {
+    final ehCelular = MediaQuery.sizeOf(context).width < 700;
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       padding: const EdgeInsets.all(12),
@@ -737,123 +817,252 @@ class _PedidosPageState extends State<PedidosPage> {
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: Colors.white.withOpacity(0.1)),
       ),
-      child: Row(
-        children: [
-          const Icon(
-            Icons.calendar_today,
-            size: 18,
-            color: Colors.orange,
-          ),
-          const SizedBox(width: 8),
-          const Text(
-            'Período:',
-            style: TextStyle(
-              color: Colors.white70,
-              fontSize: 14,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          const SizedBox(width: 12),
-          // Data Inicial
-          GestureDetector(
-            onTap: () => _selecionarDataFiltro(true),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: Colors.orange.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: Colors.orange.withOpacity(0.3),
+      // No celular os filtros de período usam Wrap: em vez de uma
+      // única linha (que estourava em telas estreitas), os elementos
+      // fluem para a segunda linha.
+      child: ehCelular
+          ? Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+
+                const Icon(
+                  Icons.calendar_today,
+                  size: 18,
+                  color: Colors.orange,
                 ),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(
-                    Icons.event,
-                    size: 16,
-                    color: Colors.orange,
+                const SizedBox(width: 8),
+                const Text(
+                  'Período:',
+                  style: TextStyle(
+                    color: Colors.white70,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
                   ),
-                  const SizedBox(width: 6),
-                  Text(
-                    _dataInicioFiltro != null
-                        ? DateFormat('dd/MM/yyyy').format(_dataInicioFiltro!)
-                        : 'Data inicial',
-                    style: TextStyle(
-                      color: _dataInicioFiltro != null
-                          ? Colors.white
-                          : Colors.white54,
-                      fontSize: 13,
+                ),
+                const SizedBox(width: 12),
+                // Data Inicial
+                GestureDetector(
+                  onTap: () => _selecionarDataFiltro(true),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: Colors.orange.withOpacity(0.3),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.event,
+                          size: 16,
+                          color: Colors.orange,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          _dataInicioFiltro != null
+                              ? DateFormat('dd/MM/yyyy').format(_dataInicioFiltro!)
+                              : 'Data inicial',
+                          style: TextStyle(
+                            color: _dataInicioFiltro != null
+                                ? Colors.white
+                                : Colors.white54,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                ],
-              ),
-            ),
-          ),
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 8),
-            child: Text(
-              'até',
-              style: TextStyle(color: Colors.white54),
-            ),
-          ),
-          // Data Final
-          GestureDetector(
-            onTap: () => _selecionarDataFiltro(false),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: Colors.orange.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: Colors.orange.withOpacity(0.3),
                 ),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(
-                    Icons.event,
-                    size: 16,
-                    color: Colors.orange,
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 8),
+                  child: Text(
+                    'até',
+                    style: TextStyle(color: Colors.white54),
                   ),
-                  const SizedBox(width: 6),
-                  Text(
-                    _dataFimFiltro != null
-                        ? DateFormat('dd/MM/yyyy').format(_dataFimFiltro!)
-                        : 'Data final',
-                    style: TextStyle(
-                      color: _dataFimFiltro != null
-                          ? Colors.white
-                          : Colors.white54,
-                      fontSize: 13,
+                ),
+                // Data Final
+                GestureDetector(
+                  onTap: () => _selecionarDataFiltro(false),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: Colors.orange.withOpacity(0.3),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.event,
+                          size: 16,
+                          color: Colors.orange,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          _dataFimFiltro != null
+                              ? DateFormat('dd/MM/yyyy').format(_dataFimFiltro!)
+                              : 'Data final',
+                          style: TextStyle(
+                            color: _dataFimFiltro != null
+                                ? Colors.white
+                                : Colors.white54,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                ],
-              ),
-            ),
-          ),
+                ),
+
+
+                // Botão Limpar Filtro
+                if (_dataInicioFiltro != null || _dataFimFiltro != null)
+                  TextButton.icon(
+                    onPressed: () {
+                      setState(() {
+                        _dataInicioFiltro = null;
+                        _dataFimFiltro = null;
+                      });
+                    },
+                    icon: const Icon(Icons.clear, size: 16),
+                    label: const Text('Limpar'),
+                    style: TextButton.styleFrom(
+                      foregroundColor: Colors.orange,
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                  ),
+              ],
+            )
+          : Row(
+              children: [
+
+                const Icon(
+                  Icons.calendar_today,
+                  size: 18,
+                  color: Colors.orange,
+                ),
+                const SizedBox(width: 8),
+                const Text(
+                  'Período:',
+                  style: TextStyle(
+                    color: Colors.white70,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                // Data Inicial
+                GestureDetector(
+                  onTap: () => _selecionarDataFiltro(true),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: Colors.orange.withOpacity(0.3),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.event,
+                          size: 16,
+                          color: Colors.orange,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          _dataInicioFiltro != null
+                              ? DateFormat('dd/MM/yyyy').format(_dataInicioFiltro!)
+                              : 'Data inicial',
+                          style: TextStyle(
+                            color: _dataInicioFiltro != null
+                                ? Colors.white
+                                : Colors.white54,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 8),
+                  child: Text(
+                    'até',
+                    style: TextStyle(color: Colors.white54),
+                  ),
+                ),
+                // Data Final
+                GestureDetector(
+                  onTap: () => _selecionarDataFiltro(false),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: Colors.orange.withOpacity(0.3),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.event,
+                          size: 16,
+                          color: Colors.orange,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          _dataFimFiltro != null
+                              ? DateFormat('dd/MM/yyyy').format(_dataFimFiltro!)
+                              : 'Data final',
+                          style: TextStyle(
+                            color: _dataFimFiltro != null
+                                ? Colors.white
+                                : Colors.white54,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
           const Spacer(),
-          // Botão Limpar Filtro
-          if (_dataInicioFiltro != null || _dataFimFiltro != null)
-            TextButton.icon(
-              onPressed: () {
-                setState(() {
-                  _dataInicioFiltro = null;
-                  _dataFimFiltro = null;
-                });
-              },
-              icon: const Icon(Icons.clear, size: 16),
-              label: const Text('Limpar'),
-              style: TextButton.styleFrom(
-                foregroundColor: Colors.orange,
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                minimumSize: Size.zero,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
+
+                // Botão Limpar Filtro
+                if (_dataInicioFiltro != null || _dataFimFiltro != null)
+                  TextButton.icon(
+                    onPressed: () {
+                      setState(() {
+                        _dataInicioFiltro = null;
+                        _dataFimFiltro = null;
+                      });
+                    },
+                    icon: const Icon(Icons.clear, size: 16),
+                    label: const Text('Limpar'),
+                    style: TextButton.styleFrom(
+                      foregroundColor: Colors.orange,
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                  ),
+              ],
             ),
-        ],
-      ),
     );
   }
 
@@ -1005,6 +1214,8 @@ class _PedidosPageState extends State<PedidosPage> {
     final isPago = !isCancelado && pedido.totalmenteRecebido;
     final isParcialmentePago = !isCancelado && pedido.totalRecebido > 0 && !isPago;
     final isSelecionado = _selecionadosIds.contains(pedido.id);
+    // No celular (< 700px) os blocos laterais descem para o card.
+    final ehCelular = MediaQuery.sizeOf(context).width < 700;
     
     final cliente = pedido.clienteId != null
         ? dataService.clientes
@@ -1074,8 +1285,213 @@ class _PedidosPageState extends State<PedidosPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // Linha 1: Número, Status e Valor
+              // No celular: número + valor na primeira linha e os selos
+              // (E-commerce/Delivery/Pagamento) descem para uma segunda
+              // linha em Wrap, sem estourar a largura da tela.
+              if (ehCelular)
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+
+                          if (_modoSelecao) ...[
+                            Checkbox(
+                              value: isSelecionado,
+                              onChanged: (_) => _alternarSelecao(pedido.id),
+                              activeColor: Colors.blueAccent,
+                              side: BorderSide(color: Colors.white.withOpacity(0.4)),
+                            ),
+                            const SizedBox(width: 8),
+                          ],
+                          // Número do pedido
+                          Text(
+                            pedido.numero.isNotEmpty
+                                ? pedido.numero
+                                : '#${pedido.id.substring(pedido.id.length > 6 ? pedido.id.length - 6 : 0)}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+
+                        const Spacer(),
+
+                          // Valor total
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text(
+                                'R\$ ${pedido.totalGeral.toStringAsFixed(2)}',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 18,
+                                ),
+                              ),
+                              if (isParcialmentePago) ...[
+                                const SizedBox(height: 2),
+                                Text(
+                                  'Falta: R\$ ${pedido.valorPendente.toStringAsFixed(2)}',
+                                  style: const TextStyle(
+                                    color: Colors.orangeAccent,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                              if (taxaEntrega != null && taxaEntrega > 0) ...[
+                                const SizedBox(height: 2),
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Icon(
+                                      Icons.local_shipping,
+                                      color: Colors.orange,
+                                      size: 12,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      'Taxa: R\$ ${taxaEntrega.toStringAsFixed(2)}',
+                                      style: const TextStyle(
+                                        color: Colors.orange,
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ],
+                          ),
+
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      children: [
+                          // Badge E-commerce
+                          if (isPedidoEcommerce)
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.purple,
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.shopping_cart,
+                                    color: Colors.white,
+                                    size: 12,
+                                  ),
+                                  SizedBox(width: 4),
+                                  Text(
+                                    'E-commerce',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 10,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          if (isPedidoEcommerce) const SizedBox(width: 8),
+
+                  
+                          // Badge Delivery vs Venda Direta
+                          if (pedido.deliveryInfo != null) ...[
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: Colors.orange.withOpacity(0.8),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.local_shipping, color: Colors.white, size: 12),
+                                  SizedBox(width: 4),
+                                  Text(
+                                    'DELIVERY',
+                                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 10),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                          ] else if (!isPedidoEcommerce) ...[
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: Colors.blue.withOpacity(0.8),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.assignment, color: Colors.white, size: 12),
+                                  SizedBox(width: 4),
+                                  Text(
+                                    'LANÇAMENTO',
+                                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 10),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                          ],
+
+                          // Badge PAGO
+                          // Badge EM ABERTO (Parcialmente Pago)
+                          if (isParcialmentePago)
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.amber,
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(
+                                    Icons.hourglass_bottom,
+                                    color: Color(0xFF795548),
+                                    size: 12,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    'EM ABERTO - Falta R\$ ${(pedido.totalGeral - pedido.totalRecebido).toStringAsFixed(2)}',
+                                    style: const TextStyle(
+                                      color: Color(0xFF795548),
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 10,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+
+                      ],
+                    ),
+                  ],
+                )
+              else
               Row(
                 children: [
+
                   if (_modoSelecao) ...[
                     Checkbox(
                       value: isSelecionado,
@@ -1206,7 +1622,9 @@ class _PedidosPageState extends State<PedidosPage> {
                         ],
                       ),
                     ),
+
                   const Spacer(),
+
                   // Valor total
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
@@ -1254,8 +1672,10 @@ class _PedidosPageState extends State<PedidosPage> {
                       ],
                     ],
                   ),
+
                 ],
               ),
+
               if (isParcialmentePago) ...[
                 const SizedBox(height: 8),
                 ClipRRect(
@@ -1413,8 +1833,305 @@ class _PedidosPageState extends State<PedidosPage> {
               ],
               const SizedBox(height: 8),
               // Linha 4: Data, Itens, Status e Ações de edição
+              // No celular os dados ficam na 1ª linha e as 6 ações de
+              // edição na 2ª (Wrap alinhado à direita), para não
+              // estourar a largura da tela.
+              if (ehCelular)
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+
+                           // Data
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _formatarDataCurta(pedido.dataPedido),
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.5),
+                                  fontSize: 11,
+                                ),
+                              ),
+                              if (pedido.deliveryInfo?.dataEntrega != null)
+                                Row(
+                                  children: [
+                                    const Icon(Icons.delivery_dining, size: 10, color: Colors.blueAccent),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      _formatarDataHora(pedido.deliveryInfo!.dataEntrega!),
+                                      style: const TextStyle(
+                                        color: Colors.blueAccent,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              if (_orcamentoDeOrigem(pedido) != null)
+                                Row(
+                                  children: [
+                                    const Icon(Icons.request_quote,
+                                        size: 10, color: Colors.purpleAccent),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      'Orçamento ${_orcamentoDeOrigem(pedido)}',
+                                      style: const TextStyle(
+                                        color: Colors.purpleAccent,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                            ],
+                          ),
+                          const SizedBox(width: 12),
+                          // Itens
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              '${pedido.quantidadeItens} ${pedido.quantidadeItens == 1 ? 'item' : 'itens'}',
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.7),
+                                fontSize: 11,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          // Status badge
+                          if (!isPago)
+                            PopupMenuButton<String>(
+                              onSelected: (novoStatus) =>
+                                  _alterarStatus(pedido, novoStatus, dataService),
+                              padding: EdgeInsets.zero,
+                              itemBuilder: (context) =>
+                                  [
+                                        'Pendente',
+                                        'Parcialmente Pago',
+                                        'Em Andamento',
+                                        'Entregue',
+                                        'Pago',
+                                        'Cancelado',
+                                      ]
+                                      .map(
+                                        (status) => PopupMenuItem(
+                                          value: status,
+                                          child: Row(
+                                            children: [
+                                              Container(
+                                                width: 10,
+                                                height: 10,
+                                                decoration: BoxDecoration(
+                                                  color: _getCorStatus(status),
+                                                  shape: BoxShape.circle,
+                                                ),
+                                              ),
+                                              const SizedBox(width: 8),
+                                              Text(
+                                                status,
+                                                style: const TextStyle(fontSize: 13),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      )
+                                      .toList(),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 3,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: _getCorStatus(pedido.status),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Text(
+                                  pedido.status,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 10,
+                                  ),
+                                ),
+                              ),
+                            ),
+
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Wrap(
+                      alignment: WrapAlignment.end,
+                      spacing: 2,
+                      runSpacing: 4,
+                      children: [
+
+                          // Ações de edição - sempre visíveis
+                          // Botão receber pagamento
+                          if (!isPago && pedido.status.toLowerCase() != 'cancelado')
+                            IconButton(
+                              onPressed: () => _abrirRecebimento(context, pedido),
+                              icon: const Icon(
+                                Icons.attach_money,
+                                size: 18,
+                                color: Colors.greenAccent,
+                              ),
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(
+                                minWidth: 32,
+                                minHeight: 32,
+                              ),
+                              tooltip: 'Receber Pagamento',
+                            ),
+                          if (!isPago && pedido.status.toLowerCase() != 'cancelado' && NumeracaoVenda.ehVendaPdv(pedido.numero))
+                            IconButton(
+                              onPressed: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => VendaDiretaPage(pedidoParaEditar: pedido),
+                                  ),
+                                );
+                              },
+                              icon: const Icon(
+                                Icons.shopping_cart_checkout,
+                                size: 18,
+                                color: Colors.blueAccent,
+                              ),
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(
+                                minWidth: 32,
+                                minHeight: 32,
+                              ),
+                              tooltip: 'Continuar Venda no PDV',
+                            ),
+                          if (!isPago && pedido.status.toLowerCase() != 'cancelado') const SizedBox(width: 2),
+                          // Botão editar
+                          IconButton(
+                            onPressed: (isPago || pedido.status.toLowerCase() == 'cancelado')
+                                ? null
+                                : () {
+                                    final authService = Provider.of<AuthService>(context, listen: false);
+                                    final empresa = authService.empresaAtual;
+                                    final exigirSenha = empresa?.configuracoes?['exigir_senha_alterar_pedido'] ?? false;
+
+                                    if (exigirSenha) {
+                                      _solicitarSenhaAdmin(
+                                        context: context,
+                                        titulo: 'Autorização do Administrador',
+                                        mensagem: 'Digite a senha master para alterar o pedido ${pedido.numero}:',
+                                        onConfirmar: () => _abrirLancamentoPedido(context, pedido: pedido),
+                                      );
+                                    } else {
+                                      _abrirLancamentoPedido(context, pedido: pedido);
+                                    }
+                                  },
+                            icon: Icon(
+                              Icons.edit,
+                              size: 18,
+                              color: (isPago || pedido.status.toLowerCase() == 'cancelado')
+                                  ? Colors.white30
+                                  : Colors.lightBlueAccent,
+                            ),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(
+                              minWidth: 32,
+                              minHeight: 32,
+                            ),
+                            tooltip: isPago
+                                ? 'Pedido pago não pode ser editado'
+                                : pedido.status.toLowerCase() == 'cancelado'
+                                    ? 'Pedido cancelado não pode ser editado'
+                                    : 'Editar',
+                          ),
+                          const SizedBox(width: 2),
+                          // Botão cancelar
+                          IconButton(
+                            onPressed: (isPago || pedido.status.toLowerCase() == 'cancelado')
+                                ? null
+                                : () {
+                                    final authService = Provider.of<AuthService>(context, listen: false);
+                                    final empresa = authService.empresaAtual;
+                                    final exigirSenha = empresa?.configuracoes?['exigir_senha_cancelar_pedido'] ?? false;
+
+                                    if (exigirSenha) {
+                                      _solicitarSenhaAdmin(
+                                        context: context,
+                                        titulo: 'Autorização do Administrador',
+                                        mensagem: 'Digite a senha master para cancelar o pedido ${pedido.numero}:',
+                                        onConfirmar: () => _confirmarCancelamento(context, pedido, dataService),
+                                      );
+                                    } else {
+                                      _confirmarCancelamento(context, pedido, dataService);
+                                    }
+                                  },
+                            icon: Icon(
+                              Icons.cancel_outlined,
+                              size: 18,
+                              color: (isPago || pedido.status.toLowerCase() == 'cancelado')
+                                  ? Colors.white30
+                                  : Colors.orangeAccent,
+                            ),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(
+                              minWidth: 32,
+                              minHeight: 32,
+                            ),
+                            tooltip: isPago
+                                ? 'Pedido pago não pode ser cancelado'
+                                : pedido.status.toLowerCase() == 'cancelado'
+                                    ? 'Pedido já está cancelado'
+                                    : 'Cancelar Pedido',
+                          ),
+                          const SizedBox(width: 2),
+                          // Botão imprimir - disponível para todos os pedidos
+                          IconButton(
+                            onPressed: () => _mostrarDialogoTipoImpressaoPedido(context, pedido),
+                            icon: const Icon(
+                              Icons.print,
+                              size: 18,
+                              color: Colors.orange,
+                            ),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(
+                              minWidth: 32,
+                              minHeight: 32,
+                            ),
+                            tooltip: 'Imprimir Pedido',
+                          ),
+                          const SizedBox(width: 2),
+                          // Botão reimprimir produção - imprime os tickets nas impressoras dos setores
+                          IconButton(
+                            onPressed: () => _reimprimirProducao(context, pedido),
+                            icon: const Icon(
+                              Icons.restaurant,
+                              size: 18,
+                              color: Colors.deepOrangeAccent,
+                            ),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(
+                              minWidth: 32,
+                              minHeight: 32,
+                            ),
+                            tooltip: 'Reimprimir Produção (setores)',
+                          ),
+
+                      ],
+                    ),
+                  ],
+                )
+              else
               Row(
                 children: [
+
                    // Data
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -1536,7 +2253,9 @@ class _PedidosPageState extends State<PedidosPage> {
                         ),
                       ),
                     ),
+
                   const Spacer(),
+
                   // Ações de edição - sempre visíveis
                   // Botão receber pagamento
                   if (!isPago && pedido.status.toLowerCase() != 'cancelado')
@@ -1686,8 +2405,10 @@ class _PedidosPageState extends State<PedidosPage> {
                     ),
                     tooltip: 'Reimprimir Produção (setores)',
                   ),
+
                 ],
               ),
+
               // Linha 5: Botão de Receber em destaque (para pedidos não pagos e não cancelados)
               if (!isPago && pedido.status.toLowerCase() != 'cancelado') ...[
                 const SizedBox(height: 10),

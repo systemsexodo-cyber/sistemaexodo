@@ -13224,6 +13224,9 @@ recusando a emissão de NFC-e (erro 403).
   ) {
     final screenWidth = MediaQuery.of(context).size.width;
     final screenHeight = MediaQuery.of(context).size.height;
+    // No celular (< 700px) os atalhos secundários do topo descem para o
+    // menu "⋮", com o mesmo padrão da tela de Produtos.
+    final ehCelular = screenWidth < 700;
     final isVerySmallHeight = screenHeight < 650;
     final isSmallHeight = screenHeight < 750;
 
@@ -14011,6 +14014,8 @@ recusando a emissão de NFC-e (erro 403).
                       ),
                       tooltip: 'Tela Cheia',
                     ),
+                  // No celular estes três atalhos descem para o menu "⋮".
+                  if (!ehCelular) ...[
                   // Botão Sangria (menor, apenas ícone)
                   IconButton(
                     padding: EdgeInsets.zero,
@@ -14090,6 +14095,50 @@ recusando a emissão de NFC-e (erro 403).
                     ),
                     tooltip: 'Observações da Venda',
                   ),
+                  ],
+                  if (ehCelular)
+                    PopupMenuButton<String>(
+                      icon: const Icon(Icons.more_vert, color: Colors.white),
+                      tooltip: 'Mais ações',
+                      onSelected: (valor) {
+                        if (valor == 'pagamento') {
+                          _abrirDialogPagamento();
+                        } else if (valor == 'suprimento') {
+                          _abrirDialogSuprimento();
+                        } else if (valor == 'obs') {
+                          _abrirDialogObservacoes();
+                        }
+                      },
+                      itemBuilder: (context) => const [
+                        PopupMenuItem(
+                          value: 'pagamento',
+                          child: Row(children: [
+                            Icon(Icons.remove_circle_outline,
+                                size: 18, color: Colors.redAccent),
+                            SizedBox(width: 8),
+                            Text('Pagamento / Sangria'),
+                          ]),
+                        ),
+                        PopupMenuItem(
+                          value: 'suprimento',
+                          child: Row(children: [
+                            Icon(Icons.add_circle_outline,
+                                size: 18, color: Colors.greenAccent),
+                            SizedBox(width: 8),
+                            Text('Suprimento'),
+                          ]),
+                        ),
+                        PopupMenuItem(
+                          value: 'obs',
+                          child: Row(children: [
+                            Icon(Icons.note_outlined,
+                                size: 18, color: Colors.blueAccent),
+                            SizedBox(width: 8),
+                            Text('Observações da Venda'),
+                          ]),
+                        ),
+                      ],
+                    ),
                   const SizedBox(width: 8),
                 ],
               ),

@@ -845,6 +845,9 @@ class _PdvPageState extends State<PdvPage> {
       n.createdAt.year == now.year && n.createdAt.month == now.month
     ).toList();
     final totalFiscalMes = nfcesAutorizadasMes.fold(0.0, (sum, n) => sum + n.valorTotal);
+
+    // No celular os blocos do topo rolam/descem em vez de estourar.
+    final ehCelular = MediaQuery.sizeOf(context).width < 700;
     
     return AppTheme.appBackground(
       child: Scaffold(
@@ -948,8 +951,107 @@ class _PdvPageState extends State<PdvPage> {
                       );
                     }
                   },
-                  child: Row(
-                    children: [
+                  // No celular os chips fiscais (Hoje/Mês/Pendentes) e
+                  // o atalho "Ver Fiscal" fluem em duas linhas com Wrap,
+                  // em vez de uma única linha que estourava a largura.
+                  child: ehCelular
+                      ? Wrap(
+                          spacing: 8,
+                          runSpacing: 6,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+
+                          // Ícone fiscal
+                          Icon(
+                            nfcesPendentes.isNotEmpty 
+                              ? Icons.warning_amber_rounded 
+                              : Icons.receipt_long,
+                            color: nfcesPendentes.isNotEmpty 
+                              ? Colors.orangeAccent 
+                              : Colors.greenAccent,
+                            size: 20,
+                          ),
+                          const SizedBox(width: 10),
+                      
+                          // Total fiscal Hoje
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: Colors.green.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              'Hoje: ${nfcesAutorizadasHoje.length} notas | R\$ ${totalFiscalHoje.toStringAsFixed(2)}',
+                              style: const TextStyle(
+                                color: Colors.greenAccent,
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                      
+                          const SizedBox(width: 8),
+                      
+                          // Total fiscal Mês
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: Colors.blue.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              'Mês: ${nfcesAutorizadasMes.length} notas | R\$ ${totalFiscalMes.toStringAsFixed(2)}',
+                              style: const TextStyle(
+                                color: Colors.lightBlueAccent,
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                      
+                          // Pendentes
+                          if (nfcesPendentes.isNotEmpty) ...[
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: Colors.orange.withOpacity(0.3),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.sync_problem, color: Colors.orangeAccent, size: 14),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    '${nfcesPendentes.length} pendente${nfcesPendentes.length != 1 ? 's' : ''}',
+                                    style: const TextStyle(
+                                      color: Colors.orangeAccent,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                      
+
+
+                      
+                          Text(
+                            'Ver Fiscal  ›',
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.5),
+                              fontSize: 11,
+                            ),
+                          ),
+
+                          ],
+                        )
+                      : Row(
+                          children: [
+
                       // Ícone fiscal
                       Icon(
                         nfcesPendentes.isNotEmpty 
@@ -1025,7 +1127,9 @@ class _PdvPageState extends State<PdvPage> {
                         ),
                       ],
                       
+
                       const Spacer(),
+
                       
                       Text(
                         'Ver Fiscal  ›',
@@ -1034,8 +1138,9 @@ class _PdvPageState extends State<PdvPage> {
                           fontSize: 11,
                         ),
                       ),
-                    ],
-                  ),
+
+                          ],
+                        ),
                 ),
               ),
             
@@ -1144,7 +1249,16 @@ class _PdvPageState extends State<PdvPage> {
                         ),
                       ],
                     ),
-                    const Spacer(),
+                    // Em telas estreitas os botões rolam horizontalmente
+                    // em vez de estourar a barra de seleção inferior.
+                    Expanded(
+                      child: Align(
+                        alignment: Alignment.centerRight,
+                        child: SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
                     ElevatedButton.icon(
                       onPressed: () async {
                         if (pedidosSelecionados.isEmpty) return;
@@ -1238,6 +1352,11 @@ class _PdvPageState extends State<PdvPage> {
                       child: const Text(
                         'PAGAR AGORA',
                         style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                            ],
+                          ),
+                        ),
                       ),
                     ),
                   ],

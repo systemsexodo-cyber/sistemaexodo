@@ -93,6 +93,9 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
     return AppTheme.appBackground(
       child: Consumer<DataService>(
         builder: (context, dataService, _) {
+          // No celular os atalhos do topo descem para o menu "⋮", com o
+          // mesmo padrão da tela de Produtos.
+          final ehCelular = MediaQuery.sizeOf(context).width < 700;
           return Scaffold(
             backgroundColor: Colors.transparent,
             appBar: AppBar(
@@ -102,11 +105,13 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
               foregroundColor: Colors.white,
               actions: [
                 const SyncStatusWidget(),
+                if (!ehCelular) ...[
                 IconButton(
                   icon: const Icon(Icons.link),
                   onPressed: () => _gerarLinkAgendamento(dataService),
                   tooltip: 'Link de Agendamento Online',
                 ),
+                ],
                 // Notificações de Solicitações Online
                 Stack(
                   alignment: Alignment.center,
@@ -138,6 +143,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                       ),
                   ],
                 ),
+                if (!ehCelular) ...[
                 IconButton(
                   icon: const Icon(Icons.map_outlined, color: Colors.lightGreenAccent),
                   onPressed: () => _mostrarMapaDisponibilidade(context, dataService),
@@ -158,6 +164,80 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                   onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ConfiguracoesAgendaPage())),
                   tooltip: 'Configurações de Agendamento',
                 ),
+                ],
+                if (ehCelular)
+                  PopupMenuButton<String>(
+                    icon: const Icon(Icons.more_vert, color: Colors.white),
+                    tooltip: 'Mais ações',
+                    onSelected: (valor) {
+                      if (valor == 'link') {
+                        _gerarLinkAgendamento(dataService);
+                      } else if (valor == 'mapa') {
+                        _mostrarMapaDisponibilidade(context, dataService);
+                      } else if (valor == 'comissoes') {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => ComissoesPage()),
+                        );
+                      } else if (valor == 'funcionarios') {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => FuncionariosPage()),
+                        );
+                      } else if (valor == 'config') {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (_) => ConfiguracoesAgendaPage()),
+                        );
+                      }
+                    },
+                    itemBuilder: (context) => const [
+                      PopupMenuItem(
+                        value: 'link',
+                        child: Row(children: [
+                          Icon(Icons.link, size: 18),
+                          SizedBox(width: 8),
+                          Text('Link de Agendamento'),
+                        ]),
+                      ),
+                      PopupMenuItem(
+                        value: 'mapa',
+                        child: Row(children: [
+                          Icon(Icons.map_outlined,
+                              size: 18, color: Colors.lightGreenAccent),
+                          SizedBox(width: 8),
+                          Text('Mapa de Disponibilidade'),
+                        ]),
+                      ),
+                      PopupMenuItem(
+                        value: 'comissoes',
+                        child: Row(children: [
+                          Icon(Icons.monetization_on_outlined,
+                              size: 18, color: Colors.amber),
+                          SizedBox(width: 8),
+                          Text('Comissões'),
+                        ]),
+                      ),
+                      PopupMenuItem(
+                        value: 'funcionarios',
+                        child: Row(children: [
+                          Icon(Icons.people_alt_outlined,
+                              size: 18, color: Colors.blueAccent),
+                          SizedBox(width: 8),
+                          Text('Funcionários / Vendedores'),
+                        ]),
+                      ),
+                      PopupMenuItem(
+                        value: 'config',
+                        child: Row(children: [
+                          Icon(Icons.settings, size: 18),
+                          SizedBox(width: 8),
+                          Text('Configurações de Agendamento'),
+                        ]),
+                      ),
+                    ],
+                  ),
                 IconButton(
                   icon: const Icon(Icons.add),
                   onPressed: () => _mostrarDialogNovoAgendamento(context, dataService),
@@ -562,9 +642,13 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
               ),
           ],
           const SizedBox(height: 10),
-          // Seletor de visualização e Navegação
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          // Seletor de visualização e Navegação. No celular o Wrap deixa
+          // a navegação de data descer para a segunda linha em vez de
+          // estourar a largura da tela.
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               // Lado Esquerdo: Seletor (Compacto)
               Row(
@@ -2244,20 +2328,26 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
                         const SizedBox(height: 8),
                         Row(
                           children: [
-                            // Status pill
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                              decoration: BoxDecoration(
-                                color: corStatus.withOpacity(0.12),
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: Text(
-                                agendamento.status.toUpperCase(),
-                                style: TextStyle(
-                                  color: corStatus,
-                                  fontSize: 9,
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: 0.5,
+                            // Status pill (Flexible: em telas estreitas o
+                            // texto encolhe com reticências em vez de
+                            // empurrar os botões para fora do card)
+                            Flexible(
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                decoration: BoxDecoration(
+                                  color: corStatus.withOpacity(0.12),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Text(
+                                  agendamento.status.toUpperCase(),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: corStatus,
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: 0.5,
+                                  ),
                                 ),
                               ),
                             ),

@@ -168,44 +168,33 @@ class _ClientesPageState extends State<ClientesPage> {
           ),
         ],
       ),
-      child: Row(
-        children: [
-          Expanded(
-            child: _buildStatCard(
-              'Total',
-              stats['total'].toString(),
-              Colors.blue,
-              Icons.people,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: _buildStatCard(
-              'Ativos',
-              stats['ativos'].toString(),
-              Colors.green,
-              Icons.check_circle,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: _buildStatCard(
-              'Inativos',
-              stats['inativos'].toString(),
-              Colors.grey,
-              Icons.cancel,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: _buildStatCard(
-              'Bloqueados',
-              stats['bloqueados'].toString(),
-              Colors.red,
-              Icons.block,
-            ),
-          ),
-        ],
+      // No celular os 4 indicadores ficam 2 por linha (Wrap), em vez de
+      // 4 colunas espremidas que cortavam os rótulos.
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final ehCelular = MediaQuery.sizeOf(context).width < 700;
+          final colunas = ehCelular ? 2 : 4;
+          final larguraCard =
+              (constraints.maxWidth - 12 * (colunas - 1)) / colunas;
+          Widget card(String label, String valor, Color cor, IconData icone) =>
+              SizedBox(
+                width: larguraCard,
+                child: _buildStatCard(label, valor, cor, icone),
+              );
+          return Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              card('Total', stats['total'].toString(), Colors.blue, Icons.people),
+              card('Ativos', stats['ativos'].toString(), Colors.green,
+                  Icons.check_circle),
+              card('Inativos', stats['inativos'].toString(), Colors.grey,
+                  Icons.cancel),
+              card('Bloqueados', stats['bloqueados'].toString(), Colors.red,
+                  Icons.block),
+            ],
+          );
+        },
       ),
     );
   }
@@ -282,6 +271,9 @@ class _ClientesPageState extends State<ClientesPage> {
   }
 
   Widget _buildCardCliente(Cliente cliente) {
+    // No celular (largura < 700) os blocos laterais descem para dentro do
+    // card, evitando estouro de largura — mesmo padrão da tela de Produtos.
+    final ehCelular = MediaQuery.sizeOf(context).width < 700;
     final isPJ = cliente.tipoPessoa == TipoPessoa.juridica;
     final isBloqueado = cliente.bloqueado;
     final isInativo = !cliente.ativo;
@@ -369,7 +361,12 @@ class _ClientesPageState extends State<ClientesPage> {
                             ),
                           ),
                         const SizedBox(height: 4),
-                        Row(
+                        // Selos em Wrap: no celular o CPF/CNPJ (que ficava
+                        // ao lado do nome) desce para cá, sem cortar nada.
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 4,
+                          crossAxisAlignment: WrapCrossAlignment.center,
                           children: [
                             Container(
                               padding: const EdgeInsets.symmetric(
@@ -391,7 +388,6 @@ class _ClientesPageState extends State<ClientesPage> {
                                 ),
                               ),
                             ),
-                            const SizedBox(width: 6),
                             Container(
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 8,
@@ -410,14 +406,35 @@ class _ClientesPageState extends State<ClientesPage> {
                                 ),
                               ),
                             ),
+                            if (ehCelular && cliente.cpfCnpjFormatado != null)
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 2,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                  cliente.cpfCnpjFormatado!,
+                                  style: TextStyle(
+                                    color: Colors.white.withOpacity(0.8),
+                                    fontSize: 10,
+                                    fontFamily: 'monospace',
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
                           ],
                         ),
                       ],
                     ),
                   ),
 
-                  // CPF/CNPJ
-                  if (cliente.cpfCnpjFormatado != null)
+                  // CPF/CNPJ (só no desktop; no celular ele aparece nos
+                  // selos acima, para o nome não ficar espremido)
+                  if (!ehCelular && cliente.cpfCnpjFormatado != null)
                     Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 10,
@@ -441,55 +458,76 @@ class _ClientesPageState extends State<ClientesPage> {
 
               const SizedBox(height: 12),
 
-              // Contato
-              Row(
-                children: [
-                  // Telefone
-                  Expanded(
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.phone,
-                          color: Colors.greenAccent.withOpacity(0.7),
-                          size: 16,
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          cliente.telefone,
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.8),
-                            fontSize: 13,
-                          ),
-                        ),
-                      ],
+              // Contato. No celular telefone e e-mail ficam um embaixo do
+              // outro (duas linhas), em vez de dividir a largura estreita.
+              if (ehCelular)
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _linhaContato(
+                      Icons.phone,
+                      Colors.greenAccent.withOpacity(0.7),
+                      cliente.telefone,
                     ),
-                  ),
-                  // Email
-                  if (cliente.email != null && cliente.email!.isNotEmpty)
+                    if (cliente.email != null && cliente.email!.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      _linhaContato(
+                        Icons.email,
+                        Colors.blue.withOpacity(0.7),
+                        cliente.email!,
+                      ),
+                    ],
+                  ],
+                )
+              else
+                Row(
+                  children: [
+                    // Telefone
                     Expanded(
                       child: Row(
                         children: [
                           Icon(
-                            Icons.email,
-                            color: Colors.blue.withOpacity(0.7),
+                            Icons.phone,
+                            color: Colors.greenAccent.withOpacity(0.7),
                             size: 16,
                           ),
                           const SizedBox(width: 6),
-                          Expanded(
-                            child: Text(
-                              cliente.email!,
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(0.8),
-                                fontSize: 13,
-                              ),
-                              overflow: TextOverflow.ellipsis,
+                          Text(
+                            cliente.telefone,
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.8),
+                              fontSize: 13,
                             ),
                           ),
                         ],
                       ),
                     ),
-                ],
-              ),
+                    // Email
+                    if (cliente.email != null && cliente.email!.isNotEmpty)
+                      Expanded(
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.email,
+                              color: Colors.blue.withOpacity(0.7),
+                              size: 16,
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                cliente.email!,
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.8),
+                                  fontSize: 13,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
 
               // Endereço
               if (cliente.endereco != null && cliente.endereco!.isNotEmpty) ...[
@@ -552,6 +590,27 @@ class _ClientesPageState extends State<ClientesPage> {
           ),
         ),
       ),
+    );
+  }
+
+  /// Uma linha de contato (ícone + texto) com reticências — usada no
+  /// celular para telefone e e-mail empilhados.
+  Widget _linhaContato(IconData icone, Color cor, String texto) {
+    return Row(
+      children: [
+        Icon(icone, color: cor, size: 16),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            texto,
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.8),
+              fontSize: 13,
+            ),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
     );
   }
 

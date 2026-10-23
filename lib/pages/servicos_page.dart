@@ -389,6 +389,10 @@ class _ServicosPageState extends State<ServicosPage>
     final emAberto = filtrados.where(_emAberto).toList();
     final recebidos = filtrados.where(_recebido).toList();
 
+    // No celular os atalhos do topo descem para o menu "⋮", com o mesmo
+    // padrão da tela de Produtos.
+    final ehCelular = MediaQuery.sizeOf(context).width < 700;
+
     return AppTheme.appBackground(
       child: Scaffold(
         backgroundColor: Colors.transparent,
@@ -398,6 +402,7 @@ class _ServicosPageState extends State<ServicosPage>
           elevation: 0,
           foregroundColor: Colors.white,
           actions: [
+            if (!ehCelular) ...[
             IconButton(
               icon: const Icon(Icons.people),
               onPressed: () {
@@ -472,6 +477,79 @@ class _ServicosPageState extends State<ServicosPage>
               },
               tooltip: 'Tipos de Serviço (Cadastro)',
             ),
+            ],
+            if (ehCelular)
+              PopupMenuButton<String>(
+                icon: const Icon(Icons.more_vert, color: Colors.white),
+                tooltip: 'Mais ações',
+                onSelected: (valor) {
+                  final destinos = <String, Widget>{
+                    'clientes': const ClientesServicosPage(),
+                    'comissoes': const ComissoesPage(),
+                    'receber': PdvPage(abaInicial: 0),
+                    'agenda': const AgendaServicosPage(),
+                    'historico': const HistoricoVendasPage(),
+                    'tipos': const TiposServicoPage(),
+                  };
+                  final destino = destinos[valor];
+                  if (destino != null) {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => destino),
+                    );
+                  }
+                },
+                itemBuilder: (context) => const [
+                  PopupMenuItem(
+                    value: 'clientes',
+                    child: Row(children: [
+                      Icon(Icons.people, size: 18),
+                      SizedBox(width: 8),
+                      Text('Clientes de Serviços'),
+                    ]),
+                  ),
+                  PopupMenuItem(
+                    value: 'comissoes',
+                    child: Row(children: [
+                      Icon(Icons.account_balance_wallet, size: 18),
+                      SizedBox(width: 8),
+                      Text('Consulta de Comissões'),
+                    ]),
+                  ),
+                  PopupMenuItem(
+                    value: 'receber',
+                    child: Row(children: [
+                      Icon(Icons.payment, size: 18),
+                      SizedBox(width: 8),
+                      Text('Receber Pagamentos'),
+                    ]),
+                  ),
+                  PopupMenuItem(
+                    value: 'agenda',
+                    child: Row(children: [
+                      Icon(Icons.calendar_month, size: 18),
+                      SizedBox(width: 8),
+                      Text('Agenda de Serviços'),
+                    ]),
+                  ),
+                  PopupMenuItem(
+                    value: 'historico',
+                    child: Row(children: [
+                      Icon(Icons.history, size: 18, color: Colors.blue),
+                      SizedBox(width: 8),
+                      Text('Histórico de Vendas'),
+                    ]),
+                  ),
+                  PopupMenuItem(
+                    value: 'tipos',
+                    child: Row(children: [
+                      Icon(Icons.playlist_add, size: 18, color: Colors.greenAccent),
+                      SizedBox(width: 8),
+                      Text('Tipos de Serviço'),
+                    ]),
+                  ),
+                ],
+              ),
             IconButton(
               icon: const Icon(Icons.add),
               onPressed: () => _abrirLancamento(),
@@ -518,6 +596,13 @@ class _ServicosPageState extends State<ServicosPage>
               labelColor: Colors.white,
               unselectedLabelColor: Colors.white60,
               indicatorColor: _coresAba[_abaAtual],
+              // No celular as abas rolam em vez de dividir a largura
+              // (mesmo ajuste do formulário de produto).
+              isScrollable: ehCelular,
+              tabAlignment: ehCelular ? TabAlignment.start : TabAlignment.fill,
+              labelPadding: ehCelular
+                  ? const EdgeInsets.symmetric(horizontal: 14)
+                  : null,
               tabs: [
                 Tab(text: 'Orçamentos (${orcamentos.length})'),
                 Tab(text: 'Em Aberto (${emAberto.length})'),

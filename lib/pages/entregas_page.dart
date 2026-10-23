@@ -57,6 +57,9 @@ class _EntregasPageState extends State<EntregasPage>
     final dataService = Provider.of<DataService>(context);
     final entregas = _filtrarEntregas(dataService.entregas);
     final estatisticas = _calcularEstatisticas(dataService.entregas);
+    // No celular o botão largo e os atalhos do topo descem para o menu "⋮",
+    // com o mesmo padrão da tela de Produtos.
+    final ehCelular = MediaQuery.sizeOf(context).width < 700;
 
     return AppTheme.appBackground(
       child: Scaffold(
@@ -76,6 +79,7 @@ class _EntregasPageState extends State<EntregasPage>
                 )
               : null,
           actions: [
+            if (!ehCelular) ...[
             // Atalho para Romaneios
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 4.0),
@@ -115,6 +119,55 @@ class _EntregasPageState extends State<EntregasPage>
               onPressed: () => _otimizarRotaBoy(context, dataService),
             ),
 
+            ],
+            if (ehCelular)
+              PopupMenuButton<String>(
+                icon: const Icon(Icons.more_vert, color: Colors.white),
+                tooltip: 'Mais ações',
+                onSelected: (valor) {
+                  if (valor == 'romaneios') {
+                    Navigator.pushReplacement(
+                      context,
+                      MaterialPageRoute(
+                          builder: (context) => const RomaneiosPage()),
+                    );
+                  } else if (valor == 'taxas') {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (context) => const TaxasEntregaPage()),
+                    );
+                  } else if (valor == 'rota') {
+                    _otimizarRotaBoy(context, dataService);
+                  }
+                },
+                itemBuilder: (context) => const [
+                  PopupMenuItem(
+                    value: 'romaneios',
+                    child: Row(children: [
+                      Icon(Icons.map_outlined, size: 18),
+                      SizedBox(width: 8),
+                      Text('Romaneios'),
+                    ]),
+                  ),
+                  PopupMenuItem(
+                    value: 'taxas',
+                    child: Row(children: [
+                      Icon(Icons.local_shipping, size: 18),
+                      SizedBox(width: 8),
+                      Text('Taxas de Entrega'),
+                    ]),
+                  ),
+                  PopupMenuItem(
+                    value: 'rota',
+                    child: Row(children: [
+                      Icon(Icons.route, size: 18),
+                      SizedBox(width: 8),
+                      Text('Otimizar Rota'),
+                    ]),
+                  ),
+                ],
+              ),
             // Busca
             IconButton(
               icon: const Icon(Icons.search),
